@@ -139,7 +139,17 @@ class Snapshot:
         return self._wh.sql(sql + f" ORDER BY {keys}", [self.as_of, *params])
 
     def players(self, season: str) -> pd.DataFrame:
-        """Squad-selectable players with price, ownership and availability."""
+        """Players with price, ownership and availability.
+
+        Optional columns are selected only if the connected database actually
+        has them. A read-only consumer cannot run migrations, so hard-coding a
+        newer column list here breaks every reader against an older file --
+        which is exactly what happened when can_select was introduced while a
+        long-running writer held the lock.
+        """
+        optional = [c for c in ("can_select", "can_transact", "removed")
+                    if c in self._columns("fact_player_state")]
+        extra = "".join(f"s.{c}, " for c in optional)
         return self._wh.sql(
             """
             WITH p AS (
@@ -159,12 +169,19 @@ class Snapshot:
                    p.team_code, s.price_tenths, s.selected_by_pct, s.status,
                    s.chance_of_playing_next_round, s.news,
                    s.transfers_in_event, s.transfers_out_event,
-                   s.can_select, s.can_transact, s.removed,
+                   """ + extra + """
                    greatest(p.as_of, s.as_of) AS as_of
             FROM p JOIN s USING (season, code)
             """,
             [self.as_of, season, self.as_of, season],
         )
+
+    def _columns(self, table: str) -> set[str]:
+        rows = self._wh.sql(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = ?",
+            [table],
+        )
+        return set(rows["column_name"]) if not rows.empty else set()
 
     def selectable(self, season: str) -> pd.DataFrame:
         """Players the game would actually let you pick right now.

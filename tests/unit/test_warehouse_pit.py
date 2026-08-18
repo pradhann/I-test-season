@@ -316,3 +316,48 @@ def test_non_lock_io_errors_are_not_swallowed(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(_duckdb, "connect", disk_full)
     with pytest.raises(_duckdb.IOException, match="disk is full"):
         Warehouse(tmp_path / "x.duckdb", lock_timeout_s=5.0)
+
+
+def test_players_works_against_a_database_missing_newer_columns(tmp_path) -> None:
+    """A read-only consumer cannot run migrations.
+
+    Hard-coding a newer column list in players() breaks every reader against an
+    older file. That happened for real when can_select was introduced while a
+    long-running writer held the single-writer lock, so no migration could run.
+    """
+    import duckdb
+
+    path = tmp_path / "old.duckdb"
+    # Build the pre-migration schema directly; DuckDB refuses to DROP a column
+    # that an index depends on, so we never add the newer ones.
+    con = duckdb.connect(str(path))
+    con.execute("SET TimeZone='UTC'")
+    con.execute("""
+        CREATE TABLE dim_player (
+            season VARCHAR, code INTEGER, element_id INTEGER, web_name VARCHAR,
+            first_name VARCHAR, second_name VARCHAR, position INTEGER,
+            team_code INTEGER, as_of TIMESTAMPTZ
+        )""")
+    con.execute("""
+        CREATE TABLE fact_player_state (
+            season VARCHAR, code INTEGER, element_id INTEGER, price_tenths INTEGER,
+            selected_by_pct DOUBLE, status VARCHAR,
+            chance_of_playing_next_round INTEGER, news VARCHAR,
+            news_added TIMESTAMPTZ, transfers_in_event BIGINT,
+            transfers_out_event BIGINT, cost_change_start INTEGER, as_of TIMESTAMPTZ
+        )""")
+    con.execute(
+        "INSERT INTO dim_player VALUES ('2026-27',1,1,'A','A','B',3,1,?)", [T(1)]
+    )
+    con.execute(
+        "INSERT INTO fact_player_state VALUES "
+        "('2026-27',1,1,50,5.0,'a',NULL,'',NULL,0,0,0,?)", [T(1)]
+    )
+    con.close()
+
+    with Warehouse(path, read_only=True) as wh:
+        got = wh.snapshot_at(T(19)).players("2026-27")
+        assert len(got) == 1
+        assert "can_select" not in got.columns
+        # selectable() must still work, falling back to status.
+        assert len(wh.snapshot_at(T(19)).selectable("2026-27")) == 1
