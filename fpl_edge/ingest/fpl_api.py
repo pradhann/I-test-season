@@ -35,9 +35,20 @@ def season_label(bootstrap: dict[str, Any]) -> str:
 
 
 def _ts(value: str | None) -> dt.datetime | None:
+    """Parse an FPL timestamp, refusing to return a naive datetime.
+
+    Not every FPL timestamp carries a 'Z'. The old implementation returned a
+    naive datetime for those, which then flowed into kickoff_utc / news_added
+    and was reinterpreted as local time downstream.
+    """
     if not value:
         return None
-    return dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        # FPL publishes in UTC; an absent offset is a formatting quirk, not a
+        # local time. Attach it explicitly so nothing downstream has to guess.
+        return parsed.replace(tzinfo=dt.timezone.utc)
+    return parsed.astimezone(dt.timezone.utc)
 
 
 def ingest_bootstrap(wh: Warehouse, fetcher: Fetcher | None = None) -> dict[str, int]:
@@ -111,6 +122,9 @@ def ingest_bootstrap(wh: Warehouse, fetcher: Fetcher | None = None) -> dict[str,
             "transfers_in_event": el.get("transfers_in_event"),
             "transfers_out_event": el.get("transfers_out_event"),
             "cost_change_start": el.get("cost_change_start"),
+            "can_select": el.get("can_select"),
+            "can_transact": el.get("can_transact"),
+            "removed": el.get("removed"),
             "as_of": as_of,
         })
 

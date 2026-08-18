@@ -7,6 +7,7 @@ from fpl_edge.store.warehouse import (
     PIT_KEYS,
     Snapshot,
     Warehouse,
+    WarehouseLockedError,
 )
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "PIT_KEYS",
     "Snapshot",
     "Warehouse",
+    "WarehouseLockedError",
 ]

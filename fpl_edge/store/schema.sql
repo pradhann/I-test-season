@@ -65,6 +65,12 @@ CREATE TABLE IF NOT EXISTS fact_player_state (
     transfers_in_event            BIGINT,
     transfers_out_event           BIGINT,
     cost_change_start             INTEGER,
+    -- FPL's own authority on whether a player may be picked at all. Filtering
+    -- on `status` alone is wrong: the two can diverge, and can_select is the
+    -- field the game actually enforces.
+    can_select                    BOOLEAN,
+    can_transact                  BOOLEAN,
+    removed                       BOOLEAN,
     as_of                         TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (season, code, as_of)
 );

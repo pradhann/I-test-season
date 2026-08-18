@@ -11,7 +11,7 @@ import datetime as dt
 import pandas as pd
 import pytest
 
-from fpl_edge.store import ConflictingFactError, Warehouse
+from fpl_edge.store import ConflictingFactError, LeakageError, Warehouse
 
 UTC = dt.timezone.utc
 
@@ -70,6 +70,13 @@ def test_snapshot_returns_exactly_one_row_per_entity(wh: Warehouse) -> None:
 
 def test_results_are_invisible_until_finalisation(wh: Warehouse) -> None:
     """A gameweek that has kicked off but not finalised must not be readable."""
+    # results_before() drops codes with no dim_player row, so the player has to
+    # actually exist for this to test what it claims to test.
+    wh.append("dim_player", pd.DataFrame([{
+        "season": "2026-27", "code": 4, "element_id": 4, "web_name": "P",
+        "first_name": "A", "second_name": "B", "position": 2, "team_code": 1,
+        "as_of": T(1),
+    }]))
     row = {
         "season": "2026-27", "code": 4, "fixture_id": 1, "gw": 1, "minutes": 90,
         "goals_scored": 1, "assists": 0, "clean_sheets": 1, "goals_conceded": 0,
@@ -190,3 +197,122 @@ def test_snapshot_row_order_is_deterministic(wh: Warehouse) -> None:
     assert first == sorted(first)
     for _ in range(3):
         assert wh.snapshot_at(T(19)).table("fact_player_state")["code"].tolist() == first
+
+
+def test_raw_warehouse_is_not_reachable_from_a_snapshot(wh: Warehouse) -> None:
+    """snapshot.warehouse.sql(...) read the entire future in one line and looked
+    like ordinary code in review. The handle is now private."""
+    snap = wh.snapshot_at(T(19))
+    with pytest.raises(LeakageError, match="bypasses point-in-time"):
+        _ = snap.warehouse
+
+
+def test_escape_hatch_demands_a_substantive_reason(wh: Warehouse) -> None:
+    snap = wh.snapshot_at(T(19))
+    with pytest.raises(ValueError, match="substantive reason"):
+        snap.escape_hatch_unfiltered("because")
+    assert snap.escape_hatch_unfiltered(
+        "schema introspection for the leakage audit, not model input"
+    ) is wh
+
+
+def test_snapshot_constructed_directly_still_validates_its_as_of(wh: Warehouse) -> None:
+    """snapshot_at() validated, but the constructor was an unguarded back door."""
+    from fpl_edge.store.warehouse import Snapshot
+
+    with pytest.raises(ValueError, match="timezone-aware"):
+        Snapshot(wh, dt.datetime(2026, 8, 19, 12))
+
+
+def test_result_observable_before_its_own_kickoff_is_refused(wh: Warehouse) -> None:
+    """as_of set to the deadline rather than to finalisation is exactly how a
+    backtest ends up reading the future."""
+    wh.append("fact_fixture", pd.DataFrame([{
+        "season": "2026-27", "fixture_id": 77, "gw": 1,
+        "kickoff_utc": T(22, 14), "home_team_code": 1, "away_team_code": 2,
+        "finished": False, "home_score": None, "away_score": None, "as_of": T(1),
+    }]))
+    row = {
+        "season": "2026-27", "code": 11, "fixture_id": 77, "gw": 1, "minutes": 90,
+        "goals_scored": 1, "assists": 0, "clean_sheets": 0, "goals_conceded": 1,
+        "own_goals": 0, "penalties_saved": 0, "penalties_missed": 0, "yellow_cards": 0,
+        "red_cards": 0, "saves": 0, "bonus": 0, "bps": 20, "starts": 1, "tackles": 0,
+        "clearances_blocks_interceptions": 0, "recoveries": 0,
+        "defensive_contribution": 0, "expected_goals": 0.3, "expected_assists": 0.0,
+        "expected_goals_conceded": 1.0, "total_points": 6, "was_home": True,
+        "as_of": T(20),  # two days BEFORE kickoff
+    }
+    with pytest.raises(ValueError, match="before their own kickoff"):
+        wh.append("fact_player_fixture", pd.DataFrame([row]))
+
+    ok = {**row, "as_of": T(23)}
+    assert wh.append("fact_player_fixture", pd.DataFrame([ok])) == 1
+
+
+def test_orphan_codes_cannot_reach_results(wh: Warehouse) -> None:
+    """A refused manager element can still leave per-fixture rows behind, and
+    those would enter a training set as an unlabelled player."""
+    wh.append("fact_fixture", pd.DataFrame([{
+        "season": "2026-27", "fixture_id": 88, "gw": 1, "kickoff_utc": T(20, 14),
+        "home_team_code": 1, "away_team_code": 2, "finished": True,
+        "home_score": 1, "away_score": 0, "as_of": T(1),
+    }]))
+    wh.append("dim_player", pd.DataFrame([{
+        "season": "2026-27", "code": 100, "element_id": 1, "web_name": "Real",
+        "first_name": "R", "second_name": "P", "position": 3, "team_code": 1,
+        "as_of": T(1),
+    }]))
+    base = {
+        "season": "2026-27", "fixture_id": 88, "gw": 1, "minutes": 90,
+        "goals_scored": 0, "assists": 0, "clean_sheets": 0, "goals_conceded": 0,
+        "own_goals": 0, "penalties_saved": 0, "penalties_missed": 0, "yellow_cards": 0,
+        "red_cards": 0, "saves": 0, "bonus": 0, "bps": 10, "starts": 1, "tackles": 0,
+        "clearances_blocks_interceptions": 0, "recoveries": 0,
+        "defensive_contribution": 0, "expected_goals": 0.0, "expected_assists": 0.0,
+        "expected_goals_conceded": 0.0, "total_points": 2, "was_home": True,
+        "as_of": T(21),
+    }
+    wh.append("fact_player_fixture", pd.DataFrame([
+        {**base, "code": 100}, {**base, "code": 999},  # 999 has no dim_player row
+    ]))
+    got = wh.snapshot_at(T(25)).results_before("2026-27")
+    assert set(got["code"]) == {100}
+
+
+def test_concurrent_writer_raises_a_useful_error_not_a_raw_ioexception(
+    tmp_path, monkeypatch
+) -> None:
+    """DuckDB permits one writer per file, across processes.
+
+    A scheduled weekly run colliding with an ad-hoc ingest should wait briefly
+    and then say what happened, not die with a raw IOException. The lock is
+    cross-process, so it cannot be reproduced with two in-process connections;
+    we drive the handler directly instead.
+    """
+    import duckdb as _duckdb
+
+    from fpl_edge.store import WarehouseLockedError
+
+    calls = {"n": 0}
+
+    def always_locked(*args, **kwargs):
+        calls["n"] += 1
+        raise _duckdb.IOException(
+            'IO Error: Could not set lock on file "x": Conflicting lock is held'
+        )
+
+    monkeypatch.setattr(_duckdb, "connect", always_locked)
+    with pytest.raises(WarehouseLockedError, match="one writer"):
+        Warehouse(tmp_path / "locked.duckdb", lock_timeout_s=0.6)
+    assert calls["n"] > 1, "should have retried rather than failing on first attempt"
+
+
+def test_non_lock_io_errors_are_not_swallowed(tmp_path, monkeypatch) -> None:
+    import duckdb as _duckdb
+
+    def disk_full(*args, **kwargs):
+        raise _duckdb.IOException("IO Error: disk is full")
+
+    monkeypatch.setattr(_duckdb, "connect", disk_full)
+    with pytest.raises(_duckdb.IOException, match="disk is full"):
+        Warehouse(tmp_path / "x.duckdb", lock_timeout_s=5.0)

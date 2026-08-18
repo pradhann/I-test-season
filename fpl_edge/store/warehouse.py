@@ -18,6 +18,7 @@ read-only.
 from __future__ import annotations
 
 import datetime as dt
+import time
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -47,6 +48,10 @@ class LeakageError(RuntimeError):
     """Raised when a read would expose information from after the as-of instant."""
 
 
+class WarehouseLockedError(RuntimeError):
+    """Another process holds the single writer lock and did not release it."""
+
+
 class ConflictingFactError(ValueError):
     """Two different values claim the same entity at the same instant.
 
@@ -73,10 +78,39 @@ class Snapshot:
     Snapshot is the only sanctioned way to read mutable facts, which makes
     leakage an auditable property: grep for direct table reads outside this
     class and you have found your bug.
+
+    The warehouse handle is deliberately private. When it was public,
+    ``snapshot.warehouse.sql(...)`` read the entire future in a single line and
+    looked exactly like legitimate code in review.
     """
 
-    warehouse: "Warehouse"
+    _wh: "Warehouse"
     as_of: dt.datetime
+
+    def __post_init__(self) -> None:
+        # snapshot_at() validates, but nothing stopped a caller constructing a
+        # Snapshot directly with a naive datetime and bypassing the check.
+        object.__setattr__(self, "as_of", _require_utc(self.as_of, "Snapshot.as_of"))
+
+    @property
+    def warehouse(self) -> "Warehouse":
+        raise LeakageError(
+            "Snapshot.warehouse is not available: reading the warehouse directly "
+            "bypasses point-in-time filtering and exposes the future. Use "
+            "snapshot.table(...) / players(...) / results_before(...). If you "
+            "genuinely need unfiltered access, call escape_hatch_unfiltered() so "
+            "the intent is explicit and greppable."
+        )
+
+    def escape_hatch_unfiltered(self, reason: str) -> "Warehouse":
+        """Unfiltered warehouse access. Every call site must justify itself.
+
+        Exists so that legitimate needs (schema introspection, audits) do not
+        force people to reintroduce a silent public handle.
+        """
+        if not reason or len(reason) < 20:
+            raise ValueError("escape_hatch_unfiltered requires a substantive reason")
+        return self._wh
 
     def table(
         self,
@@ -102,11 +136,11 @@ class Snapshot:
         # Deterministic order. DuckDB parallelises scans, so without an explicit
         # ORDER BY the row order varies with thread count -- which makes seeded
         # model runs irreproducible across machines for no visible reason.
-        return self.warehouse.sql(sql + f" ORDER BY {keys}", [self.as_of, *params])
+        return self._wh.sql(sql + f" ORDER BY {keys}", [self.as_of, *params])
 
     def players(self, season: str) -> pd.DataFrame:
         """Squad-selectable players with price, ownership and availability."""
-        return self.warehouse.sql(
+        return self._wh.sql(
             """
             WITH p AS (
                 SELECT * EXCLUDE (rn) FROM (
@@ -125,11 +159,32 @@ class Snapshot:
                    p.team_code, s.price_tenths, s.selected_by_pct, s.status,
                    s.chance_of_playing_next_round, s.news,
                    s.transfers_in_event, s.transfers_out_event,
+                   s.can_select, s.can_transact, s.removed,
                    greatest(p.as_of, s.as_of) AS as_of
             FROM p JOIN s USING (season, code)
             """,
             [self.as_of, season, self.as_of, season],
         )
+
+    def selectable(self, season: str) -> pd.DataFrame:
+        """Players the game would actually let you pick right now.
+
+        Filters on FPL's own ``can_select`` where it is known, falling back to
+        ``status`` only where the flag is absent (historical rows predate it).
+        Filtering on ``status`` alone is not equivalent: the fields can diverge,
+        and ``can_select`` is what the game enforces.
+        """
+        df = self.players(season)
+        if df.empty:
+            return df
+        if "can_select" in df.columns and df["can_select"].notna().any():
+            keep = df["can_select"].fillna(True).astype(bool)
+        else:
+            keep = pd.Series(True, index=df.index)
+        keep &= df["status"].isin(["a", "d"]) | df["status"].isna()
+        if "removed" in df.columns:
+            keep &= ~df["removed"].fillna(False).astype(bool)
+        return df[keep].reset_index(drop=True)
 
     def results_before(self, season: str) -> pd.DataFrame:
         """Finalised per-fixture returns visible at this instant.
@@ -137,7 +192,14 @@ class Snapshot:
         Note the ``as_of <= deadline`` filter uses points-finalisation time, so a
         gameweek that has kicked off but not been finalised is correctly absent.
         """
-        return self.table("fact_player_fixture", where="season = ?", params=[season])
+        rows = self.table("fact_player_fixture", where="season = ?", params=[season])
+        if rows.empty:
+            return rows
+        # Drop rows whose code has no dim_player entry. A manager element that
+        # was correctly refused at ingestion can still leave per-fixture rows
+        # behind, and those would reach a training set as an unlabelled player.
+        known = self.table("dim_player", where="season = ?", params=[season])["code"]
+        return rows[rows["code"].isin(set(known))].reset_index(drop=True)
 
     def upcoming_fixtures(self, season: str, *, horizon_gws: int | None = None) -> pd.DataFrame:
         """Fixtures whose kickoff is strictly after this instant.
@@ -173,11 +235,17 @@ class Snapshot:
 class Warehouse:
     """Owns the DuckDB connection and all writes."""
 
-    def __init__(self, path: Path | str = DEFAULT_DB, *, read_only: bool = False) -> None:
+    def __init__(
+        self,
+        path: Path | str = DEFAULT_DB,
+        *,
+        read_only: bool = False,
+        lock_timeout_s: float = 30.0,
+    ) -> None:
         self.path = Path(path)
         if not read_only:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._con = duckdb.connect(str(self.path), read_only=read_only)
+        self._con = self._connect(read_only, lock_timeout_s)
         # Pin the session timezone. DuckDB stores TIMESTAMPTZ as a correct
         # instant but RENDERS it in the host's local zone, so on a machine set
         # to US/Pacific the GW1 deadline reads back as "10:30" rather than
@@ -188,6 +256,59 @@ class Warehouse:
         self._con.execute("SET TimeZone='UTC'")
         if not read_only:
             self._con.execute(_SCHEMA_PATH.read_text())
+            self._migrate()
+
+    def _connect(self, read_only: bool, timeout_s: float) -> duckdb.DuckDBPyConnection:
+        """Open the database, waiting briefly for a conflicting writer.
+
+        DuckDB allows a single writer process. That is the right trade for this
+        workload -- ingestion is single-writer by design -- but a scheduled
+        weekly run can still collide with an ad-hoc ingest and would otherwise
+        die instantly at the least convenient moment. We wait, then fail with an
+        error that says who holds the lock rather than a raw IOException.
+        """
+        deadline = time.monotonic() + timeout_s
+        delay = 0.25
+        while True:
+            try:
+                return duckdb.connect(str(self.path), read_only=read_only)
+            except duckdb.IOException as exc:
+                if "lock" not in str(exc).lower() or time.monotonic() >= deadline:
+                    if "lock" in str(exc).lower():
+                        raise WarehouseLockedError(
+                            f"{self.path} is locked by another process and did not "
+                            f"free up within {timeout_s:.0f}s. DuckDB permits one "
+                            f"writer; open read_only=True for concurrent reads.\n"
+                            f"{exc}"
+                        ) from exc
+                    raise
+                time.sleep(delay)
+                delay = min(delay * 2, 2.0)
+
+    def _migrate(self) -> None:
+        """Additive, idempotent column migrations.
+
+        CREATE TABLE IF NOT EXISTS does not add columns to a table that already
+        exists, so a warehouse built before a column was introduced would keep
+        silently missing it.
+        """
+        additions = {
+            "fact_player_state": [
+                ("can_select", "BOOLEAN"),
+                ("can_transact", "BOOLEAN"),
+                ("removed", "BOOLEAN"),
+            ],
+        }
+        for table, cols in additions.items():
+            existing = {
+                r[0] for r in self._con.execute(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = ?", [table]
+                ).fetchall()
+            }
+            for name, sqltype in cols:
+                if name not in existing:
+                    self._con.execute(f"ALTER TABLE {table} ADD COLUMN {name} {sqltype}")
 
     # -- reads ---------------------------------------------------------------
 
@@ -231,6 +352,32 @@ class Warehouse:
                 "Localise them explicitly rather than letting pandas assume UTC."
             )
         df = df.assign(as_of=raw.dt.tz_convert("UTC"))
+
+        if table == "fact_player_fixture" and "kickoff_utc" not in df.columns:
+            # Cross-check against the fixture table: a result stamped observable
+            # before its own kickoff is impossible, and this exact shape (as_of
+            # set to a deadline rather than to finalisation) is how a backtest
+            # ends up reading the future.
+            try:
+                kicks = self._con.execute(
+                    "SELECT season, fixture_id, max(kickoff_utc) AS ko "
+                    "FROM fact_fixture GROUP BY season, fixture_id"
+                ).df()
+            except duckdb.Error:
+                kicks = pd.DataFrame()
+            if not kicks.empty:
+                merged = df.merge(kicks, on=["season", "fixture_id"], how="left")
+                impossible = merged[
+                    merged["ko"].notna()
+                    & (pd.to_datetime(merged["as_of"], utc=True) < merged["ko"])
+                ]
+                if not impossible.empty:
+                    raise ValueError(
+                        f"fact_player_fixture: {len(impossible)} row(s) claim to be "
+                        f"observable before their own kickoff. Set as_of to points "
+                        f"finalisation, not to the deadline.\n"
+                        f"{impossible[['season', 'code', 'fixture_id', 'as_of', 'ko']].head(3)}"
+                    )
 
         keys = [*PIT_KEYS[table], "as_of"]
         # Drop exact in-batch duplicates first; identical rows are idempotent,
