@@ -21,7 +21,7 @@ def _latest_bootstrap() -> dict:
 
 
 def test_season_is_current() -> None:
-    assert rules().season == "2026/27"
+    assert rules().season == "2026-27"
 
 
 def test_squad_constraints_match_api() -> None:
@@ -77,7 +77,7 @@ def test_wildcard_and_freehit_unavailable_in_gw1() -> None:
 
 
 def test_manager_scoring_is_gone_this_season() -> None:
-    """2025/26 had Manager elements. Backtests must strip them for 2026/27."""
+    """2024-25 had Manager elements. Backtests must strip them for 2026-27."""
     bs = _latest_bootstrap()
     assert rules().get("misc.manager_scoring_removed") is True
     assert {t["id"] for t in bs["element_types"]} == {1, 2, 3, 4}
@@ -120,3 +120,11 @@ def test_deadline_authority_is_the_api() -> None:
     """Guards against re-introducing the browser-local-time deadline bug."""
     note = rules().rule("deadlines.authoritative_source").note or ""
     assert "browser-local" in note or "rules page" in note
+
+
+def test_registry_season_matches_the_warehouse_season_label() -> None:
+    """A mismatch here silently returns empty frames for anyone filtering
+    warehouse rows by rules().season -- a bug with no error message."""
+    from fpl_edge.ingest.fpl_api import season_label
+
+    assert rules().season == season_label(_latest_bootstrap())

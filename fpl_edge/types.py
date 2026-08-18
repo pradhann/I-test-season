@@ -59,11 +59,12 @@ class Position(enum.IntEnum):
         try:
             return cls(element_type)
         except ValueError as exc:
-            # 2025/26 had element_type 5 == Manager. It does not exist in
-            # 2026/27 and must be dropped, not coerced.
+            # element_type 5 == Manager existed only in 2024-25 (20 players,
+            # introduced mid-season). It does not exist in 2026-27 and must be
+            # dropped, not coerced.
             raise ValueError(
                 f"Unknown element_type {element_type!r}. Note that element_type 5 "
-                "(Manager) existed in 2025/26 but was removed for 2026/27; such "
+                "(Manager) existed only in 2024-25 and was gone by 2025-26; such "
                 "rows must be filtered out of historical data, not mapped."
             ) from exc
 

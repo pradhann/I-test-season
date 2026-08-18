@@ -10,6 +10,7 @@ around to polling.
 from __future__ import annotations
 
 import datetime as dt
+import warnings
 from typing import Any
 
 import pandas as pd
@@ -72,8 +73,14 @@ def ingest_bootstrap(wh: Warehouse, fetcher: Fetcher | None = None) -> dict[str,
 
     team_code_by_id = {t["id"]: t["code"] for t in bs["teams"]}
 
-    players, states, skipped = [], [], 0
+    players, states, skipped, temporary = [], [], 0, []
     for el in bs["elements"]:
+        if el.get("has_temporary_code"):
+            # FPL issues a placeholder `code` to a player whose registration is
+            # incomplete, then REPLACES it later. Since `code` is our stable
+            # cross-season join key, a temporary one will silently split that
+            # player's history in two. Record them so the audit can re-map.
+            temporary.append((el["code"], el.get("web_name")))
         try:
             pos = Position.from_api(el["element_type"])
         except ValueError:
@@ -89,7 +96,14 @@ def ingest_bootstrap(wh: Warehouse, fetcher: Fetcher | None = None) -> dict[str,
         states.append({
             "season": season, "code": el["code"], "element_id": el["id"],
             "price_tenths": el["now_cost"],
-            "selected_by_pct": float(el.get("selected_by_percent") or 0.0),
+            # None means "we do not know", 0.0 means "nobody owns him". Coercing
+            # the first into the second fabricates the single most decision-
+            # relevant field for a differential.
+            "selected_by_pct": (
+                float(el["selected_by_percent"])
+                if el.get("selected_by_percent") not in (None, "")
+                else None
+            ),
             "status": el.get("status"),
             "chance_of_playing_next_round": el.get("chance_of_playing_next_round"),
             "news": el.get("news") or "",
@@ -107,6 +121,15 @@ def ingest_bootstrap(wh: Warehouse, fetcher: Fetcher | None = None) -> dict[str,
         "fact_player_state": wh.append("fact_player_state", pd.DataFrame(states)),
     }
     written["skipped_non_player_elements"] = skipped
+    written["temporary_codes"] = len(temporary)
+    if temporary:
+        warnings.warn(
+            f"{len(temporary)} player(s) carry has_temporary_code=True and will be "
+            f"reissued a permanent code later: {temporary[:5]}. Cross-season joins "
+            f"on these codes will split the player's history until they are remapped.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
     return written
 
 

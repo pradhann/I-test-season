@@ -4,7 +4,7 @@
 Source of truth is `fpl_edge/rules/registry.yaml`;
 regenerate with `make rules-doc`.
 
-Season: **2026/27**
+Season: **2026-27**
 
 ## Sources
 
@@ -61,7 +61,7 @@ The following rules are **UNVERIFIED**. Code reading them raises
 | `defensive_contribution.stacks` | `False` | RULES | does NOT stack; 20 CBI still scores 2 not 4 |
 | `league_phases` | `{"Overall": [1, 38], "August": [1, 2], "September": [3, 5], "October": [6, 9], "November": [10, 12], "December": [13, 18], "January": [19, 23], "February": [24, 27], "March": [28, 30], "April": [31, 33], "May": [34, 38]}` | RULES |  |
 | `misc.classic_tiebreak` | `fewest transfers made (WC/FH transfers excluded)` | RULES |  |
-| `misc.manager_scoring_removed` | `True` | API, RULES | All mng_* scoring weights are 0 in game_config.scoring and element_types contains only GKP/DEF/MID/FWD. The "Manager" element type used in 2025/26 does not exist in 2026/27. Any historical backtest over 2025/26 MUST strip manager elements or it will score points that cannot be earned this season. |
+| `misc.manager_scoring_removed` | `True` | API, RULES | All mng_* scoring weights are 0 in game_config.scoring and element_types contains only GKP/DEF/MID/FWD. The "Manager" element type (element_type 5) existed ONLY in 2024-25 -- verified by counting raw vaastav players_raw.csv: 2022-23=0, 2023-24=0, 2024-25=20, 2025-26=0. It does not exist in 2026-27. Any historical backtest over 2024-25 MUST strip manager elements or it will score points that cannot be earned this season. |
 | `misc.total_players_at_fetch` | `5896644` | API | field is still growing pre-GW1; do not treat as final field size |
 | `prices.change_deadlines_preseason` | `["2026-08-18T23:00:00Z", "2026-08-19T23:00:00Z", "2026-08-20T23:00:00Z"]` | API | game_config.settings.price_change_deadlines |
 | `prices.in_season_change_time_utc` ⚠️ UNVERIFIED | `None` | — | UNVERIFIED: commonly ~01:30 UTC daily but not stated by any authoritative source we read. Price model must not assume this. |

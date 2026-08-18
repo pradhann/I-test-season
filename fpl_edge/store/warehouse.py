@@ -47,6 +47,18 @@ class LeakageError(RuntimeError):
     """Raised when a read would expose information from after the as-of instant."""
 
 
+class ConflictingFactError(ValueError):
+    """Two different values claim the same entity at the same instant.
+
+    Appending is idempotent for identical rows, but a row that shares an
+    entity key and ``as_of`` while carrying different values is not a duplicate
+    -- it is a contradiction. Silently keeping the first one would let a
+    corrected result, a revised bonus award or a re-scraped price disappear
+    without trace. The caller must resolve it explicitly, normally by giving the
+    correction its own later ``as_of``.
+    """
+
+
 def _require_utc(ts: dt.datetime, label: str) -> dt.datetime:
     if ts.tzinfo is None:
         raise ValueError(f"{label} must be timezone-aware UTC, got naive {ts!r}")
@@ -87,7 +99,10 @@ class Snapshot:
                 WHERE as_of <= ? {clause}
             ) WHERE rn = 1
         """
-        return self.warehouse.sql(sql, [self.as_of, *params])
+        # Deterministic order. DuckDB parallelises scans, so without an explicit
+        # ORDER BY the row order varies with thread count -- which makes seeded
+        # model runs irreproducible across machines for no visible reason.
+        return self.warehouse.sql(sql + f" ORDER BY {keys}", [self.as_of, *params])
 
     def players(self, season: str) -> pd.DataFrame:
         """Squad-selectable players with price, ownership and availability."""
@@ -204,16 +219,49 @@ class Warehouse:
             raise ValueError(f"{table}: every fact row must carry as_of")
         if df["as_of"].isna().any():
             raise ValueError(f"{table}: as_of contains nulls")
-        as_of = pd.to_datetime(df["as_of"], utc=True)
-        if as_of.dt.tz is None:
-            raise ValueError(f"{table}: as_of must be tz-aware UTC")
-        df = df.assign(as_of=as_of)
+        raw = pd.to_datetime(df["as_of"])
+        # Check awareness BEFORE converting. pd.to_datetime(..., utc=True)
+        # localises a naive series to UTC without complaint, so the old check
+        # could never fire and a naive timestamp -- typically a local-time
+        # kickoff -- was silently reinterpreted as UTC. That shifts facts by
+        # the host's offset and quietly breaks point-in-time filtering.
+        if getattr(raw.dtype, "tz", None) is None:
+            raise ValueError(
+                f"{table}: as_of must be timezone-aware UTC; got naive timestamps. "
+                "Localise them explicitly rather than letting pandas assume UTC."
+            )
+        df = df.assign(as_of=raw.dt.tz_convert("UTC"))
 
         keys = [*PIT_KEYS[table], "as_of"]
+        # Drop exact in-batch duplicates first; identical rows are idempotent,
+        # and leaving them in would make the contradiction check below fire on
+        # a batch that is merely repetitive.
+        df = df.drop_duplicates()
         self._con.register("_incoming", df)
         before = self._con.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
         on = " AND ".join(f"t.{k} IS NOT DISTINCT FROM i.{k}" for k in keys)
         cols = ", ".join(df.columns)
+
+        # A same-key, same-as_of row with different values is a contradiction,
+        # not a duplicate. Refuse it loudly rather than keeping whichever
+        # arrived first.
+        payload = [c for c in df.columns if c not in keys]
+        if payload:
+            differs = " OR ".join(f"t.{c} IS DISTINCT FROM i.{c}" for c in payload)
+            clash = self._con.execute(
+                f"SELECT count(*) FROM {table} t JOIN _incoming i ON {on} WHERE {differs}"
+            ).fetchone()[0]
+            if clash:
+                sample = self._con.execute(
+                    f"SELECT {', '.join('i.' + k for k in keys)} "
+                    f"FROM {table} t JOIN _incoming i ON {on} WHERE {differs} LIMIT 3"
+                ).df()
+                self._con.unregister("_incoming")
+                raise ConflictingFactError(
+                    f"{table}: {clash} incoming row(s) contradict stored values at the "
+                    f"same as_of. Give the correction a later as_of instead of "
+                    f"overwriting history.\n{sample}"
+                )
         self._con.execute(
             f"""
             INSERT INTO {table} ({cols})

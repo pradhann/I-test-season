@@ -8,7 +8,7 @@
 # Sources:
 #   API   = https://fantasy.premierleague.com/api/bootstrap-static/
 #   RULES = https://fantasy.premierleague.com/help/rules
-season: "2026/27"
+season: "2026-27"  # must match ingest.fpl_api.season_label()
 
 sources:
   API:
@@ -188,8 +188,10 @@ misc:
     source: [API, RULES]
     note: >
       All mng_* scoring weights are 0 in game_config.scoring and element_types
-      contains only GKP/DEF/MID/FWD. The "Manager" element type used in 2025/26
-      does not exist in 2026/27. Any historical backtest over 2025/26 MUST strip
-      manager elements or it will score points that cannot be earned this season.
+      contains only GKP/DEF/MID/FWD. The "Manager" element type (element_type 5)
+      existed ONLY in 2024-25 -- verified by counting raw vaastav players_raw.csv:
+      2022-23=0, 2023-24=0, 2024-25=20, 2025-26=0. It does not exist in 2026-27.
+      Any historical backtest over 2024-25 MUST strip manager elements or it will
+      score points that cannot be earned this season.
   classic_tiebreak: {value: "fewest transfers made (WC/FH transfers excluded)", verified: true, source: [RULES]}
   total_players_at_fetch: {value: 5896644, verified: true, source: [API], note: "field is still growing pre-GW1; do not treat as final field size"}

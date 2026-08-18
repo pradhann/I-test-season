@@ -11,7 +11,7 @@ import datetime as dt
 import pandas as pd
 import pytest
 
-from fpl_edge.store import Warehouse
+from fpl_edge.store import ConflictingFactError, Warehouse
 
 UTC = dt.timezone.utc
 
@@ -136,3 +136,57 @@ def test_timestamps_read_back_as_utc_regardless_of_host_timezone(wh: Warehouse) 
     assert got.utcoffset() == dt.timedelta(0)
     assert got == dt.datetime(2026, 8, 21, 17, 30, tzinfo=UTC)
     assert got.hour == 17
+
+
+def test_contradicting_row_at_the_same_as_of_is_refused(wh: Warehouse) -> None:
+    """A correction must not silently vanish behind an identical key.
+
+    Appending is idempotent for identical rows, but two different prices
+    claiming the same player at the same instant is a contradiction. Keeping
+    whichever arrived first would lose a corrected bonus award or a re-scraped
+    price without trace.
+    """
+    wh.append("fact_player_state", _state(7, 75, 10.0, T(18)))
+    with pytest.raises(ConflictingFactError, match="contradict"):
+        wh.append("fact_player_state", _state(7, 76, 10.0, T(18)))
+
+    # The documented resolution: give the correction a later as_of.
+    assert wh.append("fact_player_state", _state(7, 76, 10.0, T(18, 13))) == 1
+    assert wh.snapshot_at(T(19)).table("fact_player_state").iloc[0]["price_tenths"] == 76
+
+
+def test_identical_rows_repeated_within_one_batch_are_idempotent(wh: Warehouse) -> None:
+    df = pd.concat([_state(8, 50, 1.0, T(18))] * 3, ignore_index=True)
+    assert wh.append("fact_player_state", df) == 1
+
+
+def test_naive_as_of_is_rejected_not_silently_localised(wh: Warehouse) -> None:
+    """pd.to_datetime(..., utc=True) localises naive input without complaint.
+
+    That made the old guard unreachable, so a naive local-time timestamp was
+    reinterpreted as UTC and every fact shifted by the host's offset.
+    """
+    df = _state(9, 50, 1.0, T(18))
+    df["as_of"] = [dt.datetime(2026, 8, 18, 12)]  # naive
+    with pytest.raises(ValueError, match="timezone-aware"):
+        wh.append("fact_player_state", df)
+
+
+def test_non_utc_offsets_are_converted_not_rejected(wh: Warehouse) -> None:
+    """Aware-but-not-UTC is unambiguous, so convert it rather than refuse it."""
+    df = _state(10, 50, 1.0, T(18))
+    df["as_of"] = [dt.datetime(2026, 8, 18, 13, tzinfo=dt.timezone(dt.timedelta(hours=1)))]
+    assert wh.append("fact_player_state", df) == 1
+    got = wh.snapshot_at(T(19)).table("fact_player_state")
+    assert got.iloc[0]["as_of"].to_pydatetime() == dt.datetime(2026, 8, 18, 12, tzinfo=UTC)
+
+
+def test_snapshot_row_order_is_deterministic(wh: Warehouse) -> None:
+    """DuckDB parallelises scans; without ORDER BY the order varies by thread
+    count, making seeded model runs irreproducible for no visible reason."""
+    for code in (5, 1, 3, 2, 4):
+        wh.append("fact_player_state", _state(code, 50 + code, 1.0, T(18)))
+    first = wh.snapshot_at(T(19)).table("fact_player_state")["code"].tolist()
+    assert first == sorted(first)
+    for _ in range(3):
+        assert wh.snapshot_at(T(19)).table("fact_player_state")["code"].tolist() == first
