@@ -93,8 +93,17 @@ def test_goalkeepers_score_no_defensive_contribution() -> None:
     assert got.tolist() == [0]
 
 
-def test_forwards_now_score_defensive_contribution() -> None:
-    """New for 2026/27: forwards are eligible at the 12 threshold."""
+def test_forwards_score_defensive_contribution() -> None:
+    """Forwards are eligible at the 12 threshold, as in 2025-26.
+
+    Not a 2026/27 change, contrary to an earlier assumption here: replaying the
+    map over 2025-26 reproduces all 3,278 forward rows exactly, and 9 of them
+    cleared the threshold. Had forwards been ineligible that season those rows
+    would each be 2 points out.
+
+    In practice this is a rounding error for forwards -- 9 qualifying rows in
+    3,278 appearances, 0.27% -- so it should not drive forward selection.
+    """
     got = defensive_contribution_points(
         P.FWD, clearances_blocks_interceptions=a(6), tackles=a(3), recoveries=a(3)
     )

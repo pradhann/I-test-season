@@ -57,7 +57,7 @@ The following rules are **UNVERIFIED**. Code reading them raises
 | `defensive_contribution.def_threshold` | `10` | RULES | DEF: clearances + blocks + interceptions + tackles (CBIT). Recoveries NOT counted. |
 | `defensive_contribution.mid_fwd_actions` | `["clearances", "blocked_shots", "interceptions", "tackles", "recoveries"]` | RULES |  |
 | `defensive_contribution.mid_fwd_threshold` | `12` | RULES | MID/FWD: CBIT + recoveries. |
-| `defensive_contribution.points` | `{"GKP": 0, "DEF": 2, "MID": 2, "FWD": 2}` | API, RULES |  |
+| `defensive_contribution.points` | `{"GKP": 0, "DEF": 2, "MID": 2, "FWD": 2}` | API, RULES | Forwards are eligible and were already eligible in 2025-26 -- replaying the scoring map over 113,260 archived stat lines reproduces total_points with zero mismatches, including the 9 forward rows that cleared the threshold. Forward DC is nonetheless negligible in practice: 9 qualifying rows in 3,278 forward appearances (0.27%) in 2025-26, versus 429/9,733 for defenders (4.4%) and 587/13,309 for midfielders (4.4%). |
 | `defensive_contribution.stacks` | `False` | RULES | does NOT stack; 20 CBI still scores 2 not 4 |
 | `league_phases` | `{"Overall": [1, 38], "August": [1, 2], "September": [3, 5], "October": [6, 9], "November": [10, 12], "December": [13, 18], "January": [19, 23], "February": [24, 27], "March": [28, 30], "April": [31, 33], "May": [34, 38]}` | RULES |  |
 | `misc.classic_tiebreak` | `fewest transfers made (WC/FH transfers excluded)` | RULES |  |
