@@ -1,0 +1,4 @@
+model,reference,d_log_loss,d_log_loss_lo95,d_log_loss_hi95,d_brier_cs,d_brier_cs_lo95,d_brier_cs_hi95,n_fixtures
+home_advantage_only,dixon_coles,0.091616,0.06817,0.113417,0.008322,0.0043,0.012581,1140
+last_season_table,dixon_coles,0.055939,0.040928,0.07219,0.007921,0.005228,0.010783,1140
+dixon_coles_no_promoted_prior,dixon_coles,0.001942,-0.002194,0.005778,-0.000224,-0.000964,0.000497,1140

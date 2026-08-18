@@ -1,0 +1,16 @@
+scope,model,reference,d_log_loss,d_log_loss_lo95,d_log_loss_hi95,d_brier_cs,d_brier_cs_lo95,d_brier_cs_hi95,n_fixtures
+common_coverage,home_advantage_only,market_implied,0.058778,0.039731,0.078234,0.017366,0.01287,0.022032,1067
+common_coverage,last_season_table,market_implied,0.051156,0.034322,0.067639,0.009845,0.006431,0.013346,1067
+common_coverage,dixon_coles_no_promoted_prior,market_implied,0.023313,0.011025,0.036264,0.003605,0.001002,0.006124,1067
+common_coverage,dixon_coles,market_implied,0.022143,0.010037,0.035322,0.002782,0.000143,0.005295,1067
+common_coverage,blend_dc_market,market_implied,0.005517,-0.000835,0.012196,0.000109,-0.0012,0.001364,1067
+common_coverage,home_advantage_only,dixon_coles,0.036635,0.016857,0.055715,0.014583,0.009794,0.019558,1067
+common_coverage,last_season_table,dixon_coles,0.029013,0.012731,0.045137,0.007062,0.00401,0.010228,1067
+common_coverage,market_implied,dixon_coles,-0.022143,-0.035322,-0.010037,-0.002782,-0.005295,-0.000143,1067
+common_coverage,dixon_coles_no_promoted_prior,dixon_coles,0.00117,-0.003657,0.005934,0.000823,0.000102,0.001552,1067
+common_coverage,blend_dc_market,dixon_coles,-0.016626,-0.023224,-0.01045,-0.002674,-0.003931,-0.001347,1067
+promoted_fixtures,home_advantage_only,dixon_coles,0.066276,0.012532,0.118297,0.023589,0.012277,0.034824,303
+promoted_fixtures,last_season_table,dixon_coles,0.058686,0.009934,0.10444,0.012393,0.003762,0.020618,303
+promoted_fixtures,market_implied,dixon_coles,-0.017547,-0.048535,0.013086,-0.002328,-0.008706,0.003711,303
+promoted_fixtures,dixon_coles_no_promoted_prior,dixon_coles,0.004155,-0.014205,0.021085,0.002863,0.000262,0.005359,303
+promoted_fixtures,blend_dc_market,dixon_coles,-0.016844,-0.0317,-0.001488,-0.002874,-0.006048,0.000193,303
