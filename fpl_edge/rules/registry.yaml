@@ -1,0 +1,195 @@
+# FPL rule registry for season 2026/27.
+#
+# EVERY rule the engine relies on MUST appear here with a source and fetched_at.
+# `verified: true` means a human-readable authoritative source was read and the
+# value transcribed from it. `verified: false` means the value is a guess or an
+# inference -- code that reads an unverified rule raises UnverifiedRuleError.
+#
+# Sources:
+#   API   = https://fantasy.premierleague.com/api/bootstrap-static/
+#   RULES = https://fantasy.premierleague.com/help/rules
+season: "2026/27"
+
+sources:
+  API:
+    url: "https://fantasy.premierleague.com/api/bootstrap-static/"
+    fetched_at: "2026-08-18T22:42:47Z"
+    note: "Machine-readable game_config.scoring / game_config.rules / chips / element_types."
+  RULES:
+    url: "https://fantasy.premierleague.com/help/rules"
+    fetched_at: "2026-08-18T22:43:00Z"
+    note: >
+      Rendered via headless browser; the page is a JS SPA and returns an empty
+      shell to plain HTTP fetches. IMPORTANT: the deadline table on this page is
+      rendered in BROWSER-LOCAL time, not UK time. Observed "GW1 Fri 21 Aug 10:30"
+      against the API's 2026-08-21T17:30:00Z (US/Pacific offset). Never parse
+      deadlines from this page -- use the API's UTC values.
+
+squad:
+  size:            {value: 15,   verified: true, source: [API, RULES], note: "game_config.rules.squad_squadsize"}
+  starting_xi:     {value: 11,   verified: true, source: [API, RULES], note: "squad_squadplay"}
+  budget_tenths:   {value: 1000, verified: true, source: [API, RULES], note: "squad_total_spend, i.e. GBP 100.0m in 0.1m units"}
+  max_per_club:    {value: 3,    verified: true, source: [API, RULES], note: "squad_team_limit"}
+  select_by_position: {value: {GKP: 2, DEF: 5, MID: 5, FWD: 3}, verified: true, source: [API, RULES]}
+  min_play_by_position: {value: {GKP: 1, DEF: 3, MID: 2, FWD: 1}, verified: true, source: [API]}
+  max_play_by_position: {value: {GKP: 1, DEF: 5, MID: 5, FWD: 3}, verified: true, source: [API]}
+  formation_rule:  {value: "1 GKP, >=3 DEF, >=1 FWD at all times", verified: true, source: [RULES]}
+
+scoring:
+  minutes_short:   {value: 1,  verified: true, source: [API, RULES], note: "playing 1-59 min ('up to 60')"}
+  minutes_long:    {value: 2,  verified: true, source: [API, RULES], note: "60+ min EXCLUDING stoppage time"}
+  goal:            {value: {GKP: 10, DEF: 6, MID: 5, FWD: 4}, verified: true, source: [API, RULES]}
+  assist:          {value: 3,  verified: true, source: [API, RULES]}
+  clean_sheet:     {value: {GKP: 4, DEF: 4, MID: 1, FWD: 0}, verified: true, source: [API, RULES]}
+  saves_per_point: {value: 3,  verified: true, source: [RULES], note: "1 pt per 3 saves; API exposes saves:1 as per-unit weight"}
+  goals_conceded_per_penalty: {value: 2, verified: true, source: [RULES], note: "-1 per 2 conceded, GKP/DEF only"}
+  goals_conceded:  {value: {GKP: -1, DEF: -1, MID: 0, FWD: 0}, verified: true, source: [API], note: "per 2 conceded"}
+  penalty_save:    {value: 5,  verified: true, source: [API, RULES]}
+  penalty_miss:    {value: -2, verified: true, source: [API, RULES]}
+  yellow_card:     {value: -1, verified: true, source: [API, RULES]}
+  red_card:        {value: -3, verified: true, source: [API, RULES], note: "includes any yellow deduction; keeps conceding penalty after red"}
+  own_goal:        {value: -2, verified: true, source: [API, RULES]}
+  bonus:           {value: [3, 2, 1], verified: true, source: [API, RULES], note: "top-3 BPS in match"}
+
+defensive_contribution:
+  points:          {value: {GKP: 0, DEF: 2, MID: 2, FWD: 2}, verified: true, source: [API, RULES]}
+  def_threshold:   {value: 10, verified: true, source: [RULES], note: "DEF: clearances + blocks + interceptions + tackles (CBIT). Recoveries NOT counted."}
+  mid_fwd_threshold: {value: 12, verified: true, source: [RULES], note: "MID/FWD: CBIT + recoveries."}
+  def_actions:     {value: ["clearances", "blocked_shots", "interceptions", "tackles"], verified: true, source: [RULES]}
+  mid_fwd_actions: {value: ["clearances", "blocked_shots", "interceptions", "tackles", "recoveries"], verified: true, source: [RULES]}
+  stacks:          {value: false, verified: true, source: [RULES], note: "does NOT stack; 20 CBI still scores 2 not 4"}
+
+transfers:
+  free_per_gw:     {value: 1,  verified: true, source: [RULES]}
+  max_banked:      {value: 5,  verified: true, source: [API, RULES], note: "API max_extra_free_transfers=4, i.e. 1+4=5"}
+  hit_cost:        {value: -4, verified: true, source: [RULES], note: "per extra transfer, deducted at start of next GW"}
+  cap_per_gw:      {value: 20, verified: true, source: [API, RULES], note: "transfers_cap; does not apply under Wildcard/Free Hit"}
+  unlimited_before_first_deadline: {value: true, verified: true, source: [RULES]}
+  chips_retain_banked_ft: {value: true, verified: true, source: [RULES], note: "WC/FH: saved FTs are retained for the following GW"}
+
+prices:
+  sell_on_fee_fraction: {value: 0.5, verified: true, source: [API, RULES], note: "transfers_sell_on_fee=0.5; keep half the RISE"}
+  sell_rounding:   {value: "floor_to_0.1m", verified: true, source: [RULES], note: "7.5m bought, 7.8m now -> sells at 7.6m"}
+  sell_at_purchase_price: {value: false, verified: true, source: [API], note: "element_sell_at_purchase_price=false"}
+  no_change_before_season: {value: true, verified: true, source: [RULES], note: "prices do not change until the season starts"}
+  change_deadlines_preseason: {value: ["2026-08-18T23:00:00Z", "2026-08-19T23:00:00Z", "2026-08-20T23:00:00Z"], verified: true, source: [API], note: "game_config.settings.price_change_deadlines"}
+  in_season_change_time_utc: {value: null, verified: false, source: [], note: "UNVERIFIED: commonly ~01:30 UTC daily but not stated by any authoritative source we read. Price model must not assume this."}
+
+chips:
+  # API chips[] gives exact windows. RULES prose agrees.
+  available: {value: ["wildcard", "freehit", "bboost", "3xc"], verified: true, source: [API, RULES]}
+  count_each: {value: 2, verified: true, source: [API, RULES], note: "one per half of season"}
+  windows:
+    value:
+      wildcard: [[2, 19], [20, 38]]
+      freehit:  [[2, 19], [20, 38]]
+      bboost:   [[1, 19], [20, 38]]
+      3xc:      [[1, 19], [20, 38]]
+    verified: true
+    source: [API, RULES]
+    note: >
+      Inclusive [start_event, stop_event]. CRITICAL: Wildcard and Free Hit are NOT
+      available in GW1 ("available after the first Gameweek of your season"), but
+      Bench Boost and Triple Captain ARE. Second half unlocks after the GW19
+      deadline.
+  one_per_gw: {value: true, verified: true, source: [RULES]}
+  freehit_not_consecutive: {value: true, verified: true, source: [RULES], note: "if FH played GW19, second FH not active until GW21"}
+  bboost_3xc_cancellable: {value: true, verified: true, source: [RULES], note: "cancellable before deadline"}
+  wildcard_freehit_cancellable: {value: false, verified: true, source: [RULES], note: "cannot be cancelled once confirmed"}
+
+captaincy:
+  captain_multiplier: {value: 2, verified: true, source: [RULES]}
+  triple_captain_multiplier: {value: 3, verified: true, source: [RULES]}
+  vice_enabled: {value: true, verified: true, source: [API, RULES], note: "sys_vice_captain_enabled"}
+  vice_takes_over_rule: {value: "captain plays 0 minutes -> vice captaincy applies; if both 0 min, no player doubled", verified: true, source: [RULES]}
+
+autosubs:
+  played_definition: {value: "appearance on pitch OR receiving a yellow/red card", verified: true, source: [RULES]}
+  gk_rule: {value: "GK only replaced by the bench GK", verified: true, source: [RULES]}
+  outfield_rule: {value: "highest-priority bench outfielder who played and does not break formation rules", verified: true, source: [RULES]}
+  processed: {value: "end of gameweek", verified: true, source: [RULES]}
+
+deadlines:
+  offset_before_first_kickoff_minutes: {value: 90, verified: true, source: [RULES]}
+  frozen_within_hours: {value: 24, verified: true, source: [RULES], note: "a deadline will not change within 24h of scheduled time"}
+  authoritative_source: {value: "API events[].deadline_time (UTC)", verified: true, source: [API], note: "NEVER parse the rules page deadline table -- it renders in browser-local time"}
+  points_final_at: {value: "09:00 UK the day after the final match of the Gameweek", verified: true, source: [RULES]}
+
+bps:
+  # One point per unit unless stated. Full table transcribed from RULES.
+  table:
+    verified: true
+    source: [RULES]
+    value:
+      play_1_to_60: 3
+      play_over_60: 6
+      goal_from_penalty: 12
+      goal_gkp_def_nonpen: 12
+      goal_mid_nonpen: 18
+      goal_fwd_nonpen: 24
+      assist: 9
+      clean_sheet_gkp_def: 12
+      save: 2
+      save_from_shot_inside_box: 1
+      save_from_big_chance: 1
+      penalty_save: 7
+      per_3_clearances_blocks_interceptions: 1
+      per_3_recoveries: 1
+      chance_created: 1
+      big_chance_created: 3
+      successful_open_play_cross: 1
+      successful_tackle: 2
+      successful_dribble: 1
+      match_winning_goal: 3
+      goalline_clearance: 9
+      foul_won: 1
+      shot_on_target: 2
+      pass_completion_70_79_min30: 2
+      pass_completion_80_89_min30: 4
+      pass_completion_90_plus_min30: 6
+      goal_conceded_gkp_def: -4
+      penalty_conceded: -3
+      penalty_missed: -6
+      yellow_card: -3
+      red_card: -9
+      own_goal: -6
+      big_chance_missed: -3
+      error_leading_to_goal: -3
+      error_leading_to_attempt: -1
+      foul_conceded: -1
+      caught_offside: -1
+      shot_off_target: -1
+  tie_rules:
+    value: "tie for 1st -> both get 3, third gets 1. tie for 2nd -> 3,2,2. tie for 3rd -> 3,2,1,1."
+    verified: true
+    source: [RULES]
+
+league_phases:
+  # Monthly phases; transfer hits taken in the GW before a phase starts are not deducted from that phase.
+  value:
+    Overall: [1, 38]
+    August: [1, 2]
+    September: [3, 5]
+    October: [6, 9]
+    November: [10, 12]
+    December: [13, 18]
+    January: [19, 23]
+    February: [24, 27]
+    March: [28, 30]
+    April: [31, 33]
+    May: [34, 38]
+  verified: true
+  source: [RULES]
+
+misc:
+  manager_scoring_removed:
+    value: true
+    verified: true
+    source: [API, RULES]
+    note: >
+      All mng_* scoring weights are 0 in game_config.scoring and element_types
+      contains only GKP/DEF/MID/FWD. The "Manager" element type used in 2025/26
+      does not exist in 2026/27. Any historical backtest over 2025/26 MUST strip
+      manager elements or it will score points that cannot be earned this season.
+  classic_tiebreak: {value: "fewest transfers made (WC/FH transfers excluded)", verified: true, source: [RULES]}
+  total_players_at_fetch: {value: 5896644, verified: true, source: [API], note: "field is still growing pre-GW1; do not treat as final field size"}

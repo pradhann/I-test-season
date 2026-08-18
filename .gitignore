@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+data/warehouse/*.duckdb
+data/warehouse/*.duckdb.wal
+data/raw/**/*.json
+data/raw/**/*.html
+!data/raw/**/.gitkeep
+.env
+*.egg-info/
+dist/
+.DS_Store
