@@ -163,6 +163,14 @@ class Warehouse:
         if not read_only:
             self.path.parent.mkdir(parents=True, exist_ok=True)
         self._con = duckdb.connect(str(self.path), read_only=read_only)
+        # Pin the session timezone. DuckDB stores TIMESTAMPTZ as a correct
+        # instant but RENDERS it in the host's local zone, so on a machine set
+        # to US/Pacific the GW1 deadline reads back as "10:30" rather than
+        # "17:30Z". The instant is right, but every comparison, format and test
+        # then depends on where the machine happens to be. Pinning to UTC makes
+        # reads reproducible across machines and matches the rule registry's
+        # rule that the API's UTC deadline is the only authority.
+        self._con.execute("SET TimeZone='UTC'")
         if not read_only:
             self._con.execute(_SCHEMA_PATH.read_text())
 

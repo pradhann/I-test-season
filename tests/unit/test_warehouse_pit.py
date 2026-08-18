@@ -117,3 +117,22 @@ def test_next_gw_respects_as_of(wh: Warehouse) -> None:
 def test_unknown_table_is_refused(wh: Warehouse) -> None:
     with pytest.raises(KeyError):
         wh.snapshot_at(T(19)).table("raw_fetch")
+
+
+def test_timestamps_read_back_as_utc_regardless_of_host_timezone(wh: Warehouse) -> None:
+    """DuckDB renders TIMESTAMPTZ in the session zone; we pin it to UTC.
+
+    Without the pin, a machine set to US/Pacific reads the GW1 deadline back as
+    10:30 local rather than 17:30Z. The instant is identical, but every
+    comparison, format and golden test then depends on the host's locale.
+    """
+    events = pd.DataFrame([{
+        "season": "2026-27", "gw": 1,
+        "deadline_utc": dt.datetime(2026, 8, 21, 17, 30, tzinfo=UTC),
+        "is_finished": False, "as_of": T(1),
+    }])
+    wh.append("dim_event", events)
+    got = wh.snapshot_at(T(19)).deadline("2026-27", 1)
+    assert got.utcoffset() == dt.timedelta(0)
+    assert got == dt.datetime(2026, 8, 21, 17, 30, tzinfo=UTC)
+    assert got.hour == 17

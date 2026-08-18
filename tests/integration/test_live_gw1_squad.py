@@ -26,9 +26,13 @@ SEASON = "2026-27"
 @pytest.fixture(scope="module")
 def snapshot():
     with Warehouse(read_only=True) as wh:
-        gw1 = wh.snapshot_at(dt.datetime(2026, 1, 1, tzinfo=dt.timezone.utc))
+        # Look the deadline up from "now": the fixture list was only OBSERVED at
+        # ingestion time, so an earlier snapshot correctly cannot see it. Reading
+        # it from a January snapshot would be asking what we knew before we knew
+        # anything -- which point-in-time filtering rightly answers with nothing.
+        latest = wh.snapshot_at(dt.datetime.now(dt.timezone.utc))
         try:
-            deadline = gw1.deadline(SEASON, 1)
+            deadline = latest.deadline(SEASON, 1)
         except KeyError:
             pytest.skip("no 2026-27 events loaded")
         yield wh.snapshot_at(deadline), deadline
