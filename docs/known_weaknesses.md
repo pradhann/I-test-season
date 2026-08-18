@@ -351,6 +351,17 @@ a shuffled split. What is weak:
   parameter of the simulator rather than evidence about real bookmakers. The
   generator's own docstring says this; it is repeated here because a number in a
   report loses its caveat.
+- **Simulator anchors are calibrated in-sample.** `fpl_edge/sim/calibration.py`
+  aggregates a *whole season* of `fact_player_fixture` directly — no snapshot,
+  no `as_of` — to recompute the constants the field model samples from. That is
+  defensible for a one-off constant and indefensible the moment the calibration
+  season overlaps a backtest window, because the anchors then encode the answer
+  the backtest is trying to find. Nothing currently records which season the
+  live anchors were fitted on.
+- **The ownership model family ships no walk-forward evaluator.**
+  `fpl_edge/models/ownership/` has no `evaluate` module, so the ownership
+  forecast — the input to every effective-ownership and rank-utility figure —
+  has no out-of-sample score at all.
 - **A hardcoded as-of default.** `models/minutes/evaluate.py` defaults
   `--catalog-at` to `2026-08-18T12:00:00+00:00`, silently freezing the evaluation
   to the day this audit was written for anyone who omits the flag.

@@ -141,6 +141,16 @@ ACCEPTED: dict[tuple[str, str], str] = {
     ("FILL_CONST", "fpl_edge/models/ownership/model.py"):
         "REVIEWED: transfer-flow counts and ownership deltas where an absent "
         "row means no transfers, not unknown transfers.",
+    ("DIRECT_DB", "fpl_edge/sim/calibration.py"):
+        "REVIEWED, IN-SAMPLE RISK. Opens the warehouse to recompute the "
+        "simulator's verified anchors. See below.",
+    ("DIRECT_TABLE", "fpl_edge/sim/calibration.py"):
+        "REVIEWED, IN-SAMPLE RISK. Aggregates a WHOLE SEASON of "
+        "fact_player_fixture with no snapshot, to calibrate the constants the "
+        "field model samples from. That is defensible for a one-off constant "
+        "and indefensible if the calibration season overlaps a backtest "
+        "window: the anchors then encode the answer. Recorded in "
+        "docs/known_weaknesses.md sec 10.",
     ("FILL_CONST", "fpl_edge/sim/field.py"):
         "REVIEWED: zero-filling ownership for players the field model has no "
         "row for. See docs/known_weaknesses.md -- an unknown-ownership player "
