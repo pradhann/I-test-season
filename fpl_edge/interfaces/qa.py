@@ -160,7 +160,7 @@ class QuestionRouter:
         from fpl_edge.myteam.state import Provenance
 
         state = self._team_state()
-        if state.squad is None:
+        if state.picks is None:
             return Answer(
                 "I can't see your squad yet. Before GW1 kicks off FPL publishes "
                 "nothing publicly — either run `fpl myteam auth` once (reads it "
@@ -189,10 +189,10 @@ class QuestionRouter:
                 is_captain=p.is_captain, is_vice=p.is_vice, note=note,
             )
 
-        starters = [card(p) for p in state.squad if p.is_starter]
-        bench = [card(p) for p in state.squad if not p.is_starter]
-        total_x = sum(xpts.get(p.code, 0.0) for p in state.squad if p.is_starter)
-        flags = [f"{name.get(p.code)}: {status.get(p.code)}" for p in state.squad
+        starters = [card(p) for p in state.picks if p.is_starter]
+        bench = [card(p) for p in state.picks if not p.is_starter]
+        total_x = sum(xpts.get(p.code, 0.0) for p in state.picks if p.is_starter)
+        flags = [f"{name.get(p.code)}: {status.get(p.code)}" for p in state.picks
                  if status.get(p.code) in ("i", "s", "d", "u")]
 
         src = {Provenance.PRIVATE_API: "live from your account",
@@ -206,9 +206,9 @@ class QuestionRouter:
         ]
         if flags:
             lines.append("Flags: " + "; ".join(flags))
-        cap = next((p for p in state.squad if p.is_captain), None)
+        cap = next((p for p in state.picks if p.is_captain), None)
         if cap is not None and xpts:
-            best = max((p for p in state.squad if p.is_starter),
+            best = max((p for p in state.picks if p.is_starter),
                        key=lambda p: xpts.get(p.code, 0))
             if best.code != cap.code and xpts.get(best.code, 0) > xpts.get(cap.code, 0) + 0.5:
                 lines.append(
@@ -225,7 +225,7 @@ class QuestionRouter:
 
     def suggest_transfers(self, text: str, m) -> Answer:
         state = self._team_state()
-        if state.squad is None:
+        if state.picks is None:
             return Answer(
                 "No squad to transfer from yet — GW1 hasn't started and no "
                 "squad is set. Run `fpl myteam auth` once or /setsquad."
@@ -241,7 +241,7 @@ class QuestionRouter:
         plan = json.loads(plan_p.read_text())
         players = self._snapshot().players(self.season)
         name = dict(zip(players["code"], players["web_name"]))
-        mine = {p.code for p in state.squad}
+        mine = {p.code for p in state.picks}
         theirs = set(plan["gw1"]["squad"])
         buy = [name.get(c, c) for c in sorted(theirs - mine)]
         sell = [name.get(c, c) for c in sorted(mine - theirs)]
@@ -363,7 +363,7 @@ class QuestionRouter:
         creator = candidates[0].creator
         claims = self.wh.sql(
             """
-            SELECT player_name, action, gw, confidence, published_at
+            SELECT player_name, action, gameweek AS gw, confidence, published_at
             FROM content_claim WHERE lower(creator) = lower(?)
             ORDER BY published_at DESC LIMIT 12
             """,
@@ -376,7 +376,7 @@ class QuestionRouter:
                 f"`make ingest-content` now."
             )
         state = self._team_state()
-        mine = {p.code for p in state.squad} if state.squad else set()
+        mine = {p.code for p in state.picks} if state.picks else set()
         players = self._snapshot().players(self.season)
         code_of = dict(zip(players["web_name"].str.lower(), players["code"]))
         lines = [f"Latest extracted claims from {creator}:"]
@@ -420,7 +420,7 @@ class QuestionRouter:
         total = self.wh.sql(
             "SELECT count(DISTINCT entry_id) AS n FROM fact_manager_pick "
             "WHERE season = ?", [self.season]).iloc[0]["n"]
-        mine = {p.code for p in state.squad} if state.squad else set()
+        mine = {p.code for p in state.picks} if state.picks else set()
         top = picks.head(15)
         lines = [f"Elite ownership (of {int(total)} tracked managers), "
                  f"✓ = you own him:"]

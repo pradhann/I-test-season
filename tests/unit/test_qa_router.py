@@ -133,3 +133,124 @@ def test_bot_sends_photos_for_answers_with_images(tmp_path) -> None:
     texts = transport.replies_to(7)
     assert any("here is your team" in t for t in texts)
     assert transport.photos and transport.photos[0]["filename"] == "t.png"
+
+
+def _seeded_wh(tmp_path):
+    """A tiny real warehouse the handlers can actually read."""
+    import datetime as dt
+
+    import pandas as pd
+
+    from fpl_edge.store import Warehouse
+    from fpl_edge.types import Position
+
+    UTC = dt.timezone.utc
+    t0 = dt.datetime(2026, 8, 1, tzinfo=UTC)
+    wh = Warehouse(tmp_path / "qa.duckdb")
+    layout = ([(Position.GKP, 2), (Position.DEF, 5), (Position.MID, 5), (Position.FWD, 3)])
+    players, states, code = [], [], 100
+    for pos, n in layout:
+        for i in range(n):
+            code += 1
+            players.append({"season": "2026-27", "code": code, "element_id": code,
+                            "web_name": f"{pos.name}{i}", "first_name": "F",
+                            "second_name": f"{pos.name}{i}", "position": int(pos),
+                            "team_code": 1 + (code % 6), "as_of": t0})
+            states.append({"season": "2026-27", "code": code, "element_id": code,
+                           "price_tenths": 50, "selected_by_pct": 5.0, "status": "a",
+                           "chance_of_playing_next_round": None, "news": "",
+                           "news_added": None, "transfers_in_event": 0,
+                           "transfers_out_event": 0, "cost_change_start": 0,
+                           "as_of": t0})
+    wh.append("dim_player", pd.DataFrame(players))
+    wh.append("fact_player_state", pd.DataFrame(states))
+    wh.append("dim_event", pd.DataFrame([{
+        "season": "2026-27", "gw": 1,
+        "deadline_utc": dt.datetime(2026, 8, 21, 17, 30, tzinfo=UTC),
+        "is_finished": False, "as_of": t0}]))
+    return wh
+
+
+def _real_state(wh):
+    """A MyTeamState built from the REAL dataclass, not a guess at its shape.
+
+    This test family exists because the first live run crashed on
+    `state.squad` -- an attribute the handler author invented. Constructing
+    the genuine object makes any future field drift fail here, offline.
+    """
+    import datetime as dt
+
+    from fpl_edge.eval.scoring import Pick
+    from fpl_edge.myteam.state import MyTeamState, Provenance
+    from fpl_edge.types import GwId, Position
+
+    snap = wh.snapshot_at(dt.datetime(2026, 8, 20, tzinfo=dt.timezone.utc))
+    frame = snap.players("2026-27").sort_values("code")
+    by_pos = {p: frame[frame["position"] == p]["code"].tolist() for p in (1, 2, 3, 4)}
+    order = (by_pos[1][:1] + by_pos[2][:4] + by_pos[3][:4] + by_pos[4][:2]
+             + by_pos[1][1:2] + by_pos[2][4:5] + by_pos[3][4:5] + by_pos[4][2:3])
+    pos_of = dict(zip(frame["code"], frame["position"]))
+    picks = tuple(
+        Pick(code=int(c), position=Position(int(pos_of[c])), order=i,
+             is_captain=(i == 2), is_vice=(i == 3))
+        for i, c in enumerate(order, start=1)
+    )
+    return MyTeamState(
+        entry_id=4490171, season="2026-27", gw=GwId(1),
+        as_of=dt.datetime(2026, 8, 20, tzinfo=dt.timezone.utc),
+        picks=picks, bought_at={p.code: 50 for p in picks}, bank_tenths=250,
+        free_transfers=1, provenance=Provenance.MANUAL,
+    )
+
+
+def test_review_team_renders_from_a_real_state(tmp_path, monkeypatch) -> None:
+    wh = _seeded_wh(tmp_path)
+    r = QuestionRouter(wh)
+    monkeypatch.setattr(r, "_team_state", lambda: _real_state(wh))
+    monkeypatch.setattr(r, "_projection", lambda: None)
+    a = r.route("review my team")
+    assert a is not None and "understood that as" not in a.text, a.text
+    assert a.images and a.images[0][0] == "team.png"
+    assert len(a.images[0][1]) > 10_000  # a real PNG, not an error stub
+
+
+def test_suggest_transfers_reads_the_plan_with_a_real_state(tmp_path, monkeypatch) -> None:
+    import json
+
+    wh = _seeded_wh(tmp_path)
+    r = QuestionRouter(wh)
+    state = _real_state(wh)
+    monkeypatch.setattr(r, "_team_state", lambda: state)
+    monkeypatch.chdir(tmp_path)
+    plan_dir = tmp_path / "data/warehouse"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "gw1_plan.json").write_text(json.dumps({
+        "generated_at": "2026-08-20T10:00:00+00:00", "objective_mode": "expected_points",
+        "gw1": {"squad": [p.code for p in state.picks]}, "notes": [],
+    }))
+    a = r.route("suggest me transfers")
+    assert a is not None and "understood that as" not in a.text, a.text
+    assert "Hold" in a.text
+
+
+def test_creator_fetch_query_matches_the_real_claim_schema(tmp_path, monkeypatch) -> None:
+    """The live failure: content_claim's column is `gameweek`, not `gw`."""
+    wh = _seeded_wh(tmp_path)
+    wh.sql("""
+        CREATE TABLE content_claim (
+            claim_id VARCHAR, item_id VARCHAR, creator VARCHAR, source_key VARCHAR,
+            player_code INTEGER, player_name VARCHAR, surface_form VARCHAR,
+            action VARCHAR, season VARCHAR, gameweek INTEGER, confidence DOUBLE,
+            rationale VARCHAR, source_url VARCHAR, published_at TIMESTAMPTZ,
+            gw_inferred BOOLEAN)
+    """)
+    wh.sql("""
+        INSERT INTO content_claim VALUES
+        ('c1','i1','The FPL Wire','pod_fplwire',101,'GKP0','gkp0','buy',
+         '2026-27',1,0.6,'r','u','2026-08-18T12:00:00+00:00',false)
+    """)
+    r = QuestionRouter(wh)
+    monkeypatch.setattr(r, "_team_state", lambda: _real_state(wh))
+    a = r.route("Fetch the latest from FPL Wire and summarize")
+    assert a is not None and "understood that as" not in a.text, a.text
+    assert "GW1 buy: GKP0" in a.text
