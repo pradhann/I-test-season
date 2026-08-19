@@ -17,8 +17,17 @@ meaning: high = 0.8, medium = 0.6, low = 0.4. Those numbers are calibration
 TARGETS for the scoreboard to test (do this creator's "high conviction" calls
 hit 80%?), not decorations.
 
-Requires ``ANTHROPIC_API_KEY`` (env or .env). Absent a key, callers fall back
-to the cue extractor and must say so rather than fake it.
+Two backends, in preference order:
+
+1. **Claude Code CLI** (``claude -p``) — runs on the user's Max subscription,
+   no metered API tokens. This is the default: the bot lives on the same
+   machine as the user's Claude Code login, and a subscription the user
+   already pays for beats per-token billing for a nightly content job.
+2. **Anthropic SDK** — only if ``ANTHROPIC_API_KEY`` is explicitly set and the
+   CLI is unusable.
+
+Absent both, callers fall back to the cue extractor and must say so rather
+than fake it.
 """
 
 from __future__ import annotations
@@ -39,7 +48,7 @@ CONVICTION_CONF = {"high": 0.8, "medium": 0.6, "low": 0.4}
 
 
 class AnalysisUnavailable(RuntimeError):
-    """No API key configured; the caller must fall back and say so."""
+    """No usable backend; the caller must fall back and say so."""
 
 
 class PlayerCall(BaseModel):
@@ -92,6 +101,68 @@ Rules:
 - summary bullets are the episode's actual key ideas, not a table of contents."""
 
 
+def _find_claude_cli() -> str | None:
+    """The working Claude Code binary, if any.
+
+    The nvm shim on this machine runs Claude Code under node 18, which it
+    cannot (needs >= 20) -- resolve the native install explicitly rather than
+    trusting PATH order.
+    """
+    import shutil
+    from pathlib import Path
+
+    native = Path.home() / ".local/bin/claude"
+    if native.exists():
+        return str(native)
+    return shutil.which("claude")
+
+
+def _analyze_via_cli(cli: str, *, title: str, creator: str, body: str,
+                     timeout_s: int = 600) -> TranscriptAnalysis:
+    """Structured analysis through headless Claude Code -- the Max plan.
+
+    ``claude -p`` cannot run nested inside a Claude Code session, so the
+    guard env vars are scrubbed; under launchd (the bot, the nightly job)
+    they are absent anyway. The prompt travels on stdin: a 25k-token
+    transcript does not belong in argv.
+    """
+    import json as _json
+    import os
+    import subprocess
+
+    schema = _json.dumps(TranscriptAnalysis.model_json_schema())
+    prompt = (
+        f"{_SYSTEM}\n\n"
+        f"Reply with ONLY a JSON object matching this JSON Schema -- no prose, "
+        f"no code fences:\n{schema}\n\n"
+        f"Creator: {creator}\nTitle: {title}\n\nTranscript:\n{body}"
+    )
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")}
+    proc = subprocess.run(
+        [cli, "-p", "--output-format", "json"],
+        input=prompt, capture_output=True, text=True,
+        timeout=timeout_s, env=env,
+    )
+    if proc.returncode != 0:
+        raise AnalysisUnavailable(
+            f"claude CLI exited {proc.returncode}: {proc.stderr.strip()[:200]}"
+        )
+    envelope = _json.loads(proc.stdout)
+    if envelope.get("is_error") or "revoked" in str(envelope.get("result", "")):
+        raise AnalysisUnavailable(
+            "The Claude Code CLI login is revoked or errored. Run "
+            "`claude login` once in Terminal (uses your Max plan), then retry. "
+            f"Detail: {str(envelope.get('result'))[:160]}"
+        )
+    raw = str(envelope.get("result", "")).strip()
+    if raw.startswith("```"):
+        raw = raw.strip("`\n")
+        raw = raw[raw.find("{"):]
+    raw = raw[raw.find("{"): raw.rfind("}") + 1]
+    return TranscriptAnalysis.model_validate_json(raw)
+
+
 def analyze_transcript(
     *,
     title: str,
@@ -100,21 +171,28 @@ def analyze_transcript(
     client: object | None = None,
 ) -> TranscriptAnalysis:
     """One structured read of a transcript. Deterministic schema, quoted evidence."""
-    if client is None:
-        if not secret("ANTHROPIC_API_KEY", required=False):
-            raise AnalysisUnavailable(
-                "ANTHROPIC_API_KEY is not set (env or .env), so semantic "
-                "transcript analysis is off. Add the key and re-share the link."
-            )
-        import anthropic
-
-        client = anthropic.Anthropic(api_key=secret("ANTHROPIC_API_KEY"))
-
     # A 2h podcast transcript is ~25k tokens; well inside the window. Never
     # truncate silently -- cap generously and say so if we ever have to.
     body = text
     if len(body) > 400_000:
         body = body[:400_000]
+
+    if client is None:
+        cli = _find_claude_cli()
+        cli_error: str | None = None
+        if cli:
+            try:
+                return _analyze_via_cli(cli, title=title, creator=creator, body=body)
+            except AnalysisUnavailable as exc:
+                cli_error = str(exc)
+        if not secret("ANTHROPIC_API_KEY", required=False):
+            raise AnalysisUnavailable(
+                (cli_error or "No Claude Code CLI found.")
+                + " No ANTHROPIC_API_KEY fallback is configured either."
+            )
+        import anthropic
+
+        client = anthropic.Anthropic(api_key=secret("ANTHROPIC_API_KEY"))
 
     response = client.messages.parse(  # type: ignore[attr-defined]
         model=MODEL,
@@ -149,9 +227,13 @@ def load_analysis(wh, item_id: str) -> TranscriptAnalysis | None:
     return TranscriptAnalysis.model_validate(json.loads(rows.iloc[0, 0]))
 
 
+#: Analysis stances onto the CLOSED Action set the scoreboard can settle.
+#: "watch" is deliberately unmapped: a watch is not a scoreable position, and
+#: pushing it into the scoreboard would dilute the creator's record with
+#: non-calls. Watches stay in content_analysis, visible but unscored.
 _STANCE_TO_ACTION = {
     "buy": "buy", "sell": "sell", "hold": "hold", "captain": "captain",
-    "avoid": "avoid", "bench": "bench", "watch": "watch",
+    "avoid": "avoid", "bench": "bench",
 }
 
 
@@ -173,11 +255,19 @@ def claims_from_analysis(
     from fpl_edge.ingest.content.claims import Claim
     from fpl_edge.ingest.content.models import Action
 
+    # Accept either a bare PlayerResolver or the SeasonResolvers wrapper,
+    # exactly as the cue extractor does -- season scoping recovers surnames
+    # that are only ambiguous across seasons.
+    if hasattr(resolver, "for_season"):
+        resolver = resolver.for_season(season)
+
     calls = (list(analysis.transfers_in) + list(analysis.transfers_out)
              + list(analysis.captaincy) + list(analysis.differentials))
     claims, dropped = [], []
     seen = set()
     for offset, call in enumerate(calls):
+        if call.stance not in _STANCE_TO_ACTION:
+            continue  # e.g. "watch": kept in the analysis, not scoreable
         mentions = resolver.find_mentions(call.player, None)
         codes = {m.code for m in mentions if m.code is not None}
         if len(codes) != 1:

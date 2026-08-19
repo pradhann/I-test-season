@@ -146,6 +146,15 @@ class PlayerResolver:
                 tail = second.split()[-1]
                 if len(tail) > 3:
                     self._alias[tail].add(code)
+                # First + final surname token: nobody says "bruno borges
+                # fernandes" -- they say "bruno fernandes". Without this variant
+                # the most universal form of any middle-named player resolved to
+                # nothing (found live: Bruno's captaincy claim was dropped as
+                # unresolvable). Sits in the same ambiguity machinery as every
+                # other alias, so a genuinely shared short form still refuses.
+                if first:
+                    self._alias[f"{first} {tail}"].add(code)
+                    self._max_tokens = max(self._max_tokens, 2 + first.count(" "))
         for alias, target in SHORTHAND.items():
             codes = self._alias.get(target)
             if codes and len(codes) == 1:
