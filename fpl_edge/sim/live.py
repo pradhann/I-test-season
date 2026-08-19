@@ -329,7 +329,9 @@ def open_live_world(
     """
     from fpl_edge.store import Warehouse
 
-    wh = Warehouse(db_path, read_only=True)
+    # read_copy: a live-world build reads for minutes and must not starve
+    # concurrent ingest writers (DuckDB is one-writer-XOR-many-readers).
+    wh = Warehouse.read_copy(db_path)
     if as_of is None:
         as_of = _latest_observation(wh, str(season))
     return build_live_world(wh.snapshot_at(as_of), wh.snapshot_at,
