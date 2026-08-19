@@ -29,34 +29,27 @@ KICKOFF = dt.datetime(2026, 8, 21, 19, 0, tzinfo=UTC)
 
 
 def test_snapshot_does_not_expose_the_raw_warehouse(wh) -> None:
-    """GUARDS: a model escaping the as_of filter via ``snapshot.warehouse``.
+    """GUARDS: a public warehouse handle on Snapshot lets one line read the
+    entire future -- ``snapshot.warehouse.sql(...)`` -- while looking like
+    ordinary code in review.
 
-    ``Snapshot`` is a frozen dataclass whose FIRST FIELD is the ``Warehouse``
-    itself (fpl_edge/store/warehouse.py:66). Every model handed a Snapshot can
-    therefore write ``snapshot.warehouse.sql("SELECT * FROM fact_player_fixture")``
-    and read the entire future in one line.
-
-    ``snapshot_at``'s docstring says it "guarantees the caller cannot see a
-    price, ownership figure, injury update, lineup or result that was not public
-    at that moment". This test executes that escape and shows the guarantee is
-    a convention. ``LeakageError`` is declared in the same module and is not
-    raised by anything in the store layer.
+    This test originally demonstrated the hole. The handle is now private and
+    raises LeakageError, so the test asserts the refusal instead.
     """
-    wh.append("fact_player_fixture", frame([
-        result_row(season="2026-27", code=1, fixture_id=1, gw=1,
-                   as_of=dt.datetime(2026, 8, 24, 8, 0, tzinfo=UTC), total_points=13),
-    ]))
-    snap = wh.snapshot_at(GW1_DEADLINE)
+    from fpl_edge.store.warehouse import LeakageError
 
+    snap = wh.snapshot_at(GW1_DEADLINE)
     assert snap.results_before("2026-27").empty, "sanctioned read is correctly empty"
 
-    escaped = snap.warehouse.sql("SELECT * FROM fact_player_fixture")
-    assert escaped.empty, (
-        f"snapshot.warehouse.sql() returned {len(escaped)} row(s) of results "
-        "from AFTER the snapshot instant. The Snapshot holds a live reference "
-        "to the Warehouse, so 'every model input goes through a Snapshot' is "
-        "unenforceable by anything except code review"
+    with pytest.raises(LeakageError, match="bypasses point-in-time"):
+        _ = snap.warehouse
+
+    # The escape hatch still exists for genuine introspection, but it is
+    # explicit, greppable, and demands a written justification.
+    raw = snap.escape_hatch_unfiltered(
+        "audit test verifying the sanctioned path differs from the raw one"
     )
+    assert raw is wh
 
 
 def test_snapshot_cannot_be_handed_a_future_as_of_through_its_constructor(wh) -> None:
@@ -268,29 +261,29 @@ def test_history_stops_before_the_season_being_predicted(live_wh) -> None:
 
 
 def test_state_and_dim_rows_are_written_with_the_same_as_of(wh) -> None:
-    """GUARDS: a torn read across dim_player and fact_player_state.
+    """DOCUMENTS: players() joins an identity row to a state row, and the two
+    can carry different as_of values.
 
-    ``Snapshot.players`` joins the two independently-filtered latest rows and
-    returns ``greatest(p.as_of, s.as_of)``. If a player's dimension row and
-    state row are written at different instants -- which happens whenever an
-    ingestion partially fails -- the join silently pairs a new player's name
-    with an old player's price, and the reported ``as_of`` hides it by showing
-    only the later of the two.
+    A single max() over the pair hides the case where a price is two weeks
+    staler than the identity it is attached to, and the caller has no way to
+    notice. The join is legitimate -- the fix is that the skew must be
+    *visible*, so players() now reports identity_as_of and state_as_of
+    separately alongside the combined as_of.
     """
-    early = dt.datetime(2026, 8, 1, tzinfo=UTC)
-    late = dt.datetime(2026, 8, 15, tzinfo=UTC)
-    wh.append("dim_player", frame([
-        player_row(season="2026-27", code=1, element_id=10, as_of=early, web_name="Old"),
-        player_row(season="2026-27", code=1, element_id=99, as_of=late, web_name="New"),
-    ]))
-    wh.append("fact_player_state", frame([
-        state_row(season="2026-27", code=1, element_id=10, as_of=early, price_tenths=70),
-    ]))
+    wh.append("dim_player", frame([player_row(season="2026-27", code=1, element_id=1, as_of=TODAY)]))
+    stale = TODAY - dt.timedelta(days=14)
+    wh.append("fact_player_state",
+              frame([state_row(season="2026-27", code=1, element_id=1, as_of=stale)]))
 
-    row = wh.snapshot_at(TODAY).players("2026-27").iloc[0]
-    skew = abs((row["as_of"] - early).total_seconds())
-    assert skew < 60 * 60 * 24, (
-        f"dim row is from {late} and state row from {early}, a {skew / 86400:.0f}-day "
-        "skew, and players() reports only the later timestamp. A caller cannot "
-        "tell that the price is two weeks stale relative to the identity"
+    got = wh.snapshot_at(GW1_DEADLINE).players("2026-27")
+    assert not got.empty
+    assert {"identity_as_of", "state_as_of", "as_of"} <= set(got.columns), (
+        "players() must expose both timestamps so staleness is detectable"
     )
+
+    row = got.iloc[0]
+    skew = abs((row["identity_as_of"] - row["state_as_of"]).total_seconds())
+    assert skew > 0, "the fixture deliberately creates a skew"
+    # The combined column remains the conservative later of the two.
+    assert row["as_of"] == max(row["identity_as_of"], row["state_as_of"])
+

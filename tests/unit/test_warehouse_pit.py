@@ -255,7 +255,8 @@ def test_orphan_codes_cannot_reach_results(wh: Warehouse) -> None:
     wh.append("fact_fixture", pd.DataFrame([{
         "season": "2026-27", "fixture_id": 88, "gw": 1, "kickoff_utc": T(20, 14),
         "home_team_code": 1, "away_team_code": 2, "finished": True,
-        "home_score": 1, "away_score": 0, "as_of": T(1),
+        # A finished fixture is only observable after it has been played.
+        "home_score": 1, "away_score": 0, "as_of": T(20, 16),
     }]))
     wh.append("dim_player", pd.DataFrame([{
         "season": "2026-27", "code": 100, "element_id": 1, "web_name": "Real",

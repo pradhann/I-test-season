@@ -147,6 +147,10 @@ class Snapshot:
         which is exactly what happened when can_select was introduced while a
         long-running writer held the lock.
         """
+        # identity_as_of and state_as_of are reported separately as well as
+        # combined: a single max() hides the case where a price is two weeks
+        # staler than the identity row it is attached to, and a caller has no
+        # way to notice.
         optional = [c for c in ("can_select", "can_transact", "removed")
                     if c in self._columns("fact_player_state")]
         extra = "".join(f"s.{c}, " for c in optional)
@@ -170,6 +174,7 @@ class Snapshot:
                    s.chance_of_playing_next_round, s.news,
                    s.transfers_in_event, s.transfers_out_event,
                    """ + extra + """
+                   p.as_of AS identity_as_of, s.as_of AS state_as_of,
                    greatest(p.as_of, s.as_of) AS as_of
             FROM p JOIN s USING (season, code)
             """,
@@ -369,6 +374,41 @@ class Warehouse:
                 "Localise them explicitly rather than letting pandas assume UTC."
             )
         df = df.assign(as_of=raw.dt.tz_convert("UTC"))
+
+        # Every other timestamp column needs the same guarantee. A naive
+        # kickoff_utc or deadline_utc is reinterpreted as local time by whatever
+        # reads it, which is how a deadline silently moves by the host offset.
+        for col in df.columns:
+            if col == "as_of" or not (col.endswith(("_utc", "_at", "_added"))):
+                continue
+            series = df[col]
+            if series.isna().all():
+                continue
+            parsed = pd.to_datetime(series)
+            if getattr(parsed.dtype, "tz", None) is None:
+                raise ValueError(
+                    f"{table}.{col} contains naive timestamps and must be "
+                    f"timezone-aware UTC. Localise explicitly rather than "
+                    f"letting the reader assume a timezone."
+                )
+            df = df.assign(**{col: parsed.dt.tz_convert("UTC")})
+
+        if table == "fact_fixture":
+            has_result = df.get("finished")
+            if has_result is not None and "kickoff_utc" in df.columns:
+                scored = df[
+                    df["finished"].fillna(False).astype(bool)
+                    & df["kickoff_utc"].notna()
+                    & (pd.to_datetime(df["as_of"], utc=True)
+                       < pd.to_datetime(df["kickoff_utc"], utc=True))
+                ]
+                if not scored.empty:
+                    raise ValueError(
+                        f"fact_fixture: {len(scored)} finished fixture(s) claim to be "
+                        f"observable before their own kickoff. A result is not public "
+                        f"until the match has been played.\n"
+                        f"{scored[['season', 'fixture_id', 'as_of', 'kickoff_utc']].head(3)}"
+                    )
 
         if table == "fact_player_fixture" and "kickoff_utc" not in df.columns:
             # Cross-check against the fixture table: a result stamped observable
