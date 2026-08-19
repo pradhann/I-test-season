@@ -79,6 +79,18 @@ def render_squad(wh: Warehouse, season: str, gw: int, as_of: dt.datetime) -> str
     spend = sum(price.get(c, 0) for c in d["squad"])
     lines += ["", f"Spend £{spend / 10:.1f}m, bank £{(1000 - spend) / 10:.1f}m. "
                   f"Chip: {d['chip'] or 'none'}."]
+    if d.get("chip") and len(plan["horizon_gws"]) < 38:
+        lines += [
+            "",
+            f"**Chip caveat — do not follow this blindly.** The solver plays "
+            f"{d['chip']} inside a {len(plan['horizon_gws'])}-gameweek window. "
+            "A truncated horizon is structurally biased toward spending chips "
+            "early: it cannot see the blank and double gameweeks later in the "
+            "season where Bench Boost and Triple Captain historically pay "
+            "double or more. Until season-long chip optimisation lands, treat "
+            "an early-window chip call as 'the chip would not be wasted', not "
+            "'this is the best week for it'. Holding it is the sound default.",
+        ]
     return "\n".join(lines)
 
 
