@@ -290,8 +290,14 @@ def ingest_link(wh, url: str) -> LinkFindings:
     from fpl_edge.ingest.content.youtube import fetch_transcript
 
     now = dt.datetime.now(UTC)
-    with ContentFetcher("user_link") as fetcher:
-        yt = _YT_ID_RE.search(url)
+    yt = _YT_ID_RE.search(url)
+    # For the user's OWN shared video the transcript routes are used directly:
+    # both terminate at endpoints YouTube's robots.txt disallows for crawlers,
+    # which is why the BULK pipeline keeps respect_robots on and stays
+    # description-only. A single video, transcribed at the owner's explicit
+    # request, is the exact use their fpl-server MCP has always made of the
+    # same library; articles keep the robots check.
+    with ContentFetcher("user_link", respect_robots=not yt) as fetcher:
         if yt:
             vid = yt.group(1)
             lines, route = fetch_transcript(fetcher, vid, allow_disallowed_routes=True)
@@ -334,7 +340,7 @@ def ingest_link(wh, url: str) -> LinkFindings:
         url=url, title=title, creator="user-shared", text_source=text_source,
         n_claims=len(claims),
         claims=[{"player": c.player_name, "action": str(c.action),
-                 "gw": int(c.gw), "conf": float(c.confidence)} for c in claims],
+                 "gw": int(c.gameweek), "conf": float(c.confidence)} for c in claims],
         committed=committed,
     )
 
@@ -349,7 +355,7 @@ def _commit_findings(url: str, title: str, claims) -> str:
     notes.mkdir(exist_ok=True)
     path = notes / f"{day}-{slug}.md"
     body = [f"# {title}", "", f"Source: {url}", f"Analysed: {day}", "", "## Claims", ""]
-    body += ([f"- GW{c.gw} **{c.action}** {c.player_name} (conf {c.confidence:.0%})"
+    body += ([f"- GW{c.gameweek} **{c.action}** {c.player_name} (conf {c.confidence:.0%})"
               for c in claims] or ["- none extracted"])
     path.write_text("\n".join(body) + "\n")
 

@@ -23,6 +23,7 @@ dependencies = [
   "beautifulsoup4>=4.12",
   "lxml>=5.2",
   "matplotlib>=3.9",
+  "youtube-transcript-api>=0.6",
 ]
 
 [project.optional-dependencies]
