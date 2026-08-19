@@ -120,6 +120,9 @@ class Claim:
     #: stated in the text. Scoring keeps these, but they are reported separately
     #: because an inferred gameweek is a weaker claim than a stated one.
     gw_inferred: bool = False
+    #: 'cue' (keyword-window heuristics) or 'llm:<model>' (semantic read with
+    #: conviction-band confidence). Scored as separate channels.
+    extractor: str = "cue"
 
     def __post_init__(self) -> None:
         object.__setattr__(

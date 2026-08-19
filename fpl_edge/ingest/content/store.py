@@ -45,7 +45,7 @@ _ITEM_COLS = (
 _CLAIM_COLS = (
     "claim_id", "item_id", "creator", "source_key", "player_code", "player_name",
     "surface_form", "action", "season", "gameweek", "confidence", "rationale",
-    "source_url", "published_at", "gw_inferred",
+    "source_url", "published_at", "gw_inferred", "extractor",
 )
 
 
@@ -155,6 +155,7 @@ class ContentStore:
                     "gameweek": int(c.gameweek), "confidence": float(c.confidence),
                     "rationale": c.rationale, "source_url": c.source_url,
                     "published_at": c.published_at, "gw_inferred": bool(c.gw_inferred),
+                    "extractor": getattr(c, "extractor", "cue"),
                 }
                 for c in claims
             ],

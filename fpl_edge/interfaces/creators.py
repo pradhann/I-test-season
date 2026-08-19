@@ -247,6 +247,21 @@ def find_url(text: str) -> str | None:
     return m.group(0).rstrip(").,>") if m else None
 
 
+def _timed_transcript(video_id: str) -> list[tuple[float | None, str]]:
+    """(start_seconds, text) segments via the transcript library.
+
+    The library returns per-snippet start times; keeping them is what makes
+    "what did they say and WHEN" a query instead of a re-listen.
+    """
+    try:
+        from youtube_transcript_api import YouTubeTranscriptApi
+
+        api = YouTubeTranscriptApi()
+        return [(float(sn.start), sn.text) for sn in api.fetch(video_id, languages=["en"])]
+    except Exception:  # noqa: BLE001 - caller falls back to the untimed route
+        return []
+
+
 @dataclass
 class LinkFindings:
     url: str
@@ -256,18 +271,48 @@ class LinkFindings:
     n_claims: int
     claims: list[dict]
     committed: str
+    analysis: object | None = None      # TranscriptAnalysis when the LLM ran
+    analysis_note: str = ""             # why it did not, when it did not
+    n_segments: int = 0
 
     def render(self) -> str:
-        lines = [f"Transcribed and analysed: {self.title[:70]}",
-                 f"(source treated as: {self.creator}, text via {self.text_source})"]
-        if self.claims:
-            lines.append(f"{self.n_claims} claims extracted:")
-            for c in self.claims[:10]:
-                lines.append(f"  • GW{c['gw']} {c['action']}: {c['player']} "
-                             f"(conf {c['conf']:.0%})")
+        lines = [f"Transcribed: {self.title[:70]}",
+                 f"({self.n_segments} timestamped segments stored, "
+                 f"text via {self.text_source})", ""]
+        a = self.analysis
+        if a is not None:
+            lines.append("Summary:")
+            lines += [f"  • {b}" for b in a.summary[:6]]
+
+            def calls(label, items):
+                if not items:
+                    return
+                lines.append(f"\n{label}:")
+                for c in items[:5]:
+                    gw = f" (GW{c.gameweek})" if c.gameweek else ""
+                    lines.append(f"  • {c.player}{gw} — {c.conviction} conviction")
+                    lines.append(f"    \"{c.quote[:100]}\"")
+
+            calls("Transfers IN", a.transfers_in)
+            calls("Transfers OUT", a.transfers_out)
+            calls("Captaincy", a.captaincy)
+            if a.chip_advice:
+                lines.append("\nChips:")
+                for ch in a.chip_advice[:4]:
+                    gw = f" GW{ch.gameweek}" if ch.gameweek else ""
+                    lines.append(f"  • {ch.chip}: {ch.stance}{gw} — "
+                                 f"\"{ch.quote[:80]}\"")
+            calls("Differentials", a.differentials)
+            lines.append(f"\n{self.n_claims} calls persisted to the scoreboard "
+                         f"(conviction bands: high=80% / med=60% / low=40% — "
+                         f"tested against results, not decoration).")
         else:
-            lines.append("No player claims found in the text — either no FPL "
-                         "advice in it, or names the resolver refused to guess.")
+            lines.append(self.analysis_note)
+            if self.claims:
+                lines.append(f"\nFallback keyword extraction ({self.n_claims} "
+                             f"rough claims — treat as leads only):")
+                for c in self.claims[:8]:
+                    lines.append(f"  • GW{c['gw']} {c['action']}: {c['player']}")
         lines.append(self.committed)
         return "\n".join(lines)
 
@@ -330,25 +375,70 @@ def ingest_link(wh, url: str) -> LinkFindings:
     )
     resolver = build_resolver(wh)
     calendar, _ = load_calendar(wh)
-    stats = ExtractionStats()
-    claims = extract_from_item(item, resolver, calendar, stats)
 
     store = ContentStore(wh)
     store.migrate()
     store.insert_items([item])
-    store.insert_claims(claims)
 
-    committed = _commit_findings(url, title, claims)
+    # Full transcript, timestamped, stored -- the queryable source of truth.
+    segments = _timed_transcript(yt.group(1)) if (yt and text_source == "transcript") else []
+    if not segments and text:
+        segments = [(None, text)]
+    wh.sql("DELETE FROM transcript_segment WHERE item_id = ?", [item.item_id])
+    for seq, (start, seg_text) in enumerate(segments):
+        wh.sql("INSERT INTO transcript_segment VALUES (?, ?, ?, ?)",
+               [item.item_id, seq, start, seg_text])
+
+    # Semantic analysis first; keyword windows only as an admitted fallback.
+    from fpl_edge.ingest.content.analyze import (
+        AnalysisUnavailable,
+        analyze_transcript,
+        claims_from_analysis,
+        load_analysis,
+        store_analysis,
+    )
+
+    analysis = load_analysis(wh, item.item_id)  # cached: never pay twice
+    analysis_note = ""
+    if analysis is None and text:
+        try:
+            analysis = analyze_transcript(title=title, creator="user-shared", text=text)
+            store_analysis(wh, item.item_id, analysis)
+        except AnalysisUnavailable as exc:
+            analysis_note = str(exc)
+        except Exception as exc:  # noqa: BLE001 - degraded beats dead
+            analysis_note = f"Semantic analysis failed ({type(exc).__name__}); " \
+                            f"falling back to keyword extraction."
+
+    inferred = calendar.next_after(item.published_at)
+    default_gw = int(inferred[1]) if inferred else 1
+    season = inferred[0] if inferred else "2026-27"
+
+    if analysis is not None:
+        claims, dropped = claims_from_analysis(
+            analysis, item=item, resolver=resolver, default_gw=default_gw,
+            season=season,
+        )
+        if dropped:
+            analysis_note = ("Unresolved names (kept out of the scoreboard "
+                             "rather than guessed): " + ", ".join(sorted(set(dropped))[:6]))
+    else:
+        stats = ExtractionStats()
+        claims = extract_from_item(item, resolver, calendar, stats)
+
+    store.insert_claims(claims)
+    committed = _commit_findings(url, title, claims, analysis=analysis)
     return LinkFindings(
         url=url, title=title, creator="user-shared", text_source=text_source,
         n_claims=len(claims),
         claims=[{"player": c.player_name, "action": str(c.action),
                  "gw": int(c.gameweek), "conf": float(c.confidence)} for c in claims],
-        committed=committed,
+        committed=committed, analysis=analysis, analysis_note=analysis_note,
+        n_segments=len(segments),
     )
 
 
-def _commit_findings(url: str, title: str, claims) -> str:
+def _commit_findings(url: str, title: str, claims, *, analysis=None) -> str:
     """One markdown note per shared link, pushed to the reports repo."""
     if not REPORTS_DIR.exists():
         return "Findings stored in the warehouse (reports repo not cloned here)."
@@ -357,7 +447,25 @@ def _commit_findings(url: str, title: str, claims) -> str:
     notes = REPORTS_DIR / "links"
     notes.mkdir(exist_ok=True)
     path = notes / f"{day}-{slug}.md"
-    body = [f"# {title}", "", f"Source: {url}", f"Analysed: {day}", "", "## Claims", ""]
+    body = [f"# {title}", "", f"Source: {url}", f"Analysed: {day}", ""]
+    if analysis is not None:
+        body += ["## Summary", ""] + [f"- {b}" for b in analysis.summary] + [""]
+        for label, items in (("Transfers in", analysis.transfers_in),
+                             ("Transfers out", analysis.transfers_out),
+                             ("Captaincy", analysis.captaincy),
+                             ("Differentials", analysis.differentials)):
+            if items:
+                body += [f"## {label}", ""]
+                body += [f"- **{c.player}** ({c.conviction}"
+                         + (f", GW{c.gameweek}" if c.gameweek else "")
+                         + f") — {c.reasoning}\n  > {c.quote}" for c in items] + [""]
+        if analysis.chip_advice:
+            body += ["## Chips", ""]
+            body += [f"- **{ch.chip}**: {ch.stance}"
+                     + (f" GW{ch.gameweek}" if ch.gameweek else "")
+                     + f" — {ch.reasoning}\n  > {ch.quote}"
+                     for ch in analysis.chip_advice] + [""]
+    body += ["## Scoreboard claims", ""]
     body += ([f"- GW{c.gameweek} **{c.action}** {c.player_name} (conf {c.confidence:.0%})"
               for c in claims] or ["- none extracted"])
     path.write_text("\n".join(body) + "\n")

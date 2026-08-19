@@ -24,6 +24,7 @@ dependencies = [
   "lxml>=5.2",
   "matplotlib>=3.9",
   "youtube-transcript-api>=0.6",
+  "anthropic>=0.40",
 ]
 
 [project.optional-dependencies]
