@@ -74,6 +74,7 @@ import pandas as pd
 from scipy.optimize import brentq
 
 from fpl_edge.ingest.http import Fetched, Fetcher, _now, _slug
+from fpl_edge.ingest.player_mapping import normalize_name
 from fpl_edge.store import Warehouse
 
 FOOTBALL_DATA_BASE = "https://www.football-data.co.uk"
@@ -747,7 +748,7 @@ def match_fixture_keys(wh: Warehouse, season: str, as_of: dt.datetime) -> pd.Dat
 
 
 # --------------------------------------------------------------------------
-# The Odds API (needs a key the account holder must obtain)
+# The Odds API -- the only source that carries anytime scorer
 # --------------------------------------------------------------------------
 
 
@@ -755,9 +756,59 @@ class OddsApiError(RuntimeError):
     """The Odds API refused a request, or no key is configured."""
 
 
+class CreditBudgetExceeded(RuntimeError):
+    """A planned run would breach the configured credit cap. Nothing was spent."""
+
+
+#: The Odds API team names are the long forms; FPL uses its own short forms.
+#: Explicit rather than fuzzy-matched: a wrong team mapping silently attributes
+#: every one of that club's players to the wrong squad, and there are only 20
+#: rows to write down. Verified against both name sets on 2026-08-18.
+ODDS_API_TEAM_ALIASES: dict[str, str] = {
+    "Brighton and Hove Albion": "Brighton",
+    "Leeds United": "Leeds",
+    "Manchester City": "Man City",
+    "Manchester United": "Man Utd",
+    "Newcastle United": "Newcastle",
+    "Nottingham Forest": "Nott'm Forest",
+    "Tottenham Hotspur": "Spurs",
+    "Wolverhampton Wanderers": "Wolves",
+    "West Ham United": "West Ham",
+    "Sheffield United": "Sheffield Utd",
+}
+
+
+def resolve_team_name(api_name: str, fpl_names: set[str]) -> str:
+    """Map an Odds API club name onto the FPL club name.
+
+    Tries the explicit alias table, then an exact match, then a normalised
+    match. Raises rather than guessing: an unresolved club means every player
+    on it would be matched against the wrong squad.
+    """
+    if api_name in ODDS_API_TEAM_ALIASES:
+        mapped = ODDS_API_TEAM_ALIASES[api_name]
+        if mapped in fpl_names:
+            return mapped
+    if api_name in fpl_names:
+        return api_name
+    norm = {normalize_name(n): n for n in fpl_names}
+    hit = norm.get(normalize_name(api_name))
+    if hit:
+        return hit
+    raise OddsApiError(
+        f"cannot map Odds API club {api_name!r} to an FPL club. "
+        f"Add it to ODDS_API_TEAM_ALIASES. Known FPL clubs: {sorted(fpl_names)}"
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class OddsApiQuota:
-    """Credit accounting read straight off the response headers."""
+    """Credit accounting read straight off the response headers.
+
+    These headers are the authoritative record -- the vendor's own count, reset
+    on the vendor's own schedule. We deliberately do *not* keep a local ledger
+    that could drift out of sync with it.
+    """
 
     remaining: int | None
     used: int | None
@@ -772,38 +823,236 @@ class OddsApiQuota:
         return cls(g("x-requests-remaining"), g("x-requests-used"), g("x-requests-last"))
 
 
-def parse_odds_api_events(payload: list[dict[str, Any]], as_of: dt.datetime,
-                          season: str) -> pd.DataFrame:
-    """Flatten a v4 ``/odds`` or ``/events/{id}/odds`` body into ``fact_odds``.
+@dataclass(frozen=True, slots=True)
+class CreditPlan:
+    """What a run intends to spend, checked before anything is spent."""
 
-    Handles both the featured markets (``h2h``, ``totals``) and the soccer
-    player props (``player_goal_scorer_anytime``), which is the market that
-    justifies paying for this source at all. Prices are requested in decimal
-    format so no conversion happens here.
+    events: int          # free
+    featured: int        # markets x regions, one call for all events
+    scorer: int          # markets x regions x events
+    cap: int
+    used_before: int | None
+    remaining_before: int | None
+
+    @property
+    def total(self) -> int:
+        return self.events + self.featured + self.scorer
+
+    def check(self) -> None:
+        """Refuse the run if it would breach the cap or the remaining balance."""
+        if self.remaining_before is not None and self.total > self.remaining_before:
+            raise CreditBudgetExceeded(
+                f"run needs {self.total} credits but only {self.remaining_before} "
+                "remain this month. Nothing was spent."
+            )
+        if self.used_before is not None and self.used_before + self.total > self.cap:
+            raise CreditBudgetExceeded(
+                f"run needs {self.total} credits; {self.used_before} already used "
+                f"this month and the configured cap is {self.cap}. "
+                f"Raise max_monthly_credits to proceed. Nothing was spent."
+            )
+
+
+class OddsApiFetcher(Fetcher):
+    """:class:`Fetcher` that keeps the last response headers.
+
+    The quota counters only exist as headers, and ``Fetcher.get_json`` discards
+    the response object. Subclassed rather than changing ``http.py``.
     """
-    rows: list[dict[str, Any]] = []
-    for ev in payload:
-        ko = ev.get("commence_time")
-        kickoff = dt.datetime.fromisoformat(str(ko).replace("Z", "+00:00")) if ko else None
-        key = natural_fixture_key(season, kickoff, ev.get("home_team", ""), ev.get("away_team", ""))
-        for bk in ev.get("bookmakers", []) or []:
-            book = bk.get("key", "unknown")
-            for mkt in bk.get("markets", []) or []:
-                market = _ODDS_API_MARKETS.get(mkt.get("key"), mkt.get("key"))
-                for oc in mkt.get("outcomes", []) or []:
-                    price = oc.get("price")
-                    if price is None or float(price) <= 1.0:
-                        continue
-                    sel = str(oc.get("description") or oc.get("name") or "")
-                    if oc.get("description") and oc.get("name"):
-                        sel = f"{oc['description']}|{oc['name']}"
-                    if oc.get("point") is not None:
-                        sel = f"{sel}_{oc['point']}"
-                    rows.append(_row(key, book, str(market), sel, float(price), as_of))
-    return pd.DataFrame(rows, columns=[
-        "fixture_key", "bookmaker", "market", "selection", "price_decimal", "as_of",
-    ])
 
+    def __init__(self, *a: Any, **k: Any) -> None:
+        super().__init__(*a, **k)
+        self.last_headers: dict[str, str] = {}
+
+    def _get(self, url: str, params: dict[str, Any] | None) -> Any:
+        resp = super()._get(url, params)
+        self.last_headers = {k.lower(): v for k, v in resp.headers.items()}
+        return resp
+
+
+class OddsApiClient:
+    """Client for api.the-odds-api.com v4, with the free tier's budget enforced.
+
+    Credit costs, confirmed against live ``x-requests-last`` headers on
+    2026-08-18 rather than taken from the docs:
+
+    =========================================  ======
+    ``GET /v4/sports/{sport}/events``          **0**
+    ``GET /v4/sports/{sport}/odds``            markets x regions (2 observed)
+    ``GET /v4/sports/{sport}/events/{id}/odds``  markets x regions (1 observed)
+    =========================================  ======
+
+    Because ``/events`` is free *and* returns the quota headers, the remaining
+    balance can be read without spending anything. Every run therefore checks
+    its budget against the vendor's own counter before it spends a credit.
+    """
+
+    #: Default ceiling on credits used per calendar month. The free tier allows
+    #: 500; stopping at 400 leaves headroom for a re-run after a failure.
+    DEFAULT_MONTHLY_CAP = 400
+
+    def __init__(
+        self,
+        api_key: str | None,
+        *,
+        fetcher: OddsApiFetcher | None = None,
+        max_monthly_credits: int = DEFAULT_MONTHLY_CAP,
+    ) -> None:
+        if not api_key:
+            raise OddsApiError(
+                "no Odds API key. Set ODDS_API_KEY in .env (gitignored). "
+                "The free tier gives 500 credits/month at https://the-odds-api.com."
+            )
+        self.api_key = api_key
+        self.max_monthly_credits = max_monthly_credits
+        self._fetcher = fetcher or OddsApiFetcher("odds_api", base_url=ODDS_API_BASE)
+        self.quota: OddsApiQuota | None = None
+        self.spent_this_run = 0
+
+    # -- plumbing ----------------------------------------------------------
+
+    def _get(self, endpoint: str, params: dict[str, Any]) -> Fetched:
+        got = self._fetcher.get_json(endpoint, {**params, "apiKey": self.api_key})
+        self.quota = OddsApiQuota.from_headers(self._fetcher.last_headers)
+        if self.quota.last_cost:
+            self.spent_this_run += self.quota.last_cost
+        return got
+
+    # -- endpoints ---------------------------------------------------------
+
+    def events(self, sport: str = "soccer_epl") -> Fetched:
+        """List upcoming events. Costs 0 credits, and refreshes the quota."""
+        return self._get(f"sports/{sport}/events", {})
+
+    def featured_odds(self, sport: str = "soccer_epl", regions: str = "uk",
+                      markets: str = "h2h,totals") -> Fetched:
+        """h2h/totals for every upcoming event in one call."""
+        return self._get(f"sports/{sport}/odds",
+                         {"regions": regions, "markets": markets, "oddsFormat": "decimal"})
+
+    def anytime_scorers(self, event_id: str, sport: str = "soccer_epl",
+                        regions: str = "uk") -> Fetched:
+        """Anytime-scorer prices for one event. Player props are per-event only."""
+        return self._get(
+            f"sports/{sport}/events/{event_id}/odds",
+            {"regions": regions, "markets": "player_goal_scorer_anytime",
+             "oddsFormat": "decimal"},
+        )
+
+    # -- budgeting ---------------------------------------------------------
+
+    def plan_run(self, n_events: int, *, featured_markets: int = 2,
+                 regions: int = 1) -> CreditPlan:
+        """Price a run *before* spending, using the free events call for balance."""
+        self.events()  # 0 credits, populates self.quota
+        q = self.quota or OddsApiQuota(None, None, None)
+        return CreditPlan(
+            events=0,
+            featured=featured_markets * regions,
+            scorer=n_events * regions,
+            cap=self.max_monthly_credits,
+            used_before=q.used,
+            remaining_before=q.remaining,
+        )
+
+    def close(self) -> None:
+        self._fetcher.close()
+
+    def __enter__(self) -> "OddsApiClient":  # noqa: PYI034
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
+
+# --------------------------------------------------------------------------
+# de-vigging a one-sided, non-exclusive market
+# --------------------------------------------------------------------------
+
+
+def devig_anytime_scorer(
+    decimal_odds: list[float] | np.ndarray,
+    team_expected_goals: float,
+    *,
+    coverage: float = 0.95,
+    method: Literal["power", "uniform"] = "power",
+) -> np.ndarray:
+    """Estimate fair anytime-scorer probabilities for one team's card.
+
+    **This is an estimate, not an exact de-vig, and the distinction is real.**
+
+    Anytime scorer is a set of *independent* yes/no bets, not a mutually
+    exclusive book: eleven players can all score in one match. Their implied
+    probabilities therefore do not sum to 1 and normalising them to 1 would be
+    nonsense. Measured on the real card for Arsenal v Coventry (2026-08-21),
+    17 selections summed to **4.748**.
+
+    Worse, the UK books quote only the **Yes** side -- every outcome came back
+    with ``name == "Yes"`` and no matching ``No``. With one side of a two-way
+    market missing there is no overround to measure, so the margin has to be
+    *estimated* against an external constraint rather than removed exactly.
+
+    The constraint used here comes from the match totals market. If player *i*
+    scores ``Poisson(lambda_i)`` goals then ``p_i = 1 - exp(-lambda_i)`` and,
+    critically, ``sum(lambda_i) = E[team goals]`` -- goal rates are additive
+    where probabilities are not. So we solve for the transform that makes the
+    card's implied rates add up to the team's de-vigged expected goals.
+
+    ``method="power"`` (default) solves ``p_i = q_i ** k``. ``method="uniform"``
+    scales every implied rate by one constant. Power is the default because
+    bookmakers load margin onto longshots far more heavily than onto favourites,
+    and a uniform scale therefore over-shrinks the favourite. On the real
+    Arsenal card, anchored to 2.998 expected goals:
+
+    ==================  ======  =========  =========
+    Selection           Quoted  Uniform    Power
+    ==================  ======  =========  =========
+    Gyokeres (1.78)     0.5629  0.3431     0.4121
+    Odegaard (3.80)     0.2632  0.1437     0.1276
+    Mosquera (12.00)    0.0833  0.0432     0.0216
+    ==================  ======  =========  =========
+
+    ``coverage`` is the share of the team's goals attributable to the listed
+    players -- own goals and unlisted deep substitutes make up the remainder.
+    0.95 is a stated assumption, not a measurement.
+
+    **Treat the output as uncertain.** The shrink is large (the quoted card
+    implies roughly twice the team's expected goals) and cannot be validated
+    against realised results until matches are played. The raw quoted prices are
+    always written to ``fact_odds`` alongside these, so nothing is lost if the
+    estimate later proves badly calibrated.
+    """
+    q = np.asarray([implied_prob(float(o)) for o in decimal_odds], dtype=float)
+    if team_expected_goals <= 0:
+        raise ValueError("team_expected_goals must be positive")
+    if not 0.0 < coverage <= 1.0:
+        raise ValueError("coverage must be in (0, 1]")
+    target = team_expected_goals * coverage
+
+    def rate_sum(p: np.ndarray) -> float:
+        return float((-np.log(1.0 - np.clip(p, 1e-12, 1 - 1e-12))).sum())
+
+    if rate_sum(q) <= target:
+        # The card already implies no more goals than the market does. Nothing
+        # to remove; inflating it would be inventing value.
+        return q
+
+    if method == "uniform":
+        lam_hat = -np.log(1.0 - np.clip(q, 1e-12, 1 - 1e-12))
+        return 1.0 - np.exp(-lam_hat * (target / lam_hat.sum()))
+    if method != "power":
+        raise ValueError(f"unknown method {method!r}; use 'power' or 'uniform'")
+
+    hi = 2.0
+    while rate_sum(q**hi) > target and hi < 64.0:
+        hi *= 2.0
+    k = brentq(lambda k: rate_sum(q**k) - target, 1.0, hi, xtol=1e-12)
+    return q**k
+
+
+# --------------------------------------------------------------------------
+# parsing The Odds API
+# --------------------------------------------------------------------------
 
 _ODDS_API_MARKETS = {
     "h2h": MARKET_H2H,
@@ -811,55 +1060,477 @@ _ODDS_API_MARKETS = {
     "player_goal_scorer_anytime": MARKET_ANYTIME_SCORER,
 }
 
+#: Exchange lay prices are a different market and must not be averaged in with
+#: back prices; ``h2h_lay`` arrives unrequested alongside ``h2h``.
+_ODDS_API_SKIP_MARKETS = {"h2h_lay", "outrights_lay"}
 
-class OddsApiClient:
-    """Thin client for api.the-odds-api.com v4.
 
-    Not exercised against the live service anywhere in this repo: creating the
-    account that issues the key is the account holder's decision, not the
-    engine's. Every request costs ``markets x regions`` credits against a
-    500/month free allowance, so :meth:`anytime_scorers` deliberately fetches
-    one event at a time and reports the quota headers back rather than looping
-    blindly.
+def parse_odds_api_events(
+    payload: list[dict[str, Any]] | dict[str, Any],
+    as_of: dt.datetime,
+    season: str,
+) -> pd.DataFrame:
+    """Flatten a v4 ``/odds`` or ``/events/{id}/odds`` body into ``fact_odds`` rows.
+
+    The trap this function exists to avoid: for player props the player's name
+    is in ``outcome["description"]`` and ``outcome["name"]`` is the literal
+    string ``"Yes"``. Keying the selection on ``name`` yields seventeen
+    identical rows called "Yes" that all collide on the primary key, so sixteen
+    of them vanish silently and the seventeenth is attributed to nobody.
+    Verified against the live payload: every outcome on all three UK books had
+    ``name == "Yes"``.
+
+    Selections are therefore:
+
+    * player props -- the player name from ``description``;
+    * totals -- ``OVER_2.5`` / ``UNDER_2.5`` from ``name`` plus ``point``;
+    * h2h -- ``HOME`` / ``DRAW`` / ``AWAY``, resolved against the event's own
+      team names rather than left as raw club names, so the column means the
+      same thing as it does for football-data.
     """
+    events = payload if isinstance(payload, list) else [payload]
+    rows: list[dict[str, Any]] = []
+    for ev in events:
+        ko = ev.get("commence_time")
+        kickoff = dt.datetime.fromisoformat(str(ko).replace("Z", "+00:00")) if ko else None
+        home, away = ev.get("home_team", ""), ev.get("away_team", "")
+        key = natural_fixture_key(season, kickoff, home, away)
+        for bk in ev.get("bookmakers", []) or []:
+            book = bk.get("key", "unknown")
+            for mkt in bk.get("markets", []) or []:
+                mkey = mkt.get("key")
+                if mkey in _ODDS_API_SKIP_MARKETS:
+                    continue
+                market = _ODDS_API_MARKETS.get(mkey, mkey)
+                for oc in mkt.get("outcomes", []) or []:
+                    price = oc.get("price")
+                    if price is None or float(price) <= 1.0:
+                        continue
+                    sel = _odds_api_selection(mkey, oc, home, away)
+                    if sel is None:
+                        continue
+                    rows.append(_row(key, book, str(market), sel, float(price), as_of))
+    return pd.DataFrame(rows, columns=[
+        "fixture_key", "bookmaker", "market", "selection", "price_decimal", "as_of",
+    ])
 
-    def __init__(self, api_key: str | None, *, fetcher: Fetcher | None = None) -> None:
-        if not api_key:
-            raise OddsApiError(
-                "no Odds API key. Set ODDS_API_KEY; free tier is 500 credits/month "
-                "from https://the-odds-api.com. Historical snapshots are paid-only."
+
+def _odds_api_selection(mkey: str | None, oc: dict[str, Any],
+                        home: str, away: str) -> str | None:
+    name = oc.get("name")
+    desc = oc.get("description")
+    if mkey == "player_goal_scorer_anytime":
+        # "Yes" is not a selection; the player is.
+        if not desc:
+            return None
+        return str(desc)
+    if mkey == "totals":
+        point = oc.get("point")
+        return f"{str(name).upper()}_{point}" if point is not None else None
+    if mkey == "h2h":
+        if name == "Draw":
+            return "DRAW"
+        if name == home:
+            return "HOME"
+        if name == away:
+            return "AWAY"
+        return None
+    return str(desc or name or "") or None
+
+
+# --------------------------------------------------------------------------
+# resolving bookmaker player names to FPL codes
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class NameMatch:
+    """One resolution attempt, successful or not. Never a guess."""
+
+    api_name: str
+    code: int | None
+    web_name: str | None
+    rule: str
+
+
+#: Latin letters that carry a stroke or ligature rather than a combining mark.
+#: ``unicodedata.normalize("NFKD", ...)`` cannot decompose these -- there is no
+#: base letter plus accent to separate -- so ``player_mapping.normalize_name``
+#: strips them as punctuation instead. That turns "Ødegaard" into "degaard" and
+#: the bookmaker's "Odegaard" then fails to match. Folded here, before
+#: normalising, rather than by editing the shared normaliser.
+_LATIN_FOLD = str.maketrans({
+    "ø": "o", "Ø": "o", "æ": "ae", "Æ": "ae", "œ": "oe", "Œ": "oe",
+    "ß": "ss", "đ": "d", "Đ": "d", "ð": "d", "Ð": "d", "ł": "l", "Ł": "l",
+    "þ": "th", "Þ": "th", "ı": "i", "ħ": "h", "ŧ": "t", "ŉ": "n",
+})
+
+
+def fold_name(value: object) -> str:
+    """Normalise a name for comparison, folding stroked letters first.
+
+    Verified on the real GW1 cards: without the fold, "Martin Odegaard" from
+    the bookmaker and "Martin Ødegaard" from FPL do not match.
+    """
+    return normalize_name(str(value).translate(_LATIN_FOLD))
+
+
+def _fpl_name_keys(row: pd.Series) -> tuple[str, set[str]]:
+    full = fold_name(f"{row.get('first_name') or ''} {row.get('second_name') or ''}")
+    return full, set(full.split())
+
+
+def match_player_names(
+    api_names: list[str], squad: pd.DataFrame
+) -> list[NameMatch]:
+    """Resolve bookmaker player names against an FPL squad.
+
+    ``squad`` must already be narrowed to the clubs in the fixture -- that
+    constraint does most of the work, because it removes the possibility of
+    matching a common surname onto the wrong club.
+
+    Rules are tried in order and each must be *unique* among the candidates. An
+    ambiguous match is returned as unmatched with ``rule="ambiguous"`` rather
+    than resolved by picking one, on the same principle as
+    ``player_mapping.PlayerCodeIndex``: two Ben Davieses is a reason to stop,
+    not a reason to choose.
+
+    The rules, and the real cases from GW1 that motivate each:
+
+    1. ``exact_full`` -- "Martin Zubimendi Ibanez" == first+second once
+       diacritics are folded ("Martín" + "Zubimendi Ibáñez").
+    2. ``exact_web`` -- the bookmaker used FPL's short name.
+    3. ``api_subset`` -- API tokens are a subset of the FPL tokens.
+       "Gabriel Martinelli" ⊂ "Gabriel Martinelli Silva".
+    4. ``fpl_subset`` -- the reverse, for when the bookmaker is more verbose.
+       "Magalhaes Gabriel" against FPL "Gabriel dos Santos Magalhães" resolves
+       here because token order is ignored.
+    5. ``surname_initial`` -- last token plus first initial, the last resort.
+    """
+    out: list[NameMatch] = []
+    if squad.empty:
+        return [NameMatch(n, None, None, "no_squad") for n in api_names]
+
+    cand = []
+    for _, r in squad.iterrows():
+        full, toks = _fpl_name_keys(r)
+        cand.append({
+            "code": int(r["code"]), "web": str(r["web_name"]),
+            "web_norm": fold_name(r["web_name"]), "full": full, "toks": toks,
+            "surname": full.split()[-1] if full else "",
+        })
+
+    for name in api_names:
+        norm = fold_name(name)
+        toks = set(norm.split())
+        hit: list[dict[str, Any]] = []
+        rule = "unmatched"
+
+        for label in ("exact_full", "exact_web", "api_subset",
+                      "fpl_subset", "surname_initial"):
+            hit = [c for c in cand if _name_rule(label, norm, toks, c)]
+            if hit:
+                rule = label
+                break
+
+        if len(hit) == 1:
+            out.append(NameMatch(name, hit[0]["code"], hit[0]["web"], rule))
+        elif len(hit) > 1:
+            out.append(NameMatch(name, None, None, "ambiguous"))
+        else:
+            out.append(NameMatch(name, None, None, "unmatched"))
+    return out
+
+
+def _name_rule(rule: str, norm: str, toks: set[str], c: dict[str, Any]) -> bool:
+    """Whether one candidate satisfies one matching rule. See match_player_names."""
+    if rule == "exact_full":
+        return bool(c["full"]) and c["full"] == norm
+    if rule == "exact_web":
+        return bool(c["web_norm"]) and c["web_norm"] == norm
+    if rule == "api_subset":
+        return bool(toks) and toks <= c["toks"]
+    if rule == "fpl_subset":
+        return bool(c["toks"]) and c["toks"] <= toks
+    if rule == "surname_initial":
+        return _surname_initial(toks, c["toks"], c["surname"])
+    raise ValueError(f"unknown name rule {rule!r}")
+
+
+def _surname_initial(api_toks: set[str], fpl_toks: set[str], surname: str) -> bool:
+    """Share the FPL surname and agree on some initial.
+
+    Deliberately anchored on the *last* FPL token rather than any shared token.
+    "Martin Odegaard" and "Martin Zubimendi Ibanez" share the token "martin",
+    and without the surname anchor that collision made Odegaard ambiguous
+    against every other Martin in the fixture.
+    """
+    if not surname or len(surname) <= 3 or surname not in api_toks:
+        return False
+    return bool({t[0] for t in api_toks} & {t[0] for t in fpl_toks})
+
+
+def squad_for_fixture(
+    wh: Warehouse, season: str, as_of: dt.datetime, clubs: list[str]
+) -> pd.DataFrame:
+    """The players of the named FPL clubs, as known at ``as_of``."""
+    snap = wh.snapshot_at(as_of)
+    players = snap.table("dim_player", where="season = ?", params=[season])
+    teams = snap.table("dim_team", where="season = ?", params=[season])
+    if players.empty or teams.empty:
+        return players.iloc[0:0]
+    codes = set(teams[teams["name"].isin(clubs)]["team_code"])
+    return players[players["team_code"].isin(codes)].copy()
+
+
+# --------------------------------------------------------------------------
+# live ingestion for the upcoming gameweek
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class ScorerIngestReport:
+    """Everything a run should be judged on, including what it failed to match."""
+
+    events: int
+    credits_spent: int
+    credits_remaining: int | None
+    credits_used_month: int | None
+    rows_written: int
+    scorer_selections: int
+    matched: int
+    unmatched: list[NameMatch]
+    clean_sheets_written: int
+
+    @property
+    def match_rate(self) -> float:
+        return self.matched / self.scorer_selections if self.scorer_selections else 0.0
+
+
+def _consensus(prices_by_sel: dict[str, list[float]]) -> dict[str, float]:
+    """Mean decimal price per selection across books."""
+    return {k: float(np.mean(v)) for k, v in prices_by_sel.items() if v}
+
+
+def _fixture_goal_rates(featured: pd.DataFrame, key: str) -> GoalRates | None:
+    """De-vigged Poisson rates for one fixture from its h2h (+ totals) rows."""
+    g = featured[featured["fixture_key"] == key]
+    h2h = g[g["market"] == MARKET_H2H]
+    if h2h.empty:
+        return None
+    by_sel: dict[str, list[float]] = {}
+    for _, r in h2h.iterrows():
+        by_sel.setdefault(r["selection"], []).append(r["price_decimal"])
+    avg = _consensus(by_sel)
+    if not {"HOME", "DRAW", "AWAY"} <= set(avg):
+        return None
+    p = devig_shin([avg["HOME"], avg["DRAW"], avg["AWAY"]])
+
+    tot = g[(g["market"] == MARKET_TOTALS) & (g["selection"].str.endswith("_2.5"))]
+    p_over = None
+    if not tot.empty:
+        tb: dict[str, list[float]] = {}
+        for _, r in tot.iterrows():
+            tb.setdefault(r["selection"], []).append(r["price_decimal"])
+        ta = _consensus(tb)
+        if "OVER_2.5" in ta and "UNDER_2.5" in ta:
+            p_over = float(devig_shin([ta["OVER_2.5"], ta["UNDER_2.5"]])[0])
+    try:
+        return fit_goal_rates(float(p[0]), float(p[1]), float(p[2]), p_over)
+    except (ValueError, RuntimeError, np.linalg.LinAlgError):
+        return None
+
+
+def ingest_odds_api_gameweek(
+    wh: Warehouse,
+    season: str,
+    *,
+    api_key: str,
+    client: OddsApiClient | None = None,
+    regions: str = "uk",
+    max_monthly_credits: int = OddsApiClient.DEFAULT_MONTHLY_CAP,
+    scorer_coverage: float = 0.95,
+    dry_run: bool = False,
+) -> ScorerIngestReport:
+    """Fetch and land the next gameweek's odds, including anytime scorer.
+
+    Order of operations is chosen so that nothing is spent until the budget is
+    known to be sufficient:
+
+    1. ``/events`` -- **free**, and returns the quota headers. This is both the
+       fixture list and the balance check.
+    2. :meth:`CreditPlan.check` -- refuses the whole run if it would breach the
+       remaining balance or the configured monthly cap. No partial spend.
+    3. ``/odds`` for h2h + totals -- one call for all events.
+    4. ``/events/{id}/odds`` for anytime scorer -- one call per fixture.
+
+    ``as_of`` is the fetch instant for every row: these prices are observable
+    now, which is what makes them legitimate input to the upcoming deadline.
+
+    Writes four kinds of row to ``fact_odds``:
+
+    * quoted h2h / totals / anytime scorer, one per bookmaker;
+    * ``fair#shin`` de-vigged h2h and totals consensus;
+    * ``derived#poisson`` clean sheets;
+    * ``fair#scorer_power`` anytime-scorer estimates, keyed on the FPL
+      ``code`` so the points model can join them, and written **only** for
+      players that resolved unambiguously.
+    """
+    owns = client is None
+    client = client or OddsApiClient(api_key, max_monthly_credits=max_monthly_credits)
+    try:
+        ev = client.events()
+        events = ev.body
+        plan = CreditPlan(
+            events=0, featured=2, scorer=len(events),
+            cap=max_monthly_credits,
+            used_before=client.quota.used if client.quota else None,
+            remaining_before=client.quota.remaining if client.quota else None,
+        )
+        plan.check()  # raises CreditBudgetExceeded before anything is spent
+        if dry_run:
+            return ScorerIngestReport(
+                events=len(events), credits_spent=0,
+                credits_remaining=plan.remaining_before,
+                credits_used_month=plan.used_before,
+                rows_written=0, scorer_selections=0, matched=0,
+                unmatched=[], clean_sheets_written=0,
             )
-        self.api_key = api_key
-        self._fetcher = fetcher or Fetcher("odds_api", base_url=ODDS_API_BASE)
-        self.last_quota: OddsApiQuota | None = None
 
-    def _get(self, endpoint: str, params: dict[str, Any]) -> Fetched:
-        got = self._fetcher.get_json(endpoint, {**params, "apiKey": self.api_key})
-        return got
+        as_of = ev.fetched_at
+        wh.record_fetch(source="odds_api", endpoint="events", params=None,
+                        fetched_at=as_of, sha256=ev.sha256,
+                        body_path=str(ev.body_path), http_status=ev.http_status)
 
-    def events(self, sport: str = "soccer_epl") -> Fetched:
-        """List upcoming events. Costs 0 credits."""
-        return self._get(f"sports/{sport}/events", {})
+        # -- featured markets, one call ---------------------------------
+        feat = client.featured_odds(regions=regions)
+        wh.record_fetch(source="odds_api", endpoint="odds", params=f"regions={regions}",
+                        fetched_at=feat.fetched_at, sha256=feat.sha256,
+                        body_path=str(feat.body_path), http_status=feat.http_status)
+        featured = parse_odds_api_events(feat.body, feat.fetched_at, season)
 
-    def featured_odds(self, sport: str = "soccer_epl", regions: str = "uk",
-                      markets: str = "h2h,totals") -> Fetched:
-        """h2h/totals for every upcoming event. Costs len(markets) x len(regions)."""
-        return self._get(f"sports/{sport}/odds",
-                         {"regions": regions, "markets": markets, "oddsFormat": "decimal"})
+        # -- per-event scorer cards -------------------------------------
+        scorer_frames, payloads = [], {}
+        for e in events:
+            got = client.anytime_scorers(e["id"], regions=regions)
+            wh.record_fetch(source="odds_api", endpoint=f"events/{e['id']}/odds",
+                            params=f"regions={regions}", fetched_at=got.fetched_at,
+                            sha256=got.sha256, body_path=str(got.body_path),
+                            http_status=got.http_status)
+            payloads[e["id"]] = got.body
+            scorer_frames.append(parse_odds_api_events(got.body, got.fetched_at, season))
+        scorer = pd.concat(scorer_frames, ignore_index=True) if scorer_frames else pd.DataFrame()
 
-    def anytime_scorers(self, event_id: str, sport: str = "soccer_epl",
-                        regions: str = "us") -> Fetched:
-        """Anytime-scorer prices for one event.
-
-        Soccer player props are documented as available for the EPL but with
-        coverage "currently limited to US bookmakers", hence the ``us`` default
-        region. One credit per call at one market/one region.
-        """
-        return self._get(
-            f"sports/{sport}/events/{event_id}/odds",
-            {"regions": regions, "markets": "player_goal_scorer_anytime",
-             "oddsFormat": "decimal"},
+        quoted = pd.concat([featured, scorer], ignore_index=True)
+        derived, matches = _derive_live_rows(
+            wh, season, as_of, events, featured, payloads, scorer_coverage
         )
 
-    def close(self) -> None:
-        self._fetcher.close()
+        all_rows = pd.concat([quoted, derived], ignore_index=True) if len(derived) else quoted
+        written = wh.append("fact_odds", all_rows)
+
+        return ScorerIngestReport(
+            events=len(events),
+            credits_spent=client.spent_this_run,
+            credits_remaining=client.quota.remaining if client.quota else None,
+            credits_used_month=client.quota.used if client.quota else None,
+            rows_written=written,
+            scorer_selections=len(matches),
+            matched=sum(1 for m in matches if m.code is not None),
+            unmatched=[m for m in matches if m.code is None],
+            clean_sheets_written=int((derived["market"] == MARKET_CLEAN_SHEET).sum())
+            if len(derived) else 0,
+        )
+    finally:
+        if owns:
+            client.close()
+
+
+def _derive_live_rows(
+    wh: Warehouse,
+    season: str,
+    as_of: dt.datetime,
+    events: list[dict[str, Any]],
+    featured: pd.DataFrame,
+    payloads: dict[str, Any],
+    coverage: float,
+) -> tuple[pd.DataFrame, list[NameMatch]]:
+    """Fair h2h/totals, clean sheets, and code-keyed scorer probabilities."""
+    snap_teams = wh.snapshot_at(as_of).table("dim_team", where="season = ?", params=[season])
+    fpl_names = set(snap_teams["name"]) if not snap_teams.empty else set()
+
+    rows: list[dict[str, Any]] = []
+    all_matches: list[NameMatch] = []
+
+    for e in events:
+        ko = dt.datetime.fromisoformat(str(e["commence_time"]).replace("Z", "+00:00"))
+        key = natural_fixture_key(season, ko, e["home_team"], e["away_team"])
+        rates = _fixture_goal_rates(featured, key)
+
+        # fair consensus + clean sheets
+        if rates is not None:
+            cs_home, cs_away = clean_sheet_probs(rates)
+            for sel, prob in (("HOME", cs_home), ("AWAY", cs_away)):
+                if 0.0 < prob < 1.0:
+                    rows.append(_row(key, "derived#poisson", MARKET_CLEAN_SHEET,
+                                     sel, 1.0 / prob, as_of))
+
+        # scorer card -> per-team fair probabilities, keyed on FPL code
+        payload = payloads.get(e["id"])
+        if payload is None or rates is None:
+            continue
+        by_player: dict[str, list[float]] = {}
+        for bk in payload.get("bookmakers", []) or []:
+            for m in bk.get("markets", []) or []:
+                if m.get("key") != "player_goal_scorer_anytime":
+                    continue
+                for oc in m.get("outcomes", []) or []:
+                    if oc.get("description") and oc.get("price", 0) > 1.0:
+                        by_player.setdefault(str(oc["description"]), []).append(
+                            float(oc["price"]))
+        if not by_player:
+            continue
+        avg = _consensus(by_player)
+
+        try:
+            clubs = [resolve_team_name(e["home_team"], fpl_names),
+                     resolve_team_name(e["away_team"], fpl_names)]
+        except OddsApiError:
+            all_matches.extend(NameMatch(n, None, None, "club_unresolved") for n in avg)
+            continue
+
+        squad = squad_for_fixture(wh, season, as_of, clubs)
+        matches = match_player_names(sorted(avg), squad)
+        all_matches.extend(matches)
+
+        # Anchor each club's card to that club's own expected goals. Cards are
+        # per-club in this feed, so anchoring to the match total would inflate
+        # every rate by the opponent's share.
+        code_to_club = {}
+        if not squad.empty and not snap_teams.empty:
+            club_by_code = dict(zip(snap_teams["team_code"], snap_teams["name"]))
+            code_to_club = {int(r["code"]): club_by_code.get(r["team_code"])
+                            for _, r in squad.iterrows()}
+        lam = {clubs[0]: rates.home, clubs[1]: rates.away}
+
+        per_club: dict[str, list[NameMatch]] = {}
+        for m in matches:
+            if m.code is None:
+                continue
+            per_club.setdefault(code_to_club.get(m.code) or clubs[0], []).append(m)
+
+        for club, members in per_club.items():
+            prices = [avg[m.api_name] for m in members]
+            eg = lam.get(club)
+            if not eg or eg <= 0:
+                continue
+            fair = devig_anytime_scorer(prices, eg, coverage=coverage, method="power")
+            for m, p in zip(members, fair):
+                if 0.0 < float(p) < 1.0:
+                    rows.append(_row(key, "fair#scorer_power", MARKET_ANYTIME_SCORER,
+                                     str(m.code), 1.0 / float(p), as_of))
+
+    df = pd.DataFrame(rows, columns=[
+        "fixture_key", "bookmaker", "market", "selection", "price_decimal", "as_of",
+    ])
+    return df, all_matches

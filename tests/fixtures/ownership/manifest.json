@@ -1,0 +1,100 @@
+{
+ "source": "https://github.com/vaastav/Fantasy-Premier-League",
+ "inseason_panel": {
+  "seasons": [
+   "2021-22",
+   "2022-23",
+   "2023-24",
+   "2024-25",
+   "2025-26"
+  ],
+  "rows": 124580,
+  "derivation": "gws/merged_gw.csv per season; deduped to one row per (element, GW) taking max of selected/transfers/value and summing points over double gameweeks; element_type 5 (Manager, 2025-26 only) dropped; field size N(gw)=sum(selected)/15; own=selected/N; flow=(transfers_in-transfers_out)/N."
+ },
+ "coldstart_pairs": {
+  "seasons": [
+   "2022-23",
+   "2023-24",
+   "2024-25",
+   "2025-26"
+  ],
+  "rows": 4646,
+  "derivation": "players_raw.csv read at historical git revisions dated before each GW1 deadline (deadline derived as first GW1 kickoff minus 90 minutes per rules.deadlines.offset_before_first_kickoff_minutes); own_true is realised GW1 ownership from gws/gw1.csv normalised by sum(selected)/15.",
+  "revisions": {
+   "2022-23": [
+    {
+     "sha": "f6a056f7c0a6481a08dfce8876c863c194bd7a3e",
+     "date": "2022-07-16T16:13:47+00:00",
+     "days_to_deadline": 20.0529
+    },
+    {
+     "sha": "ca894952548be42c1d41b25c182e847568ffd52f",
+     "date": "2022-07-16T16:28:36+00:00",
+     "days_to_deadline": 20.0426
+    },
+    {
+     "sha": "1b8399b713c6cbd76ce7d312422f8cc13451bbea",
+     "date": "2022-08-01T16:11:16+00:00",
+     "days_to_deadline": 4.0547
+    },
+    {
+     "sha": "5f2aa325ee811cb8f5dae07dba436f7323b35922",
+     "date": "2022-08-08T08:28:48+00:00",
+     "days_to_deadline": -2.6242
+    }
+   ],
+   "2023-24": [
+    {
+     "sha": "9ba09ce183b51e13c26f44295ac10803426ab24f",
+     "date": "2023-07-31T13:29:10+00:00",
+     "days_to_deadline": 11.1672
+    },
+    {
+     "sha": "a5fe899bd3104fd0f197a2e5f9cef7121a792a21",
+     "date": "2023-08-10T08:10:56+00:00",
+     "days_to_deadline": 1.3882
+    },
+    {
+     "sha": "be15e285f106d1becc6f24c0c470ec9ada8c935a",
+     "date": "2023-08-16T02:35:27+00:00",
+     "days_to_deadline": -4.3788
+    }
+   ],
+   "2024-25": [
+    {
+     "sha": "754b30c54394651bf6722fe47b4896d44c355ddd",
+     "date": "2024-08-02T08:16:31+00:00",
+     "days_to_deadline": 14.3844
+    },
+    {
+     "sha": "c43f0d83d2b9d769c8dadb64959c16b01713cfaa",
+     "date": "2024-08-15T17:16:49+00:00",
+     "days_to_deadline": 1.0092
+    },
+    {
+     "sha": "403e10b7b661252698745d1101d1086cec31e0f1",
+     "date": "2024-08-20T08:46:13+00:00",
+     "days_to_deadline": -3.6363
+    }
+   ],
+   "2025-26": [
+    {
+     "sha": "46277afda009b340e738336dabc4b0822dd80c57",
+     "date": "2025-08-01T08:49:42+00:00",
+     "days_to_deadline": 14.3613
+    },
+    {
+     "sha": "e930bb766ff82d6dff6a47f40eefd4e65bba29ef",
+     "date": "2025-08-20T07:59:03+00:00",
+     "days_to_deadline": -4.6035
+    }
+   ]
+  },
+  "gw1_deadlines": {
+   "2022-23": "2022-08-05T17:30:00+00:00",
+   "2023-24": "2023-08-11T17:30:00+00:00",
+   "2024-25": "2024-08-16T17:30:00+00:00",
+   "2025-26": "2025-08-15T17:30:00+00:00"
+  }
+ }
+}

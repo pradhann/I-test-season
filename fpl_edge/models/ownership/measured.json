@@ -1,0 +1,600 @@
+{
+ "trained_through": "2025-26 (five real seasons; leave-one-season-out)",
+ "inseason": {
+  "n": 78258,
+  "model": 0.38692181175605617,
+  "persistence": 0.4817828638700553,
+  "momentum": 0.5211069816974374,
+  "coverage": {
+   "0.50": 0.5035906872140867,
+   "0.80": 0.7985509468680518,
+   "0.95": 0.9483886631398707
+  },
+  "lift_vs_persistence": 0.1969,
+  "lift_vs_momentum": 0.2575
+ },
+ "inseason_by_season": [
+  {
+   "season": "2021-22",
+   "n": 15021,
+   "model": 0.4882,
+   "persistence": 0.6296,
+   "momentum": 0.6807,
+   "cover_0.50": 0.4378,
+   "cover_0.80": 0.7523,
+   "cover_0.95": 0.9276
+  },
+  {
+   "season": "2022-23",
+   "n": 14740,
+   "model": 0.3861,
+   "persistence": 0.5202,
+   "momentum": 0.5656,
+   "cover_0.50": 0.4587,
+   "cover_0.80": 0.7767,
+   "cover_0.95": 0.9541
+  },
+  {
+   "season": "2023-24",
+   "n": 14941,
+   "model": 0.4351,
+   "persistence": 0.5104,
+   "momentum": 0.5526,
+   "cover_0.50": 0.5054,
+   "cover_0.80": 0.7846,
+   "cover_0.95": 0.9317
+  },
+  {
+   "season": "2024-25",
+   "n": 16240,
+   "model": 0.3231,
+   "persistence": 0.3975,
+   "momentum": 0.4326,
+   "cover_0.50": 0.56,
+   "cover_0.80": 0.8427,
+   "cover_0.95": 0.9672
+  },
+  {
+   "season": "2025-26",
+   "n": 17316,
+   "model": 0.3181,
+   "persistence": 0.3751,
+   "momentum": 0.4006,
+   "cover_0.50": 0.5445,
+   "cover_0.80": 0.8279,
+   "cover_0.95": 0.9583
+  }
+ ],
+ "coldstart": {
+  "n": 4646,
+  "model": 0.5936174870766197,
+  "persistence": 0.6367732080743805,
+  "momentum": 0.6162024225185958,
+  "coverage": {
+   "0.50": 0.501721911321567,
+   "0.80": 0.7946620749031424,
+   "0.95": 0.9489883770985794
+  },
+  "lift_vs_persistence": 0.0678,
+  "lift_vs_momentum": 0.0367
+ },
+ "coldstart_by_snapshot": [
+  {
+   "season": "2022-23",
+   "days_to_deadline": 4.05,
+   "n": 536,
+   "regime": "far",
+   "model": 0.2921,
+   "persistence": 0.4097,
+   "momentum": 0.3256,
+   "momentum_kind": "drift from T-20.04d",
+   "model_own_ge_1pct": 0.6919,
+   "persistence_own_ge_1pct": 0.9888,
+   "cover_0.50": 0.5933,
+   "cover_0.80": 0.8358,
+   "cover_0.95": 0.9795
+  },
+  {
+   "season": "2022-23",
+   "days_to_deadline": 20.04,
+   "n": 519,
+   "regime": "far",
+   "model": 0.8932,
+   "persistence": 0.9296,
+   "momentum": 0.9296,
+   "momentum_kind": "fallback:persistence",
+   "model_own_ge_1pct": 1.942,
+   "persistence_own_ge_1pct": 2.0217,
+   "cover_0.50": 0.5665,
+   "cover_0.80": 0.8285,
+   "cover_0.95": 0.9653
+  },
+  {
+   "season": "2022-23",
+   "days_to_deadline": 20.05,
+   "n": 519,
+   "regime": "far",
+   "model": 0.9135,
+   "persistence": 0.9526,
+   "momentum": 0.9526,
+   "momentum_kind": "fallback:persistence",
+   "model_own_ge_1pct": 2.0052,
+   "persistence_own_ge_1pct": 2.0945,
+   "cover_0.50": 0.5472,
+   "cover_0.80": 0.8227,
+   "cover_0.95": 0.9595
+  },
+  {
+   "season": "2023-24",
+   "days_to_deadline": 1.39,
+   "n": 616,
+   "regime": "near",
+   "model": 0.2354,
+   "persistence": 0.2858,
+   "momentum": 0.2398,
+   "momentum_kind": "drift from T-11.17d",
+   "model_own_ge_1pct": 0.7159,
+   "persistence_own_ge_1pct": 0.878,
+   "cover_0.50": 0.3636,
+   "cover_0.80": 0.6932,
+   "cover_0.95": 0.9156
+  },
+  {
+   "season": "2023-24",
+   "days_to_deadline": 11.17,
+   "n": 610,
+   "regime": "far",
+   "model": 0.7387,
+   "persistence": 0.7607,
+   "momentum": 0.7607,
+   "momentum_kind": "fallback:persistence",
+   "model_own_ge_1pct": 2.2643,
+   "persistence_own_ge_1pct": 2.3145,
+   "cover_0.50": 0.5049,
+   "cover_0.80": 0.7508,
+   "cover_0.95": 0.9525
+  },
+  {
+   "season": "2024-25",
+   "days_to_deadline": 1.01,
+   "n": 594,
+   "regime": "near",
+   "model": 0.125,
+   "persistence": 0.1885,
+   "momentum": 0.1513,
+   "momentum_kind": "drift from T-14.38d",
+   "model_own_ge_1pct": 0.3253,
+   "persistence_own_ge_1pct": 0.5098,
+   "cover_0.50": 0.5253,
+   "cover_0.80": 0.8468,
+   "cover_0.95": 0.9394
+  },
+  {
+   "season": "2024-25",
+   "days_to_deadline": 14.38,
+   "n": 584,
+   "regime": "far",
+   "model": 0.7472,
+   "persistence": 0.7571,
+   "momentum": 0.7571,
+   "momentum_kind": "fallback:persistence",
+   "model_own_ge_1pct": 2.0658,
+   "persistence_own_ge_1pct": 2.0857,
+   "cover_0.50": 0.4966,
+   "cover_0.80": 0.7962,
+   "cover_0.95": 0.9555
+  },
+  {
+   "season": "2025-26",
+   "days_to_deadline": 14.36,
+   "n": 668,
+   "regime": "far",
+   "model": 0.8346,
+   "persistence": 0.8499,
+   "momentum": 0.8499,
+   "momentum_kind": "fallback:persistence",
+   "model_own_ge_1pct": 2.547,
+   "persistence_own_ge_1pct": 2.5809,
+   "cover_0.50": 0.4506,
+   "cover_0.80": 0.7994,
+   "cover_0.95": 0.9341
+  }
+ ],
+ "coldstart_near_deadline": {
+  "n_snapshots": 3,
+  "n_rows": 1746,
+  "model": 0.2152232834555284,
+  "persistence": 0.29073571531662395,
+  "momentum": 0.23599810380907732,
+  "model_own_ge_1pct": 0.5756537319044687,
+  "persistence_own_ge_1pct": 0.7867567448696033
+ },
+ "captaincy_simulated": {
+  "basis": "simulated field; no public captaincy-share series exists",
+  "n_managers": 4000,
+  "n_seasons": 3,
+  "n_players_scored": 1746,
+  "model_gw1_no_prior": 0.0758023874962509,
+  "model_with_prior": 0.05709113978030297,
+  "persistence": 0.05966339837608495,
+  "proportional": 0.2397450414637208,
+  "kappa_fitted": [
+   0.4,
+   0.42,
+   0.46
+  ],
+  "blend_weight_fitted": [
+   0.6,
+   0.75,
+   0.65
+  ],
+  "lift_vs_persistence": 0.0431,
+  "lift_vs_proportional": 0.6838
+ },
+ "captaincy_by_season": [
+  {
+   "season": "2022-23",
+   "n": 536,
+   "kappa": 0.4,
+   "blend_weight": 0.6,
+   "model_gw1_no_prior": 0.0772,
+   "model_with_prior": 0.0504,
+   "proportional": 0.2659,
+   "persistence": 0.0509,
+   "top_share_true": 0.3558,
+   "top_share_model": 0.2711
+  },
+  {
+   "season": "2023-24",
+   "n": 616,
+   "kappa": 0.42,
+   "blend_weight": 0.75,
+   "model_gw1_no_prior": 0.0527,
+   "model_with_prior": 0.0583,
+   "proportional": 0.2243,
+   "persistence": 0.0675,
+   "top_share_true": 0.4898,
+   "top_share_model": 0.524
+  },
+  {
+   "season": "2024-25",
+   "n": 594,
+   "kappa": 0.46,
+   "blend_weight": 0.65,
+   "model_gw1_no_prior": 0.0974,
+   "model_with_prior": 0.0625,
+   "proportional": 0.229,
+   "persistence": 0.0606,
+   "top_share_true": 0.32,
+   "top_share_model": 0.5525
+  }
+ ],
+ "gw1_uncertainty": [
+  {
+   "season": "2022-23",
+   "days_to_deadline": 4.05,
+   "band": "<1%",
+   "n": 337,
+   "mean_abs_move_pp": 0.068,
+   "p90_abs_move_pp": 0.137,
+   "max_abs_move_pp": 0.789,
+   "mean_signed_move_pp": -0.032
+  },
+  {
+   "season": "2022-23",
+   "days_to_deadline": 4.05,
+   "band": "1-5%",
+   "n": 128,
+   "mean_abs_move_pp": 0.572,
+   "p90_abs_move_pp": 0.993,
+   "max_abs_move_pp": 21.596,
+   "mean_signed_move_pp": 0.004
+  },
+  {
+   "season": "2022-23",
+   "days_to_deadline": 4.05,
+   "band": "5-15%",
+   "n": 47,
+   "mean_abs_move_pp": 1.45,
+   "p90_abs_move_pp": 3.273,
+   "max_abs_move_pp": 9.659,
+   "mean_signed_move_pp": -0.223
+  },
+  {
+   "season": "2022-23",
+   "days_to_deadline": 4.05,
+   "band": ">15%",
+   "n": 24,
+   "mean_abs_move_pp": 2.31,
+   "p90_abs_move_pp": 5.052,
+   "max_abs_move_pp": 6.544,
+   "mean_signed_move_pp": 0.586
+  },
+  {
+   "season": "2022-23",
+   "days_to_deadline": 20.04,
+   "band": "<1%",
+   "n": 315,
+   "mean_abs_move_pp": 0.222,
+   "p90_abs_move_pp": 0.297,
+   "max_abs_move_pp": 17.659,
+   "mean_signed_move_pp": 0.085
+  },
+  {
+   "season": "2022-23",
+   "days_to_deadline": 20.04,
+   "band": "1-5%",
+   "n": 134,
+   "mean_abs_move_pp": 0.978,
+   "p90_abs_move_pp": 2.008,
+   "max_abs_move_pp": 23.296,
+   "mean_signed_move_pp": -0.126
+  },
+  {
+   "season": "2022-23",
+   "days_to_deadline": 20.04,
+   "band": "5-15%",
+   "n": 48,
+   "mean_abs_move_pp": 2.489,
+   "p90_abs_move_pp": 5.293,
+   "max_abs_move_pp": 8.73,
+   "mean_signed_move_pp": -0.344
+  },
+  {
+   "season": "2022-23",
+   "days_to_deadline": 20.04,
+   "band": ">15%",
+   "n": 22,
+   "mean_abs_move_pp": 7.358,
+   "p90_abs_move_pp": 16.443,
+   "max_abs_move_pp": 20.344,
+   "mean_signed_move_pp": -0.955
+  },
+  {
+   "season": "2022-23",
+   "days_to_deadline": 20.05,
+   "band": "<1%",
+   "n": 320,
+   "mean_abs_move_pp": 0.242,
+   "p90_abs_move_pp": 0.337,
+   "max_abs_move_pp": 17.659,
+   "mean_signed_move_pp": 0.106
+  },
+  {
+   "season": "2022-23",
+   "days_to_deadline": 20.05,
+   "band": "1-5%",
+   "n": 129,
+   "mean_abs_move_pp": 0.977,
+   "p90_abs_move_pp": 1.981,
+   "max_abs_move_pp": 23.296,
+   "mean_signed_move_pp": -0.139
+  },
+  {
+   "season": "2022-23",
+   "days_to_deadline": 20.05,
+   "band": "5-15%",
+   "n": 48,
+   "mean_abs_move_pp": 2.608,
+   "p90_abs_move_pp": 5.341,
+   "max_abs_move_pp": 8.53,
+   "mean_signed_move_pp": -0.467
+  },
+  {
+   "season": "2022-23",
+   "days_to_deadline": 20.05,
+   "band": ">15%",
+   "n": 22,
+   "mean_abs_move_pp": 7.526,
+   "p90_abs_move_pp": 17.273,
+   "max_abs_move_pp": 20.544,
+   "mean_signed_move_pp": -0.932
+  },
+  {
+   "season": "2023-24",
+   "days_to_deadline": 1.39,
+   "band": "<1%",
+   "n": 441,
+   "mean_abs_move_pp": 0.051,
+   "p90_abs_move_pp": 0.088,
+   "max_abs_move_pp": 0.882,
+   "mean_signed_move_pp": -0.023
+  },
+  {
+   "season": "2023-24",
+   "days_to_deadline": 1.39,
+   "band": "1-5%",
+   "n": 104,
+   "mean_abs_move_pp": 0.435,
+   "p90_abs_move_pp": 0.809,
+   "max_abs_move_pp": 10.31,
+   "mean_signed_move_pp": 0.004
+  },
+  {
+   "season": "2023-24",
+   "days_to_deadline": 1.39,
+   "band": "5-15%",
+   "n": 45,
+   "mean_abs_move_pp": 1.164,
+   "p90_abs_move_pp": 2.797,
+   "max_abs_move_pp": 9.57,
+   "mean_signed_move_pp": -0.381
+  },
+  {
+   "season": "2023-24",
+   "days_to_deadline": 1.39,
+   "band": ">15%",
+   "n": 26,
+   "mean_abs_move_pp": 2.155,
+   "p90_abs_move_pp": 4.358,
+   "max_abs_move_pp": 9.939,
+   "mean_signed_move_pp": 1.021
+  },
+  {
+   "season": "2023-24",
+   "days_to_deadline": 11.17,
+   "band": "<1%",
+   "n": 435,
+   "mean_abs_move_pp": 0.136,
+   "p90_abs_move_pp": 0.249,
+   "max_abs_move_pp": 14.01,
+   "mean_signed_move_pp": 0.003
+  },
+  {
+   "season": "2023-24",
+   "days_to_deadline": 11.17,
+   "band": "1-5%",
+   "n": 101,
+   "mean_abs_move_pp": 0.873,
+   "p90_abs_move_pp": 1.783,
+   "max_abs_move_pp": 8.898,
+   "mean_signed_move_pp": 0.211
+  },
+  {
+   "season": "2023-24",
+   "days_to_deadline": 11.17,
+   "band": "5-15%",
+   "n": 50,
+   "mean_abs_move_pp": 3.091,
+   "p90_abs_move_pp": 7.297,
+   "max_abs_move_pp": 20.939,
+   "mean_signed_move_pp": 0.351
+  },
+  {
+   "season": "2023-24",
+   "days_to_deadline": 11.17,
+   "band": ">15%",
+   "n": 24,
+   "mean_abs_move_pp": 6.764,
+   "p90_abs_move_pp": 13.41,
+   "max_abs_move_pp": 28.611,
+   "mean_signed_move_pp": -1.817
+  },
+  {
+   "season": "2024-25",
+   "days_to_deadline": 1.01,
+   "band": "<1%",
+   "n": 406,
+   "mean_abs_move_pp": 0.04,
+   "p90_abs_move_pp": 0.072,
+   "max_abs_move_pp": 0.366,
+   "mean_signed_move_pp": -0.022
+  },
+  {
+   "season": "2024-25",
+   "days_to_deadline": 1.01,
+   "band": "1-5%",
+   "n": 115,
+   "mean_abs_move_pp": 0.253,
+   "p90_abs_move_pp": 0.57,
+   "max_abs_move_pp": 1.995,
+   "mean_signed_move_pp": 0.004
+  },
+  {
+   "season": "2024-25",
+   "days_to_deadline": 1.01,
+   "band": "5-15%",
+   "n": 48,
+   "mean_abs_move_pp": 0.65,
+   "p90_abs_move_pp": 1.204,
+   "max_abs_move_pp": 3.851,
+   "mean_signed_move_pp": 0.055
+  },
+  {
+   "season": "2024-25",
+   "days_to_deadline": 1.01,
+   "band": ">15%",
+   "n": 25,
+   "mean_abs_move_pp": 1.421,
+   "p90_abs_move_pp": 2.658,
+   "max_abs_move_pp": 3.579,
+   "mean_signed_move_pp": 0.158
+  },
+  {
+   "season": "2024-25",
+   "days_to_deadline": 14.38,
+   "band": "<1%",
+   "n": 397,
+   "mean_abs_move_pp": 0.131,
+   "p90_abs_move_pp": 0.231,
+   "max_abs_move_pp": 5.895,
+   "mean_signed_move_pp": -0.001
+  },
+  {
+   "season": "2024-25",
+   "days_to_deadline": 14.38,
+   "band": "1-5%",
+   "n": 106,
+   "mean_abs_move_pp": 1.039,
+   "p90_abs_move_pp": 1.813,
+   "max_abs_move_pp": 14.984,
+   "mean_signed_move_pp": 0.189
+  },
+  {
+   "season": "2024-25",
+   "days_to_deadline": 14.38,
+   "band": "5-15%",
+   "n": 59,
+   "mean_abs_move_pp": 2.678,
+   "p90_abs_move_pp": 5.031,
+   "max_abs_move_pp": 19.761,
+   "mean_signed_move_pp": -0.168
+  },
+  {
+   "season": "2024-25",
+   "days_to_deadline": 14.38,
+   "band": ">15%",
+   "n": 22,
+   "mean_abs_move_pp": 5.541,
+   "p90_abs_move_pp": 14.401,
+   "max_abs_move_pp": 17.779,
+   "mean_signed_move_pp": -1.071
+  },
+  {
+   "season": "2025-26",
+   "days_to_deadline": 14.36,
+   "band": "<1%",
+   "n": 474,
+   "mean_abs_move_pp": 0.141,
+   "p90_abs_move_pp": 0.243,
+   "max_abs_move_pp": 7.378,
+   "mean_signed_move_pp": -0.001
+  },
+  {
+   "season": "2025-26",
+   "days_to_deadline": 14.36,
+   "band": "1-5%",
+   "n": 122,
+   "mean_abs_move_pp": 1.188,
+   "p90_abs_move_pp": 2.593,
+   "max_abs_move_pp": 18.56,
+   "mean_signed_move_pp": 0.141
+  },
+  {
+   "season": "2025-26",
+   "days_to_deadline": 14.36,
+   "band": "5-15%",
+   "n": 45,
+   "mean_abs_move_pp": 4.48,
+   "p90_abs_move_pp": 11.136,
+   "max_abs_move_pp": 24.303,
+   "mean_signed_move_pp": 0.624
+  },
+  {
+   "season": "2025-26",
+   "days_to_deadline": 14.36,
+   "band": ">15%",
+   "n": 27,
+   "mean_abs_move_pp": 5.708,
+   "p90_abs_move_pp": 13.423,
+   "max_abs_move_pp": 22.901,
+   "mean_signed_move_pp": -2.265
+  }
+ ],
+ "notes": [
+  "Ownership MAE is measured against real realised ownership from vaastav/Fantasy-Premier-League, leave-one-season-out over 2021-22..2025-26.",
+  "GW1 cold start is measured against real pre-deadline snapshots recovered from that dataset's git history at T-1, T-4, T-11, T-14 and T-20 days.",
+  "Captaincy MAE is measured on a SIMULATED field: no public per-player captaincy-share series exists. It is a test of functional form, not of real manager behaviour.",
+  "Top-10k ownership is a PRIOR, not a measurement. The overall league standings are empty and every picks endpoint returns 404 before the first deadline, verified against the live API on 2026-08-18."
+ ]
+}

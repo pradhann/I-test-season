@@ -26,9 +26,12 @@ import sys
 
 from fpl_edge.ingest.odds import (
     FOOTBALL_DATA_BASE,
+    CreditBudgetExceeded,
+    OddsApiClient,
     TextFetcher,
     ingest_football_data,
     ingest_football_data_fixtures,
+    ingest_odds_api_gameweek,
     match_fixture_keys,
 )
 from fpl_edge.store import Warehouse
@@ -51,10 +54,20 @@ def main(argv: list[str] | None = None) -> int:
                     help="overround removal method for the derived fair lines")
     ap.add_argument("--match-fixtures", metavar="SEASON",
                     help="report how many odds keys resolve to FPL fixture ids")
+    ap.add_argument("--odds-api", action="store_true",
+                    help="fetch anytime-scorer + h2h/totals from The Odds API")
+    ap.add_argument("--regions", default="uk", help="Odds API regions (default uk)")
+    ap.add_argument("--max-credits", type=int,
+                    default=OddsApiClient.DEFAULT_MONTHLY_CAP,
+                    help=f"monthly credit cap; refuse to run above it "
+                         f"(default {OddsApiClient.DEFAULT_MONTHLY_CAP} of 500 free)")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="price the run against the live quota and stop, spending 0")
     args = ap.parse_args(argv)
 
-    if not args.history and not args.fixtures and not args.match_fixtures:
-        ap.error("nothing to do: pass --history, --fixtures or --match-fixtures")
+    if not any((args.history, args.fixtures, args.match_fixtures, args.odds_api)):
+        ap.error("nothing to do: pass --history, --fixtures, --odds-api "
+                 "or --match-fixtures")
 
     with Warehouse() as wh, TextFetcher(
         "odds_football_data", base_url=FOOTBALL_DATA_BASE
@@ -74,6 +87,9 @@ def main(argv: list[str] | None = None) -> int:
                 print("  note: football-data publishes E0 fixtures only a day or two "
                       "ahead of kickoff; zero rows here is normal this far out.")
 
+        if args.odds_api:
+            _run_odds_api(wh, args)
+
         if args.match_fixtures:
             m = match_fixture_keys(wh, args.match_fixtures,
                                    dt.datetime.now(dt.UTC))
@@ -83,6 +99,41 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"    unmatched: {r['fixture_key']}")
 
     return 0
+
+
+def _run_odds_api(wh: Warehouse, args: argparse.Namespace) -> None:
+    """Fetch The Odds API, reporting credit spend and name-match rate.
+
+    Budget failures are reported and swallowed rather than raised: a run that
+    would breach the cap has spent nothing, and the football-data path in the
+    same invocation should still be allowed to finish.
+    """
+    from fpl_edge.config import secret
+
+    try:
+        report = ingest_odds_api_gameweek(
+            wh, args.season, api_key=secret("ODDS_API_KEY"),
+            regions=args.regions, max_monthly_credits=args.max_credits,
+            dry_run=args.dry_run,
+        )
+    except CreditBudgetExceeded as exc:
+        print(f"  odds-api REFUSED: {exc}")
+        return
+
+    tag = "dry-run (0 spent)" if args.dry_run else "live"
+    print(f"  odds-api {tag}: {report.events} events, "
+          f"{report.credits_spent} credits spent, "
+          f"{report.credits_remaining} remaining, "
+          f"{report.credits_used_month} used this month (cap {args.max_credits})")
+    if args.dry_run:
+        return
+    print(f"  odds-api rows written {report.rows_written}, "
+          f"clean sheets {report.clean_sheets_written}")
+    print(f"  odds-api player match rate "
+          f"{report.matched}/{report.scorer_selections} "
+          f"({100 * report.match_rate:.1f}%)")
+    for m in report.unmatched:
+        print(f"    UNMATCHED scorer selection: {m.api_name!r} [{m.rule}]")
 
 
 if __name__ == "__main__":

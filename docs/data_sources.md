@@ -19,15 +19,18 @@ subscriptions**.
 
 ## 1. The headline findings
 
-1. **No free source publishes anytime-goalscorer odds.** Not one. The Odds API
-   is the only source found that carries `player_goal_scorer_anytime` for the
-   EPL at all — and its free tier does cover it. Pinnacle, Betfair and
-   football-data.co.uk do not offer the market in any tier.
+1. **No free source publishes anytime-goalscorer odds except The Odds API.**
+   It is the only source found that carries `player_goal_scorer_anytime` for
+   the EPL at all — and its free tier does cover it, now confirmed live.
+   Pinnacle, Betfair and football-data.co.uk do not offer the market in any
+   tier.
 2. **The Odds API's *free* tier is sufficient for live anytime-scorer
-   ingestion.** At 1 credit per event per market per region, a full gameweek of
-   scorer prices costs ~10 credits against a 500/month allowance. The paid tiers
-   buy *history*, not live coverage. This inverts the obvious assumption and is
-   the single most consequential finding here.
+   ingestion — now confirmed by running it.** A complete gameweek (10 fixtures,
+   h2h + totals + anytime scorer) costs **12 credits** against a 500/month
+   allowance: `/events` is free, `/odds` is 2, and each event's scorer card is
+   1. That is ~48 credits a month, under 10% of the free allowance. The paid
+   tiers buy *history*, not live coverage. This inverts the obvious assumption
+   and is the single most consequential finding here.
 3. **Clean-sheet probabilities do not need to be bought.** They can be derived
    from free 1X2 + Over/Under 2.5 odds. Measured against 2,280 realised
    Premier League team-matches, the derivation scores a Brier of 0.1671 against
@@ -47,7 +50,7 @@ subscriptions**.
 | Source | Cost | Anytime scorer? | Other markets | Historical depth | Rate limit | Reliability | ToS / robots | Verdict |
 |---|---|---|---|---|---|---|---|---|
 | **football-data.co.uk** | Free | **No** | 1X2, O/U 2.5, Asian handicap, from ~20 books incl. Pinnacle + Betfair Exchange | **1993-94 → 2025-26**; O/U 2.5 from 2005-06 | None observed (9 sequential fetches, no 429, no throttling) | HTTP 200 every request; 203KB for a full season in ~1s | `robots.txt` = `User-agent: * / Disallow:` (**allow all**) | ✅ **Implemented and wired in** |
-| **The Odds API** | Free 500 credits/mo; $30/mo 20K; $59/mo 100K; $119/mo 5M; $249/mo 15M | **Yes** — `player_goal_scorer_anytime` | h2h, totals, spreads, btts, draw_no_bet, team_totals, alternate lines | Featured markets from 2020-06-06; player props from 2023-05-03 — **paid plans only** (documented) | 1 credit per market × region; 429 on bursts, "space requests over several seconds" (documented) | HTTP 401 without a key (clean JSON error with `error_code`) | Commercial API, key required | ⚠️ **Client implemented; needs a key the account holder must create** |
+| **The Odds API** | Free 500 credits/mo; $30/mo 20K; $59/mo 100K; $119/mo 5M; $249/mo 15M | **Yes** — `player_goal_scorer_anytime`, 3 UK books | h2h, totals, spreads, btts, draw_no_bet, team_totals, alternate lines | Featured markets from 2020-06-06; player props from 2023-05-03 — **paid plans only** (documented) | Measured: `/events` **0 credits**, `/odds` **2**, `/events/{id}/odds` **1** | HTTP 200 on the free tier; 401 without a key | Commercial API, key required | ✅ **Live on the free tier and wired in** |
 | **Pinnacle (public API)** | Free | **No** — only "Tournament Top Goalscorer" | moneyline, spreads, totals, **team totals incl. 0.5 line** (= direct clean sheet), correct score, BTTS | Live only | Not measured | `guest.api.arcadia.pinnacle.com` → **HTTP 200**, live prices, 101 markets for one fixture; 519 EPL matchups | `api.pinnacle.com` → **HTTP 451** "URL unavailable for legal reasons". Guest API is undocumented/internal; its `robots.txt` → 404; ToS page → **HTTP 502**, could not be read | ❌ **Not used — permission unverifiable** |
 | **Betfair Exchange API** | Delayed app key free; live app key £299 one-off **(documented, not verified)** | Not verified | Not verified | n/a | n/a | `api.betfair.com/exchange/betting/rest/v1.0/` → **Cloudflare 403** unauthenticated | Requires funded account + certificate login | ❌ **Not reachable without an account** |
 | **OddsPortal** | Free | Not reachable | — | Site claims deep history | — | — | `robots.txt` **disallows** `*/ajax-*` (where odds load from) **and every historical year page** (`*-2024*` … `*-1998*`) | ❌ **Scraping explicitly forbidden** |
@@ -340,6 +343,117 @@ it rather than treat it as unbiased. This is free, and it goes back to 2005-06.
 
 ---
 
+## 5A. The Odds API live path (anytime scorer)
+
+The free key is active. Everything below is measured against it.
+
+### 5A.1 Credit costs — confirmed against `x-requests-last`
+
+| Call | Documented | **Observed** |
+|---|---|---|
+| `/v4/sports/{sport}/events` | 0 | **0** |
+| `/v4/sports/{sport}/odds?markets=h2h,totals&regions=uk` | markets × regions | **2** |
+| `/v4/sports/{sport}/events/{id}/odds?markets=player_goal_scorer_anytime&regions=uk` | markets × regions | **1** |
+
+A full gameweek is therefore `0 + 2 + (10 × 1)` = **12 credits**. At four
+gameweeks a month that is ~48 of 500.
+
+Because `/events` costs nothing *and* returns the quota headers, the remaining
+balance is readable for free. Every run prices itself against the vendor's own
+counter before spending anything, and `CreditPlan.check()` aborts the whole run
+rather than stopping halfway. The cap defaults to **400**, deliberately below
+the 500 limit so a failed run can be retried inside the same month.
+
+### 5A.2 Two things that silently corrupt this data
+
+**The `"Yes"` trap.** For player props the player's name is in
+`outcome["description"]`; `outcome["name"]` is the literal string `"Yes"` for
+every outcome — verified across all three UK books. Keying the selection on
+`name` produces 17 identical rows called "Yes" per book, which collide on
+`fact_odds`'s primary key: 16 vanish silently and the survivor is attributed to
+nobody. The selection is therefore taken from `description`, and a test asserts
+17 distinct selections per bookmaker.
+
+**Anytime scorer is not a mutually exclusive book.** Eleven players can score in
+the same match, so the implied probabilities do not sum to 1 — the real Arsenal
+card summed to **4.748**. Normalising it to 1, as one would a 1X2 market, would
+divide every striker's probability by nearly five. The 1X2 de-vig functions are
+not reachable from this path; `devig_anytime_scorer` is separate and a test
+asserts its output does *not* sum to 1.
+
+### 5A.3 De-vigging a one-sided card — and its honest limits
+
+The UK books quote **only the Yes side**. With one side of a two-way market
+missing there is no overround to measure, so the margin cannot be removed
+exactly — it has to be *estimated* against an external constraint.
+
+The constraint used is the totals market. If player *i* scores
+`Poisson(λ_i)` goals then `p_i = 1 - exp(-λ_i)` and, critically,
+`Σλ_i = E[team goals]` — **goal rates are additive where probabilities are
+not**. So we solve for the transform making the card's implied rates sum to the
+team's de-vigged expected goals.
+
+One structural detail that matters and was only visible in the data: **the
+cards are per-club**. All 17 selections for Arsenal v Coventry were Arsenal
+players. Anchoring such a card to the *match* total (3.156) instead of the
+*team* total (2.649) would inflate every rate by the opponent's share, so the
+anchor is per club.
+
+Against the real Arsenal card, anchored to 2.998 expected goals:
+
+| Selection | Quoted | Uniform | **Power (default)** |
+|---|---|---|---|
+| Gyökeres (1.78) | 0.5629 | 0.3431 | **0.4121** |
+| Havertz (2.13) | 0.4688 | 0.2748 | **0.3108** |
+| Ødegaard (3.80) | 0.2632 | 0.1437 | **0.1276** |
+| Mosquera (12.00) | 0.0833 | 0.0432 | **0.0216** |
+
+Power is the default because books load margin onto longshots far more heavily
+than onto favourites, so a uniform scale over-shrinks the favourite.
+
+**This estimate should be treated as uncertain.** The quoted card implies
+`Σλ = 5.90` against a market expectation of 2.65 — the raw prices overstate
+team goals by roughly 2.2×, and the resulting shrink is large. It cannot be
+validated against realised results until matches are played. **The raw quoted
+prices are always written to `fact_odds` alongside the estimate**, so if the
+estimate proves badly calibrated nothing is lost and it can be recomputed.
+
+### 5A.4 Player-name resolution
+
+Bookmaker names are resolved to FPL `code` — the cross-season stable key — using
+`player_mapping.normalize_name`, with candidates narrowed to the two clubs in the
+fixture. That club constraint does most of the work: it removes any chance of a
+common surname matching the wrong club.
+
+Rules are tried in order, and **each must be unique among the candidates**. An
+ambiguous name is reported unmatched rather than resolved by picking one — the
+same principle `player_mapping` applies to the two Ben Davieses.
+
+| Rule | Real case from GW1 |
+|---|---|
+| `exact_full` | "Martin Zubimendi Ibanez" = "Martín" + "Zubimendi Ibáñez" |
+| `exact_web` | bookmaker used FPL's short name |
+| `api_subset` | "Gabriel Martinelli" ⊂ "Gabriel Martinelli Silva" |
+| `fpl_subset` | "Kepa Arrizabalaga Revuelta" ⊃ FPL "Kepa Arrizabalaga" |
+| `surname_initial` | "Ben White" vs FPL "Benjamin White" |
+
+Two bugs found and fixed by running this against the live card:
+
+* **`Ø` does not NFKD-decompose.** It is a stroked letter, not a base letter
+  plus a combining mark, so the shared normaliser strips it as punctuation and
+  "Ødegaard" became "degaard" — the bookmaker's "Odegaard" then never matched.
+  `fold_name` folds `ø æ œ ß đ ð ł þ` before normalising. This was a real
+  1-in-17 failure.
+* **The surname rule was too loose.** Keyed on any shared token, "Martin
+  Odegaard" collided with "Martin Zubimendi Ibanez" on the token "martin" and
+  came back ambiguous. It is now anchored on the *last* FPL token.
+
+Club names also differ between the two feeds (7 of 20), and are mapped through
+an explicit table rather than fuzzy-matched — a wrong club mapping would
+silently attribute an entire squad to the wrong team, so an unknown club raises.
+
+---
+
 ## 6. RECOMMENDATION
 
 ### Pay for nothing yet. Take the free Odds API key.
@@ -351,7 +465,7 @@ not just the conclusion.
 
 | Candidate | Price | What it adds | Honest assessment |
 |---|---|---|---|
-| The Odds API **free** | $0 | Live `player_goal_scorer_anytime` for the EPL, ~64 credits/month against a 500 allowance | **Take it.** It is the only route to the market that matters and it costs nothing. Requires creating an account — the account holder must do this. |
+| The Odds API **free** | $0 | Live `player_goal_scorer_anytime` for the EPL, **12 credits per gameweek** measured, ~48/month against a 500 allowance | **Taken — now live.** The only route to the market that matters, and it costs nothing. |
 | The Odds API **$30/mo** | $30/mo | Historical snapshots: featured markets from 2020-06-06, player props from 2023-05-03 | **Not yet.** See the test below. |
 | The Odds API **$59+/mo** | $59–249/mo | More credits | **No.** You are nowhere near the 20K tier's limits, let alone 100K. |
 | Betfair live app key | £299 one-off | Exchange prices in real time | **No.** football-data already carries Betfair Exchange closing odds free, at a measured 0.56% overround. The £299 buys latency you cannot act on — FPL decisions are made once a week, not in-play. |
@@ -369,11 +483,11 @@ out-of-sample without historical scorer lines. Three reasons to wait:
 2. **Player-props history only reaches 2023-05-03** — about three seasons. That
    is a thin sample for calibrating a per-player, per-fixture rate, and squad
    turnover means much of it describes players who have moved.
-3. **You can generate the history yourself for free, starting now.** The free
-   tier covers live scorer ingestion from GW1. Poll it every gameweek and by
-   Christmas you own ~17 gameweeks of scorer lines that you archived yourself —
-   at the same 5-minute-snapshot granularity that matters, with `raw_fetch`
-   provenance the vendor's own history cannot give you.
+3. **You are already generating the history for free.** The free tier covers
+   live scorer ingestion from GW1, at a measured 12 credits per gameweek. Poll
+   it every gameweek and by Christmas you own ~17 gameweeks of scorer lines you
+   archived yourself, with `raw_fetch` provenance the vendor's own history
+   cannot give you — for 48 credits a month out of 500.
 
 #### The decision rule
 
@@ -385,6 +499,12 @@ Spend nothing now. Instead run this test, which the free tier fully supports:
    for every player.
 3. After **10 gameweeks**, compare Brier scores on the same set of
    player-fixtures.
+
+The comparison has a second job: it is also the only way to find out whether
+`devig_anytime_scorer` is well calibrated. Its shrink is large and currently
+unvalidated (§5A.3), so score the *raw* quoted prices and the de-vigged
+estimates separately. If the raw card scores better, the de-vig is
+over-correcting and the anchor or the `coverage` assumption needs revisiting.
 
 Then:
 
@@ -420,7 +540,7 @@ do.
 | Question | Answer |
 |---|---|
 | What should you pay for **now**? | **Nothing.** |
-| What should you sign up for now? | The Odds API **free** tier — 500 credits/month, covers live anytime-scorer ~8× over. |
+| What should you sign up for now? | Done — The Odds API **free** tier. Measured at 12 credits/gameweek, ~10× inside the 500/month allowance. |
 | What is the free stack? | football-data.co.uk (history + derived clean sheets) + The Odds API free (live scorer) + FPL API (injuries, xG, prices). |
 | When would you pay? | $30 one or two months for scorer history — **only if** the market out-scores your model over 10 gameweeks. ~£25/season for team news — **only if** late flag flips prove materially costly. |
 | What can no amount of money buy? | Understat 2026-27 data before matches are played. |

@@ -142,7 +142,7 @@ def main() -> None:
             reports, index = ingest_history(
                 wh, repo, args.seasons, write_player_state=not args.no_player_state,
             )
-            n = record_provenance(wh, repo, dt.datetime.now(dt.timezone.utc))
+            n = record_provenance(wh, repo, dt.datetime.now(dt.UTC))
 
         print(summarise(reports))
         print(f"    raw_fetch rows recorded       {n}")

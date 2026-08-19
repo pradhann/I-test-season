@@ -1,0 +1,22 @@
+{
+  "n_gws": 10,
+  "n_rivals": 2000,
+  "n_sims": 2000,
+  "note": "Deterministic toy-world run pinned by tests/unit/test_sim_regression.py. Regenerate with: uv run python tests/unit/test_sim_regression.py",
+  "seed": 7,
+  "values": {
+    "contrarian_corr_with_field": 0.4723986413589387,
+    "contrarian_mean_points": 542.7855,
+    "contrarian_median_rank": 969001.0,
+    "contrarian_p_top10k": 0.006,
+    "contrarian_utility": -0.34362499999999996,
+    "field_mean_season": 591.880126953125,
+    "field_sd_across_managers": 14.755711555480957,
+    "max_abs_eo_error": 0.024319458895159823,
+    "template_corr_with_field": 0.9295732315139429,
+    "template_mean_points": 627.367,
+    "template_median_rank": 73501.0,
+    "template_p_top10k": 0.081,
+    "template_utility": -0.19468135803059944
+  }
+}
