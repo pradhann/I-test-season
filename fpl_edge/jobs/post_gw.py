@@ -100,6 +100,7 @@ def main() -> int:
          [py, "-m", "fpl_edge.ingest.rivals.crawl", "--budget", "400"])
     _run(report, "intel", [py, "-m", "fpl_edge.intel.cli", "collect"])
     _run(report, "retro_report", [py, "scripts/retro_report.py"])
+    _run(report, "weekly_idea_report", [py, "scripts/weekly_idea_report.py"])
 
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")

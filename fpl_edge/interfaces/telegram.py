@@ -106,6 +106,20 @@ class HttpxTransport:
             raise RuntimeError(f"Telegram {method} failed: {body.get('description')!r}")
         return body
 
+    def send_photo(self, chat_id: int, png: bytes, *, caption: str = "",
+                   filename: str = "chart.png", timeout: float = 60.0) -> None:
+        """sendPhoto is multipart, not JSON -- the one Bot API call that is."""
+        resp = self._client.post(
+            "/sendPhoto",
+            data={"chat_id": str(chat_id), "caption": caption[:1024]},
+            files={"photo": (filename, png, "image/png")},
+            timeout=timeout,
+        )
+        resp.raise_for_status()
+        body = resp.json()
+        if not body.get("ok", False):
+            raise RuntimeError(f"Telegram sendPhoto failed: {body.get('description')!r}")
+
     def close(self) -> None:
         self._client.close()
 
@@ -125,6 +139,7 @@ class FakeTransport:
     """
 
     inbound: deque = field(default_factory=deque)
+    photos: list = field(default_factory=list)
     sent: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
     me: dict[str, Any] = field(
         default_factory=lambda: {"id": 1, "is_bot": True, "username": "fpl_edge_test_bot"}
@@ -155,6 +170,11 @@ class FakeTransport:
             }
         )
         return uid
+
+    def send_photo(self, chat_id: int, png: bytes, *, caption: str = "",
+                   filename: str = "chart.png", timeout: float = 60.0) -> None:
+        self.photos.append({"chat_id": chat_id, "caption": caption,
+                            "filename": filename, "bytes": len(png)})
 
     def call(self, method: str, payload: dict[str, Any], *, timeout: float = 30.0) -> dict[str, Any]:
         self.sent.append((method, payload))
@@ -366,13 +386,46 @@ class TelegramBot:
             )
             return
 
-        reply = self._dispatch(text, chat_id=int(chat_id), now=now)
-        self.send(int(chat_id), reply)
+        answered = self._try_question(text, chat_id=int(chat_id))
+        if not answered:
+            reply = self._dispatch(text, chat_id=int(chat_id), now=now)
+            self.send(int(chat_id), reply)
 
         elapsed = (time.perf_counter() - started) * 1000.0
         self.stats.handled += 1
         self.stats.last_latency_ms = elapsed
         self.stats.max_latency_ms = max(self.stats.max_latency_ms, elapsed)
+
+    def _try_question(self, text: str, *, chat_id: int) -> bool:
+        """Route questions to the QA layer; return False to fall through.
+
+        Slash commands always win (they are explicit), so the router only sees
+        plain text. Router failures fall through to the idea path rather than
+        erroring: a misrouted question logged as an idea is recoverable, a
+        swallowed message is not.
+        """
+        if text.lstrip().startswith("/"):
+            return False
+        try:
+            from fpl_edge.interfaces.qa import QuestionRouter
+
+            router = QuestionRouter(self.inbox.wh, season=self.season)
+            answer = router.route(text)
+        except Exception:  # noqa: BLE001
+            log.exception("question router failed; falling through to ideas")
+            return False
+        if answer is None:
+            return False
+        self.send(chat_id, answer.text)
+        send_photo = getattr(self.transport, "send_photo", None)
+        if send_photo is not None:
+            for filename, png in answer.images:
+                try:
+                    send_photo(chat_id, png, filename=filename)
+                except Exception:  # noqa: BLE001 - the text already went out
+                    log.exception("sendPhoto failed for %s", filename)
+        self.stats.handled += 0  # counted by handle()
+        return True
 
     def _dispatch(self, text: str, *, chat_id: int, now: dt.datetime | None) -> str:
         """Command table, then the inbox. The ONLY branch on message content.
