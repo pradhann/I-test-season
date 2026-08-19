@@ -55,12 +55,13 @@ def scorer_odds(wh: Warehouse, players: pd.DataFrame) -> pd.DataFrame:
     )
     if raw.empty:
         return raw
-    import unicodedata
+    # normalize_name handles what NFKD alone cannot: stroke letters like the
+    # one in Ødegaard have no decomposition, and a plain accent-strip deletes
+    # them, so "Odegaard" never matched. It is also the same folding the rest
+    # of the codebase uses, so one fix propagates everywhere.
+    from fpl_edge.ingest.player_mapping import normalize_name as fold
 
-    def fold(text: str) -> str:
-        """Lowercase, strip accents and punctuation: 'Gyökeres' == 'Gyokeres'."""
-        norm = unicodedata.normalize("NFKD", str(text))
-        return "".join(c for c in norm if c.isalnum() or c.isspace()).lower().strip()
+    known_codes = set(players["code"].astype(int))
 
     lookup: dict[str, int] = {}
     surname_counts: dict[str, int] = {}
@@ -79,10 +80,22 @@ def scorer_odds(wh: Warehouse, players: pd.DataFrame) -> pd.DataFrame:
             surname_counts[surname] = surname_counts.get(surname, 0) + 1
             lookup.setdefault(f"sur:{surname}", int(code))
 
+    sorted_lookup = {" ".join(sorted(k.split())): v for k, v in lookup.items()
+                     if not k.startswith("sur:")}
+
     def resolve(sel: str) -> float:
+        # Some feeds store an already-resolved FPL code as the selection.
+        text = str(sel).strip()
+        if text.isdigit() and int(text) in known_codes:
+            return int(text)
         key = fold(sel)
         if key in lookup:
             return lookup[key]
+        # "Magalhaes Gabriel" is "Gabriel Magalhães" surname-first; token order
+        # carries no information for matching, so compare order-insensitively.
+        sorted_key = " ".join(sorted(key.split()))
+        if sorted_key in sorted_lookup:
+            return sorted_lookup[sorted_key]
         # Bookmakers write "Viktor Gyokeres"; FPL may know him by a shorter
         # web_name. Try the last token as an unambiguous surname.
         last = key.split(" ")[-1] if key else ""
@@ -93,6 +106,9 @@ def scorer_odds(wh: Warehouse, players: pd.DataFrame) -> pd.DataFrame:
     raw["code"] = raw["selection"].map(resolve)
     matched = raw.dropna(subset=["code"]).copy()
     matched["code"] = matched["code"].astype(int)
+    # Two selections can resolve to one player -- a stored numeric code and a
+    # name form. Keep the shortest price (highest implied probability) per code.
+    matched = matched.sort_values("price").drop_duplicates("code", keep="first")
     # Two-way overround is not recoverable per selection here, so the raw
     # implied probability is used and the optimism is stated rather than hidden.
     matched["prob"] = 1.0 / matched["price"]

@@ -101,8 +101,26 @@ def normalize_name(value: object) -> str:
     """
     text = unicodedata.normalize("NFKD", str(value))
     text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    # Stroke and ligature letters have no NFKD decomposition, so the combining
+    # filter leaves them intact and the [a-z] strip then DELETES them:
+    # "Ødegaard" became "degaard" and silently failed every match against the
+    # ASCII "Odegaard" bookmakers publish. Translate them explicitly.
+    text = text.translate(_NON_DECOMPOSING)
     text = re.sub(r"[^a-z0-9 ]+", " ", text.lower())
     return re.sub(r"\s+", " ", text).strip()
+
+
+#: Letters NFKD cannot decompose, mapped to their ASCII conventions.
+_NON_DECOMPOSING = str.maketrans({
+    "Ø": "O", "ø": "o",
+    "Đ": "D", "đ": "d",
+    "Ł": "L", "ł": "l",
+    "Æ": "AE", "æ": "ae",
+    "Œ": "OE", "œ": "oe",
+    "ß": "ss",
+    "Þ": "Th", "þ": "th",
+    "Ð": "D", "ð": "d",
+})
 
 
 def shares_name_token(a: str, b: str) -> bool:
