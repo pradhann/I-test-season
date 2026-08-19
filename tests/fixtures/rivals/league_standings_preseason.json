@@ -1,0 +1,11 @@
+{
+  "new_entries": {"has_next": false, "page": 1, "results": [
+    {"entry": 111, "entry_name": "Alpha FC", "joined_time": "2026-08-01T00:00:00Z",
+     "player_first_name": "Ada", "player_last_name": "Lovelace"},
+    {"entry": 222, "entry_name": "Beta FC", "joined_time": "2026-08-02T00:00:00Z",
+     "player_first_name": "Alan", "player_last_name": "Turing"}
+  ]},
+  "last_updated_data": null,
+  "league": {"id": 76109, "name": "Test League", "league_type": "x", "scoring": "c"},
+  "standings": {"has_next": false, "page": 1, "results": []}
+}

@@ -171,7 +171,69 @@ rules change, as defensive contributions moved it in 2025-26, while the shape of
 the ladder has been far more stable — and they carry an explicit tolerance. Every
 conclusion that leans on them says so.
 
-## 7. Known simplifications
+## 7. Running against the shipped models
+
+`fpl_edge/sim/live.py` replaces both development stand-ins with the real ones:
+`DecomposedPointsModel` (Dixon-Coles x GBM minutes x measured per-90 rates) and
+`OwnershipForecaster`. Reproduce with
+
+```bash
+uv run python -m fpl_edge.sim.experiments --live --n-sims 4000 --n-rivals 10000
+```
+
+Three adapters were needed, and each exists because of a defect that is silent:
+
+**1. One seed for 38 gameweeks.** `SeasonSimulator` hands every gameweek the
+same `seed`. `DecomposedPointsModel` keys its generator on the seed alone, so it
+returns the identical draw 38 times: a season total becomes 38 copies of one
+gameweek, its variance collapses to 1/38 of the truth, every rank is
+deterministic given GW1, and P(top 10k) is meaningless. `MultiGwPointsModel`
+mixes the gameweek into the seed. The stand-in happened to mix `gw` in itself,
+which is why the defect only appeared on contact with the real model.
+
+**2. Fixture scope.** `DecomposedPointsModel.simulate` reads its fixtures with
+`upcoming_fixtures(season, horizon_gws=1)`, so it can only ever simulate the
+next gameweek and raises for GW2 onward from a GW1 snapshot.
+`GwScopedSnapshot` narrows the fixture view to the requested gameweek and
+delegates everything else. Narrowing can only remove rows the snapshot was
+already prepared to show, so it cannot leak.
+
+**3. Effective ownership is not ownership.** This one changed answers.
+`engine.prepare` fed `eo_overall` to `FieldModel.sample_squads`, which wants a
+*squad-inclusion probability*. EO drops benched owners, counts a captain twice,
+and sums to 12 rather than 15. With the stand-in ownership model the column
+happened to hold `selected_by_pct`, so the two agreed and nothing showed. With
+the real forecast they do not: Haaland's GW1 2026-27 EO is **1.139** against a
+forecast ownership of **0.730**. The sampler clips inclusion probabilities to 1,
+so the simulated field owned him at ~0.99 — the 27% of managers who do not own
+him vanished, and with them the entire Haaland differential. `_align_ownership`
+now prefers the model's `own_mean` column and falls back to `eo_overall` only
+for models that emit the bare contract. `ownership_renormalisation` gained an
+`n_saturated` counter so the failure is visible rather than inferred; it reads 0
+on the corrected path.
+
+`fpl_edge/sim/calibration.py` had the same confusion: the verified anchor
+"owned-15 points per GW" is `sum(selected_by_pct * points)`, an ownership-weighted
+quantity, and was being computed with EO. Fixed alongside.
+
+**A fourth, in the experiment rather than the engine.** `World.xp` was the *next
+gameweek's* expected points, but the decisions being compared are season-long.
+On the live build, swaps that GW1 xP scored as a 0.18-points-per-gameweek
+downgrade *gained* 9.98 season points, because the two players' remaining
+fixtures differ. The "expected-points-optimal" baseline was therefore not
+optimal, and any divergence measured against it would have been measuring the
+baseline's own mistake. `live_world` now supplies a season-average `season_xp`
+for squad decisions and keeps the next-gameweek vector for the ownership model's
+projection feature, which is the one that genuinely wants it.
+
+**One approximation, stated.** The ownership forecast is a next-deadline
+forecast whose cold-start block was fitted at horizons of 1-20 days. Asking it
+what ownership will be in GW38 extrapolates a square-root-of-time diffusion 260
+days out, which is arithmetic rather than forecasting.
+`FrozenOwnershipForecast` therefore forecasts once and holds it; the field's
+composition then drifts only through `FieldConfig.churn`.
+
+## 8. Known simplifications
 
 * **Rival autosubs are estimated, not run per rival.** The full autosub engine
   runs exactly on a 256-rival subsample and the mean per-simulation credit is

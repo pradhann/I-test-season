@@ -144,17 +144,38 @@ def validate_points_model(points_model, snapshot, season, ownership_model,
         starters += float((s.minutes >= 60).sum(axis=0).mean())
         n += 1
     xp = tot / n
-    own = ownership_model.forecast(snapshot, season, 1, expected_points=xp)
-    eo = own["eo_overall"].to_numpy()
+    own = _forecast(ownership_model, snapshot, season, xp)
+    # The anchor is sum(selected_by_pct * points): a squad of 15 at the field's
+    # marginal OWNERSHIP, bench included. Effective ownership is a different
+    # quantity -- it drops benched owners and counts the captain twice -- so
+    # using eo_overall here would compare the model against an anchor that
+    # measures something else. See engine._align_ownership.
+    column = "own_mean" if "own_mean" in own.columns else "eo_overall"
+    weight = own[column].to_numpy()
     got = {
         "total player points per GW": pool / n,
-        "owned-15 points per GW": float((eo * xp).sum()),
+        "owned-15 points per GW": float((weight * xp).sum()),
         "players with 60+ minutes per GW": starters / n,
     }
     lines = []
     for a in warehouse_anchors(db_path, anchor_season):
         lines.append(a.check(got[a.name])[1])
     return got, lines
+
+
+def _forecast(ownership_model, snapshot, season, xp):
+    """Ask for a forecast, handing over expected points however the model wants.
+
+    ``OwnershipModel.forecast`` deliberately takes no expected points; models
+    that want them advertise a ``set_expected_points`` hook. The development
+    stand-in accepts them as a keyword instead, so both are supported rather
+    than widening the shared contract.
+    """
+    setter = getattr(ownership_model, "set_expected_points", None)
+    if setter is not None:
+        setter(xp)
+        return ownership_model.forecast(snapshot, season, 1)
+    return ownership_model.forecast(snapshot, season, 1, expected_points=xp)
 
 
 def validate_field(simulator) -> tuple[dict, list[str]]:

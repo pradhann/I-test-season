@@ -135,7 +135,7 @@ class SeasonSimulator:
             xp = pts.mean(axis=1)
             self._xp[gw] = xp
             own = self._forecast(GwId(gw), xp)
-            eo = _align(own, "eo_overall", self.universe)
+            eo = _align_ownership(own, self.universe)
             cap = _align(own, "captaincy_share", self.universe)
             squads = self.field.sample_squads(eo, cap, xp, gw_offset=k)
             self._squads[gw] = squads
@@ -271,7 +271,7 @@ class SeasonSimulator:
     def realised_ownership_error(self, gw: int) -> dict[str, float]:
         """How closely the sampled field reproduces the ownership it was given."""
         own = self._forecast(GwId(gw), self._xp[gw])
-        given = _align(own, "eo_overall", self.universe)
+        given = _align_ownership(own, self.universe)
         target = self.field.target_ownership(given)
         got = self._squads[gw].ownership_realised(self.universe.n_players)
         cap_t = _align(own, "captaincy_share", self.universe)
@@ -291,6 +291,36 @@ def _align(df, column: str, universe: PlayerUniverse) -> np.ndarray:
 
     s = pd.Series(df[column].to_numpy(), index=df["code"].to_numpy())
     return s.reindex(universe.codes).fillna(0.0).to_numpy(dtype=np.float64)
+
+
+#: Column the field sampler wants: the share of managers who OWN each player.
+OWNERSHIP_COLUMN = "own_mean"
+
+
+def _align_ownership(df, universe: PlayerUniverse) -> np.ndarray:
+    """The squad-inclusion marginal the field sampler needs.
+
+    ``FieldModel.sample_squads`` draws 15-man squads, so its input must be
+    *ownership* -- the share of managers holding the player -- and ownership
+    alone sums to 15 across the player set.
+
+    ``eo_overall`` is not that. Effective ownership is the mean multiplier the
+    field applies, so it counts a captain twice, drops benched owners, and sums
+    to 12 (eleven starters plus one armband). Feeding it to the sampler
+    over-states every captaincy magnet: at the 2026-27 GW1 forecast Haaland's
+    EO is 1.139, which the sampler clips to 0.999 and reproduces as a field that
+    owns him almost universally, against a real forecast ownership of 0.730.
+    Every Haaland differential is then priced against a field that does not
+    exist.
+
+    So the real ownership column is used when the model supplies one, and
+    ``eo_overall`` only as a fallback for models that emit the bare contract --
+    which is correct for those, because a model with no ownership column has
+    nothing better to offer.
+    """
+    if OWNERSHIP_COLUMN in getattr(df, "columns", ()):
+        return _align(df, OWNERSHIP_COLUMN, universe)
+    return _align(df, "eo_overall", universe)
 
 
 def template_squad(universe: PlayerUniverse, eo: np.ndarray, xp: np.ndarray,

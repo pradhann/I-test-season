@@ -49,6 +49,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from fpl_edge.config import load_env, secret
 from fpl_edge.interfaces.bias import review as run_review
+from fpl_edge.interfaces.dossier import telegram_addendum as dossier_addendum
 from fpl_edge.interfaces.inbox import IdeaInbox
 from fpl_edge.interfaces.tracking import track as run_track
 
@@ -390,7 +391,15 @@ class TelegramBot:
             self.stats.clarifications += 1
         elif sub.ok:
             self.stats.ideas += 1
-        return sub.render()
+        # Texting a player's name should answer the question the user actually
+        # has, which is "tell me about him", not only "your thesis is logged".
+        # The dossier is appended rather than substituted so the idea record --
+        # the thing that survives -- is still the headline. The helper owns its
+        # own failures and returns "" rather than raising: an intel outage must
+        # never cost the user a logged thought.
+        return sub.render() + dossier_addendum(
+            self.inbox.wh, sub, season=self.season, now=now
+        )
 
     def _command(self, token: str, *, chat_id: int, now: dt.datetime | None) -> str:
         if token in ("/start", "/help"):

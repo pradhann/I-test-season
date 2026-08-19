@@ -49,11 +49,19 @@ def _parse_as_of(value: str | None) -> dt.datetime:
     return parsed.astimezone(UTC)
 
 
-def _warehouse(db: Path) -> Warehouse:
+def _warehouse(db: Path, *, read_only: bool = True) -> Warehouse:
+    """Open the warehouse, read-only by default.
+
+    Theses live in files; the warehouse is only ever *read* here (creation
+    verdicts, realised results). Read-only means `fpl thesis add` still works
+    while an ingest or the bot holds DuckDB's single writer lock -- which is
+    exactly when ideas tend to arrive. Only `theses sync` needs the writer
+    (the ideas registry applies its migrations at open).
+    """
     if not db.exists():
         console.print(f"[red]No warehouse at {db}.[/] Run `make ingest` first.")
         raise typer.Exit(code=2)
-    return Warehouse(db)
+    return Warehouse(db, read_only=read_only)
 
 
 DbOpt = typer.Option(DEFAULT_DB, "--db", help="Path to the DuckDB warehouse.")
@@ -152,8 +160,21 @@ def theses_resolve(
     ),
 ) -> None:
     """Grade every open thesis whose window has finalised; move, score, commit."""
+    from fpl_edge.store import WarehouseLockedError
+
     when = _parse_as_of(as_of)
-    with _warehouse(db) as wh:
+    # The registry sync needs the writer (its migrations run at open); grading
+    # itself only reads. If another process holds the single writer lock,
+    # settle anyway rather than skipping the week.
+    sync = not no_sync
+    try:
+        wh = _warehouse(db, read_only=no_sync or dry_run)
+    except WarehouseLockedError:
+        console.print("[yellow]Warehouse writer is busy; resolving read-only "
+                      "without the registry sync. Run `fpl theses sync` later.[/]")
+        sync = False
+        wh = _warehouse(db, read_only=True)
+    with wh:
         report = resolve_theses(
             wh,
             season=season,
@@ -161,7 +182,7 @@ def theses_resolve(
             store=ThesesStore(base_dir),
             dry_run=dry_run,
             commit=not no_commit,
-            sync_registry=not no_sync,
+            sync_registry=sync and not dry_run,
         )
     echo(report.render())
 
@@ -171,7 +192,7 @@ def theses_sync(
     db: Path = DbOpt, season: str = SeasonOpt, base_dir: Path = DirOpt
 ) -> None:
     """Mirror registry ideas (Telegram/CLI inbox) into thesis files. Idempotent."""
-    with _warehouse(db) as wh:
+    with _warehouse(db, read_only=False) as wh:
         created = sync_from_registry(wh, season=season, store=ThesesStore(base_dir))
     if not created:
         echo("Nothing to sync: every registry idea with a subject is already filed.")

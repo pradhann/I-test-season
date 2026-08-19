@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  A trimmed capture of a real Megaphone-hosted FPL podcast feed, kept because
+  two of its properties broke the parser and would break it again silently:
+
+  * pubDate carries "-0000". RFC 5322 says that means UTC with an unknown local
+    offset; Python's email parser signals it by returning a NAIVE datetime, and
+    the strict "no naive dates" rule then rejected every episode. The feed
+    returned 200, parsed cleanly, and yielded zero items.
+  * Show notes are a wall of block tags with no sentence punctuation between
+    them, so without a block-to-break rule the last word of one bullet fuses
+    with the first of the next.
+
+  The fourth item has no pubDate at all and MUST be dropped: a claim with an
+  unknown publication instant cannot be tested for admissibility, and an
+  untestable claim is indistinguishable from a post-hoc one.
+-->
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"
+     xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <title>Test FPL Podcast</title>
+    <link>https://example.invalid/podcast</link>
+    <item>
+      <title>GW1 CAPTAIN PICKS: Haaland or Salah?</title>
+      <link>https://example.invalid/ep/1</link>
+      <guid isPermaLink="false">ep-0001</guid>
+      <pubDate>Tue, 18 Aug 2026 08:20:00 -0000</pubDate>
+      <description><![CDATA[<p>We are captaining Haaland in Gameweek 1</p><p>Bringing in Palmer as well</p>]]></description>
+    </item>
+    <item>
+      <title>GW2 TRANSFERS: Selling Salah</title>
+      <link>https://example.invalid/ep/2</link>
+      <guid isPermaLink="false">ep-0002</guid>
+      <pubDate>Wed, 26 Aug 2026 07:00:00 +0000</pubDate>
+      <description><![CDATA[<p>Selling Salah this week</p><p>Holding Watkins</p>]]></description>
+    </item>
+    <item>
+      <title>GW1 REVIEW: what we got wrong</title>
+      <link>https://example.invalid/ep/3</link>
+      <guid isPermaLink="false">ep-0003</guid>
+      <pubDate>Mon, 24 Aug 2026 09:00:00 +0100</pubDate>
+      <description><![CDATA[<p>Captaining Haaland was correct in Gameweek 1</p>]]></description>
+    </item>
+    <item>
+      <title>Episode with no date at all</title>
+      <link>https://example.invalid/ep/4</link>
+      <guid isPermaLink="false">ep-0004</guid>
+      <description><![CDATA[<p>Captaining Watkins in Gameweek 1</p>]]></description>
+    </item>
+  </channel>
+</rss>

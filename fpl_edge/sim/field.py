@@ -233,8 +233,14 @@ class FieldModel:
 
     # -- squad sampling ------------------------------------------------------
 
-    def target_ownership(self, eo: np.ndarray) -> np.ndarray:
+    def target_ownership(self, ownership: np.ndarray) -> np.ndarray:
         """The inclusion probabilities the sampler will actually reproduce.
+
+        The argument is **ownership** -- the share of managers who hold the
+        player -- not effective ownership. EO counts a captain twice and drops
+        benched owners, so it cannot be a squad-inclusion probability; passing
+        it here silently clips every captaincy magnet to 1.0. See
+        ``engine._align_ownership``.
 
         A squad holds exactly 2/5/5/3 by position, so ownership *must* sum to
         those counts within each position group. A forecast that does not is
@@ -242,18 +248,19 @@ class FieldModel:
         reports how far it had to move, and a large value means the ownership
         model and the squad rules disagree.
         """
-        out = np.zeros_like(eo, dtype=np.float64)
+        out = np.zeros_like(ownership, dtype=np.float64)
         for p in _POS_GROUPS:
             cols = self._pos_index[p]
-            base = np.clip(eo[cols], 1e-6, 0.999)
+            base = np.clip(ownership[cols], 1e-6, 0.999)
             out[cols] = _clip_to_unit(base[None, :], SQUAD_BY_POSITION[p])[0]
         return out
 
-    def ownership_renormalisation(self, eo: np.ndarray) -> dict[str, float]:
-        target = self.target_ownership(eo)
+    def ownership_renormalisation(self, ownership: np.ndarray) -> dict[str, float]:
+        target = self.target_ownership(ownership)
         return {
-            "max_abs_shift": float(np.abs(target - eo).max()),
-            "mean_abs_shift": float(np.abs(target - eo).mean()),
+            "max_abs_shift": float(np.abs(target - ownership).max()),
+            "mean_abs_shift": float(np.abs(target - ownership).mean()),
+            "n_saturated": float(np.sum(np.asarray(ownership) >= 0.999)),
         }
 
     def _ordering(self, p: int, xp_z: np.ndarray) -> np.ndarray:
@@ -316,7 +323,7 @@ class FieldModel:
 
     def sample_squads(
         self,
-        eo: np.ndarray,
+        ownership: np.ndarray,
         captaincy: np.ndarray,
         expected_points: np.ndarray,
         *,
@@ -324,9 +331,14 @@ class FieldModel:
     ) -> FieldSquads:
         """Draw ``n_rivals`` squads consistent with the ownership forecast.
 
-        ``eo``, ``captaincy`` and ``expected_points`` are ``(n_players,)`` arrays
-        aligned to the universe.
+        ``ownership``, ``captaincy`` and ``expected_points`` are
+        ``(n_players,)`` arrays aligned to the universe. ``ownership`` is the
+        squad-inclusion share, **not** effective ownership; ``captaincy`` is the
+        share of the whole field captaining the player, so ``captaincy /
+        ownership`` is P(captain | owned), which is what the armband draw below
+        needs.
         """
+        eo = ownership
         m = self.config.n_rivals
         xp_z = _standardise_within_position(expected_points, self.universe.position)
         if gw_offset > 0 and self.config.churn > 0:

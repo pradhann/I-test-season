@@ -39,7 +39,7 @@ from fpl_edge.sim.squad import (
     pick_best_xi,
 )
 from fpl_edge.sim.synthetic import build_synthetic_world
-from fpl_edge.sim.utility import rank_utility_of
+from fpl_edge.sim.utility import rank_utility, rank_utility_of
 from fpl_edge.types import Season
 
 #: The user's stated setting: primary target top 10k, stretch top 1k, with a
@@ -71,6 +71,30 @@ def build_world(n_xp_sims: int = 1_500, seed: int = 11) -> World:
     own = om.forecast(snap, season, 1, expected_points=xp)
     return World(u, snap, pm, om, xp,
                  own["eo_overall"].to_numpy(), own["captaincy_share"].to_numpy())
+
+
+def live_world(*, n_xp_sims: int = 2_000, gw: int = 1, **kw) -> tuple[World, Any]:
+    """The same World, built from the shipped models rather than the stand-ins.
+
+    Returns the World and the :class:`~fpl_edge.sim.live.LiveWorld` it came
+    from, because the latter carries the provenance -- as-of instant, days to
+    the deadline, field size -- that every reported number has to be stamped
+    with.
+
+    ``World.eo`` is ownership, not effective ownership: it is what "differential"
+    is measured against and what the field sampler consumes. The EO vector is on
+    ``LiveWorld.eo``.
+
+    ``World.xp`` is the *season-average* expected points, because the decisions
+    compared here are season-long. ``LiveWorld.xp`` keeps the next-gameweek
+    vector the ownership model was given.
+    """
+    from fpl_edge.sim.live import open_live_world
+
+    lw = open_live_world(gw=gw, n_xp_sims=n_xp_sims, **kw)
+    world = World(lw.universe, lw.snapshot, lw.points_model, lw.ownership_model,
+                  lw.season_xp, lw.own_mean, lw.captaincy)
+    return world, lw
 
 
 def make_simulator(world: World, *, n_sims: int, n_rivals: int,
@@ -489,6 +513,84 @@ def captaincy_divergence(sim: SeasonSimulator, world: World,
 
 
 # ---------------------------------------------------------------------------
+# 2d. The objective is a configuration, not a constant
+# ---------------------------------------------------------------------------
+
+def utility_under_configs(sim: SeasonSimulator, world: World,
+                          configs: dict[str, RankUtilityConfig]) -> list[dict]:
+    """The same candidate set scored under several rank-utility configurations.
+
+    ``USER.rank_utility`` is a decision, and it has been changed at least once
+    (from top-10k-balanced to top-1k-aggressive). Rather than hardcode one, this
+    reports the best swap under each, so the effect of the configuration on the
+    *decision* -- not just on the score -- is visible.
+    """
+    u, xp = world.universe, world.xp
+    base_squad = optimal_squad(u, xp)
+    base_scores = sim.score_plan(SquadPlan(base_squad))
+    from fpl_edge.sim.rank import rank_from_scores
+
+    assert sim.rival_totals is not None
+    n = sim.field_config.field_size
+    base_ranks = rank_from_scores(base_scores, sim.rival_totals, field_size=n)
+    candidates = [
+        (out_i, in_i, rank_from_scores(
+            sim.score_plan(SquadPlan(base_squad.replace(out_i, in_i, u))),
+            sim.rival_totals, field_size=n))
+        for out_i, in_i in _swap_candidates(world, base_squad, 0.35)
+    ]
+
+    out = []
+    for name, cfg in configs.items():
+        base_u = rank_utility(base_ranks, cfg, field_size=cfg.field_size or n)
+        best = None
+        for out_i, in_i, ranks in candidates:
+            ru = rank_utility(ranks, cfg, field_size=cfg.field_size or n)
+            if best is None or ru.utility > best[0].utility:
+                best = (ru, out_i, in_i)
+        if best is None:
+            continue
+        ru, out_i, in_i = best
+        out.append({
+            "config": name, "target": cfg.target_rank, "stretch": cfg.stretch_rank,
+            "risk_lambda": cfg.risk_lambda,
+            "base_utility": base_u.utility, "base_p_target": base_u.p_target,
+            "base_se_utility": base_u.se_utility,
+            "best_swap": f"{u.web_name[out_i]}->{u.web_name[in_i]}",
+            "direction": "differential" if world.eo[in_i] < world.eo[out_i] else "template",
+            "d_utility": ru.utility - base_u.utility,
+            "d_p_target": ru.p_target - base_u.p_target,
+            "swap_beats_baseline": bool(ru.utility > base_u.utility),
+        })
+    return out
+
+
+def field_size_sensitivity(sim: SeasonSimulator, plan: SquadPlan,
+                           sizes: tuple[int, ...]) -> list[dict]:
+    """How much P(top 10k) moves with the registration count.
+
+    ``total_players`` was 5,896,644 at rule capture and 5,950,733 on the live API
+    the same day, and it keeps climbing to the deadline. Rank is
+    ``1 + p * N``, so a larger field makes every absolute threshold harder; this
+    quantifies by how much rather than waving at it.
+    """
+    from fpl_edge.sim.rank import rank_from_scores
+
+    assert sim.rival_totals is not None
+    mine = sim.score_plan(plan)
+    out = []
+    for n in sizes:
+        ranks = rank_from_scores(mine, sim.rival_totals, field_size=n)
+        out.append({
+            "field_size": n,
+            "p_top10k": float((ranks <= 10_000).mean()),
+            "p_top1k": float((ranks <= 1_000).mean()),
+            "median_rank": float(np.median(ranks)),
+        })
+    return out
+
+
+# ---------------------------------------------------------------------------
 # 3. Monte Carlo error
 # ---------------------------------------------------------------------------
 
@@ -523,15 +625,26 @@ def _fmt(x) -> str:
     return f"{x:,.4f}" if isinstance(x, float) and abs(x) < 100 else f"{x:,.1f}"
 
 
-def main(n_sims: int = 4_000, n_rivals: int = 10_000) -> None:  # pragma: no cover
+def main(n_sims: int = 4_000, n_rivals: int = 10_000, *, live: bool = False,
+         convergence: bool = True) -> None:  # pragma: no cover
     np.set_printoptions(suppress=True)
     print("=" * 78)
     print("FPL-EDGE SIMULATOR: correlation, divergence and field validation")
     print("=" * 78)
 
     t0 = time.perf_counter()
-    world = build_world()
-    print(f"\nuniverse: {world.universe.n_players} players   "
+    if live:
+        world, lw = live_world()
+        print(f"\nLIVE models: decomposed points (Dixon-Coles x GBM minutes x per-90 "
+              f"rates) and OwnershipForecaster")
+        print(f"  as_of {lw.as_of:%Y-%m-%d %H:%MZ}   GW{lw.ownership_model.forecast_gw} "
+              f"deadline {lw.deadline:%Y-%m-%d %H:%MZ}   "
+              f"T-{lw.days_to_deadline:.2f}d   field {lw.field_size:,}")
+        print(f"  ownership path: {lw.ownership_model.frame['path'].iloc[0]}")
+    else:
+        world = build_world()
+        print("\nSYNTHETIC stand-in models (fpl_edge.sim.synthetic)")
+    print(f"universe: {world.universe.n_players} players   "
           f"built in {time.perf_counter() - t0:.1f}s")
 
     print("\n--- 1. POINTS MODEL LEVEL vs REAL WAREHOUSE DATA " + "-" * 29)
@@ -628,10 +741,12 @@ def main(n_sims: int = 4_000, n_rivals: int = 10_000) -> None:  # pragma: no cov
               f"{r['se_d_p_top10k']:8.5f} {r['corr_with_field']:7.4f} "
               f"{r['d_utility']:+9.5f}")
 
+    if not convergence:
+        return
     print("\n--- 7. MONTE CARLO CONVERGENCE " + "-" * 47)
     print(f"    {'n_sims':>8s} {'prep_s':>8s} {'eval_s':>8s} {'P(10k)':>9s} {'se':>8s} "
           f"{'P(1k)':>9s} {'se':>8s} {'P(100)':>9s} {'se':>8s}")
-    for r in convergence_study(world):
+    for r in convergence_study(world, n_rivals=n_rivals):
         print(f"    {r['n_sims']:8,d} {r['prepare_seconds']:8.1f} {r['evaluate_seconds']:8.2f} "
               f"{r['p_top10k']:9.5f} {r['se_top10k']:8.5f} "
               f"{r['p_top1k']:9.5f} {r['se_top1k']:8.5f} "
@@ -639,4 +754,14 @@ def main(n_sims: int = 4_000, n_rivals: int = 10_000) -> None:  # pragma: no cov
 
 
 if __name__ == "__main__":  # pragma: no cover
-    main()
+    import argparse
+
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--live", action="store_true",
+                    help="use the shipped points and ownership models instead of the "
+                         "development stand-ins")
+    ap.add_argument("--n-sims", type=int, default=4_000)
+    ap.add_argument("--n-rivals", type=int, default=10_000)
+    ap.add_argument("--no-convergence", action="store_true")
+    a = ap.parse_args()
+    main(a.n_sims, a.n_rivals, live=a.live, convergence=not a.no_convergence)

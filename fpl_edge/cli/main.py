@@ -32,6 +32,8 @@ from fpl_edge.interfaces.inbox import IdeaInbox
 from fpl_edge.interfaces.registry import IdeaRegistry
 from fpl_edge.interfaces.report import weekly_report
 from fpl_edge.interfaces.tracking import track as run_track
+# Importing the package also registers the weekly report's `transfers` section.
+from fpl_edge.myteam.cli import app as myteam_app
 from fpl_edge.store import DEFAULT_DB, Warehouse
 
 UTC = dt.timezone.utc
@@ -44,6 +46,7 @@ app = typer.Typer(
 )
 idea_app = typer.Typer(no_args_is_help=True, help="The idea inbox: your hypotheses, tracked.")
 app.add_typer(idea_app, name="idea")
+app.add_typer(myteam_app, name="myteam")
 
 # The hypothesis registry team's surface. Importing it also registers the
 # theses section of the weekly report.
@@ -385,7 +388,12 @@ def idea_telegram(
     ),
     cycles: int = typer.Option(None, "--cycles", help="Stop after N poll cycles."),
 ) -> None:
-    """Run the long-polling bot. Reads TELEGRAM_BOT_TOKEN from env or .env."""
+    """Run the long-polling bot. Reads TELEGRAM_BOT_TOKEN from env or .env.
+
+    The squad commands (/setsquad, /confirm, /myteam, /sync) are installed onto
+    this same bot rather than run as a second one: two pollers on one token fight
+    over getUpdates, and the idea inbox must keep working unchanged.
+    """
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     from fpl_edge.interfaces.telegram import (
         FakeTransport,
@@ -402,6 +410,7 @@ def idea_telegram(
                 IdeaInbox(wh, season=season), config=cfg, transport=transport,
                 season=season, discover=True,
             )
+            _install_myteam(bot, wh, season)
             chat = next(iter(cfg.allowed_chat_ids), 1)
             bot.allowed = frozenset({chat})
             console.print(f"[dim]Dry run against a fake transport, chat id {chat}.[/]")
@@ -427,6 +436,7 @@ def idea_telegram(
 
     with _warehouse(db) as wh:
         bot = build_bot(IdeaInbox(wh, season=season), config=cfg, season=season, discover=discover)
+        _install_myteam(bot, wh, season)
         bot.drop_webhook()
         console.print(f"Connected as @{bot.check_connection()}.")
         console.print(
@@ -434,6 +444,13 @@ def idea_telegram(
         )
         bot.run_forever(max_cycles=cycles)
         console.print(f"{bot.stats}")
+
+
+def _install_myteam(bot, wh: Warehouse, season: str) -> None:
+    """Attach the squad commands to the idea bot. Owned by fpl_edge.myteam."""
+    from fpl_edge.myteam.bot import MyTeamCommands, install
+
+    install(bot, MyTeamCommands(warehouse=wh, season=season))
 
 
 # -- fpl weekly --------------------------------------------------------------
@@ -450,6 +467,19 @@ def weekly(
     when = _parse_as_of(as_of)
     with _warehouse(db) as wh:
         echo(weekly_report(wh, season=season, gw=gw, as_of=when).render())
+
+
+# -- fpl dossier / fpl intel -------------------------------------------------
+#
+# Owned by the intel team (fpl_edge/intel/, fpl_edge/interfaces/dossier.py). They
+# register their own commands so that adding a section, a flag or a subcommand
+# never needs an edit to this file, and so the CLI, the MCP tool and the Telegram
+# reply stay three renderers over one implementation.
+from fpl_edge.intel.cli import register_cli as _register_intel_cli  # noqa: E402
+from fpl_edge.interfaces.dossier import register_cli as _register_dossier_cli  # noqa: E402
+
+_register_dossier_cli(app)
+_register_intel_cli(app)
 
 
 if __name__ == "__main__":

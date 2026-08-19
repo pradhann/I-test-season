@@ -95,6 +95,80 @@ Per held-out season — the model wins all five:
 Calibration of the predictive interval, pooled: **50.4% / 79.9% / 94.8%** against
 nominal 50 / 80 / 95.
 
+### 2.1b The same thing under a strict walk-forward
+
+Leave-one-season-out lets the 2023-24 fold learn from 2024-25, which had not
+happened. `fpl_edge/models/ownership/evaluate.py` runs the protocol an operator
+would actually have had: for the transition out of gameweek `g` in season `s`,
+fit on every transition from a season before `s` plus every transition in `s`
+that ends at or before `g`. The gameweek being predicted is never in the fit.
+Cold start folds by season, because GW1 has no earlier gameweek of its own.
+
+**173 in-season folds, 76,103 player-transitions:**
+
+| | MAE (pp) | vs model |
+| --- | --- | --- |
+| **model** | **0.3950** | — |
+| persistence | 0.4801 | **-17.7%** |
+| naive transfer momentum | 0.5192 | **-23.9%** |
+
+Slightly worse than the leave-one-season-out 0.3869, which is the expected
+direction: the early folds are fitted on far less data.
+
+**A second negative result, and it changes how the number should be read.** The
+model beats persistence on MAE by 17.7%, but it is closer than persistence on
+only **43.3% of individual rows**. The two are not in conflict: the model earns
+its whole margin on the minority of players whose ownership moves a lot, and
+pays a small toll on the majority that barely move — the dilution and
+mean-reversion terms nudge a static 0.4%-owned player that persistence leaves
+alone. For the rank objective that trade is the right way round, because the
+players who move are the ones with enough effective ownership to matter. But
+"beats persistence" should not be read as "is closer more often than not",
+because it is not.
+
+**Cold start, 5 folds, 3,072 player-snapshots:**
+
+| horizon | n | model | persistence | momentum |
+| --- | --- | --- | --- | --- |
+| all | 3,072 | 0.5489 | 0.5736 (-4.3%) | 0.5571 (-1.5%) |
+| near deadline (T-1.0d, T-1.4d) | 1,210 | 0.1997 | 0.2380 (-16.1%) | **0.1963 (+1.7%)** |
+| far (T-11.2d, T-14.4d) | 1,862 | 0.7759 | 0.7916 (-2.0%) | 0.7916 (-2.0%) |
+
+Row-by-row, the model is closer than persistence on 58.4% of cold-start rows
+overall, 63.8% far from the deadline and exactly 50.0% near it.
+
+**A negative result, stated plainly.** At the near horizon — the only one that
+matters operationally, because that is when decisions get made — the fitted
+model is *worse than naive drift extrapolation* by 1.7% of MAE, on 1,210 rows
+across two folds. Leave-one-season-out reported the model ahead here; under the
+strict protocol it is not. Two folds is not enough to call this either way, and
+that is the finding: **the near-horizon cold-start block is not demonstrably
+better than extrapolating the observed drift**, and anyone quoting it should
+quote the drift baseline next to it. The far-horizon and in-season wins are real
+and are not affected.
+
+`2022-23` cannot be scored at all — it is the first season in the panel and
+there is no earlier pre-deadline snapshot anywhere. Its 1,574 rows are reported
+as untestable rather than dropped.
+
+### 2.1c Cold-start coefficient signs, audited
+
+`evaluate.coefficient_signs` renders every fitted cold-start coefficient against
+the sign its mechanism dictates, and `main()` exits non-zero if any escaped:
+
+| block | level | concentration | projection ≥0 | flagged ≤0 | drift ≥0 |
+| --- | --- | --- | --- | --- | --- |
+| near | -0.0084 | +0.0289 | +0.0035 | **-0.1556** | +1.9562 |
+| far | -0.0148 | -0.0120 | +0.0066 | **-0.1556** | +1.6644 |
+| near, no drift | +0.0006 | +0.0164 | +0.0056 | **-0.2036** | 0 |
+| far, no drift | -0.0145 | -0.0085 | +0.0059 | **-0.2036** | 0 |
+
+The constraint is load-bearing and `tests/unit/test_ownership_walk_forward.py`
+proves it every run: an unconstrained least-squares fit of the near block on its
+two snapshots puts the availability coefficient at **+0.239**, condition number
+110. If a future fixture change makes the unconstrained fit well-behaved, that
+test fails and asks for the constraint to be re-derived rather than deleted.
+
 ### 2.2 GW1 cold start
 
 Against real pre-deadline snapshots recovered from the upstream dataset's git
@@ -402,8 +476,38 @@ per `rules.deadlines.offset_before_first_kickoff_minutes`.
 ## 7. Reproducing
 
 ```bash
-uv run python -m fpl_edge.models.ownership.fit   # refits, rewrites params.json and measured.json
-uv run pytest tests/unit/test_ownership_eo.py tests/unit/test_ownership_forecast.py -q
+uv run python -m fpl_edge.models.ownership.fit       # refits, rewrites params.json and measured.json
+uv run python -m fpl_edge.models.ownership.evaluate  # strict walk-forward + sign audit
+uv run pytest tests/unit/test_ownership_eo.py tests/unit/test_ownership_forecast.py \
+              tests/unit/test_ownership_backtest.py tests/unit/test_ownership_walk_forward.py -q
 ```
 
-Both are offline and deterministic.
+All offline and deterministic. `evaluate` exits non-zero if any cold-start
+coefficient escapes its domain sign constraint.
+
+## 8. Live status at GW1 2026-27
+
+Recorded from the warehouse and the live API on 2026-08-18, T-2.76d from the
+17:30Z deadline on 2026-08-21:
+
+| | value |
+| --- | --- |
+| forecast path taken | `cold_start` — **not** `cold_start+drift` |
+| ownership polls in the warehouse | 2, thirty minutes apart |
+| drift term | refused: a 0.02-day window against a 2.76-day horizon is 1.3% of the required ratio |
+| `total_players` | 5,896,644 at rule capture, 5,950,733 on the live API the same day |
+| top-10k ownership | prior; `eo_top10k_is_prior = True` on all 509 rows |
+| overall league standings | `results: []` |
+| `entry/4490171/event/1/picks/` | HTTP 404 |
+
+The drift refusal is the guard in `MIN_DRIFT_WINDOW_RATIO` working as designed,
+and it costs real accuracy: on the historical snapshots the drift term is worth
+more than every structural feature combined. **The single highest-value action
+before the deadline is to poll `bootstrap-static` again, at least ~33 hours
+before it, so a usable drift window exists.** Everything else in this package is
+already as good as the data allows.
+
+Field size is not in the warehouse schema, so `extrapolate_total_players` cannot
+be run automatically; the two observations above exist only in this document.
+Registrations grew 54,089 in one day, so the deadline field is likely ~6.0M
+rather than 5.90M — about a 1.7% tightening of every rank threshold.
