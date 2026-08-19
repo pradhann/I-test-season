@@ -51,12 +51,13 @@ class StaleSessionError(RuntimeError):
 
 
 SETUP_STEPS = (
-    "Set FPL_SESSION_COOKIE in .env (gitignored):\n"
     "  1. Log in at https://fantasy.premierleague.com in your browser.\n"
     "  2. DevTools -> Network -> click any /api/ request.\n"
     "  3. Copy the full Cookie request-header value.\n"
-    "  4. .env: FPL_SESSION_COOKIE=<paste>\n"
-    "No password is stored and none is ever asked for; log out to revoke."
+    "  4. Run: uv run fpl myteam auth --paste-cookie   (prompts, stores, done)\n"
+    "That is a ONE-TIME step: the stored refresh token renews itself for about "
+    "six months. No password is stored and none is ever asked for; revoke by "
+    "logging out of that browser session."
 )
 
 
@@ -87,24 +88,68 @@ class PrivateTeamClient:
     """Reads ``/api/my-team/{entry}/`` with the manager's own session cookie."""
 
     def __init__(self, cookie: str | None = None, *, base_url: str = BASE,
-                 timeout: float = 30.0) -> None:
+                 timeout: float = 30.0, tokens: object | None = None) -> None:
         self._cookie = cookie if cookie is not None else secret(
             "FPL_SESSION_COOKIE", required=False
         )
         self._base = base_url.rstrip("/")
         self._timeout = timeout
+        # Injectable so tests pin it to a temp .env. Defaulting to the real
+        # TokenManager() inside fetch() made unit tests read the developer's
+        # live .env and try to refresh REAL tokens over the network.
+        self._tokens = tokens
 
     @property
     def configured(self) -> bool:
         return bool(self._cookie)
 
     def fetch(self, entry_id: int) -> PrivateSquad:
+        """Read my-team, preferring the self-renewing bearer token.
+
+        Order of attempts, each with a distinct failure story:
+
+        1. **Bearer** via :class:`~fpl_edge.myteam.tokens.TokenManager` -- the
+           access token auto-refreshes through the OAuth grant, so this path
+           needs no manual upkeep for the refresh token's ~6-month life. A 401
+           forces one refresh-and-retry before giving up, because an access
+           token can expire between the freshness check and the request.
+        2. **Raw cookie** fallback for a setup that predates the token flow.
+        """
+        from fpl_edge.myteam.tokens import (
+            AuthNotConfiguredError,
+            RefreshRefusedError,
+            TokenManager,
+        )
+
+        url = f"{self._base}/my-team/{int(entry_id)}/"
+        manager = self._tokens if self._tokens is not None else TokenManager()
+
+        if manager.configured:
+            try:
+                resp = self._get_bearer(url, manager.access_token())
+                if resp.status_code in (401, 403):
+                    # Force one refresh: the cached token may have just aged out
+                    # or been rotated by another client.
+                    resp = self._get_bearer(url, manager._refresh(manager._read()))
+                if resp.status_code in (401, 403):
+                    raise StaleSessionError(
+                        f"FPL rejected a freshly refreshed token "
+                        f"(HTTP {resp.status_code}). The session was revoked; "
+                        f"log in once in your browser and re-run "
+                        f"`uv run fpl myteam auth --paste-cookie`."
+                    )
+                resp.raise_for_status()
+                return self._parse(resp.json())
+            except (AuthNotConfiguredError, RefreshRefusedError) as exc:
+                if not self._cookie:
+                    raise StaleSessionError(str(exc)) from exc
+                # fall through to the cookie path
+
         if not self._cookie:
             raise NoSessionError(
-                "No FPL session cookie is configured, so the pre-deadline squad "
-                "cannot be read.\n" + SETUP_STEPS
+                "No FPL auth is configured, so the pre-deadline squad cannot be "
+                "read. One-time setup:\n" + SETUP_STEPS
             )
-        url = f"{self._base}/my-team/{int(entry_id)}/"
         headers = {"User-Agent": USER_AGENT, "Cookie": self._cookie}
         with httpx.Client(timeout=self._timeout, follow_redirects=True) as client:
             resp = client.get(url, headers=headers)
@@ -116,6 +161,15 @@ class PrivateTeamClient:
             )
         resp.raise_for_status()
         return self._parse(resp.json())
+
+    def _get_bearer(self, url: str, token: str) -> httpx.Response:
+        """One my-team GET with the bearer header the FPL web app itself sends."""
+        headers = {
+            "User-Agent": USER_AGENT,
+            "X-API-Authorization": f"Bearer {token}",
+        }
+        with httpx.Client(timeout=self._timeout, follow_redirects=True) as client:
+            return client.get(url, headers=headers)
 
     @staticmethod
     def _parse(body: dict[str, Any]) -> PrivateSquad:

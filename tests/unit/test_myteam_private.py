@@ -10,6 +10,7 @@ import datetime as dt
 
 import pytest
 
+from fpl_edge.myteam.tokens import TokenManager
 from fpl_edge.myteam.private import (
     NoSessionError,
     PrivateTeamClient,
@@ -40,8 +41,15 @@ def my_team_body() -> dict:
     }
 
 
-def test_missing_cookie_fails_with_setup_steps_not_a_403() -> None:
-    client = PrivateTeamClient(cookie="")
+def _no_auth(tmp_path) -> TokenManager:
+    """A token manager pinned to an empty env: no tokens, no network, ever."""
+    empty = tmp_path / "empty.env"
+    empty.write_text("")
+    return TokenManager(env_path=empty)
+
+
+def test_missing_cookie_fails_with_setup_steps_not_a_403(tmp_path) -> None:
+    client = PrivateTeamClient(cookie="", tokens=_no_auth(tmp_path))
     assert not client.configured
     with pytest.raises(NoSessionError, match="DevTools"):
         client.fetch(4490171)
@@ -74,14 +82,14 @@ def test_missing_bank_is_refused_rather_than_guessed() -> None:
         PrivateTeamClient._parse(body)
 
 
-def test_stale_cookie_gives_refresh_instructions(monkeypatch) -> None:
+def test_stale_cookie_gives_refresh_instructions(monkeypatch, tmp_path) -> None:
     import httpx
 
     def reject(self, url, headers=None):
         return httpx.Response(403, request=httpx.Request("GET", url))
 
     monkeypatch.setattr(httpx.Client, "get", reject)
-    client = PrivateTeamClient(cookie=COOKIE)
+    client = PrivateTeamClient(cookie=COOKIE, tokens=_no_auth(tmp_path))
     with pytest.raises(StaleSessionError, match="expired") as exc:
         client.fetch(4490171)
     # The error explains recovery without quoting the credential.
@@ -143,3 +151,72 @@ def test_reconstruct_prefers_private_over_manual_and_reports_provenance(tmp_path
     )
     assert state.provenance is Provenance.PRIVATE_API
     assert state.bank.tenths == 15  # observed from the account, not derived
+
+
+class _FakeTokens:
+    """A TokenManager stand-in with scripted behaviour and zero network."""
+
+    def __init__(self, tokens: list[str]) -> None:
+        self._tokens = list(tokens)
+        self.refreshes = 0
+        self.configured = True
+
+    def access_token(self) -> str:
+        return self._tokens[0]
+
+    def _read(self) -> dict:
+        return {}
+
+    def _refresh(self, env: dict) -> str:
+        self.refreshes += 1
+        return self._tokens[1]
+
+
+def test_bearer_path_reads_the_squad_without_a_cookie(monkeypatch) -> None:
+    import httpx
+
+    sent = {}
+
+    def ok(self, url, headers=None):
+        sent["auth"] = (headers or {}).get("X-API-Authorization", "")
+        return httpx.Response(200, json=my_team_body(),
+                              request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(httpx.Client, "get", ok)
+    client = PrivateTeamClient(cookie="", tokens=_FakeTokens(["tokA", "tokB"]))
+    squad = client.fetch(4490171)
+    assert squad.bank.tenths == 15
+    assert sent["auth"] == "Bearer tokA"
+
+
+def test_bearer_401_forces_one_refresh_then_succeeds(monkeypatch) -> None:
+    import httpx
+
+    calls = {"n": 0}
+
+    def first_401(self, url, headers=None):
+        calls["n"] += 1
+        auth = (headers or {}).get("X-API-Authorization", "")
+        if auth == "Bearer tokA":
+            return httpx.Response(401, request=httpx.Request("GET", url))
+        return httpx.Response(200, json=my_team_body(),
+                              request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(httpx.Client, "get", first_401)
+    fake = _FakeTokens(["tokA", "tokB"])
+    squad = PrivateTeamClient(cookie="", tokens=fake).fetch(4490171)
+    assert fake.refreshes == 1
+    assert calls["n"] == 2
+    assert squad.squad_value.tenths == 1002
+
+
+def test_bearer_401_after_refresh_is_a_revoked_session(monkeypatch) -> None:
+    import httpx
+
+    def always_401(self, url, headers=None):
+        return httpx.Response(401, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(httpx.Client, "get", always_401)
+    fake = _FakeTokens(["tokA", "tokB"])
+    with pytest.raises(StaleSessionError, match="revoked"):
+        PrivateTeamClient(cookie="", tokens=fake).fetch(4490171)
