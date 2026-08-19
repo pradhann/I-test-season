@@ -128,7 +128,13 @@ class QuestionRouter:
         p = Path("data/warehouse/gw1_projection.parquet")
         if not p.exists():
             return None
-        return pd.read_parquet(p)
+        df = pd.read_parquet(p)
+        # The solve script writes the frame with `code` as the index; every
+        # handler here wants it as a column. Normalising once at the loader is
+        # what keeps that decision from crashing each handler separately.
+        if "code" not in df.columns:
+            df = df.reset_index()
+        return df
 
     def _team_state(self):
         from fpl_edge.myteam.sources import PublicEntryClient
