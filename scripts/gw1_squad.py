@@ -80,9 +80,15 @@ def main(n_sims: int = 1000) -> None:
         # the XI/bench assignments a reader checks first. A 45-per-position
         # pool solves to the 1e-4 gap in well under the limit, and no plausible
         # GW1 squad draws from outside it.
+        from fpl_edge.opt import SolverConfig
+
         config = OptimizerConfig(
             mode=ObjectiveMode.EXPECTED_POINTS,
             max_candidates_per_position=45,
+            # The 300s default returns a ~10% incumbent on this instance. A
+            # deadline decision runs once a week; 30 minutes is cheap against
+            # ~33 points of possible slack over the horizon.
+            solver=SolverConfig(time_limit_s=1800.0, mip_gap_rel=0.01),
         )
         plan, stats = solve_horizon(problem, config, return_stats=True)
         print(f"status={plan.status} gap={plan.mip_gap}")
