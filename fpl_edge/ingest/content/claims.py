@@ -248,7 +248,10 @@ def extract_from_item(
     seen: set[tuple[int, str, int]] = set()
 
     for offset, seg in enumerate(segments):
-        lowered = seg.lower()
+        # Hyphens become spaces so "must-have" matches the "must have" cue.
+        # The replacement is length-preserving, which keeps every character
+        # offset -- and therefore token_spans and mention positions -- valid.
+        lowered = seg.lower().replace("-", " ")
         tokens = _WORD_RE.findall(lowered)
         if not tokens:
             continue
