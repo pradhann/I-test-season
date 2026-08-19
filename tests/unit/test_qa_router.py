@@ -45,8 +45,13 @@ CASES = [
     ("Which defenders have the highest xPoints", "top_by_position"),
     ("best midfielders by expected points?", "top_by_position"),
     ("top forwards for haul potential", "top_by_position"),
-    ("Fetch the latest from FPL Wire and summarize", "creator_fetch"),
-    ("what's the latest from Let's Talk FPL?", "creator_fetch"),
+    ("Fetch the latest from FPL Wire and summarize", "creator_summary"),
+    ("what's the latest from Let's Talk FPL?", "creator_summary"),
+    # The three messages that failed live, verbatim from the screenshot:
+    ("Find the key ideas from FPl Harry and FPLWire", "creator_summary"),
+    ("Who is playing bench boost content creators?", "creator_chip_scan"),
+    ("Summarize FPLRaptor", "creator_summary"),
+    ("https://youtu.be/dQw4w9WgXcQ check this", "link_ingest"),
     ("Which fixtures to target next?", "fixtures_target"),
     ("which players are essential for the next 5 GWs", "fixtures_target"),
     ("How is my team different from the top fantasy managers", "vs_elite"),
@@ -80,13 +85,15 @@ def test_ideas_fall_through(router, text) -> None:
     assert router.route(text) is None
 
 
-def test_creator_name_extraction() -> None:
-    r = QuestionRouter(wh=None)
-    intent = next(i for i in r.intents if i.name == "creator_fetch")
-    m = intent.pattern.search("Fetch the latest from FPL Wire and summarize")
-    assert m and m.group("src").strip() == "FPL Wire"
-    m2 = intent.pattern.search("latest from Let's Talk FPL?")
-    assert m2 and "Talk FPL" in m2.group("src")
+def test_creator_matching_handles_typos_and_multiples() -> None:
+    from fpl_edge.interfaces.creators import match_creators
+
+    got = match_creators("Find the key ideas from FPl Harry and FPLWire")
+    assert got == ["FPL Harry", "The FPL Wire"]
+    assert match_creators("Summarize FPLRaptor") == ["FPL Raptor"]
+    # Beliefs must not trip the creator gate.
+    assert match_creators("I like Rashford") == []
+    assert match_creators("Semenyo captain GW12?") == []
 
 
 def test_handler_failure_is_reported_not_swallowed() -> None:
@@ -233,9 +240,15 @@ def test_suggest_transfers_reads_the_plan_with_a_real_state(tmp_path, monkeypatc
     assert "Hold" in a.text
 
 
-def test_creator_fetch_query_matches_the_real_claim_schema(tmp_path, monkeypatch) -> None:
-    """The live failure: content_claim's column is `gameweek`, not `gw`."""
+def test_creator_summary_reads_the_real_claim_schema(tmp_path, monkeypatch) -> None:
+    """The live failure class: handlers written against invented schemas."""
     wh = _seeded_wh(tmp_path)
+    wh.sql("""
+        CREATE TABLE content_item (
+            item_id VARCHAR, source_key VARCHAR, creator VARCHAR, kind VARCHAR,
+            title VARCHAR, url VARCHAR, published_at TIMESTAMPTZ, text VARCHAR,
+            fetched_at TIMESTAMPTZ, text_source VARCHAR)
+    """)
     wh.sql("""
         CREATE TABLE content_claim (
             claim_id VARCHAR, item_id VARCHAR, creator VARCHAR, source_key VARCHAR,
@@ -245,12 +258,31 @@ def test_creator_fetch_query_matches_the_real_claim_schema(tmp_path, monkeypatch
             gw_inferred BOOLEAN)
     """)
     wh.sql("""
+        CREATE TABLE claim_outcome (
+            claim_id VARCHAR, creator VARCHAR, season VARCHAR, gameweek INTEGER,
+            player_code INTEGER, action VARCHAR, player_points DOUBLE,
+            benchmark VARCHAR, benchmark_points DOUBLE, hit BOOLEAN,
+            unscoreable VARCHAR, resolved_utc TIMESTAMPTZ)
+    """)
+    wh.sql("""
+        INSERT INTO content_item VALUES
+        ('i1','pod_fplwire','The FPL Wire','podcast','Ep 1','u',
+         '2026-08-19T12:00:00+00:00','we are on the bench boost train for gw1',
+         '2026-08-19T13:00:00+00:00','transcript')
+    """)
+    wh.sql("""
         INSERT INTO content_claim VALUES
         ('c1','i1','The FPL Wire','pod_fplwire',101,'GKP0','gkp0','buy',
-         '2026-27',1,0.6,'r','u','2026-08-18T12:00:00+00:00',false)
+         '2026-27',1,0.6,'r','u','2026-08-19T12:00:00+00:00',false)
     """)
     r = QuestionRouter(wh)
-    monkeypatch.setattr(r, "_team_state", lambda: _real_state(wh))
+    import fpl_edge.interfaces.creators as cr
+    monkeypatch.setattr(cr, "_refresh", lambda keys, **k: False)
+
     a = r.route("Fetch the latest from FPL Wire and summarize")
     assert a is not None and "understood that as" not in a.text, a.text
     assert "GW1 buy: GKP0" in a.text
+    assert "ZERO decision weight" in a.text  # unearned influence stays at zero
+
+    a2 = r.route("Who is playing bench boost content creators?")
+    assert a2 is not None and "The FPL Wire" in a2.text and "bboost" in a2.text

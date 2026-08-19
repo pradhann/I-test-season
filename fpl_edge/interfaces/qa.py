@@ -83,10 +83,26 @@ class QuestionRouter:
                               r"\bessential\b.{0,24}\b(players?|picks?)\b|"
                               r"\b(players?|picks?)\b.{0,24}\bessential\b", re.I),
                    self.fixtures_target),
-            Intent("creator_fetch",
-                   re.compile(r"\b(fetch|latest|what).{0,24}\bfrom\s+(?P<src>[\w' ]{3,30}?)"
-                              r"\s*(and|\?|$|summar)", re.I),
-                   self.creator_fetch),
+            # Links first: a shared URL is always a transcription request,
+            # whatever words surround it.
+            Intent("link_ingest",
+                   re.compile(r"https?://\S+", re.I),
+                   self.link_ingest),
+            # Chip talk across creators ("who is playing bench boost?").
+            Intent("creator_chip_scan",
+                   re.compile(r"\b(bench\s*boost|triple\s*captain|wild\s*card|wildcard|"
+                              r"free\s*hit)\b.{0,40}\b(creators?|content|anyone|who)\b|"
+                              r"\b(who|which|any)\b.{0,30}\b(playing|using|on)\b.{0,16}"
+                              r"\b(bench\s*boost|triple\s*captain|wildcard|free\s*hit)\b",
+                              re.I),
+                   self.creator_chip_scan),
+            # Any message that names a tracked creator routes here -- matched
+            # against the roster with typo-tolerant aliases, not a phrase
+            # template. "Summarize FPLRaptor", "key ideas from FPl Harry and
+            # FPLWire", "what is Let's Talk FPL saying?" all land.
+            Intent("creator_summary",
+                   re.compile(r".", re.S),  # gate is the roster match below
+                   self.creator_summary),
             Intent("top_by_position",
                    re.compile(r"\b(which|what|top|best|highest)\b.{0,30}"
                               r"\b(goalkeepers?|keepers?|defenders?|midfielders?|forwards?|"
@@ -102,6 +118,14 @@ class QuestionRouter:
         stripped = text.strip()
         for intent in self.intents:
             m = intent.pattern.search(stripped)
+            if intent.name == "creator_summary":
+                # The pattern is a catch-all; the real gate is naming a tracked
+                # creator. Without a creator named, fall through to other
+                # intents and ultimately the idea inbox.
+                from fpl_edge.interfaces.creators import match_creators
+
+                if not match_creators(stripped):
+                    continue
             if m:
                 try:
                     return intent.handler(stripped, m)
@@ -354,52 +378,59 @@ class QuestionRouter:
         nxt = snap.next_gw(self.season)
         return list(range(int(nxt), int(nxt) + n))
 
-    def creator_fetch(self, text: str, m) -> Answer:
-        from fpl_edge.ingest.content import sources as src_mod
+    def creator_summary(self, text: str, m) -> Answer:
+        from fpl_edge.interfaces.creators import match_creators, summarize_creator
 
-        wanted = (m.group("src") or "").strip().lower()
-        candidates = [s for s in src_mod.fetchable()
-                      if wanted in s.creator.lower() or wanted in s.key.lower()]
-        if not candidates:
-            names = sorted({s.creator for s in src_mod.fetchable()})
+        creators = match_creators(text)
+        blocks = []
+        for creator in creators[:3]:
+            summary = summarize_creator(self.wh, creator)
+            blocks.append(summary.render())
+        note = ("\n\nClaims are extracted and player-resolved from stored "
+                "transcripts/descriptions; share a specific video link and I "
+                "will transcribe that one directly.")
+        return Answer("\n\n".join(blocks) + note)
+
+    def creator_chip_scan(self, text: str, m) -> Answer:
+        from fpl_edge.interfaces.creators import chip_scan
+
+        rows = chip_scan(self.wh)
+        if not rows:
             return Answer(
-                f"I don't track a source matching '{wanted}'. I do track: "
-                + ", ".join(names[:15]) + " …"
+                "No chip talk found in the last 10 days of stored creator "
+                "content. Most YouTube items are description-only until "
+                "transcripts accumulate, so absence here is weak evidence — "
+                "share a specific video link and I'll transcribe it."
             )
-        creator = candidates[0].creator
-        claims = self.wh.sql(
-            """
-            SELECT player_name, action, gameweek AS gw, confidence, published_at
-            FROM content_claim WHERE lower(creator) = lower(?)
-            ORDER BY published_at DESC LIMIT 12
-            """,
-            [creator],
-        )
-        if claims.empty:
-            return Answer(
-                f"{creator} is tracked but has no extracted claims in the "
-                f"warehouse yet. The nightly job re-ingests; or run "
-                f"`make ingest-content` now."
-            )
-        state = self._team_state()
-        mine = {p.code for p in state.picks} if state.picks else set()
-        players = self._snapshot().players(self.season)
-        code_of = dict(zip(players["web_name"].str.lower(), players["code"]))
-        lines = [f"Latest extracted claims from {creator}:"]
-        for r in claims.itertuples():
-            tag = ""
-            c = code_of.get(str(r.player_name).lower())
-            if c in mine:
-                tag = " — you own him"
-            lines.append(f"• GW{r.gw} {r.action}: {r.player_name} "
-                         f"(conf {r.confidence:.0%}){tag}")
-        lines.append(
-            "\nWeight warning: this creator's measured hit rate is not yet "
-            "established (claims resolve after gameweeks finish), so the "
-            "engine currently gives these zero decision weight. Treat as "
-            "leads to check against the dossier, not instructions."
-        )
+        wanted = None
+        low = text.lower()
+        for phrase, chip in {"bench boost": "bboost", "triple": "3xc",
+                             "wildcard": "wildcard", "free hit": "freehit"}.items():
+            if phrase in low:
+                wanted = chip
+                break
+        picked = [r for r in rows if wanted is None or r[1] == wanted] or rows
+        lines = ["Chip talk across tracked creators (last 10 days):"]
+        seen = set()
+        for creator, chip, title, snippet in picked[:8]:
+            key = (creator, chip)
+            if key in seen:
+                continue
+            seen.add(key)
+            lines.append(f"• {creator} — {chip}: \"{snippet[:90]}\"")
+        lines.append("\nThese are keyword hits with context, not resolved "
+                     "claims; chip advice enters the model only through the "
+                     "scored-claim pipeline.")
         return Answer("\n".join(lines))
+
+    def link_ingest(self, text: str, m) -> Answer:
+        from fpl_edge.interfaces.creators import find_url, ingest_link
+
+        url = find_url(text)
+        if url is None:
+            return Answer("I saw something like a link but could not parse it.")
+        findings = ingest_link(self.wh, url)
+        return Answer(findings.render())
 
     def vs_elite(self, text: str, m) -> Answer:
         state = self._team_state()
