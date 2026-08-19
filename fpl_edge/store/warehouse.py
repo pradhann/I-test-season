@@ -254,6 +254,45 @@ class Snapshot:
         return int(future.sort_values("deadline_utc").iloc[0]["gw"])
 
 
+class LeasedWarehouse:
+    """A Warehouse that holds the file lock only while actually in use.
+
+    DuckDB permits one writer per file. A long-lived process (the Telegram
+    bot under launchd, KeepAlive, alive for months) that opens a plain
+    Warehouse therefore starves every other writer -- the nightly settlement
+    job, ideas CLI, every ingest -- for its whole life. This wrapper connects
+    on first attribute access and disconnects on :meth:`release`, which the
+    bot calls after each poll cycle; between messages the lock is free.
+    """
+
+    def __init__(self, path: Path | str = DEFAULT_DB, *, lock_timeout_s: float = 60.0) -> None:
+        self._path = Path(path)
+        self._lock_timeout_s = lock_timeout_s
+        self._wh: "Warehouse | None" = None
+
+    def _ensure(self) -> "Warehouse":
+        if self._wh is None:
+            self._wh = Warehouse(self._path, lock_timeout_s=self._lock_timeout_s)
+        return self._wh
+
+    def __getattr__(self, name: str):
+        return getattr(self._ensure(), name)
+
+    def release(self) -> None:
+        if self._wh is not None:
+            self._wh.close()
+            self._wh = None
+
+    def close(self) -> None:
+        self.release()
+
+    def __enter__(self) -> "LeasedWarehouse":
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.release()
+
+
 class Warehouse:
     """Owns the DuckDB connection and all writes."""
 

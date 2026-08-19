@@ -159,7 +159,10 @@ class ScorerStrategy:
     def decide(self, snapshot: Snapshot, state: SquadState | None,
                season: Season, gw: GwId) -> Decision:
         players = snapshot.players(season)
-        players = players[players["status"].isin(["a", "d"])]
+        # NULL status means "the archive predates the field", not "unavailable":
+        # vaastav's per-GW files carry no status, so filtering it out empties
+        # every historical season and the backtest dies at GW1.
+        players = players[players["status"].isin(["a", "d"]) | players["status"].isna()]
         value = self.scorer(snapshot, players, season, gw)
 
         if state is None:

@@ -454,6 +454,16 @@ class TelegramBot:
                 self.stats.errors += 1
                 log.exception("poll cycle failed; backing off")
                 time.sleep(3.0)
+            finally:
+                # Free the single-writer lock between cycles: this process
+                # lives for months under launchd, and holding the warehouse
+                # open would starve the settlement job and every CLI write.
+                release = getattr(self.inbox.wh, "release", None)
+                if release is not None:
+                    try:
+                        release()
+                    except Exception:  # noqa: BLE001
+                        log.exception("warehouse release failed")
             cycles += 1
 
 

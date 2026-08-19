@@ -138,7 +138,8 @@ class ReplayResult:
 
 
 def _validate_squad(picks: tuple[Pick, ...], price: dict[int, int],
-                    team_of: dict[int, int], bank: int) -> None:
+                    team_of: dict[int, int], bank: int,
+                    held: frozenset[int] = frozenset()) -> None:
     r = rules()
     if len(picks) != r.get("squad.size"):
         raise InvalidDecision(f"squad must contain {r.get('squad.size')} players")
@@ -154,12 +155,21 @@ def _validate_squad(picks: tuple[Pick, ...], price: dict[int, int],
             raise InvalidDecision(f"need {n} {pos_name}, got {got}")
 
     limit = r.get("squad.max_per_club")
-    counts: dict[int, int] = {}
+    by_club: dict[int, list[int]] = {}
     for p in picks:
-        club = team_of[p.code]
-        counts[club] = counts.get(club, 0) + 1
-        if counts[club] > limit:
-            raise InvalidDecision(f"more than {limit} players from club {club}")
+        by_club.setdefault(team_of[p.code], []).append(p.code)
+    for club, codes in by_club.items():
+        if len(codes) <= limit:
+            continue
+        # A real-world transfer can move a HELD player onto a club where the
+        # manager already owns three: FPL grandfathers that (nobody is forced
+        # to sell). The cap therefore binds only when a newly BOUGHT player
+        # contributes to the excess.
+        if any(c not in held for c in codes):
+            raise InvalidDecision(
+                f"more than {limit} players from club {club} "
+                f"(a newly bought player contributes to the excess)"
+            )
 
     if bank < 0:
         raise InvalidDecision(f"bank went negative: {Money(bank)}")
@@ -229,7 +239,7 @@ def apply_decision(
             free_transfers=1,
             chips_used=((decision.chip, gw),) if decision.chip is not Chip.NONE else (),
         )
-        _validate_squad(new.picks, price, team_of, bank)
+        _validate_squad(new.picks, price, team_of, bank)  # initial squad: nothing held
         if decision.chip is not Chip.NONE:
             _chip_allowed(decision.chip, gw, ())
         return new, 0, (), tuple(sorted(p.code for p in decision.picks))
@@ -272,7 +282,10 @@ def apply_decision(
         chips_used=state.chips_used + (((decision.chip, gw),) if decision.chip is not Chip.NONE else ()),
         pre_freehit=state if decision.chip is Chip.FREE_HIT else None,
     )
-    _validate_squad(new.picks, price, team_of, bank)
+    # Players carried over are grandfathered against club moves; only the
+    # newly bought may push a club over the cap.
+    _validate_squad(new.picks, price, team_of, bank,
+                    held=frozenset(state.codes - out))
     return new, hits, tuple(sorted(out)), tuple(sorted(into))
 
 

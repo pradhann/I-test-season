@@ -227,3 +227,23 @@ def test_captain_must_be_a_starter() -> None:
     )
     with pytest.raises(InvalidDecision, match="starting XI"):
         apply_decision(None, Decision(bad), PRICE, TEAM_OF, GwId(1))
+
+
+def test_held_squad_survives_a_real_world_club_move() -> None:
+    """FPL grandfathers a 4-from-one-club squad created by a transfer window.
+
+    Found in the 2025-26 backtest: a mid-season club move put a held player
+    onto a club where three others were already owned, and every subsequent
+    hold was rejected as illegal. Nobody is forced to sell; only newly bought
+    players may push a club over the cap.
+    """
+    s = initial()
+    # Player 11 "moves" to club 1, which already has players 1, 2, 3.
+    moved = {**TEAM_OF, 11: 1}
+    held, hits, _, _ = apply_decision(s, Decision(picks()), PRICE, moved, GwId(2))
+    assert hits == 0  # holding is legal
+
+    # But BUYING a fourth for that club is still refused.
+    with pytest.raises(InvalidDecision, match="newly bought"):
+        team = {**moved, 26: 1}
+        apply_decision(held, Decision(swap(picks(), 9, 26)), PRICE, team, GwId(3))

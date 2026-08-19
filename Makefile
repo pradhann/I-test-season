@@ -48,3 +48,20 @@ audit:  ## Run the leakage / adversarial audit suite
 
 clean:
 	rm -f data/warehouse/*.duckdb data/warehouse/*.wal
+
+.PHONY: deploy undeploy
+deploy:  ## Install the Telegram bot + nightly settlement as launchd services
+	mkdir -p data/warehouse/jobs ~/Library/LaunchAgents
+	cp deploy/com.fpledge.telegram.plist ~/Library/LaunchAgents/
+	cp deploy/com.fpledge.postgw.plist ~/Library/LaunchAgents/
+	launchctl unload ~/Library/LaunchAgents/com.fpledge.telegram.plist 2>/dev/null || true
+	launchctl unload ~/Library/LaunchAgents/com.fpledge.postgw.plist 2>/dev/null || true
+	launchctl load ~/Library/LaunchAgents/com.fpledge.telegram.plist
+	launchctl load ~/Library/LaunchAgents/com.fpledge.postgw.plist
+	@echo "bot: always on (KeepAlive). settlement: daily 03:00 local."
+	@echo "remove with: make undeploy"
+
+undeploy:  ## Remove the launchd services
+	launchctl unload ~/Library/LaunchAgents/com.fpledge.telegram.plist 2>/dev/null || true
+	launchctl unload ~/Library/LaunchAgents/com.fpledge.postgw.plist 2>/dev/null || true
+	rm -f ~/Library/LaunchAgents/com.fpledge.telegram.plist ~/Library/LaunchAgents/com.fpledge.postgw.plist

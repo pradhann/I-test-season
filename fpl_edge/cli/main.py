@@ -370,6 +370,54 @@ def idea_acted(
             raise typer.Exit(code=1)
 
 
+@app.command("elite")
+def elite(
+    top: int = typer.Option(20, "--top", help="How many managers to show."),
+    refresh: bool = typer.Option(False, "--refresh", help="Recompute from the warehouse."),
+) -> None:
+    """The maintained list of TOP FPL managers, skill-scored across seasons.
+
+    Skill is separated from luck with a hierarchical model over normalised
+    season ranks (ICC ~0.53: about half of season-to-season variance is
+    persistent skill). The list refreshes nightly with the settlement job;
+    --refresh recomputes now. Their squads become copyable the moment each
+    gameweek's deadline locks them.
+    """
+    import json as _json
+    from pathlib import Path as _P
+
+    cache = _P("data/warehouse/elite_list.json")
+    if refresh or not cache.exists():
+        from fpl_edge.models.copying.report import build
+
+        data = build()
+        cache.write_text(_json.dumps(data, default=str))
+    else:
+        data = _json.loads(cache.read_text())
+
+    rows = data.get("shortlist", [])[:top]
+    if not rows:
+        echo("No elite list yet. Run `make deploy` (nightly) or `fpl elite --refresh`.")
+        raise typer.Exit(1)
+    from rich.table import Table
+
+    t = Table(title=f"Top {len(rows)} managers by skill score (theta)")
+    for col in ("#", "manager", "entry", "seasons", "theta", "top-10k seasons", "best rank"):
+        t.add_column(col)
+    for i, r in enumerate(rows, 1):
+        t.add_row(str(i), str(r.get("name", "?")), str(r.get("entry_id")),
+                  str(r.get("n_seasons")), f"{r.get('theta_hat', 0):.2f}",
+                  str(r.get("top10k_seasons")), f"{r.get('best_rank'):,}")
+    console.print(t)
+    you = data.get("user", {})
+    if you:
+        console.print(
+            f"You: theta {you.get('theta_hat', 0):.2f}, pool rank "
+            f"{int(you.get('pool_rank', 0))}/{int(you.get('pool_size', 0))} "
+            f"(expected percentile {you.get('expected_percentile', 0):.1%})"
+        )
+
+
 # -- fpl idea telegram -------------------------------------------------------
 
 
@@ -395,6 +443,10 @@ def idea_telegram(
     over getUpdates, and the idea inbox must keep working unchanged.
     """
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    # httpx logs full request URLs at INFO, and Telegram Bot API URLs CONTAIN
+    # THE TOKEN. A credential in a log file defeats everything .env protects.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
     from fpl_edge.interfaces.telegram import (
         FakeTransport,
         TelegramConfig,
@@ -434,7 +486,9 @@ def idea_telegram(
         console.print("[red]--discover still needs TELEGRAM_BOT_TOKEN.[/]")
         raise typer.Exit(code=2)
 
-    with _warehouse(db) as wh:
+    from fpl_edge.store import LeasedWarehouse
+
+    with LeasedWarehouse(db) as wh:
         bot = build_bot(IdeaInbox(wh, season=season), config=cfg, season=season, discover=discover)
         _install_myteam(bot, wh, season)
         bot.drop_webhook()

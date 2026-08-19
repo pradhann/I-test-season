@@ -362,3 +362,25 @@ def test_players_works_against_a_database_missing_newer_columns(tmp_path) -> Non
         assert "can_select" not in got.columns
         # selectable() must still work, falling back to status.
         assert len(wh.snapshot_at(T(19)).selectable("2026-27")) == 1
+
+
+def test_leased_warehouse_frees_the_lock_between_uses(tmp_path) -> None:
+    """A long-lived bot must not starve every other writer for months.
+
+    The lease connects on demand and releases on request; while released,
+    another writer can take the file.
+    """
+    from fpl_edge.store import LeasedWarehouse
+
+    path = tmp_path / "l.duckdb"
+    lease = LeasedWarehouse(path)
+    lease.append("fact_player_state", _state(1, 50, 1.0, T(18)))  # opens on demand
+    lease.release()
+
+    other = Warehouse(path, lock_timeout_s=2.0)  # must not time out
+    assert other.append("fact_player_state", _state(2, 60, 2.0, T(18))) == 1
+    other.close()
+
+    # The lease reopens transparently after a release.
+    assert len(lease.snapshot_at(T(19)).table("fact_player_state")) == 2
+    lease.close()

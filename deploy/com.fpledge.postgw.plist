@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.fpledge.postgw</string>
+  <key>WorkingDirectory</key><string>/Users/nripeshpradhan/Documents/Github/i-test-season</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/nripeshpradhan/Documents/Github/i-test-season/.venv/bin/python</string>
+    <string>-m</string><string>fpl_edge.jobs.post_gw</string>
+  </array>
+  <!-- 10:00 UTC daily: FPL finalises points by 09:00 UK the morning after the
+       last match, so a daily 10:00Z run settles every finished gameweek at
+       most one day late and is a no-op otherwise (every step is idempotent). -->
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>3</integer><key>Minute</key><integer>0</integer></dict>
+  <key>RunAtLoad</key><false/>
+  <key>StandardOutPath</key><string>/Users/nripeshpradhan/Documents/Github/i-test-season/data/warehouse/jobs/postgw.log</string>
+  <key>StandardErrorPath</key><string>/Users/nripeshpradhan/Documents/Github/i-test-season/data/warehouse/jobs/postgw.log</string>
+</dict>
+</plist>
