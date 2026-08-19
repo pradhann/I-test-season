@@ -108,12 +108,27 @@ def current_state(
     owned_client = client is None
     client = client or PublicEntryClient()
     try:
+        private = None
+        try:
+            from fpl_edge.myteam.private import PrivateTeamClient, StaleSessionError
+
+            pc = PrivateTeamClient()
+            if pc.configured:
+                try:
+                    private = pc.fetch(entry_id)
+                except StaleSessionError:
+                    # Reported in the section body via provenance; a stale
+                    # cookie must not take the whole weekly report down.
+                    private = None
+        except Exception:  # noqa: BLE001 - the report renders without it
+            private = None
         return reconstruct(
             snapshot,
             entry_id=entry_id,
             season=season,
             client=client,          # type: ignore[arg-type]
             manual=manual,
+            private=private,
             gw=gw,
         )
     finally:

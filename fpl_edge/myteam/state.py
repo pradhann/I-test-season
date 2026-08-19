@@ -41,6 +41,8 @@ from typing import TYPE_CHECKING
 
 from fpl_edge.eval.replay import Decision, InvalidDecision, SquadState, apply_decision
 from fpl_edge.eval.scoring import Chip, Pick
+from typing import TYPE_CHECKING
+
 from fpl_edge.myteam.sources import (
     ChipPlay,
     EntryHistory,
@@ -49,6 +51,9 @@ from fpl_edge.myteam.sources import (
     PublicEntryClient,
     TransferRow,
 )
+
+if TYPE_CHECKING:
+    from fpl_edge.myteam.private import PrivateSquad
 from fpl_edge.rules import rules
 from fpl_edge.store import Snapshot
 from fpl_edge.types import GwId, Money, Position, selling_price
@@ -62,6 +67,7 @@ UTC = dt.timezone.utc
 class Provenance(enum.StrEnum):
     """Where the 15 came from. Never inferred, always recorded."""
 
+    PRIVATE_API = "private_api"     # observed live via the manager's own session cookie
     PUBLIC_PICKS = "public_picks"   # observed: the gameweek has started
     MANUAL = "manual"               # the manager told us, and confirmed it back
     NONE = "none"                   # we genuinely do not know
@@ -563,6 +569,7 @@ def reconstruct(
     transfers: Sequence[TransferRow] | None = None,
     picks: GwPicks | None = None,
     manual: "ManualSquadRecord | None" = None,
+    private: "PrivateSquad | None" = None,
     gw: int | None = None,
     validate: bool = True,
 ) -> MyTeamState:
@@ -595,7 +602,13 @@ def reconstruct(
 
     squad: tuple[Pick, ...] | None = None
     provenance = Provenance.NONE
-    if picks is not None:
+    if private is not None:
+        # The strongest source there is: the live pre-deadline squad, read with
+        # the manager's own session. Purchase prices and bank are observed, so
+        # nothing about the sell-on fee is left to reconstruction.
+        squad = picks_from_public(private.picks, index)
+        provenance = Provenance.PRIVATE_API
+    elif picks is not None:
         squad = picks_from_public(picks, index)
         provenance = Provenance.PUBLIC_PICKS
     elif manual is not None:
@@ -605,7 +618,11 @@ def reconstruct(
         unavailable.append(NO_PICKS_BEFORE_KICKOFF)
 
     # -- money ---------------------------------------------------------------
-    if history.current:
+    if private is not None:
+        # Observed live from the account: nothing to derive.
+        bank = private.bank.tenths
+        observed_value = private.squad_value
+    elif history.current:
         bank = history.current[-1].bank.tenths
         observed_value = history.current[-1].value
     elif entry.last_deadline_bank is not None:
@@ -622,7 +639,23 @@ def reconstruct(
     # -- purchase prices -----------------------------------------------------
     bought_at: dict[int, int] = {}
     if squad is not None:
-        if manual is not None and provenance is Provenance.MANUAL:
+        if provenance is Provenance.PRIVATE_API:
+            # my-team states purchase_price per pick outright. Map the per-
+            # element figures onto stable codes; a pick the payload did not
+            # price falls through to reconstruction below, loudly counted.
+            bought_at = {}
+            for element, tenths in private.purchase_by_element.items():
+                try:
+                    bought_at[int(index.code(element))] = int(tenths)
+                except ReconstructionError:
+                    pass  # counted below as a reconstructed price
+            missing_pp = [p_.code for p_ in squad if p_.code not in bought_at]
+            if missing_pp:
+                derived.append(
+                    f"purchase price for {len(missing_pp)} pick(s) the private "
+                    "payload did not price (reconstructed from transfers)"
+                )
+        elif manual is not None and provenance is Provenance.MANUAL:
             bought_at = dict(manual.bought_at)
         else:
             bought_at = purchase_prices(

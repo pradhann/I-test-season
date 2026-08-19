@@ -79,6 +79,31 @@ def _entry_id(value: int | None) -> int:
 # -- fpl myteam show ---------------------------------------------------------
 
 
+def _try_private(entry_id: int):
+    """The live private squad when a session cookie is configured, else None.
+
+    Degrades silently to the public/manual path on any failure EXCEPT a stale
+    cookie, which is worth a visible warning: the manager set it up and would
+    otherwise not learn it stopped working until a wrong recommendation.
+    """
+    from fpl_edge.myteam.private import (
+        NoSessionError,
+        PrivateTeamClient,
+        StaleSessionError,
+    )
+
+    client = PrivateTeamClient()
+    if not client.configured:
+        return None
+    try:
+        return client.fetch(entry_id)
+    except StaleSessionError as exc:
+        console.print(f"[yellow]{exc}[/yellow]")
+        return None
+    except NoSessionError:
+        return None
+
+
 @app.command("show")
 def show(
     db: Path = DbOpt,
@@ -119,7 +144,7 @@ def show(
             else:
                 state = reconstruct(
                     snapshot, entry_id=entry_id, season=season, client=client,
-                    manual=manual, gw=gw,
+                    manual=manual, private=_try_private(entry_id), gw=gw,
                 )
         finally:
             if client is not None:
@@ -392,7 +417,8 @@ def transfers(
         index = PlayerIndex.from_snapshot(snapshot, season)
         state = reconstruct(
             snapshot, entry_id=entry_id, season=season, client=client,
-            manual=store.confirmed(season=season), gw=gw,
+            manual=store.confirmed(season=season),
+            private=_try_private(entry_id), gw=gw,
         )
         target = int(gw) if gw is not None else int(state.gw)
         try:
@@ -429,18 +455,46 @@ def transfers(
 
 @app.command("whynot")
 def whynot(entry: int = EntryOpt) -> None:
-    """Why the engine does not just log in and read your team."""
-    entry_id = _entry_id(entry)
-    try:
-        from fpl_edge.myteam.sources import forbid_authenticated_url
-
-        forbid_authenticated_url(f"https://fantasy.premierleague.com/api/my-team/{entry_id}/")
-    except AuthenticatedEndpointError as exc:
-        echo(str(exc))
-        console.print()
+    """How the engine reads your team, and why it never takes a password."""
     console.print(
-        "Public endpoints used instead: /api/entry/{id}/, .../history/, "
-        ".../transfers/, and .../event/{gw}/picks/ once a gameweek has started."
+        "The engine never stores or asks for your FPL password: the login runs "
+        "through the Premier League SSO behind anti-bot protection, a stored "
+        "password grants full account control, and neither is needed.\n\n"
+        "Instead, three sources in order of strength:\n"
+        "  1. FPL_SESSION_COOKIE in .env -- your own browser session, pasted by "
+        "you, revocable by logging out. Reads /api/my-team/ live, including the "
+        "pre-deadline squad, exact purchase prices and bank. Check it with "
+        "`fpl myteam cookie`.\n"
+        "  2. Public picks -- /api/entry/{id}/event/{gw}/picks/ once a gameweek "
+        "has started.\n"
+        "  3. Manual entry -- `fpl myteam set`, confirmed back before saving."
+    )
+
+
+@app.command("cookie")
+def cookie_probe(entry: int = EntryOpt) -> None:
+    """Test the FPL session cookie end to end, without printing it."""
+    from fpl_edge.myteam.private import (
+        NoSessionError,
+        PrivateTeamClient,
+        StaleSessionError,
+    )
+
+    entry_id = _entry_id(entry)
+    client = PrivateTeamClient()
+    try:
+        squad = client.fetch(entry_id)
+    except (NoSessionError, StaleSessionError) as exc:
+        echo(str(exc))
+        raise typer.Exit(1)
+    console.print(
+        f"[green]Session OK.[/green] Live squad read: 15 picks, "
+        f"bank {squad.bank}, value {squad.squad_value}, "
+        f"free transfers {squad.free_transfers}, "
+        f"chips: " + ", ".join(f"{k}={v}" for k, v in sorted(squad.chips.items()))
+    )
+    console.print(
+        "The weekly report and `myteam show` now read this squad automatically."
     )
 
 
