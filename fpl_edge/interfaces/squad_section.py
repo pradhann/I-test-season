@@ -53,11 +53,14 @@ def render_squad(wh: Warehouse, season: str, gw: int, as_of: dt.datetime) -> str
     if plan["objective_mode"] == "expected_points":
         lines += [
             "",
-            "**Mode caveat:** this squad maximises expected points, not "
-            "P(top-10k). The rank-utility objective is not yet wired into the "
-            "solver (it raises rather than silently substituting means), so "
-            "treat this as the xPts anchor the rank view will be measured "
-            "against, not the final answer.",
+            "**Objective note:** this squad maximises expected points. The "
+            "rank-utility divergence experiment (docs/models/simulator.md §9, "
+            "measured 2026-08-19 on live models) found that at GW1, from a "
+            "leading position, the xPts-optimal squad IS the rank-optimal "
+            "squad: no swap in either direction improved P(top 10k), and the "
+            "xPts-max captain is also the rank-max captain. Rank utility "
+            "re-enters when live rank falls behind the pace, on chip weeks, "
+            "and in mini-league mode.",
         ]
     if age_h > 24:
         lines += ["", f"**Staleness warning:** {age_h:.0f}h old. Prices, injuries "
