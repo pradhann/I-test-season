@@ -319,8 +319,11 @@ def ingest_link(wh, url: str) -> LinkFindings:
             text_source = "article"
             title = url.split("/")[-1][:60] or url
 
+    # Canonicalise before hashing: watch?v=, youtu.be/ and shorts/ forms of
+    # one video must dedupe to one item, or every re-paste doubles its claims.
+    canonical = f"youtube:{yt.group(1)}" if yt else url
     item = ContentItem(
-        item_id="link_" + hashlib.sha256(url.encode()).hexdigest()[:16],
+        item_id="link_" + hashlib.sha256(canonical.encode()).hexdigest()[:16],
         source_key="user_link", creator="user-shared", kind="link",
         title=title, url=url, published_at=now, text=text,
         fetched_at=now, text_source="transcript" if text_source == "transcript" else "article",
