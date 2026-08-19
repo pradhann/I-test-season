@@ -73,8 +73,19 @@ def main(n_sims: int = 1000) -> None:
             points_forecast=SimulatedPointsForecast(model, n_sims, seed=20260821),
             state=None,
         )
-        config = OptimizerConfig(mode=ObjectiveMode.EXPECTED_POINTS)
+        # Prune to the strongest 45 per position (by horizon xPts, plus all
+        # held players -- prune() keeps holdings). The full 509-player universe
+        # hits the 300s time limit and returns a ~2% incumbent, which is ~5.6
+        # points of slack at this objective -- and that slack pools in exactly
+        # the XI/bench assignments a reader checks first. A 45-per-position
+        # pool solves to the 1e-4 gap in well under the limit, and no plausible
+        # GW1 squad draws from outside it.
+        config = OptimizerConfig(
+            mode=ObjectiveMode.EXPECTED_POINTS,
+            max_candidates_per_position=45,
+        )
         plan, stats = solve_horizon(problem, config, return_stats=True)
+        print(f"status={plan.status} gap={plan.mip_gap}")
 
         players = snap.selectable(SEASON)
         name = dict(zip(players["code"], players["web_name"]))

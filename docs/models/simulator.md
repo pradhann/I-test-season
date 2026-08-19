@@ -251,3 +251,45 @@ composition then drifts only through `FieldConfig.churn`.
 * The stand-in points model in `synthetic.py` is not a forecast and its
   `ModelCard` says so. It exists so this package could be built and tested before
   the points model landed. Nothing in the simulator imports it.
+
+## 9. Measured verdict on the premise (GW1 2026-27, live models)
+
+Run: `--live --n-sims 3000 --n-rivals 8000`, 2026-08-19. Full output in the
+session log; reproduce with the command above.
+
+**The premise — that rank utility and expected points recommend different
+squads — is FALSE at GW1 from a leading position.** From the exact
+xPts-optimal squad (season mean 2,217, sd 94, vs an estimated top-10k
+threshold of ~2,196):
+
+- Every candidate swap, differential and template alike, lowered BOTH xPts
+  and P(top 10k). 0 of 6 swaps passed the 2-standard-error test. The same
+  holds at targets 100k, 1k and 100.
+- Captaincy: Haaland (48.4% field share) maximises both xPts and P(top 10k).
+  Every alternative captain lowers both.
+- The break-even table makes the cost concrete: replacing Mbeumo (32% owned)
+  with any differential costs 9-20 percentage points of P(top 10k).
+
+Why: when the squad's expected season total already clears the target
+threshold, mean dominates. Variance and decorrelation from the field pay only
+from BEHIND the threshold. The correlation counterfactual shows the same
+mechanism from the other side: for a template squad, destroying the coupling
+with the field RAISES P(top 10k) from 0.334 to 0.409 — owning what the field
+owns caps upward separation exactly as claimed — but the cure is a better
+squad, not a worse correlated one.
+
+**What survives of the rank-utility programme:**
+
+1. Its value is CONDITIONAL, not zero: it activates when live rank falls
+   behind the pace, when chips concentrate variance, and in mini-league
+   head-to-heads. The machinery is built and stays; it simply reports
+   "no deviation warranted" this week, which is an answer.
+2. The absolute levels (P(top 10k) = 0.63 for the optimal squad) are
+   model-flattering and NOT to be quoted: the simulated field holds frozen
+   squads sampled from ownership while real managers transfer, and "my"
+   squad is optimised against the same projection that generates the
+   simulated outcomes. Relative comparisons are meaningful; levels are not.
+3. Under model uncertainty the case for spreading across information sources
+   (market, creators, elite managers) is untouched — this experiment takes
+   our projection as truth, which is exactly the assumption the oracle layer
+   exists to hedge.
