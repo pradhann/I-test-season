@@ -45,6 +45,13 @@ app = typer.Typer(
 idea_app = typer.Typer(no_args_is_help=True, help="The idea inbox: your hypotheses, tracked.")
 app.add_typer(idea_app, name="idea")
 
+# The hypothesis registry team's surface. Importing it also registers the
+# theses section of the weekly report.
+from fpl_edge.theses.cli import theses_app, thesis_app
+
+app.add_typer(theses_app, name="theses")
+app.add_typer(thesis_app, name="thesis")
+
 console = Console()
 
 

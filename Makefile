@@ -1,4 +1,4 @@
-.PHONY: help install test lint ingest rules-doc weekly clean audit
+.PHONY: help install test lint ingest rules-doc weekly clean audit resolve-gw
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -28,6 +28,9 @@ audit:  ## Run the leakage / adversarial audit suite
 
 weekly:  ## Produce the decision report for the upcoming deadline
 	uv run python -m fpl_edge.cli.main weekly
+
+resolve-gw:  ## Grade open theses against finalised gameweeks, update the scoreboard, commit
+	uv run python -m fpl_edge.cli.main theses resolve
 
 clean:
 	rm -f data/warehouse/*.duckdb data/warehouse/*.wal
