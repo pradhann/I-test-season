@@ -27,6 +27,7 @@ from fpl_edge.interfaces.inbox import IdeaInbox, Submission
 from fpl_edge.interfaces.parsing import MessageParser, PlayerResolver
 from fpl_edge.interfaces.registry import IdeaRegistry
 from fpl_edge.interfaces.report import register_section, weekly_report
+from fpl_edge.interfaces import squad_section  # noqa: F401  (registers on import)
 from fpl_edge.interfaces.tracking import track
 from fpl_edge.interfaces.verdict import (
     PriorVerdict,

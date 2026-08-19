@@ -8,6 +8,7 @@ a squad picked on GW1 form alone walks into GW2-6 fixtures blind.
 from __future__ import annotations
 
 import datetime as dt
+import pathlib
 
 import pandas as pd
 
@@ -94,6 +95,33 @@ def main(n_sims: int = 1000) -> None:
                       f"{own[c]:5.1f}% owned{cap}")
         spend = sum(price[c] for c in gw1.squad)
         print(f"\nspend £{spend/10:.1f}m, bank £{(1000-spend)/10:.1f}m")
+
+        # Persist the plan so the weekly report can render it with an honest
+        # timestamp instead of re-solving (the solve takes minutes).
+        import json
+
+        artefact = {
+            "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "snapshot_as_of": deadline.isoformat(),
+            "season": SEASON,
+            "horizon_gws": [int(g) for g in HORIZON],
+            "objective_mode": "expected_points",
+            "objective": float(plan.objective),
+            "n_sims": n_sims,
+            "solver": str(stats),
+            "gw1": {
+                "squad": [int(c) for c in gw1.squad],
+                "starting_xi": [int(c) for c in gw1.starting_xi],
+                "bench": [int(c) for c in gw1.bench],
+                "captain": int(gw1.captain),
+                "vice_captain": int(gw1.vice_captain),
+                "chip": gw1.chip,
+                "bank_after": int(gw1.bank_after.tenths),
+            },
+        }
+        out = pathlib.Path("data/warehouse/gw1_plan.json")
+        out.write_text(json.dumps(artefact, indent=1))
+        print(f"plan persisted to {out}")
 
 
 if __name__ == "__main__":
