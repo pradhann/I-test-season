@@ -177,12 +177,17 @@ def seed_warehouse(
              "is_finished": gw <= finished_gws, "as_of": SEASON_START}
         )
         for f, (home, away) in enumerate(_pairings(gw)):
+            kickoff = deadline + dt.timedelta(hours=2)
+            is_done = gw <= finished_gws
             fixtures.append(
                 {"season": season, "fixture_id": gw * 100 + f, "gw": gw,
-                 "kickoff_utc": deadline + dt.timedelta(hours=2),
+                 "kickoff_utc": kickoff,
                  "home_team_code": home, "away_team_code": away,
-                 "finished": gw <= finished_gws, "home_score": None, "away_score": None,
-                 "as_of": SEASON_START}
+                 # A finished fixture is only observable after it was played;
+                 # the warehouse refuses a result stamped before its own
+                 # kickoff, so the finished row's as_of sits after full time.
+                 "finished": is_done, "home_score": None, "away_score": None,
+                 "as_of": kickoff + dt.timedelta(hours=2) if is_done else SEASON_START}
             )
     wh.append("dim_event", pd.DataFrame(events))
     wh.append("fact_fixture", pd.DataFrame(fixtures))

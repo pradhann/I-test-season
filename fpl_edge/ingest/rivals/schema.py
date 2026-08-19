@@ -165,6 +165,33 @@ def migrate(wh: Warehouse) -> None:
     for statement in _statements(DDL):
         wh.sql(statement)
 
+    # CREATE TABLE IF NOT EXISTS never adds a column to a table that already
+    # exists, so a warehouse created by an older build of this module keeps
+    # silently missing whatever was added since -- which surfaces as a binder
+    # error mid-append, after the network budget has already been spent.
+    # Diff the declared columns against the live table and ALTER-add the gap.
+    import re
+
+    for block in re.finditer(
+        r"CREATE TABLE IF NOT EXISTS (\w+)\s*\((.*?)\)\s*;", DDL, re.S
+    ):
+        table, body = block.group(1), block.group(2)
+        declared: dict[str, str] = {}
+        for raw_line in body.splitlines():
+            line = raw_line.split("--")[0].strip().rstrip(",")
+            m = re.match(r"^(\w+)\s+([A-Z][A-Z0-9_() ]*?)(?:\s+NOT NULL)?$", line)
+            if m and m.group(1).upper() not in ("PRIMARY", "FOREIGN", "UNIQUE", "CHECK"):
+                declared[m.group(1)] = m.group(2).strip()
+        existing = {
+            r[0] for r in wh.sql(
+                "SELECT column_name FROM information_schema.columns "
+                f"WHERE table_name = '{table}'"
+            ).itertuples(index=False)
+        }
+        for name, sqltype in declared.items():
+            if name not in existing:
+                wh.sql(f"ALTER TABLE {table} ADD COLUMN {name} {sqltype}")
+
 
 def _statements(ddl: str) -> list[str]:
     """Split DDL into executable statements, ignoring `--` comments.
