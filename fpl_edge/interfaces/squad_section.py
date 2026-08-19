@@ -62,6 +62,8 @@ def render_squad(wh: Warehouse, season: str, gw: int, as_of: dt.datetime) -> str
             "re-enters when live rank falls behind the pace, on chip weeks, "
             "and in mini-league mode.",
         ]
+    for note in plan.get("notes", []):
+        lines += ["", f"**Solver note:** {note}"]
     if age_h > 24:
         lines += ["", f"**Staleness warning:** {age_h:.0f}h old. Prices, injuries "
                       "and odds have moved since; re-solve before acting."]

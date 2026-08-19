@@ -136,9 +136,33 @@ def main(n_sims: int = 1000) -> None:
                 "bank_after": int(gw1.bank_after.tenths),
             },
         }
+        # Surface disagreements a reader should weigh rather than discover.
+        notes: list[str] = []
+        if plan.mip_gap and plan.mip_gap > 0.02:
+            notes.append(
+                f"Solver stopped at a {plan.mip_gap:.1%} optimality gap; squad "
+                f"composition choices inside that gap are not settled."
+            )
+        gw1_sample = model.simulate(snap, SEASON, 1, n_sims=500, seed=1)
+        top_idx = int(gw1_sample.mean().argmax())
+        top_code = int(gw1_sample.codes[top_idx])
+        if top_code not in set(int(c) for c in gw1.squad):
+            nm = name.get(top_code, top_code)
+            notes.append(
+                f"The squad omits {nm}, the projection's highest expected scorer "
+                f"({gw1_sample.mean()[top_idx]:.2f} xPts, "
+                f"{own.get(top_code, float('nan')):.0f}% owned). The season-exact "
+                f"experiment (docs/models/simulator.md §9) selected and captained "
+                f"this player; under a value-dense 5-GW objective the premium is "
+                f"marginal, and the call sits inside the solver's gap. Weigh the "
+                f"omission against effective ownership before following it."
+            )
+        artefact["notes"] = notes
         out = pathlib.Path("data/warehouse/gw1_plan.json")
         out.write_text(json.dumps(artefact, indent=1))
         print(f"plan persisted to {out}")
+        for note in notes:
+            print(f"NOTE: {note}")
 
 
 if __name__ == "__main__":
