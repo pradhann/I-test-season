@@ -14,12 +14,17 @@ def test_entry_and_leagues_are_configured() -> None:
     assert {76109, 82939, 1264466} <= ids
 
 
-def test_rank_utility_defaults_to_balanced() -> None:
+def test_rank_utility_encodes_going_for_the_win() -> None:
+    """The user's refined brief sets P(rank=1) as the objective with top-1k as
+    the progress measure. Operationally we steer on P(top 1k) -- P(rank=1) is
+    unestimable noise at feasible simulation counts -- and report P(rank=1)
+    alongside. Low risk_lambda is deliberate: going for the win means accepting
+    a fat left tail rather than quietly hedging it away."""
     cfg = USER.rank_utility
     cfg.validate()
-    assert cfg.target_rank == 10_000
-    assert cfg.stretch_rank == 1_000
-    assert cfg.risk_lambda > 0  # catastrophe penalty is live
+    assert cfg.target_rank == 1_000
+    assert cfg.stretch_rank == 1
+    assert 0 < cfg.risk_lambda <= 0.15
 
 
 def test_missing_required_secret_fails_loudly(monkeypatch, tmp_path) -> None:

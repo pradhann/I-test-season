@@ -107,10 +107,19 @@ class UserConfig:
     )
 
     rank_utility: RankUtilityConfig = field(
-        # Balanced: chase top 10k as the primary target with a meaningful
-        # penalty on blowing up, and treat top 1k as the stretch.
+        # The stated objective is to WIN: P(rank = 1) is the objective the user
+        # set in the refined brief (2026-08-18), with top-1k as the fallback
+        # measure of progress. This supersedes the earlier "Balanced" answer.
+        #
+        # Encoded honestly: rank 1 of ~11M is not a target an optimizer can
+        # steer to directly -- P(rank=1) for any single-season plan is so small
+        # that its Monte Carlo estimate is pure noise at any feasible n_sims.
+        # The operational objective is therefore P(top 1k), which is the
+        # direction rank-1 lives in, with P(rank=1) REPORTED alongside it and
+        # risk_lambda dropped low: going for the win means accepting a fat left
+        # tail, and the config should not quietly hedge that away.
         default_factory=lambda: RankUtilityConfig(
-            target_rank=10_000, stretch_rank=1_000, risk_lambda=0.35
+            target_rank=1_000, stretch_rank=1, risk_lambda=0.10
         )
     )
 
