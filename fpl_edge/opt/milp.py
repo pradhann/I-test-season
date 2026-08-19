@@ -66,6 +66,15 @@ def _live(term: object) -> bool:
     return not isinstance(term, int)
 
 
+class NoIncumbentError(RuntimeError):
+    """The time budget expired before any feasible plan was found.
+
+    Distinct from :class:`InfeasibleError`: a feasible plan exists, the solver
+    just did not find one in time. Callers may retry with a larger budget or a
+    smaller problem; they must not treat this as "no legal squad exists".
+    """
+
+
 class InfeasibleError(RuntimeError):
     """No squad satisfies the constraints."""
 
@@ -596,8 +605,38 @@ class _Builder:
             )
         if label not in ("Optimal", "Not Solved"):
             raise RuntimeError(f"solver returned status {label!r}")
+        if not self._has_incumbent():
+            # "Not Solved" covers both "stopped at the gap with an incumbent"
+            # and "time expired before ANY feasible plan was found". In the
+            # second case PuLP leaves every variable at 0 -- a vacuous
+            # "solution" with objective 0.0, not None -- and extracting it
+            # would hand downstream code an empty squad it treats as real.
+            raise NoIncumbentError(
+                f"time limit ({self.cfg.solver.time_limit_s}s) expired before the "
+                f"solver found any feasible plan. Raise the limit, loosen "
+                f"mip_gap_rel, or shrink the horizon/candidate pool."
+            )
         gap, label = self._diagnostics(label, backend_name)
         return self._extract(label, backend_name, elapsed, gap), self.stats
+
+    def _has_incumbent(self) -> bool:
+        """Whether the solver actually loaded a feasible solution.
+
+        Preferred check: HiGHS's own primal_solution_status, which is
+        authoritative. Fallback for CBC (whose vacuous case also leaves every
+        variable at zero): a loaded plan must own at least one player in the
+        first gameweek, since sum(own) == 15 is a hard constraint.
+        """
+        hm = getattr(self.model, "solverModel", None)
+        if hm is not None and hasattr(hm, "getInfo"):
+            try:
+                return int(hm.getInfo().primal_solution_status) != 0
+            except Exception:  # noqa: BLE001 - fall through to the value check
+                pass
+        return any(
+            (v := pulp.value(self.own[i, 0])) is not None and v > 0.5
+            for i in range(self.n)
+        )
 
     def _diagnostics(self, label: str, backend: str) -> tuple[float | None, str]:
         """Pull the true solver status and MIP gap out of HiGHS.
@@ -652,8 +691,20 @@ class _Builder:
                 order = sorted(bench_out, key=lambda i: (-float(self.xp[i, j]), int(codes[i])))
             bench = tuple(codes[i] for i in bench_gk + order)
 
-            captain = next(i for i in range(self.n) if on(self.cap[i, j]))
-            vice = next(i for i in range(self.n) if on(self.vice[i, j]))
+            # Under a solver time limit HiGHS can return an integer-feasible
+            # incumbent in which a constraint like sum(cap)==1 is satisfied at
+            # a tolerance that rounds every cap variable to 0. A missing
+            # armband is then repaired deterministically -- highest expected
+            # points in the XI, vice the next -- rather than crashing on
+            # next() of an empty generator.
+            captain = next((i for i in range(self.n) if on(self.cap[i, j])), None)
+            vice = next((i for i in range(self.n) if on(self.vice[i, j])), None)
+            if captain is None or vice is None or captain == vice:
+                ranked = sorted(xi, key=lambda i: (-float(self.xp[i, j]), int(codes[i])))
+                if captain is None:
+                    captain = ranked[0]
+                if vice is None or vice == captain:
+                    vice = next(i for i in ranked if i != captain)
 
             ins = sorted(own - prev_own, key=lambda i: int(codes[i]))
             outs = sorted(prev_own - own, key=lambda i: int(codes[i]))

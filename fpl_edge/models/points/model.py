@@ -73,7 +73,10 @@ class DecomposedPointsModel:
         if players.empty:
             raise ValueError(f"no selectable players for {season} at {snapshot.as_of}")
 
-        fixtures = snapshot.upcoming_fixtures(season, horizon_gws=1)
+        # No horizon cap here: the caller names the gameweek, which may be
+        # several weeks out (multi-GW optimisation). Capping at 1 made every
+        # gw beyond the next look like it had no fixtures.
+        fixtures = snapshot.upcoming_fixtures(season)
         fixtures = fixtures[fixtures["gw"] == gw]
         if fixtures.empty:
             raise ValueError(f"no fixtures for {season} GW{gw} at {snapshot.as_of}")

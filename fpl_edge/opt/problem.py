@@ -277,7 +277,22 @@ def build_problem(
     exactly the columns that leak.
     """
     gw_list = [GwId(int(g)) for g in gws]
-    frame = snapshot.players(str(season))
+    # The purchasable universe is what the game will actually let you pick --
+    # selectable() filters on FPL's own can_select flag. Using the full player
+    # table here let the optimiser recommend players who left the league in
+    # the summer (32 of 592 at the GW1 snapshot). One exception: players the
+    # manager already HOLDS stay in the universe even if no longer selectable,
+    # because a held player can be kept or sold, just not bought.
+    frame = snapshot.selectable(str(season))
+    if state is not None and state.holdings:
+        held = set(int(c) for c in state.holdings)
+        missing = held - set(frame["code"].astype(int))
+        if missing:
+            everyone = snapshot.players(str(season))
+            frame = pd.concat(
+                [frame, everyone[everyone["code"].astype(int).isin(missing)]],
+                ignore_index=True,
+            )
     if frame.empty:
         raise ValueError(f"no players visible at {snapshot.as_of} for {season}")
     frame = frame.sort_values("code").reset_index(drop=True)

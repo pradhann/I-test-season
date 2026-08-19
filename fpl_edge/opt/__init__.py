@@ -23,7 +23,12 @@ from fpl_edge.opt.interfaces import (
     StaticPriceForecast,
     TablePriceForecast,
 )
-from fpl_edge.opt.milp import InfeasibleError, ModelStats, solve_horizon
+from fpl_edge.opt.milp import (
+    InfeasibleError,
+    ModelStats,
+    NoIncumbentError,
+    solve_horizon,
+)
 from fpl_edge.opt.plan import GwDecision, HorizonPlan
 from fpl_edge.opt.problem import (
     CHIP_NAMES,
@@ -53,6 +58,7 @@ __all__ = [
     "HorizonPlan",
     "HorizonProblem",
     "InfeasibleError",
+    "NoIncumbentError",
     "ModelStats",
     "ObjectiveMode",
     "OptimizerConfig",
