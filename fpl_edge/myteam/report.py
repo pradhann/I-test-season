@@ -111,15 +111,17 @@ def current_state(
         private = None
         try:
             from fpl_edge.myteam.private import PrivateTeamClient, StaleSessionError
+            from fpl_edge.myteam.tokens import TokenManager
 
-            pc = PrivateTeamClient()
-            if pc.configured:
-                try:
-                    private = pc.fetch(entry_id)
-                except StaleSessionError:
-                    # Reported in the section body via provenance; a stale
-                    # cookie must not take the whole weekly report down.
-                    private = None
+            if not PrivateTeamClient.disabled_by_env():
+                pc = PrivateTeamClient()
+                if pc.configured or TokenManager().configured:
+                    try:
+                        private = pc.fetch(entry_id)
+                    except StaleSessionError:
+                        # Reported in the section body via provenance; a stale
+                        # session must not take the whole weekly report down.
+                        private = None
         except Exception:  # noqa: BLE001 - the report renders without it
             private = None
         return reconstruct(

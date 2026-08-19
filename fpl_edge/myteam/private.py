@@ -103,6 +103,18 @@ class PrivateTeamClient:
     def configured(self) -> bool:
         return bool(self._cookie)
 
+    @staticmethod
+    def disabled_by_env() -> bool:
+        """True when auto-private reads are switched off for this process.
+
+        Set FPL_EDGE_DISABLE_PRIVATE=1 to guarantee no authenticated request
+        can happen -- the test suite sets it globally, because a unit test that
+        quietly refreshes REAL tokens over the network is how this was found.
+        """
+        import os
+
+        return os.environ.get("FPL_EDGE_DISABLE_PRIVATE", "") not in ("", "0")
+
     def fetch(self, entry_id: int) -> PrivateSquad:
         """Read my-team, preferring the self-renewing bearer token.
 

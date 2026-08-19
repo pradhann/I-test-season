@@ -92,8 +92,12 @@ def _try_private(entry_id: int):
         StaleSessionError,
     )
 
+    if PrivateTeamClient.disabled_by_env():
+        return None
     client = PrivateTeamClient()
-    if not client.configured:
+    from fpl_edge.myteam.tokens import TokenManager
+
+    if not client.configured and not TokenManager().configured:
         return None
     try:
         return client.fetch(entry_id)
