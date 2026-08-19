@@ -337,6 +337,31 @@ class Warehouse:
     def sql(self, query: str, params: Iterable[Any] = ()) -> pd.DataFrame:
         return self._con.execute(query, list(params)).df()
 
+    @classmethod
+    def read_copy(cls, path: Path | str = DEFAULT_DB) -> "Warehouse":
+        """Open a read-only connection to a private copy of the database file.
+
+        DuckDB allows one writer OR many readers per file, across processes. A
+        model fit or MILP solve that holds a reader open for minutes therefore
+        blocks every ingest job for its whole runtime. Heavy read-only work
+        should read a copy: the file is tens of megabytes, the copy takes
+        milliseconds, and the original stays free for writers. The copy is a
+        consistent snapshot of the database at copy time, which is exactly the
+        semantics a point-in-time job wants anyway.
+        """
+        import shutil
+        import tempfile
+
+        src = Path(path)
+        if not src.exists():
+            raise FileNotFoundError(f"no warehouse at {src}")
+        tmp = Path(tempfile.mkdtemp(prefix="fpl-read-")) / src.name
+        shutil.copy2(src, tmp)
+        wal = src.with_suffix(src.suffix + ".wal")
+        if wal.exists():
+            shutil.copy2(wal, tmp.with_suffix(tmp.suffix + ".wal"))
+        return cls(tmp, read_only=True)
+
     def snapshot_at(self, as_of: dt.datetime) -> Snapshot:
         """The only sanctioned entry point for reading mutable facts.
 

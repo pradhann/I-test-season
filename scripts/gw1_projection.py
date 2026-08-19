@@ -18,7 +18,7 @@ HISTORY = ["2022-23", "2023-24", "2024-25", "2025-26"]
 
 
 def main(n_sims: int = 2000) -> None:
-    with Warehouse(read_only=True) as wh:
+    with Warehouse.read_copy() as wh:
         latest = wh.snapshot_at(dt.datetime.now(dt.timezone.utc))
         deadline = latest.deadline(SEASON, 1)
         snap = wh.snapshot_at(deadline)

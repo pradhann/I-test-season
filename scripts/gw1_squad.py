@@ -55,7 +55,7 @@ class SimulatedPointsForecast:
 
 
 def main(n_sims: int = 1000) -> None:
-    with Warehouse(read_only=True) as wh:
+    with Warehouse.read_copy() as wh:
         now = wh.snapshot_at(dt.datetime.now(dt.timezone.utc))
         deadline = now.deadline(SEASON, 1)
         snap = wh.snapshot_at(deadline)
