@@ -97,7 +97,7 @@ Ranked on coverage × freshness × reliability × licence-cleanliness.
 | 2 | **fplbench** (GitHub) | ✅ | ✅ | ✕ | 587 players, next GW | Per-GW file committed pre-deadline, CI-driven | **MIT** + "research and personal modelling use only" | raw.githubusercontent CSV |
 | 3 | **blueladd11** (GitHub) | ✅ | ✅ | ✕ | 469 players × 6 GW horizon | **Hourly**, GitHub Action, archived snapshots | **None** — public, unlicensed | raw.githubusercontent CSV, discovered path |
 | 4 | **FPL `ep_next`** | ✅ | ✕ | ✅ | 595 players, next GW | Continuous — every price poll sees a fresh value | The official public API | `bootstrap-static` JSON |
-| 5 | **Rotowire lineups** | ✕ | proxy | proxy | 20 team sheets, 220 names | Upgrades to *confirmed* ~60–75 min before kickoff | robots-permitted + `llms.txt` welcoming bots | Server-rendered HTML |
+| 5 | **Rotowire lineups** | ✕ | proxy | proxy | 20 team sheets: 220 starters + 88 injury-list names | Upgrades to *confirmed* ~60–75 min before kickoff | robots-permitted + `llms.txt` welcoming bots | Server-rendered HTML |
 | 6 | **Premier Injuries** | ✕ | ✕ | ✅ **explicit %** | 91 flagged players, all 20 clubs | Continuous editorial | `User-agent: * / Disallow:` — fully open | Server-rendered HTML table |
 | 7 | **LiveFPL** | ✕ | ✕ | ✕ | 592 players (ownership, not points) | Per-GW static JSON | `Allow: /`, no restriction | Static JSON |
 
