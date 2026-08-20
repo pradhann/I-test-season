@@ -50,37 +50,65 @@ carry the system:
    retried on restart, consecutive-failure auto-pause, overlap skipping,
    humane cron UI, Debug-in-chat from every failed run (§5, §6).
 
-## 2. Stack decision — SYNTHESIS-PENDING (framework below)
+## 2. Stack decision — DECIDED: thin Python-core platform (Option B)
 
-Two candidates, decided after the Argus-study agent's mapping doc lands:
+Decided 2026-08-20 after the Argus study (docs/platform/argus_architecture.md
+§6.2 lays out both options without a verdict; this section is the verdict).
 
-A. **Adapt the Argus TS stack**: keep server/web/scripts-service, replace the
-   ClickHouse/Postgres brokers with a DuckDB query endpoint, port tools.
-   - For: shipped UI machinery (chat streaming, dashboards sandbox, monitors
-     pages, inbox) is ~free; scripts service semantics proven.
-   - Against: the platform's competencies (warehouse w/ PIT snapshots, MILP
-     solver, Monte Carlo sim, calibration, jobs, Telegram) are ALL Python.
-     Every panel and monitor trigger would cross a language boundary to reach
-     them; the Claude Agent SDK loop duplicates what the Max-plan CLI already
-     provides; 547 TS files of surface for one user.
+**Build `fpl_edge/platform/` (FastAPI) + `web/` (React+Vite+TS), adopting
+Argus's structural rules natively rather than adapting its TS server.**
 
-B. **Thin new UI over the Python core**: FastAPI + React/Vite in-repo,
-   adopting Argus's four ideas natively:
-   - typed-JSON **panel scripts** in `fpl_edge/platform/scripts/` (plain
-     Python, registered like report sections; the repo itself is the git
-     versioning; panels declare which scripts they pin);
-   - one guarded **read-only query endpoint** over Warehouse.read_copy for
-     chat + ad-hoc panels;
-   - **monitors** = deterministic Python trigger scripts on the deadline DAG
-     + LLM copy-polish via the Max-plan CLI; deliveries to in-app Inbox AND
-     the existing Telegram bot;
-   - **credential posture**: server holds .env; browser and panel scripts see
-     nothing; chat agent runs with read-only tools by default.
-   - Against: dashboards/chat UI built from scratch (mitigated: one user, a
-     handful of panels, no multi-tenant auth needed).
+Why B over A (adapt Argus stack):
+- The platform's competencies — warehouse with PIT snapshots, MILP solver,
+  Monte Carlo sim, calibration, jobs, Telegram — are all Python. Under A,
+  every panel, monitor trigger and solver call crosses a language bridge that
+  must be built anyway (Argus's own broker pattern); the bridge IS most of B.
+- Argus's "credential holder" concept maps here to *the DuckDB write lock and
+  the leakage discipline*, not secrets. One Python process already owns both.
+- Scripts that matter to us (projections, solver runs, sim studies) need the
+  Python model stack; under A they cannot be scripts at all (Argus reserved
+  `runtime: "python"` but never built it).
+- A's real payoff is user-authored dashboards machinery (compiler, jsdom
+  smoke, sandbox). We have ONE user and a fixed panel set: that machinery is
+  the most expensive part of A and the least needed here.
 
-Decision criteria: time-to-first-real-panel, honesty of empty states, reuse of
-existing tested Python surfaces, deployability under launchd like the bot.
+What we adopt from Argus structurally (the audit checks these):
+1. **Panel scripts are the only data path.** Every UI panel gets data solely
+   from a registered, typed panel script (`fpl_edge/platform/scripts/*.py`,
+   params/result validated by JSON Schema, versioned by this repo's git; every
+   response carries {script, repo_sha, generated_at, as_of} provenance).
+   The frontend has no SQL surface.
+2. **One guarded query path.** `/api/query` (and the chat agent's warehouse
+   tool) execute read-only, single-statement SQL via Warehouse.read_copy;
+   time-scoped panel scripts route through snapshot_at. Guards live where the
+   lock lives.
+3. **Monitors: deterministic trigger, LLM polish only.** Triggers are Python
+   scripts returning {triggered, title, body, charts?}; the LLM (Max-plan
+   claude CLI) may rewrite copy after a fire and write report prose over
+   pinned results; LLM failure falls back to the deterministic text; a trigger
+   never calls an LLM.
+4. **Durable outbox delivery.** Evaluations commit to an outbox table in the
+   same transaction; a worker delivers to the in-app Inbox and Telegram
+   (reply-threaded recovery), retrying until acknowledged. Canonical message
+   stored once, rendered everywhere.
+5. **Event-relative scheduler.** Argus's cron tick with overlap-skip and
+   stale-forward, but next_due computed from dim_event deadlines (UTC) —
+   the one-function seam §6.2 identifies.
+6. **Chat.** v1: the existing deterministic QuestionRouter answers instantly;
+   an "ask the agent" escalation runs headless `claude -p` (Max plan) with the
+   fpl-server MCP attached for warehouse/codebase questions, streamed to the
+   pane. No API key anywhere.
+
+### 2.1 Platform API contract (v1)
+
+- `GET  /api/panels` → registered panels with their pinned script names.
+- `POST /api/scripts/{name}/run` {params} → {result, provenance} (10s budget,
+  Argus's draft-run rule; long jobs are monitors, not panels).
+- `POST /api/query` {sql, as_of?} → guarded read-only result (row/byte caps).
+- `GET  /api/inbox` / `POST /api/inbox/{id}/ack` — deliveries, newest first.
+- `GET  /api/monitors` / `POST /api/monitors/{name}/run` — definitions + manual eval.
+- `POST /api/chat` {text} → router answer | SSE stream for agent escalation.
+- Static: serves the built web/ bundle.
 
 ## 3. Deadline DAG (schedule spine) — draft
 
