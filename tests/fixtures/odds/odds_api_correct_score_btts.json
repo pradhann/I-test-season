@@ -1,0 +1,342 @@
+{
+ "id": "eb2553d10d63dc912b99f8fd0d675721",
+ "sport_key": "soccer_epl",
+ "sport_title": "EPL",
+ "commence_time": "2026-08-21T19:00:00Z",
+ "home_team": "Arsenal",
+ "away_team": "Coventry City",
+ "bookmakers": [
+  {
+   "key": "betfred_uk",
+   "title": "Betfred (UK)",
+   "markets": [
+    {
+     "key": "btts",
+     "last_update": "2026-08-20T01:07:10Z",
+     "outcomes": [
+      {
+       "name": "Yes",
+       "price": 2.5
+      },
+      {
+       "name": "No",
+       "price": 1.5
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "key": "betfair_ex_uk",
+   "title": "Betfair",
+   "markets": [
+    {
+     "key": "btts",
+     "last_update": "2026-08-20T01:07:36Z",
+     "outcomes": [
+      {
+       "name": "Yes",
+       "price": 2.62
+      },
+      {
+       "name": "No",
+       "price": 1.58
+      }
+     ]
+    },
+    {
+     "key": "correct_score",
+     "last_update": "2026-08-20T01:07:36Z",
+     "outcomes": [
+      {
+       "name": "Arsenal:0|Coventry City:0",
+       "price": 25.0
+      },
+      {
+       "name": "Arsenal:0|Coventry City:1",
+       "price": 48.0
+      },
+      {
+       "name": "Arsenal:0|Coventry City:2",
+       "price": 95.0
+      },
+      {
+       "name": "Arsenal:0|Coventry City:3",
+       "price": 26.0
+      },
+      {
+       "name": "Arsenal:1|Coventry City:0",
+       "price": 8.2
+      },
+      {
+       "name": "Arsenal:1|Coventry City:1",
+       "price": 17.5
+      },
+      {
+       "name": "Arsenal:1|Coventry City:2",
+       "price": 50.0
+      },
+      {
+       "name": "Arsenal:1|Coventry City:3",
+       "price": 130.0
+      },
+      {
+       "name": "Arsenal:2|Coventry City:0",
+       "price": 6.8
+      },
+      {
+       "name": "Arsenal:2|Coventry City:1",
+       "price": 11.5
+      },
+      {
+       "name": "Arsenal:2|Coventry City:2",
+       "price": 38.0
+      },
+      {
+       "name": "Arsenal:2|Coventry City:3",
+       "price": 90.0
+      },
+      {
+       "name": "Arsenal:3|Coventry City:0",
+       "price": 7.4
+      },
+      {
+       "name": "Arsenal:3|Coventry City:1",
+       "price": 14.0
+      },
+      {
+       "name": "Arsenal:3|Coventry City:2",
+       "price": 46.0
+      },
+      {
+       "name": "Arsenal:3|Coventry City:3",
+       "price": 120.0
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "key": "williamhill",
+   "title": "William Hill",
+   "markets": [
+    {
+     "key": "btts",
+     "last_update": "2026-08-20T01:06:50Z",
+     "outcomes": [
+      {
+       "name": "Yes",
+       "price": 2.3
+      },
+      {
+       "name": "No",
+       "price": 1.57
+      }
+     ]
+    },
+    {
+     "key": "correct_score",
+     "last_update": "2026-08-20T01:07:44Z",
+     "outcomes": [
+      {
+       "name": "Arsenal:1|Coventry City:0",
+       "price": 7.0
+      },
+      {
+       "name": "Arsenal:2|Coventry City:0",
+       "price": 5.8
+      },
+      {
+       "name": "Arsenal:2|Coventry City:1",
+       "price": 8.5
+      },
+      {
+       "name": "Arsenal:3|Coventry City:0",
+       "price": 6.5
+      },
+      {
+       "name": "Arsenal:3|Coventry City:1",
+       "price": 11.0
+      },
+      {
+       "name": "Arsenal:3|Coventry City:2",
+       "price": 29.0
+      },
+      {
+       "name": "Arsenal:4|Coventry City:0",
+       "price": 9.5
+      },
+      {
+       "name": "Arsenal:4|Coventry City:1",
+       "price": 17.0
+      },
+      {
+       "name": "Arsenal:4|Coventry City:2",
+       "price": 51.0
+      },
+      {
+       "name": "Arsenal:4|Coventry City:3",
+       "price": 101.0
+      },
+      {
+       "name": "Arsenal:5|Coventry City:0",
+       "price": 15.0
+      },
+      {
+       "name": "Arsenal:5|Coventry City:1",
+       "price": 29.0
+      },
+      {
+       "name": "Arsenal:5|Coventry City:2",
+       "price": 71.0
+      },
+      {
+       "name": "Arsenal:6|Coventry City:0",
+       "price": 34.0
+      },
+      {
+       "name": "Arsenal:6|Coventry City:1",
+       "price": 56.0
+      },
+      {
+       "name": "Arsenal:6|Coventry City:2",
+       "price": 101.0
+      },
+      {
+       "name": "Arsenal:7|Coventry City:0",
+       "price": 67.0
+      },
+      {
+       "name": "Arsenal:7|Coventry City:1",
+       "price": 101.0
+      },
+      {
+       "name": "Arsenal:8|Coventry City:0",
+       "price": 101.0
+      },
+      {
+       "name": "Arsenal:9|Coventry City:0",
+       "price": 151.0
+      },
+      {
+       "name": "Arsenal:10|Coventry City:0",
+       "price": 151.0
+      },
+      {
+       "name": "Arsenal:0|Coventry City:0",
+       "price": 17.0
+      },
+      {
+       "name": "Arsenal:1|Coventry City:1",
+       "price": 13.0
+      },
+      {
+       "name": "Arsenal:2|Coventry City:2",
+       "price": 34.0
+      },
+      {
+       "name": "Arsenal:3|Coventry City:3",
+       "price": 101.0
+      },
+      {
+       "name": "Arsenal:4|Coventry City:4",
+       "price": 151.0
+      },
+      {
+       "name": "Coventry City:1|Arsenal:0",
+       "price": 29.0
+      },
+      {
+       "name": "Coventry City:2|Arsenal:0",
+       "price": 81.0
+      },
+      {
+       "name": "Coventry City:2|Arsenal:1",
+       "price": 34.0
+      },
+      {
+       "name": "Coventry City:3|Arsenal:0",
+       "price": 151.0
+      },
+      {
+       "name": "Coventry City:3|Arsenal:1",
+       "price": 101.0
+      },
+      {
+       "name": "Coventry City:3|Arsenal:2",
+       "price": 91.0
+      },
+      {
+       "name": "Coventry City:4|Arsenal:0",
+       "price": 151.0
+      },
+      {
+       "name": "Coventry City:4|Arsenal:1",
+       "price": 151.0
+      },
+      {
+       "name": "Coventry City:4|Arsenal:2",
+       "price": 151.0
+      },
+      {
+       "name": "Coventry City:4|Arsenal:3",
+       "price": 151.0
+      },
+      {
+       "name": "Coventry City:5|Arsenal:0",
+       "price": 151.0
+      },
+      {
+       "name": "Coventry City:5|Arsenal:1",
+       "price": 151.0
+      },
+      {
+       "name": "Coventry City:5|Arsenal:2",
+       "price": 151.0
+      },
+      {
+       "name": "Coventry City:6|Arsenal:0",
+       "price": 151.0
+      },
+      {
+       "name": "Coventry City:6|Arsenal:1",
+       "price": 151.0
+      },
+      {
+       "name": "Coventry City:6|Arsenal:2",
+       "price": 151.0
+      },
+      {
+       "name": "Coventry City:7|Arsenal:0",
+       "price": 151.0
+      },
+      {
+       "name": "Coventry City:7|Arsenal:1",
+       "price": 151.0
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "key": "skybet",
+   "title": "Sky Bet",
+   "markets": [
+    {
+     "key": "btts",
+     "last_update": "2026-08-20T01:07:28Z",
+     "outcomes": [
+      {
+       "name": "Yes",
+       "price": 2.63
+      },
+      {
+       "name": "No",
+       "price": 1.44
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

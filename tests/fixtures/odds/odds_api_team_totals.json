@@ -1,0 +1,262 @@
+{
+ "id": "eb2553d10d63dc912b99f8fd0d675721",
+ "sport_key": "soccer_epl",
+ "sport_title": "EPL",
+ "commence_time": "2026-08-21T19:00:00Z",
+ "home_team": "Arsenal",
+ "away_team": "Coventry City",
+ "bookmakers": [
+  {
+   "key": "fanduel",
+   "title": "FanDuel",
+   "markets": [
+    {
+     "key": "alternate_team_totals",
+     "last_update": "2026-08-20T01:07:13Z",
+     "outcomes": [
+      {
+       "name": "Over",
+       "description": "Arsenal",
+       "price": 6.6,
+       "point": 4.5
+      },
+      {
+       "name": "Under",
+       "description": "Arsenal",
+       "price": 1.1,
+       "point": 4.5
+      },
+      {
+       "name": "Over",
+       "description": "Arsenal",
+       "price": 1.88,
+       "point": 2.5
+      },
+      {
+       "name": "Under",
+       "description": "Arsenal",
+       "price": 1.88,
+       "point": 2.5
+      },
+      {
+       "name": "Over",
+       "description": "Arsenal",
+       "price": 13.0,
+       "point": 5.5
+      },
+      {
+       "name": "Under",
+       "description": "Arsenal",
+       "price": 1.02,
+       "point": 5.5
+      },
+      {
+       "name": "Over",
+       "description": "Arsenal",
+       "price": 3.35,
+       "point": 3.5
+      },
+      {
+       "name": "Under",
+       "description": "Arsenal",
+       "price": 1.31,
+       "point": 3.5
+      },
+      {
+       "name": "Over",
+       "description": "Arsenal",
+       "price": 1.26,
+       "point": 1.5
+      },
+      {
+       "name": "Under",
+       "description": "Arsenal",
+       "price": 3.8,
+       "point": 1.5
+      },
+      {
+       "name": "Over",
+       "description": "Arsenal",
+       "price": 1.04,
+       "point": 0.5
+      },
+      {
+       "name": "Under",
+       "description": "Arsenal",
+       "price": 10.0,
+       "point": 0.5
+      },
+      {
+       "name": "Over",
+       "description": "Coventry City",
+       "price": 2.46,
+       "point": 0.5
+      },
+      {
+       "name": "Under",
+       "description": "Coventry City",
+       "price": 1.53,
+       "point": 0.5
+      },
+      {
+       "name": "Over",
+       "description": "Coventry City",
+       "price": 9.7,
+       "point": 1.5
+      },
+      {
+       "name": "Under",
+       "description": "Coventry City",
+       "price": 1.05,
+       "point": 1.5
+      },
+      {
+       "name": "Over",
+       "description": "Coventry City",
+       "price": 36.0,
+       "point": 2.5
+      }
+     ]
+    },
+    {
+     "key": "team_totals",
+     "last_update": "2026-08-20T01:07:13Z",
+     "outcomes": [
+      {
+       "name": "Over",
+       "description": "Arsenal",
+       "price": 1.88,
+       "point": 2.5
+      },
+      {
+       "name": "Under",
+       "description": "Arsenal",
+       "price": 1.88,
+       "point": 2.5
+      },
+      {
+       "name": "Over",
+       "description": "Coventry City",
+       "price": 2.46,
+       "point": 0.5
+      },
+      {
+       "name": "Under",
+       "description": "Coventry City",
+       "price": 1.53,
+       "point": 0.5
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "key": "draftkings",
+   "title": "DraftKings",
+   "markets": [
+    {
+     "key": "alternate_team_totals",
+     "last_update": "2026-08-20T01:06:24Z",
+     "outcomes": [
+      {
+       "name": "Over",
+       "description": "Arsenal",
+       "price": 1.03,
+       "point": 0.5
+      },
+      {
+       "name": "Under",
+       "description": "Arsenal",
+       "price": 8.6,
+       "point": 0.5
+      },
+      {
+       "name": "Over",
+       "description": "Arsenal",
+       "price": 1.28,
+       "point": 1.5
+      },
+      {
+       "name": "Under",
+       "description": "Arsenal",
+       "price": 3.27,
+       "point": 1.5
+      },
+      {
+       "name": "Over",
+       "description": "Arsenal",
+       "price": 1.88,
+       "point": 2.5
+      },
+      {
+       "name": "Under",
+       "description": "Arsenal",
+       "price": 1.79,
+       "point": 2.5
+      },
+      {
+       "name": "Over",
+       "description": "Arsenal",
+       "price": 3.22,
+       "point": 3.5
+      },
+      {
+       "name": "Under",
+       "description": "Arsenal",
+       "price": 1.29,
+       "point": 3.5
+      },
+      {
+       "name": "Over",
+       "description": "Arsenal",
+       "price": 5.84,
+       "point": 4.5
+      },
+      {
+       "name": "Under",
+       "description": "Arsenal",
+       "price": 1.09,
+       "point": 4.5
+      },
+      {
+       "name": "Over",
+       "description": "Arsenal",
+       "price": 10.1,
+       "point": 5.5
+      },
+      {
+       "name": "Under",
+       "description": "Arsenal",
+       "price": 1.01,
+       "point": 5.5
+      },
+      {
+       "name": "Over",
+       "description": "Coventry City",
+       "price": 2.22,
+       "point": 0.5
+      },
+      {
+       "name": "Under",
+       "description": "Coventry City",
+       "price": 1.57,
+       "point": 0.5
+      },
+      {
+       "name": "Over",
+       "description": "Coventry City",
+       "price": 6.99,
+       "point": 1.5
+      },
+      {
+       "name": "Under",
+       "description": "Coventry City",
+       "price": 1.06,
+       "point": 1.5
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}
