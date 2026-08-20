@@ -17,6 +17,7 @@ from fpl_edge.jobs.deadline_dag import (
     LOOKBACK,
     NIGHTLY_TASK,
     STALE_WINDOW,
+    stale_window_for,
     due_tasks,
     next_due,
     nightly_instants,
@@ -70,9 +71,15 @@ def test_owed_exactly_at_its_due_instant(task):
 
 @pytest.mark.parametrize("task", list(DEADLINE_OFFSETS))
 def test_fresh_inside_the_stale_window_and_stale_just_outside(task):
+    """The boundary holds for every task, against ITS OWN window.
+
+    Windows became per-task after a sleeping laptop showed a single global
+    value cannot serve both an idempotent refresh and a pre-deadline alert.
+    """
+    window = stale_window_for(task)
     due = GW1 - DEADLINE_OFFSETS[task]
-    inside = owed(due + STALE_WINDOW - dt.timedelta(minutes=1))[task][0]
-    outside = owed(due + STALE_WINDOW + dt.timedelta(minutes=1))[task][0]
+    inside = owed(due + window - dt.timedelta(minutes=1))[task][0]
+    outside = owed(due + window + dt.timedelta(minutes=1))[task][0]
     assert inside.stale is False
     assert outside.stale is True
 
@@ -87,8 +94,11 @@ def test_a_firing_older_than_the_lookback_is_forgotten_not_replayed():
 def test_the_t90m_firing_still_precedes_the_deadline():
     """The alert has to arrive while it can still change something."""
     due = GW1 - DEADLINE_OFFSETS["lineup_captain_check"]
+    window = stale_window_for("lineup_captain_check")
     assert due < GW1
-    assert due + STALE_WINDOW > GW1  # ...and the stale window is wide enough to be lax
+    # Its window must not outlive the deadline: a captaincy alert delivered
+    # after lock is noise, so this task is the one that stays tight.
+    assert due + window <= GW1
     # so the ordering guard that matters is the offset itself, not the window
     assert DEADLINE_OFFSETS["lineup_captain_check"] < DEADLINE_OFFSETS["final_solve_delivery"]
 
@@ -174,3 +184,48 @@ def test_next_due_reports_all_four_tasks_ahead_of_gw1():
     assert got["lineup_captain_check"] == dt.datetime(2026, 8, 21, 16, 0, tzinfo=UTC)
     assert got[NIGHTLY_TASK] == dt.datetime(2026, 8, 21, 1, 0, tzinfo=UTC)
     assert all(v > now for v in got.values())
+
+
+# -- per-task staleness (found in production) --------------------------------
+
+
+def test_refresh_survives_a_sleeping_laptop_but_lineup_check_does_not():
+    """A flat stale window gets one class of task wrong. This is the fix.
+
+    Found live: the machine slept through the T-30h refresh and a global 2h
+    window discarded it -- a task whose entire job is idempotent ingestion that
+    was still useful 7h late and 23h before the deadline. Meanwhile the T-90m
+    captaincy check genuinely IS worthless once the deadline passes.
+
+    So staleness is per task: value that decays with the deadline gets a tight
+    budget, idempotent refreshes get a generous one.
+    """
+    import datetime as dt
+
+    from fpl_edge.jobs.deadline_dag import due_tasks, stale_window_for
+
+    deadline = dt.datetime(2026, 8, 21, 17, 30, tzinfo=dt.timezone.utc)
+    # 6h45m after the T-30h instant: the exact production case.
+    now = dt.datetime(2026, 8, 20, 18, 15, tzinfo=dt.timezone.utc)
+    by_task = {d.task: d for d in due_tasks([(1, deadline)], now)}
+
+    assert by_task["presser_projection_refresh"].stale is False, (
+        "an idempotent refresh 6.75h late and 23h before the deadline is still "
+        "worth running"
+    )
+    assert stale_window_for("lineup_captain_check") < dt.timedelta(hours=2), (
+        "the confirmed-XI check must stay tight: it is worthless after kickoff"
+    )
+    assert stale_window_for("presser_projection_refresh") > dt.timedelta(hours=8)
+
+
+def test_an_explicit_stale_window_still_overrides_every_task():
+    """Tests and one-off runs keep a single knob."""
+    import datetime as dt
+
+    from fpl_edge.jobs.deadline_dag import due_tasks
+
+    deadline = dt.datetime(2026, 8, 21, 17, 30, tzinfo=dt.timezone.utc)
+    now = dt.datetime(2026, 8, 20, 18, 15, tzinfo=dt.timezone.utc)
+    forced = due_tasks([(1, deadline)], now, stale_window=dt.timedelta(minutes=5))
+    assert all(d.stale for d in forced)

@@ -164,3 +164,37 @@ def test_jwt_expiry_reads_exp() -> None:
     tok = make_jwt(3600)
     delta = jwt_expiry(tok) - dt.datetime.now(dt.timezone.utc)
     assert 3500 < delta.total_seconds() <= 3600
+
+
+def test_the_auth_command_exists_and_is_wired() -> None:
+    """A documented command that does not exist is worse than no docs.
+
+    MVP.md told the user to run `fpl myteam auth`; the command had been lost in
+    an edit and the docs were never re-checked against the CLI. This asserts the
+    two agree.
+    """
+    from typer.testing import CliRunner
+
+    from fpl_edge.myteam.cli import app
+
+    result = CliRunner().invoke(app, ["--help"])
+    assert result.exit_code == 0
+    for command in ("auth", "cookie", "show", "set", "sync", "transfers", "whynot"):
+        assert command in result.output, f"`fpl myteam {command}` is missing"
+
+
+def test_every_myteam_command_named_in_the_docs_exists() -> None:
+    """Docs and CLI must not drift apart again."""
+    import re
+    from pathlib import Path
+
+    from typer.testing import CliRunner
+
+    from fpl_edge.myteam.cli import app
+
+    listed = CliRunner().invoke(app, ["--help"]).output
+    for doc in (Path("MVP.md"), Path("docs/platform/ROADMAP.md")):
+        if not doc.exists():
+            continue
+        for cmd in set(re.findall(r"fpl myteam ([a-z-]+)", doc.read_text())):
+            assert cmd in listed, f"{doc} references `fpl myteam {cmd}`, which does not exist"

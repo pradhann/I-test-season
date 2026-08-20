@@ -475,6 +475,48 @@ def whynot(entry: int = EntryOpt) -> None:
     )
 
 
+@app.command("auth")
+def auth(
+    entry: int = EntryOpt,
+    paste_cookie: bool = typer.Option(
+        False,
+        "--paste-cookie",
+        help="Prompt for a browser Cookie header (hidden input) and store the "
+        "self-renewing token pair extracted from it.",
+    ),
+) -> None:
+    """Set up or inspect FPL auth. One paste lasts about six months.
+
+    With no flag this reports token state and verifies the session, refreshing
+    the 8-hour access token through the stored refresh token if needed --
+    which is the everyday case. ``--paste-cookie`` is the one-time setup, and
+    the recovery path if the refresh token is ever revoked.
+    """
+    from fpl_edge.myteam.tokens import AuthNotConfiguredError, TokenManager
+
+    manager = TokenManager()
+    if paste_cookie:
+        pasted = typer.prompt("Paste the Cookie header", hide_input=True)
+        try:
+            status = manager.ingest_from_cookie(pasted)
+        except AuthNotConfiguredError as exc:
+            echo(str(exc))
+            raise typer.Exit(1)
+        console.print(f"[green]Stored.[/green] {status}")
+    else:
+        console.print(manager.status())
+        if not manager.configured:
+            console.print(
+                "Not configured. Run [bold]fpl myteam auth --paste-cookie[/bold] "
+                "once; see `fpl myteam whynot` for why this is a session and "
+                "never a password."
+            )
+            raise typer.Exit(1)
+
+    console.print("Verifying against the live account (refreshing if needed)...")
+    cookie_probe(entry)
+
+
 @app.command("cookie")
 def cookie_probe(entry: int = EntryOpt) -> None:
     """Test the FPL session cookie end to end, without printing it."""

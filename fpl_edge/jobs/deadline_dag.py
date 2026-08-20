@@ -87,11 +87,38 @@ DEADLINE_OFFSETS: dict[str, dt.timedelta] = {
 NIGHTLY_TASK = "price_radar"
 NIGHTLY_LOCAL_HOUR = 2
 
-#: A firing due longer ago than this is recorded and skipped, never run. Two
-#: hours is chosen against the tightest offset: T-90m is worthless if delivered
-#: after the deadline, and 2h means a tick can be late by a whole launchd
-#: interval plus a slow ingest and still be honest.
+#: A firing due longer ago than its window is recorded and skipped, never run.
+#:
+#: The window is PER TASK because staleness means different things per task, and
+#: one global value gets one of them wrong. This was found in production: the
+#: machine (a laptop) slept through the T-30h refresh, and a flat 2h window
+#: discarded a task whose whole job is to ingest data that is still perfectly
+#: useful 7 hours late and 23 hours before the deadline.
+#:
+#: The rule: a task whose value DECAYS WITH THE DEADLINE gets a tight window; a
+#: task that is an idempotent refresh gets a generous one, bounded only by the
+#: point at which running it would no longer inform the decision.
+STALE_WINDOWS: dict[str, dt.timedelta] = {
+    # Pure ingest + digest. Running it late still refreshes projections, odds and
+    # injury news; the only true expiry is the deadline itself.
+    "presser_projection_refresh": dt.timedelta(hours=20),
+    # Price changes resolve nightly. A radar delivered at breakfast is still
+    # actionable; one delivered a day late is describing yesterday's prices.
+    "price_radar": dt.timedelta(hours=8),
+    # A plan delivered after the deadline is worthless, but the artefact it
+    # reads is timestamped, so a late delivery is honest about its own age.
+    "final_solve_delivery": dt.timedelta(hours=3),
+    # Confirmed XI vs picked captain. Worthless the moment the deadline passes.
+    "lineup_captain_check": dt.timedelta(minutes=75),
+}
+
+#: Fallback for a task not named above.
 STALE_WINDOW = dt.timedelta(hours=2)
+
+
+def stale_window_for(task: str) -> dt.timedelta:
+    """The staleness budget for one task. See :data:`STALE_WINDOWS`."""
+    return STALE_WINDOWS.get(task, STALE_WINDOW)
 
 #: How far back a tick looks for firings it never saw. Bounds how many
 #: skipped_stale rows a week-long outage can write, while still leaving an
@@ -165,7 +192,7 @@ def due_tasks(
     *,
     season: str = SEASON,
     lookback: dt.timedelta = LOOKBACK,
-    stale_window: dt.timedelta = STALE_WINDOW,
+    stale_window: dt.timedelta | None = None,
 ) -> list[Due]:
     """Which firings are owed at ``now``, and which of those are already stale.
 
@@ -173,7 +200,13 @@ def due_tasks(
     known deadline for it. A task is owed when its due instant has passed and
     the tick has not already recorded it; staleness is decided here rather than
     at the call site so the same rule applies to a launchd tick and a manual one.
+
+    ``stale_window`` overrides the per-task budget for every task; leave it None
+    to use :data:`STALE_WINDOWS`, which is what production wants.
     """
+    def _window(task: str) -> dt.timedelta:
+        return stale_window if stale_window is not None else stale_window_for(task)
+
     now = now.astimezone(UTC)
     horizon = now - lookback
     out: list[Due] = []
@@ -191,7 +224,7 @@ def due_tasks(
                     gw=int(gw),
                     due_utc=due,
                     deadline_utc=deadline,
-                    stale=(now - due) > stale_window,
+                    stale=(now - due) > _window(task),
                 )
             )
 
@@ -207,7 +240,7 @@ def due_tasks(
                 gw=gw,
                 due_utc=inst,
                 deadline_utc=_deadline_for_gw(deadlines, gw),
-                stale=(now - inst) > stale_window,
+                stale=(now - inst) > _window(NIGHTLY_TASK),
             )
         )
 
