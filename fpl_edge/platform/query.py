@@ -283,8 +283,12 @@ def guarded_query(
         # Fetch one extra row so truncation is detectable rather than assumed.
         body = sql.strip().rstrip(";").strip()
         if _WRAPPABLE.match(body):
+            # The newlines are not cosmetic: a statement ending in a `--`
+            # comment would otherwise swallow the closing paren, and the query
+            # would die with a parser error that names nothing the caller wrote.
             df = wh.sql(
-                f"SELECT * FROM ({body}) AS _guarded LIMIT {int(max_rows) + 1}", params
+                f"SELECT * FROM (\n{body}\n) AS _guarded LIMIT {int(max_rows) + 1}",
+                params,
             )
         else:
             # EXPLAIN / DESCRIBE / SHOW are not table subqueries in DuckDB.
