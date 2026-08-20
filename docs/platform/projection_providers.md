@@ -135,7 +135,7 @@ Why this order:
 
 | Source | Measured | Why not yet |
 |---|---|---|
-| **SportsGambler lineups** | 200, 174,590 B; robots permits; publishes `sitemap-lineups.xml` | XIs sit behind ten per-fixture pages, so a full read costs 11 requests. Rotowire gives the same signal for 1. It earns the extra ten once the ensemble can measure whether it disagrees *usefully*. |
+| **SportsGambler lineups** | 200, 174,590 B; robots permits and publishes `sitemap-lineups.xml` — but every "view lineups" toggle is `href="#"`, every `div.toggle-content` is empty, and the sitemap lists only the league index | **No XI is in the bytes.** The only route is an undocumented AJAX endpoint found by reading the site's own scripts — nearer the FPL Review line than the Rotowire line. Rotowire gives the same signal, server-rendered, in one request. Re-check if the site ever server-renders the XIs. |
 | **fpl-projections-site** (Juz92backup) | 200 on every data file; `manifest.json` run_at 2026-08-18T03:00Z, season 2026-27 | Monte-Carlo xPts percentiles, genuinely current — but anonymous, unlicensed, and the account name ("…backup") suggests it may vanish. |
 
 ### Paywalled — schema and integration notes only, no scraping around the paywall

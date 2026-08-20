@@ -675,9 +675,11 @@ PROVIDERS: tuple[Provider, ...] = (
         home="https://www.sportsgambler.com/lineups/football/england-premier-league/",
         publishes="Predicted and confirmed XIs for every Premier League fixture.",
         interface=(
-            "Server-rendered HTML index with ten fixture rows; each XI is "
-            "behind a per-fixture 'view lineups' page, so a full read costs "
-            "eleven requests rather than one."
+            "Server-rendered HTML index carrying ten fixture rows and ten "
+            "'view lineups' toggles -- but every toggle is href='#' and every "
+            "div.toggle-content is empty in the delivered HTML. The XIs arrive "
+            "over an undocumented AJAX call, and sitemap-lineups.xml lists only "
+            "the league index page, not per-match URLs."
         ),
         cost="Free.",
         licence=(
@@ -692,12 +694,17 @@ PROVIDERS: tuple[Provider, ...] = (
         verdict="watchlist",
         reason=(
             "HTTP 200, 174,590 bytes, 20 lineup-row entries and 10 fixture "
-            "toggles on the index -- but the index's toggle-content blocks are "
-            "empty, so the XIs need ten further per-fixture fetches. Viable "
-            "and permitted; not ingested yet because Rotowire already supplies "
-            "the same signal for one request, and a second lineup source earns "
-            "its eleven requests only once the ensemble can measure whether it "
-            "disagrees usefully."
+            "toggles -- and no XI anywhere in the bytes. The first read of this "
+            "page counted the toggles and assumed ten linkable per-fixture "
+            "pages behind them; there are none. Every toggle is href='#' and "
+            "sitemap-lineups.xml, which the site publishes precisely to say "
+            "which lineup URLs it wants crawled, lists only the league index.\n"
+            "So the only route to the data is an undocumented AJAX endpoint "
+            "found by reading the site's own scripts. That is nearer the FPL "
+            "Review line than the Rotowire line, and Rotowire already gives "
+            "the same signal, server-rendered, in one request. Watchlist: "
+            "re-check if the site ever server-renders the XIs or names the "
+            "endpoint publicly."
         ),
         probe_urls=("https://www.sportsgambler.com/robots.txt",
                     "https://www.sportsgambler.com/lineups/football/england-premier-league/"),
