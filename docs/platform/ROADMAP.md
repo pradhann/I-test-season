@@ -118,18 +118,26 @@ Pending: the top-1k sampler run **after GW1 locks** (picks are only public
 post-deadline — pre-GW1 the honest answer is labelled ownership marginals), and
 cohort captaincy/chip rates measured from the crawl.
 
-### 6. UI depth
+### 6. Fixture difficulty from our own ratings
+`fixture_ticker` currently returns opponents and home/away only — no difficulty
+— so the UI renders those cells neutral rather than inventing a colour. The
+Dixon-Coles fit that would supply real difficulty takes ~1 minute, well past a
+panel's 10s budget, so this needs a **cached ratings artefact** written by the
+nightly job and read by the panel. That is the single cheapest upgrade to the
+dashboard's usefulness.
+
+### 7. UI depth
 Current page renders every panel the API declares. Next: multi-source projection
 comparison with source selection, elite/template EO panel, watchlist with
 triggers, creator consensus with track records, team-news feed, and the chat pane
 (the API route exists and answers through the deterministic router today).
 
-### 7. ASR for podcasts
+### 8. ASR for podcasts
 Benchmarking found MLX-Whisper ~5× faster than faster-whisper on this machine.
 Pending: the transcription module, the nightly time-budgeted backfill, and the
 press-conference source inventory.
 
-### 8. Confirmed lineups
+### 9. Confirmed lineups
 No source ingested. The T-90m task exists and honestly records `no_source`; a
 test proves the wiring wakes up the moment a feed lands. This is the single
 highest-latency edge still missing.
