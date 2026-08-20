@@ -17,3 +17,4 @@ dist/
 .DS_Store
 data/warehouse/jobs/
 data/odds_expansion_ledger.json
+code_bases/
