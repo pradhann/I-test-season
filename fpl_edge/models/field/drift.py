@@ -127,15 +127,32 @@ def measure_flow_velocity(
     lookback: dt.timedelta = dt.timedelta(hours=24),
     min_window_days: float = 0.10,
 ) -> FlowVelocity | None:
-    """Flow per day from two polls of ``fact_player_state``, or None.
+    """Flow per day from ``fact_player_state``, or None.
 
-    The event counters reset when a deadline passes, so a negative difference
-    means the window straddled a reset; those players fall back to the level
-    divided by the time since the last deadline. Returns ``None`` when there
-    is genuinely nothing to measure -- one poll, a sub-``min_window_days``
-    window, or flow that is identically zero (the pre-GW1 state, where the
-    counters have never moved). None means "drift disabled", never "drift of
-    zero measured".
+    ``transfers_in_event`` / ``transfers_out_event`` are **per-gameweek
+    counters that reset at every deadline**, and getting the divisor wrong is
+    the easiest way to make this function lie. Two regimes:
+
+    * **The previous poll is on the same side of the last deadline.** Then the
+      counters have not reset between the polls and the flow in the window is
+      the plain difference over the poll gap.
+    * **The previous poll predates the last deadline.** Then the counters
+      restarted at zero when that deadline passed, so the *level* is the flow
+      since the deadline and the previous poll tells us nothing. Dividing the
+      level by the poll gap would understate the velocity by the ratio of the
+      two windows -- with a weekly poll cadence and a decision four days after
+      a deadline that is a factor of 7/4 -- so the divisor is the time since
+      the deadline, and ``window_days`` reports that shorter window.
+
+    A per-player negative difference means a reset the deadline table did not
+    explain (or a corrected feed); those players fall back to the same
+    since-deadline level, or to zero when the deadline is unknown.
+
+    Returns ``None`` when there is genuinely nothing to measure: one poll, a
+    sub-``min_window_days`` window, or counters that have never moved (the
+    pre-GW1 state). **None means "drift disabled", never "drift of zero
+    measured"** -- the caller labels the sample UNDRIFTED rather than silently
+    carrying a week-old field forward as if it were current.
     """
     players = snapshot.players(season)
     if players.empty:
@@ -159,32 +176,47 @@ def measure_flow_velocity(
     if prior.empty:
         return None
     prior = prior.sort_values("code").reset_index(drop=True)
-    gap_days = (
-        snapshot.as_of - pd.to_datetime(prior["as_of"], utc=True).max()
-    ).total_seconds() / 86400.0
+    prev_as_of = pd.to_datetime(prior["as_of"], utc=True).max()
+    gap_days = (snapshot.as_of - prev_as_of).total_seconds() / 86400.0
     if not np.isfinite(gap_days) or gap_days < min_window_days:
         return None
-    prev_in = _aligned(prior, "transfers_in_event", universe)
-    prev_out = _aligned(prior, "transfers_out_event", universe)
 
-    d_in, d_out = now_in - prev_in, now_out - prev_out
-    reset = (d_in < 0) | (d_out < 0)
-    if reset.any():
-        # Counter reset mid-window: use the level over the time since the
-        # deadline that reset it, when that time is knowable; else drop to 0.
-        since = _days_since_last_deadline(snapshot, season)
-        if since is not None and since > min_window_days:
-            d_in = np.where(reset, now_in / since * gap_days, d_in)
-            d_out = np.where(reset, now_out / since * gap_days, d_out)
-        else:
-            d_in = np.where(reset, 0.0, d_in)
-            d_out = np.where(reset, 0.0, d_out)
+    last_deadline = _last_deadline(snapshot, season)
+    since_deadline = (
+        None if last_deadline is None
+        else (snapshot.as_of - last_deadline).total_seconds() / 86400.0
+    )
+
+    if last_deadline is not None and prev_as_of < last_deadline:
+        # The counters reset at ``last_deadline``; the prior poll is pre-reset
+        # and carries no usable information about the current window.
+        if since_deadline is None or since_deadline < min_window_days:
+            return None
+        window = since_deadline
+        d_in, d_out = now_in, now_out
+        how = f"level since the GW deadline over {window:.2f}d"
+    else:
+        window = gap_days
+        prev_in = _aligned(prior, "transfers_in_event", universe)
+        prev_out = _aligned(prior, "transfers_out_event", universe)
+        d_in, d_out = now_in - prev_in, now_out - prev_out
+        reset = (d_in < 0) | (d_out < 0)
+        if reset.any():
+            if since_deadline is not None and since_deadline >= min_window_days:
+                scale = window / since_deadline
+                d_in = np.where(reset, now_in * scale, d_in)
+                d_out = np.where(reset, now_out * scale, d_out)
+            else:
+                d_in = np.where(reset, 0.0, d_in)
+                d_out = np.where(reset, 0.0, d_out)
+        how = f"two-poll diff over {window:.2f}d"
+
     return FlowVelocity(
-        in_per_day=np.clip(d_in, 0.0, None) / gap_days,
-        out_per_day=np.clip(d_out, 0.0, None) / gap_days,
-        window_days=float(gap_days),
+        in_per_day=np.clip(d_in, 0.0, None) / window,
+        out_per_day=np.clip(d_out, 0.0, None) / window,
+        window_days=float(window),
         as_of=snapshot.as_of,
-        provenance=f"fact_player_state two-poll diff over {gap_days:.2f}d",
+        provenance=f"fact_player_state {how}",
     )
 
 
@@ -196,15 +228,16 @@ def _aligned(players: pd.DataFrame, column: str, universe: PlayerUniverse) -> np
     return s.reindex(universe.codes).fillna(0.0).to_numpy(dtype=float)
 
 
-def _days_since_last_deadline(snapshot: Snapshot, season: str) -> float | None:
+def _last_deadline(snapshot: Snapshot, season: str) -> dt.datetime | None:
+    """The most recent deadline at ``snapshot.as_of`` -- the instant at which
+    the per-gameweek transfer counters were last reset to zero."""
     events = snapshot.table("dim_event", where="season = ?", params=[season])
     if events.empty:
         return None
     past = events[pd.to_datetime(events["deadline_utc"], utc=True) <= snapshot.as_of]
     if past.empty:
         return None
-    latest = pd.to_datetime(past["deadline_utc"], utc=True).max()
-    return (snapshot.as_of - latest).total_seconds() / 86400.0
+    return pd.to_datetime(past["deadline_utc"], utc=True).max().to_pydatetime()
 
 
 # ---------------------------------------------------------------------------

@@ -41,6 +41,25 @@ def _idx(team: int, j: int) -> int:
     return (team % N_TEAMS) * PER_TEAM + j
 
 
+def state_frame(universe, ownership, as_of, transfers_in, transfers_out) -> pd.DataFrame:
+    """One ``fact_player_state`` poll. Module-level so tests can add polls.
+
+    The transfer counters are per-gameweek and reset at every deadline, so a
+    test that wants to exercise the two-poll difference regime has to plant two
+    polls on the same side of a deadline -- which it cannot do without this.
+    """
+    return pd.DataFrame([
+        {"season": SEASON, "code": int(universe.codes[p]), "element_id": p + 1,
+         "price_tenths": int(universe.price_tenths[p]),
+         "selected_by_pct": float(ownership[p] * 100.0), "status": "a",
+         "chance_of_playing_next_round": None,
+         "transfers_in_event": int(transfers_in[p]),
+         "transfers_out_event": int(transfers_out[p]),
+         "as_of": as_of}
+        for p in range(universe.n_players)
+    ])
+
+
 def manager_squad(i: int) -> tuple[list[int], int, int]:
     """A legal squad for manager ``i`` in FPL slot order (0-based indices).
 
@@ -88,15 +107,7 @@ def build_warehouse(
     ]))
 
     def state(as_of, ti, to):
-        return pd.DataFrame([
-            {"season": SEASON, "code": int(u.codes[p]), "element_id": p + 1,
-             "price_tenths": int(u.price_tenths[p]),
-             "selected_by_pct": float(eo[p] * 100.0), "status": "a",
-             "chance_of_playing_next_round": None,
-             "transfers_in_event": int(ti[p]), "transfers_out_event": int(to[p]),
-             "as_of": as_of}
-            for p in range(u.n_players)
-        ])
+        return state_frame(u, eo, as_of, ti, to)
 
     zeros = np.zeros(u.n_players, dtype=int)
     wh.append("fact_player_state", state(T_POOL, zeros, zeros))
