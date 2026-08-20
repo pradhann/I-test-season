@@ -108,6 +108,60 @@ class Move:
 
 
 @dataclass(frozen=True, slots=True)
+class HitVerdict:
+    """One move's hit, judged against the rank break-even rather than against 4.
+
+    ``rank_objectives.md`` §5: a hit costs 4 points with certainty, buys ``g``
+    expected points, and changes effective weekly volatility from ``s`` to
+    ``s'``. The break-even is ``g* = 4 + L(S' - S)/S``, not 4 -- behind, a hit
+    that *loses* expected points can be correct; ahead, a variance-buying hit
+    must clear a much higher bar while a variance-shedding one gets cheap.
+    """
+
+    label: str
+    hits: int
+    hit_points: int
+    #: Expected-points gain over rolling, GROSS of the hit. That is the quantity
+    #: §5's threshold is defined on; the objective's own value already nets the
+    #: hit and (under RANK_MV) the variance term, so neither is comparable to g*.
+    expected_gain: float
+    #: ``g*`` -- the break-even total gain in this state.
+    breakeven_gain: float
+    #: Effective weekly SD after the move, from the relative-variance delta the
+    #: rank coefficients imply. Equals the incumbent ``s`` when unknown.
+    s_weekly_after: float
+    justified: bool
+    #: Value of the free transfer the hit forfeits, netted off the gain (§5's
+    #: closing caveat). Zero when the banked-FT term is off.
+    ft_option_value: float = 0.0
+    #: The move being judged, so a verdict is readable and checkable on its own.
+    into: tuple[int, ...] = ()
+    out: tuple[int, ...] = ()
+
+    def describe(self) -> str:
+        verdict = "JUSTIFIED" if self.justified else "NOT justified"
+        return (
+            f"{self.label or 'chosen'}: -{self.hit_points} for {self.expected_gain:+.2f} xP "
+            f"(net of {self.ft_option_value:.2f} FT option) against a rank break-even of "
+            f"{self.breakeven_gain:+.2f} -- {verdict}. "
+            f"Points logic would demand +4.00; the state moves the bar to "
+            f"{self.breakeven_gain:+.2f} (s {self.s_weekly_after:.2f}/wk after the move)."
+        )
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "label": self.label,
+            "hits": self.hits,
+            "hit_points": self.hit_points,
+            "expected_gain": self.expected_gain,
+            "breakeven_gain": self.breakeven_gain,
+            "s_weekly_after": self.s_weekly_after,
+            "ft_option_value": self.ft_option_value,
+            "justified": self.justified,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class TransferRecommendation:
     """The move to make, what it costs, and the ones that lost."""
 
@@ -126,6 +180,41 @@ class TransferRecommendation:
     n_candidates_screened: int = 0
     n_candidates_solved: int = 0
     solve_seconds: float = 0.0
+
+    # -- rank layer (empty unless the recommendation was solved rank-aware) ---
+
+    #: The ``(D, tau)`` state the recommendation was solved at, with its
+    #: provenance. §7.2 is why this is carried rather than logged: a verdict
+    #: quoted without its state overreaches, and the study's own example of that
+    #: mistake is in this repo.
+    rank_state: object | None = None
+    #: One verdict per move that carries a hit, judged against §5's ``g*``.
+    hit_verdicts: tuple[HitVerdict, ...] = ()
+    #: F1 paired-CRN validation of the shortlist, if a simulator was supplied.
+    #: Baseline is the chosen move; every other entry carries a paired
+    #: ``Delta P(top 10k)`` and its standard error.
+    alternatives_with_delta_p: tuple[object, ...] = ()
+    #: Value of the free transfers the chosen plan leaves banked past the
+    #: horizon. Zero when the banked-FT term is off.
+    banked_ft_value: float = 0.0
+
+    def rank_summary(self) -> str:
+        """The state, the posture it implies, and what it changed."""
+        if self.rank_state is None:
+            return (
+                "No rank state: this recommendation was solved without one, so "
+                "its risk posture is whatever the objective's fixed coefficients "
+                "encode rather than a response to where you stand."
+            )
+        from fpl_edge.rank.policy import should_gamble, theta
+
+        state = self.rank_state
+        posture = (
+            "behind on expectation -- variance is a GOOD and theta prices it positively"
+            if should_gamble(state)
+            else "ahead on expectation -- variance is a COST and theta prices it negatively"
+        )
+        return f"{state.describe()}\n  theta = {theta(state):+.5f} per point^2; {posture}."
 
     @property
     def gain_over_roll(self) -> float | None:
@@ -426,6 +515,8 @@ def recommend(
     price_forecast: object | None = None,
     mode: ObjectiveMode = ObjectiveMode.RANK_UTILITY,
     rank_utility: object | None = None,
+    rank_mv: object | None = None,
+    validator: object | None = None,
     config: OptimizerConfig | None = None,
     candidates: int = DEFAULT_CANDIDATES,
     max_candidates_per_position: int | None = 40,
@@ -437,6 +528,18 @@ def recommend(
     raises, and this function lets that propagate untouched. Passing
     ``ObjectiveMode.EXPECTED_POINTS`` is how a caller says, in writing, that they
     want the surrogate.
+
+    ``ObjectiveMode.RANK_MV`` is the implemented rank objective and takes
+    ``rank_mv`` -- :class:`~fpl_edge.rank.coefficients.RankCoefficients` built
+    from a :class:`~fpl_edge.rank.state.RankState`. The resulting
+    recommendation additionally carries the state it was solved at, a §5 hit
+    verdict for every move that costs points, and the banked-FT option value.
+
+    ``validator`` is an optional paired simulator (a
+    :class:`~fpl_edge.sim.engine.SeasonSimulator`). When supplied, the chosen
+    move and its alternatives are re-run on common random numbers and the
+    recommendation carries paired ``Delta P(top 10k)`` with standard errors --
+    F1 in the role §8.2 assigns it.
     """
     if state.picks is None:
         raise NoSquadError(
@@ -467,6 +570,19 @@ def recommend(
             "exists to prevent. Pass ObjectiveMode.EXPECTED_POINTS explicitly if "
             "the surrogate is what you want -- it is a genuinely different "
             "recommendation, not an approximation of this one."
+        )
+    if mode is ObjectiveMode.RANK_MV and rank_mv is None:
+        # Same reasoning as above: refuse before paying for the points model.
+        from fpl_edge.opt import RankInputsUnavailableError
+
+        raise RankInputsUnavailableError(
+            "ObjectiveMode.RANK_MV needs RankCoefficients (see "
+            "fpl_edge.rank.coefficients.build_rank_coefficients), and none was "
+            "supplied. It takes a RankState -- where you stand against the top-10k "
+            "pace, and how many gameweeks are left -- plus per-player variances and "
+            "the near-threshold cohort's ownership and captaincy shares. Refusing to "
+            "run: without them the objective collapses to expected points while still "
+            "reporting a rank mode."
         )
     if price_forecast is None:
         from fpl_edge.opt import StaticPriceForecast
@@ -501,11 +617,11 @@ def recommend(
     notes: list[str] = []
 
     # RANK_UTILITY without a provider raises out of here, by design.
-    free_plan = solve_horizon(problem, cfg, rank_utility=rank_utility)
+    free_plan = solve_horizon(problem, cfg, rank_utility=rank_utility, rank_mv=rank_mv)
     chosen = _move_from(problem, free_plan, state)
 
     held = [int(p.code) for p in state.picks]
-    roll_plan = _solve_squad(problem, cfg, held, rank_utility)
+    roll_plan = _solve_squad(problem, cfg, held, rank_utility, rank_mv)
     roll = (
         _move_from(problem, roll_plan, state, label="roll")
         if roll_plan is not None
@@ -516,7 +632,7 @@ def recommend(
     solved: list[Move] = []
     for out, into in shortlist:
         squad = [c for c in held if c not in out] + list(into)
-        plan = _solve_squad(problem, cfg, squad, rank_utility)
+        plan = _solve_squad(problem, cfg, squad, rank_utility, rank_mv)
         if plan is None:
             continue
         solved.append(_move_from(problem, plan, state))
@@ -543,6 +659,13 @@ def recommend(
         notes.append(f"points forecast: {points_forecast.name}")
     notes.extend(free_plan.notes)
 
+    rank_state = getattr(rank_mv, "state", None)
+    ft_value = _banked_ft_value(problem, winner.plan, cfg)
+    hit_verdicts = _hit_verdicts(
+        problem, cfg, [winner, *alternatives], roll, rank_state, rank_mv, ft_value
+    )
+    deltas = _paired_validation(validator, [winner, *alternatives], notes)
+
     return TransferRecommendation(
         season=season,
         gw=GwId(int(horizon[0])),
@@ -557,7 +680,160 @@ def recommend(
         n_candidates_screened=len(shortlist),
         n_candidates_solved=len(solved),
         solve_seconds=time.perf_counter() - started,
+        rank_state=rank_state,
+        hit_verdicts=hit_verdicts,
+        alternatives_with_delta_p=deltas,
+        banked_ft_value=ft_value,
     )
+
+
+# -- rank layer helpers ------------------------------------------------------
+
+
+def _banked_ft_value(
+    problem: HorizonProblem, plan: HorizonPlan, cfg: OptimizerConfig
+) -> float:
+    if cfg.ft_value_list is None:
+        return 0.0
+    from fpl_edge.opt.scoring import banked_ft_value
+
+    return banked_ft_value(problem, plan, cfg)
+
+
+def _expected_points(problem: HorizonProblem, plan: HorizonPlan, cfg: OptimizerConfig) -> float:
+    """The plan's value under plain expected points, whatever mode solved it.
+
+    ``g*`` is a threshold on expected-points gain. The RANK_MV objective is a
+    certainty equivalent that has already priced variance and already netted the
+    hit, so comparing it to ``g*`` would double-count both.
+    """
+    from fpl_edge.opt import score_plan
+
+    return score_plan(problem, plan, replace(cfg, mode=ObjectiveMode.EXPECTED_POINTS))
+
+
+def _relative_variance_delta(
+    problem: HorizonProblem, move: Move, rank_mv: object
+) -> float:
+    """Change in variance-against-the-bar from this move, at the first gameweek.
+
+    ``(1 - 2 share) sigma^2`` summed over the players coming in, minus the same
+    over those going out -- the same first-order term the objective prices, so
+    the hit verdict and the objective are reasoning about one quantity rather
+    than two. Positive means the move buys volatility relative to the field.
+    """
+    import numpy as np
+
+    codes = np.asarray(rank_mv.codes)  # type: ignore[attr-defined]
+    row_of = {int(c): i for i, c in enumerate(codes)}
+    gws = [int(g) for g in rank_mv.gws]  # type: ignore[attr-defined]
+    if not gws or int(problem.gws[0]) not in gws:
+        return 0.0
+    j = gws.index(int(problem.gws[0]))
+    var = np.asarray(rank_mv.variance)      # type: ignore[attr-defined]
+    own = np.asarray(rank_mv.own_share)     # type: ignore[attr-defined]
+
+    def contribution(code: int) -> float:
+        i = row_of.get(int(code))
+        if i is None:
+            return 0.0
+        return float((1.0 - 2.0 * own[i, j]) * var[i, j])
+
+    return sum(contribution(c) for c in move.into) - sum(
+        contribution(c) for c in move.out
+    )
+
+
+def _hit_verdicts(
+    problem: HorizonProblem,
+    cfg: OptimizerConfig,
+    moves: Sequence[Move],
+    roll: Move | None,
+    rank_state: object | None,
+    rank_mv: object | None,
+    ft_value: float,
+) -> tuple[HitVerdict, ...]:
+    """A §5 verdict for every move that costs points.
+
+    Silent when there is no rank state: ``g*`` is a function of ``L = D + m tau``
+    and without a state the only threshold available is the naive 4, which the
+    existing :meth:`TransferRecommendation.hit_verdict` already reports. Making
+    up a state to produce a number would be worse than saying nothing.
+    """
+    if rank_state is None or roll is None:
+        return ()
+    import math
+
+    from fpl_edge.rank.policy import hit_is_justified
+
+    baseline = _expected_points(problem, roll.plan, cfg)
+    horizon = problem.n_gws
+    out: list[HitVerdict] = []
+    for move in moves:
+        if move.hits <= 0:
+            continue
+        # Gross of the hit: score_plan has already subtracted it, so add it back.
+        gain = (_expected_points(problem, move.plan, cfg) + move.hit_points) - baseline
+        s_after = rank_state.s_weekly
+        if rank_mv is not None:
+            delta_var = _relative_variance_delta(problem, move, rank_mv)
+            s_after = math.sqrt(max(rank_state.s_weekly**2 + delta_var, 1e-9))
+        justified, g_star = hit_is_justified(
+            gain,
+            rank_state,
+            s_weekly_after=s_after,
+            hold_weeks=min(horizon, rank_state.tau),
+            ft_option_value=ft_value,
+        )
+        out.append(
+            HitVerdict(
+                label=move.label or f"{len(move.into)}-transfer move",
+                hits=move.hits,
+                hit_points=move.hit_points,
+                expected_gain=gain,
+                breakeven_gain=g_star,
+                s_weekly_after=s_after,
+                justified=justified,
+                ft_option_value=ft_value,
+                into=tuple(int(c) for c in move.into),
+                out=tuple(int(c) for c in move.out),
+            )
+        )
+    return tuple(out)
+
+
+def _paired_validation(
+    validator: object | None, moves: Sequence[Move], notes: list[str]
+) -> tuple[object, ...]:
+    """F1 on the shortlist, or nothing at all.
+
+    Any failure degrades to "not validated" with a note rather than taking the
+    recommendation down: the F2 answer stands on its own, and §8.2 makes the
+    simulator a check on it, not a precondition for it.
+    """
+    if validator is None or not moves:
+        return ()
+    from fpl_edge.rank.validate import squad_plan_from_horizon, validate_plans
+
+    universe = getattr(validator, "universe", None)
+    if universe is None:
+        notes.append(
+            "validator supplied without a .universe; skipping F1 paired validation."
+        )
+        return ()
+    try:
+        plans = [
+            squad_plan_from_horizon(m.plan, universe, label=m.label or f"move {k + 1}")
+            for k, m in enumerate(moves)
+        ]
+        return tuple(
+            validate_plans(
+                validator, plans, labels=[m.label or f"move {k + 1}" for k, m in enumerate(moves)]
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - a failed check must not eat the answer
+        notes.append(f"F1 paired validation unavailable ({exc}); reporting F2 only.")
+        return ()
 
 
 def _solve_squad(
@@ -565,6 +841,7 @@ def _solve_squad(
     cfg: OptimizerConfig,
     squad: Sequence[int],
     rank_utility: object | None,
+    rank_mv: object | None = None,
 ) -> HorizonPlan | None:
     """Best plan available while owning exactly ``squad`` in the first gameweek.
 
@@ -574,7 +851,10 @@ def _solve_squad(
     the ranking.
     """
     try:
-        return solve_horizon(_mask_to_squad(problem, squad), cfg, rank_utility=rank_utility)
+        return solve_horizon(
+            _mask_to_squad(problem, squad), cfg,
+            rank_utility=rank_utility, rank_mv=rank_mv,
+        )
     except InfeasibleError:
         return None
 
