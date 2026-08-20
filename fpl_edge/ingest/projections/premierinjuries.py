@@ -175,13 +175,30 @@ def fetch(*, client: object | None = None, delay_s: float = POLITE_DELAY_S) -> F
                    body_path=dest, http_status=resp.status_code, from_cache=False)
 
 
+#: Link text that is site chrome rather than content.
+_CHROME_LINKS = {"see player page", "track"}
+
+
 def _cell(td) -> str:
-    """One table cell without its duplicated mobile header."""
+    """One table cell without its duplicated mobile header or its chrome.
+
+    Re-parsed from ``str(td)`` rather than mutated in place: ``extract()`` is
+    destructive, and stripping nodes out of the shared tree would make a second
+    read of the same soup return something different from the first.
+
+    Only *named* chrome links are removed. Stripping every ``<a>`` was the
+    first version and it is a trap waiting for the day the site wraps player
+    names in links to their profile pages -- at which point every name would
+    silently become an empty string. (It would raise on the empty name rather
+    than write a blank row, but "the parser broke" is a much worse diagnosis to
+    reach from than "the parser skipped the links it was told to skip".)
+    """
     clone = BeautifulSoup(str(td), "lxml")
-    for m in clone.select(".mob-title"):
-        m.extract()
+    for node in clone.select(".mob-title, .track-player"):
+        node.extract()
     for a in clone.select("a"):
-        a.extract()          # "See Player Page" links
+        if a.get_text(" ", strip=True).lower() in _CHROME_LINKS:
+            a.extract()
     return " ".join(clone.get_text(" ", strip=True).split())
 
 
