@@ -212,6 +212,19 @@ class TokenManager:
                     pass
             return self._refresh(env)
 
+    def prove_refresh(self) -> str:
+        """Redeem the refresh token once, now, and persist the rotated pair.
+
+        Setup used to report "Session OK" off the freshly pasted *access*
+        token, which proves nothing about the grant: the access token works for
+        8 hours whether or not the refresh chain is alive. That is how a dead
+        refresh token stayed hidden until it mattered. Redeeming once at setup
+        turns the six-month claim into something that has actually been tested,
+        and stores the rotation so the next renewal starts from a live token.
+        """
+        with self._lock, self._process_lock():
+            return self._refresh(self._read())
+
     def _refresh(self, env: dict[str, str]) -> str:
         refresh = env.get("FPL_REFRESH_TOKEN")
         if not refresh:

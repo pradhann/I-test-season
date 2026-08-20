@@ -18,3 +18,271 @@ Connected as @fplpradhannbot.
 Accepting messages from [8782506418].
 Connected as @fplpradhannbot.
 Accepting messages from [8782506418].
+╭───────────────────── Traceback (most recent call last) ──────────────────────╮
+│ /Users/nripeshpradhan/Documents/Github/i-test-season/.venv/lib/python3.11/si │
+│ te-packages/httpx/_transports/default.py:101 in map_httpcore_exceptions      │
+│                                                                              │
+│    98 │   if len(HTTPCORE_EXC_MAP) == 0:                                     │
+│    99 │   │   HTTPCORE_EXC_MAP = _load_httpcore_exceptions()                 │
+│   100 │   try:                                                               │
+│ ❱ 101 │   │   yield                                                          │
+│   102 │   except Exception as exc:                                           │
+│   103 │   │   mapped_exc = None                                              │
+│   104                                                                        │
+│                                                                              │
+│ /Users/nripeshpradhan/Documents/Github/i-test-season/.venv/lib/python3.11/si │
+│ te-packages/httpx/_transports/default.py:250 in handle_request               │
+│                                                                              │
+│   247 │   │   │   extensions=request.extensions,                             │
+│   248 │   │   )                                                              │
+│   249 │   │   with map_httpcore_exceptions():                                │
+│ ❱ 250 │   │   │   resp = self._pool.handle_request(req)                      │
+│   251 │   │                                                                  │
+│   252 │   │   assert isinstance(resp.stream, typing.Iterable)                │
+│   253                                                                        │
+│                                                                              │
+│ /Users/nripeshpradhan/Documents/Github/i-test-season/.venv/lib/python3.11/si │
+│ te-packages/httpcore/_sync/connection_pool.py:256 in handle_request          │
+│                                                                              │
+│   253 │   │   │   │   closing = self._assign_requests_to_connections()       │
+│   254 │   │   │                                                              │
+│   255 │   │   │   self._close_connections(closing)                           │
+│ ❱ 256 │   │   │   raise exc from None                                        │
+│   257 │   │                                                                  │
+│   258 │   │   # Return the response. Note that in this case we still have to │
+│       manage                                                                 │
+│   259 │   │   # the point at which the response is closed.                   │
+│                                                                              │
+│ /Users/nripeshpradhan/Documents/Github/i-test-season/.venv/lib/python3.11/si │
+│ te-packages/httpcore/_sync/connection_pool.py:236 in handle_request          │
+│                                                                              │
+│   233 │   │   │   │                                                          │
+│   234 │   │   │   │   try:                                                   │
+│   235 │   │   │   │   │   # Send the request on the assigned connection.     │
+│ ❱ 236 │   │   │   │   │   response = connection.handle_request(              │
+│   237 │   │   │   │   │   │   pool_request.request                           │
+│   238 │   │   │   │   │   )                                                  │
+│   239 │   │   │   │   except ConnectionNotAvailable:                         │
+│                                                                              │
+│ /Users/nripeshpradhan/Documents/Github/i-test-season/.venv/lib/python3.11/si │
+│ te-packages/httpcore/_sync/connection.py:101 in handle_request               │
+│                                                                              │
+│    98 │   │   │   │   │   │   )                                              │
+│    99 │   │   except BaseException as exc:                                   │
+│   100 │   │   │   self._connect_failed = True                                │
+│ ❱ 101 │   │   │   raise exc                                                  │
+│   102 │   │                                                                  │
+│   103 │   │   return self._connection.handle_request(request)                │
+│   104                                                                        │
+│                                                                              │
+│ /Users/nripeshpradhan/Documents/Github/i-test-season/.venv/lib/python3.11/si │
+│ te-packages/httpcore/_sync/connection.py:78 in handle_request                │
+│                                                                              │
+│    75 │   │   try:                                                           │
+│    76 │   │   │   with self._request_lock:                                   │
+│    77 │   │   │   │   if self._connection is None:                           │
+│ ❱  78 │   │   │   │   │   stream = self._connect(request)                    │
+│    79 │   │   │   │   │                                                      │
+│    80 │   │   │   │   │   ssl_object = stream.get_extra_info("ssl_object")   │
+│    81 │   │   │   │   │   http2_negotiated = (                               │
+│                                                                              │
+│ /Users/nripeshpradhan/Documents/Github/i-test-season/.venv/lib/python3.11/si │
+│ te-packages/httpcore/_sync/connection.py:156 in _connect                     │
+│                                                                              │
+│   153 │   │   │   │   │   │   "timeout": timeout,                            │
+│   154 │   │   │   │   │   }                                                  │
+│   155 │   │   │   │   │   with Trace("start_tls", logger, request, kwargs)   │
+│       as trace:                                                              │
+│ ❱ 156 │   │   │   │   │   │   stream = stream.start_tls(**kwargs)            │
+│   157 │   │   │   │   │   │   trace.return_value = stream                    │
+│   158 │   │   │   │   return stream                                          │
+│   159 │   │   │   except (ConnectError, ConnectTimeout):                     │
+│                                                                              │
+│ /Users/nripeshpradhan/Documents/Github/i-test-season/.venv/lib/python3.11/si │
+│ te-packages/httpcore/_backends/sync.py:154 in start_tls                      │
+│                                                                              │
+│   151 │   │   │   socket.timeout: ConnectTimeout,                            │
+│   152 │   │   │   OSError: ConnectError,                                     │
+│   153 │   │   }                                                              │
+│ ❱ 154 │   │   with map_exceptions(exc_map):                                  │
+│   155 │   │   │   try:                                                       │
+│   156 │   │   │   │   if isinstance(self._sock, ssl.SSLSocket):  # pragma:   │
+│       no cover                                                               │
+│   157 │   │   │   │   │   # If the underlying socket has already been        │
+│       upgraded                                                               │
+│                                                                              │
+│ /Users/nripeshpradhan/.local/share/uv/python/cpython-3.11.15-macos-aarch64-n │
+│ one/lib/python3.11/contextlib.py:158 in __exit__                             │
+│                                                                              │
+│   155 │   │   │   │   # tell if we get the same exception back               │
+│   156 │   │   │   │   value = typ()                                          │
+│   157 │   │   │   try:                                                       │
+│ ❱ 158 │   │   │   │   self.gen.throw(typ, value, traceback)                  │
+│   159 │   │   │   except StopIteration as exc:                               │
+│   160 │   │   │   │   # Suppress StopIteration *unless* it's the same        │
+│       exception that                                                         │
+│   161 │   │   │   │   # was passed to throw().  This prevents a              │
+│       StopIteration                                                          │
+│                                                                              │
+│ /Users/nripeshpradhan/Documents/Github/i-test-season/.venv/lib/python3.11/si │
+│ te-packages/httpcore/_exceptions.py:14 in map_exceptions                     │
+│                                                                              │
+│   11 │   except Exception as exc:  # noqa: PIE786                            │
+│   12 │   │   for from_exc, to_exc in map.items():                            │
+│   13 │   │   │   if isinstance(exc, from_exc):                               │
+│ ❱ 14 │   │   │   │   raise to_exc(exc) from exc                              │
+│   15 │   │   raise  # pragma: nocover                                        │
+│   16                                                                         │
+│   17                                                                         │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ConnectError: [Errno 54] Connection reset by peer
+
+The above exception was the direct cause of the following exception:
+
+╭───────────────────── Traceback (most recent call last) ──────────────────────╮
+│ /Users/nripeshpradhan/Documents/Github/i-test-season/fpl_edge/cli/main.py:49 │
+│ 4 in idea_telegram                                                           │
+│                                                                              │
+│   491 │   with LeasedWarehouse(db) as wh:                                    │
+│   492 │   │   bot = build_bot(IdeaInbox(wh, season=season), config=cfg,      │
+│       season=season, discover=discover)                                      │
+│   493 │   │   _install_myteam(bot, wh, season)                               │
+│ ❱ 494 │   │   bot.drop_webhook()                                             │
+│   495 │   │   console.print(f"Connected as @{bot.check_connection()}.")      │
+│   496 │   │   console.print(                                                 │
+│   497 │   │   │   f"Accepting messages from {sorted(bot.allowed) or 'NOBODY  │
+│       (allowlist empty)'}."                                                  │
+│                                                                              │
+│ /Users/nripeshpradhan/Documents/Github/i-test-season/fpl_edge/interfaces/tel │
+│ egram.py:497 in drop_webhook                                                 │
+│                                                                              │
+│   494 │                                                                      │
+│   495 │   def drop_webhook(self) -> None:                                    │
+│   496 │   │   """Long polling and webhooks are mutually exclusive; make sure │
+│       we win."""                                                             │
+│ ❱ 497 │   │   self.transport.call("deleteWebhook", {"drop_pending_updates":  │
+│       False}, timeout=15.0)                                                  │
+│   498 │                                                                      │
+│   499 │   def run_forever(self, *, timeout: int = POLL_TIMEOUT_S,            │
+│       max_cycles: int | None = None) -> None:                                │
+│   500 │   │   cycles = 0                                                     │
+│                                                                              │
+│ /Users/nripeshpradhan/Documents/Github/i-test-season/fpl_edge/interfaces/tel │
+│ egram.py:102 in call                                                         │
+│                                                                              │
+│    99 │   │   self._client = httpx.Client(base_url=f"{api_root}/bot{token}", │
+│       timeout=60.0)                                                          │
+│   100 │                                                                      │
+│   101 │   def call(self, method: str, payload: dict[str, Any], *, timeout:   │
+│       float = 30.0) -> dict[str, Any]:                                       │
+│ ❱ 102 │   │   resp = self._client.post(f"/{method}", json=payload,           │
+│       timeout=timeout)                                                       │
+│   103 │   │   resp.raise_for_status()                                        │
+│   104 │   │   body = resp.json()                                             │
+│   105 │   │   if not body.get("ok", False):                                  │
+│                                                                              │
+│ /Users/nripeshpradhan/Documents/Github/i-test-season/.venv/lib/python3.11/si │
+│ te-packages/httpx/_client.py:1144 in post                                    │
+│                                                                              │
+│   1141 │   │                                                                 │
+│   1142 │   │   **Parameters**: See `httpx.request`.                          │
+│   1143 │   │   """                                                           │
+│ ❱ 1144 │   │   return self.request(                                          │
+│   1145 │   │   │   "POST",                                                   │
+│   1146 │   │   │   url,                                                      │
+│   1147 │   │   │   content=content,                                          │
+│                                                                              │
+│ /Users/nripeshpradhan/Documents/Github/i-test-season/.venv/lib/python3.11/si │
+│ te-packages/httpx/_client.py:825 in request                                  │
+│                                                                              │
+│    822 │   │   │   timeout=timeout,                                          │
+│    823 │   │   │   extensions=extensions,                                    │
+│    824 │   │   )                                                             │
+│ ❱  825 │   │   return self.send(request, auth=auth,                          │
+│        follow_redirects=follow_redirects)                                    │
+│    826 │                                                                     │
+│    827 │   @contextmanager                                                   │
+│    828 │   def stream(                                                       │
+│                                                                              │
+│ /Users/nripeshpradhan/Documents/Github/i-test-season/.venv/lib/python3.11/si │
+│ te-packages/httpx/_client.py:914 in send                                     │
+│                                                                              │
+│    911 │   │                                                                 │
+│    912 │   │   auth = self._build_request_auth(request, auth)                │
+│    913 │   │                                                                 │
+│ ❱  914 │   │   response = self._send_handling_auth(                          │
+│    915 │   │   │   request,                                                  │
+│    916 │   │   │   auth=auth,                                                │
+│    917 │   │   │   follow_redirects=follow_redirects,                        │
+│                                                                              │
+│ /Users/nripeshpradhan/Documents/Github/i-test-season/.venv/lib/python3.11/si │
+│ te-packages/httpx/_client.py:942 in _send_handling_auth                      │
+│                                                                              │
+│    939 │   │   │   request = next(auth_flow)                                 │
+│    940 │   │   │                                                             │
+│    941 │   │   │   while True:                                               │
+│ ❱  942 │   │   │   │   response = self._send_handling_redirects(             │
+│    943 │   │   │   │   │   request,                                          │
+│    944 │   │   │   │   │   follow_redirects=follow_redirects,                │
+│    945 │   │   │   │   │   history=history,                                  │
+│                                                                              │
+│ /Users/nripeshpradhan/Documents/Github/i-test-season/.venv/lib/python3.11/si │
+│ te-packages/httpx/_client.py:979 in _send_handling_redirects                 │
+│                                                                              │
+│    976 │   │   │   for hook in self._event_hooks["request"]:                 │
+│    977 │   │   │   │   hook(request)                                         │
+│    978 │   │   │                                                             │
+│ ❱  979 │   │   │   response = self._send_single_request(request)             │
+│    980 │   │   │   try:                                                      │
+│    981 │   │   │   │   for hook in self._event_hooks["response"]:            │
+│    982 │   │   │   │   │   hook(response)                                    │
+│                                                                              │
+│ /Users/nripeshpradhan/Documents/Github/i-test-season/.venv/lib/python3.11/si │
+│ te-packages/httpx/_client.py:1014 in _send_single_request                    │
+│                                                                              │
+│   1011 │   │   │   )                                                         │
+│   1012 │   │                                                                 │
+│   1013 │   │   with request_context(request=request):                        │
+│ ❱ 1014 │   │   │   response = transport.handle_request(request)              │
+│   1015 │   │                                                                 │
+│   1016 │   │   assert isinstance(response.stream, SyncByteStream)            │
+│   1017                                                                       │
+│                                                                              │
+│ /Users/nripeshpradhan/Documents/Github/i-test-season/.venv/lib/python3.11/si │
+│ te-packages/httpx/_transports/default.py:249 in handle_request               │
+│                                                                              │
+│   246 │   │   │   content=request.stream,                                    │
+│   247 │   │   │   extensions=request.extensions,                             │
+│   248 │   │   )                                                              │
+│ ❱ 249 │   │   with map_httpcore_exceptions():                                │
+│   250 │   │   │   resp = self._pool.handle_request(req)                      │
+│   251 │   │                                                                  │
+│   252 │   │   assert isinstance(resp.stream, typing.Iterable)                │
+│                                                                              │
+│ /Users/nripeshpradhan/.local/share/uv/python/cpython-3.11.15-macos-aarch64-n │
+│ one/lib/python3.11/contextlib.py:158 in __exit__                             │
+│                                                                              │
+│   155 │   │   │   │   # tell if we get the same exception back               │
+│   156 │   │   │   │   value = typ()                                          │
+│   157 │   │   │   try:                                                       │
+│ ❱ 158 │   │   │   │   self.gen.throw(typ, value, traceback)                  │
+│   159 │   │   │   except StopIteration as exc:                               │
+│   160 │   │   │   │   # Suppress StopIteration *unless* it's the same        │
+│       exception that                                                         │
+│   161 │   │   │   │   # was passed to throw().  This prevents a              │
+│       StopIteration                                                          │
+│                                                                              │
+│ /Users/nripeshpradhan/Documents/Github/i-test-season/.venv/lib/python3.11/si │
+│ te-packages/httpx/_transports/default.py:118 in map_httpcore_exceptions      │
+│                                                                              │
+│   115 │   │   │   raise                                                      │
+│   116 │   │                                                                  │
+│   117 │   │   message = str(exc)                                             │
+│ ❱ 118 │   │   raise mapped_exc(message) from exc                             │
+│   119                                                                        │
+│   120                                                                        │
+│   121 class ResponseStream(SyncByteStream):                                  │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ConnectError: [Errno 54] Connection reset by peer
+Connected as @fplpradhannbot.
+Accepting messages from [8782506418].

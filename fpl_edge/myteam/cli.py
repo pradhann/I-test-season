@@ -503,6 +503,20 @@ def auth(
             echo(str(exc))
             raise typer.Exit(1)
         console.print(f"[green]Stored.[/green] {status}")
+        # Prove the grant, do not assume it. See TokenManager.prove_refresh.
+        console.print("Proving the refresh grant (redeeming once)...")
+        try:
+            manager.prove_refresh()
+        except Exception as exc:  # noqa: BLE001 - report any refusal plainly
+            console.print(
+                f"[red]The refresh grant does not work:[/red] {exc}\n"
+                "The access token will still last ~8 hours, but renewal will "
+                "fail after that. Re-copy the cookie from a browser session you "
+                "have just used, and check nothing else is redeeming the same "
+                "token (`launchctl list | grep fpledge`)."
+            )
+            raise typer.Exit(1)
+        console.print("[green]Refresh grant verified.[/green] Renewal is automatic.")
     else:
         console.print(manager.status())
         if not manager.configured:

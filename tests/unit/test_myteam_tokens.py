@@ -313,3 +313,44 @@ def test_two_processes_refreshing_at_once_redeem_the_token_only_once(tmp_path) -
         f"the refresh token was redeemed {redemptions} times across two "
         "processes; the second replay is the HTTP 400 that broke live auth"
     )
+
+
+def test_paste_setup_proves_the_grant_instead_of_trusting_the_access_token(tmp_path) -> None:
+    """Setup must redeem once, not just report the access token works.
+
+    A pasted access token is valid for ~8h regardless of whether the refresh
+    chain is alive, so reporting "Session OK" off it hid a dead refresh token
+    until renewal was due. `prove_refresh` is what makes the six-month promise
+    a tested claim.
+    """
+    import base64
+    import datetime as dt
+    import json
+
+    from fpl_edge.myteam.tokens import TokenManager
+
+    def mint(seconds: int) -> str:
+        exp = dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=seconds)
+        body = base64.urlsafe_b64encode(
+            json.dumps({"exp": int(exp.timestamp())}).encode()
+        ).decode().rstrip("=")
+        return f"x.{body}.y"
+
+    env = tmp_path / ".env"
+    env.write_text(
+        f"FPL_ACCESS_TOKEN={mint(8 * 3600)}\n"   # perfectly valid: must NOT short-circuit
+        f"FPL_REFRESH_TOKEN={mint(180 * 86400)}\n"
+    )
+
+    redeemed: list[str] = []
+
+    class Proving(TokenManager):
+        def _refresh(self, env_: dict) -> str:
+            redeemed.append("yes")
+            return mint(8 * 3600)
+
+    Proving(env_path=env).prove_refresh()
+    assert redeemed == ["yes"], (
+        "prove_refresh returned the cached access token instead of redeeming; "
+        "a dead refresh chain would go unnoticed until renewal"
+    )

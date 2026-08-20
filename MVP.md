@@ -43,14 +43,34 @@ Fires on its own, keyed to the real UTC deadline:
 
 ## Before the GW1 deadline (Fri 21 Aug 17:30 UTC)
 
-1. `uv run fpl myteam auth` — refresh the session so the squad panel and
-   transfer advice read your real team (the access token expires every 8h; the
-   refresh token lasts ~6 months).
-2. `make solve` — generates a fresh plan. Without this the T-4h delivery will
-   honestly report "no fresh solve" rather than hand you a stale squad.
+1. `uv run fpl myteam auth` — reports token state and verifies against the live
+   account, refreshing the 8-hour access token through the stored refresh token.
+   That is the everyday case and needs no input. If it reports the grant was
+   *refused*, the session was revoked: `uv run fpl myteam auth --paste-cookie`
+   once (hidden prompt) and the ~6-month refresh token takes over again.
+2. `uv run python scripts/gw1_squad.py` — re-solves the plan. The recommended
+   squad section leads with the solve time and warns past 24h; acting on a
+   stale plan means acting on stale prices, injuries and odds.
 3. Open `localhost:8321` and confirm the dashboard renders — it was built after
    browser automation got blocked here, so it is served and syntax-checked but
    not visually confirmed.
+
+Once 1 and 2 are both done, `uv run fpl weekly` ends its recommended-squad
+section with **Versus your actual squad**: the exact players to move, paired
+by position so every row is a legal transfer, plus whether you and the plan
+agree on the captain. Before the first deadline those transfers are unlimited
+and free, so that diff *is* the GW1 decision.
+
+## Authentication, in one paragraph
+
+FPL authenticates with a bearer token, not a cookie — a session cookie on its
+own now returns 403. `auth --paste-cookie` extracts the `access_token` and
+`refresh_token` from a pasted browser Cookie header (pasting just those two
+values works too) and stores them in `.env`, which is gitignored; no password
+is stored or asked for. Refresh tokens are single-use, so redemption is
+serialised across processes with a lock on `.env.lock` — without it the bot
+and the DAG could refresh at once and the loser would replay a spent token.
+Revoke by logging out of that browser session.
 
 ## What is not built yet
 
