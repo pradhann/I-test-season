@@ -309,24 +309,29 @@ gh_blueladd      ok       2,814 appended     469 parsed     0 unresolved  HTTP 2
 7/7 providers ok, 11,388 rows appended, 17 names/ids unresolved
 ```
 
-Cumulative warehouse state after that run:
+What that buys, per fetch — the stable shape, rather than the cumulative row
+count, which grows by design on every run:
 
-| source | rows | players | gw range | with xmins | with xpts | with p_appear |
-|---|---|---|---|---|---|---|
-| `fplform` | 23,680 | 592 | 1–8 | 0 | 23,680 | 23,680 |
-| `gh_blueladd` | 14,070 | 469 | 1–6 | 2,345 | 14,070 | 0 |
-| `gh_fplbench` | 2,935 | 587 | 1 | 2,935 | 2,935 | 0 |
-| `fpl_ep` | 2,380 | 595 | 1 | 0 | 2,380 | 2,380 |
-| `premierinjuries` | 172 | 86 | 1 | 0 | 0 | 172 |
+| source | table | rows/fetch | distinct players | gw range | xmins | xpts | p_appear |
+|---|---|---|---|---|---|---|---|
+| `fplform` | `fact_projection` | 4,736 | 592 | 1–8 | — | all | all |
+| `gh_blueladd` | `fact_projection` | 2,814 | 469 | 1–6 | gw1 only (469) | all | — |
+| `gh_fplbench` | `fact_projection` | 587 | 587 | 1 | all | all | — |
+| `fpl_ep` | `fact_projection` | 595 | 595 | 1 | — | all | all |
+| `premierinjuries` | `fact_projection` | 86 | 86 | 1 | — | — | all |
+| `rotowire` | `fact_predicted_lineup` | 298 | 298 | 1 | 217 starters | — | — |
+| `livefpl` | `fact_external_ownership` | 2,272 | 971 | 1, 38 | — | — | — |
 
-`fact_predicted_lineup`: `rotowire`, 1,178 rows, 298 players, 856 starter-rows.
-`fact_external_ownership`: `livefpl`, 9,680 rows across `eo_predicted`,
-`eo_top10k`, `eo_elite`.
+**Cumulative rows exceed one run's, and that is the design, not duplication.**
+`fetched_at` is the fetch instant, so each re-fetch of a revised projection is a
+new fact and the earlier number survives — which is the only way "the projection
+as it stood at the deadline" can be answered later. `ProjectionStore.as_of()`
+returns the latest row per entity at any instant, and re-appending an
+*unchanged* body under its original instant appends zero rows, so the raw
+archive can be replayed to rebuild the warehouse without doubling it.
 
-(Row counts exceed one run's because `fetched_at` is the fetch instant, so each
-re-fetch is a new fact. That is the design, not duplication: `ProjectionStore.as_of()`
-returns the latest row per entity at any instant, and re-appending an *unchanged*
-body under its original instant adds zero rows.)
+Read the live numbers with
+`uv run python -m fpl_edge.ingest.projections.cli providers`.
 
 ### Every unresolved name, and why
 
