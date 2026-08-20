@@ -243,7 +243,9 @@ def test_held_squad_survives_a_real_world_club_move() -> None:
     held, hits, _, _ = apply_decision(s, Decision(picks()), PRICE, moved, GwId(2))
     assert hits == 0  # holding is legal
 
-    # But BUYING a fourth for that club is still refused.
+    # But BUYING a fourth for that club is still refused. The incoming player
+    # must be a MID like the one going out, or position validation fires first
+    # and this stops testing the club rule at all.
     with pytest.raises(InvalidDecision, match="newly bought"):
-        team = {**moved, 26: 1}
-        apply_decision(held, Decision(swap(picks(), 9, 26)), PRICE, team, GwId(3))
+        team = {**moved, 28: 1}
+        apply_decision(held, Decision(swap(picks(), 9, 28)), PRICE, team, GwId(3))
