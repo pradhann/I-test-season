@@ -9,7 +9,7 @@ constraint bug cannot hide behind "well, the real data is different".
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -232,15 +232,31 @@ class HorizonProblem:
     def codes(self) -> np.ndarray:
         return np.array([int(p.code) for p in self.players], dtype=np.int64)
 
-    def prune(self, max_per_position: int | None) -> HorizonProblem:
+    def prune(
+        self,
+        max_per_position: int | None,
+        *,
+        protect: Iterable[int] = (),
+    ) -> HorizonProblem:
         """Keep the top-N per position by horizon-total xPts, plus everything owned.
 
         Reduces the MILP, and changes the answer. Only ever called explicitly.
+
+        ``protect`` is the safe-list: codes that survive pruning whatever their
+        expected points. Locked and banned players must be in it, because a
+        constraint naming a player the pool no longer contains is either
+        silently ignored (locked) or vacuously satisfied (banned), and both are
+        worse than a larger model.
         """
         if max_per_position is None:
             return self
         total = self.xpts.sum(axis=1)
-        keep: set[int] = {i for i, p in enumerate(self.players) if p.code in self.state.holdings}
+        safe = {int(c) for c in protect}
+        keep: set[int] = {
+            i
+            for i, p in enumerate(self.players)
+            if p.code in self.state.holdings or int(p.code) in safe
+        }
         for pos in Position:
             idx = [i for i, p in enumerate(self.players) if p.position is pos]
             idx.sort(key=lambda i: (-total[i], int(self.players[i].code)))

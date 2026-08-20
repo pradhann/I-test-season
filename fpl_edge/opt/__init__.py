@@ -7,6 +7,9 @@ quietly optimising expected points.
 """
 
 from fpl_edge.opt.config import (
+    FT_VALUE_DEFAULT,
+    FT_VALUE_LIST_SOTA,
+    REPORT_DECAY_BASES,
     AutosubWeights,
     ObjectiveMode,
     OptimizerConfig,
@@ -16,17 +19,22 @@ from fpl_edge.opt.config import (
 from fpl_edge.opt.interfaces import (
     POINTS_FORECAST_COLUMNS,
     PRICE_FORECAST_COLUMNS,
+    VARIANCE_FORECAST_COLUMNS,
     PointsForecast,
+    PointsVarianceForecast,
     PriceForecast,
+    RankInputsUnavailableError,
     RankUtilityProvider,
     RankUtilityUnavailableError,
     StaticPriceForecast,
     TablePriceForecast,
 )
 from fpl_edge.opt.milp import (
+    CUT_CRITERIA,
     InfeasibleError,
     ModelStats,
     NoIncumbentError,
+    enumerate_plans,
     solve_horizon,
 )
 from fpl_edge.opt.plan import GwDecision, HorizonPlan
@@ -42,6 +50,8 @@ from fpl_edge.opt.problem import (
 from fpl_edge.opt.scoring import (
     PlanInvalidError,
     assert_valid,
+    banked_ft_value,
+    decay_metrics,
     gw_contributions,
     replay_finances,
     score_plan,
@@ -49,23 +59,29 @@ from fpl_edge.opt.scoring import (
 )
 
 __all__ = [
-    "CHIP_NAMES",
-    "POINTS_FORECAST_COLUMNS",
-    "PRICE_FORECAST_COLUMNS",
     "AutosubWeights",
+    "CHIP_NAMES",
+    "CUT_CRITERIA",
     "ChipState",
+    "FT_VALUE_DEFAULT",
+    "FT_VALUE_LIST_SOTA",
     "GwDecision",
     "HorizonPlan",
     "HorizonProblem",
     "InfeasibleError",
-    "NoIncumbentError",
     "ModelStats",
+    "NoIncumbentError",
     "ObjectiveMode",
     "OptimizerConfig",
+    "POINTS_FORECAST_COLUMNS",
+    "PRICE_FORECAST_COLUMNS",
     "PlanInvalidError",
     "PlayerRow",
     "PointsForecast",
+    "PointsVarianceForecast",
     "PriceForecast",
+    "REPORT_DECAY_BASES",
+    "RankInputsUnavailableError",
     "RankUtilityProvider",
     "RankUtilityUnavailableError",
     "Ruleset",
@@ -74,8 +90,12 @@ __all__ = [
     "SquadState",
     "StaticPriceForecast",
     "TablePriceForecast",
+    "VARIANCE_FORECAST_COLUMNS",
     "assert_valid",
+    "banked_ft_value",
     "build_problem",
+    "decay_metrics",
+    "enumerate_plans",
     "gw_contributions",
     "replay_finances",
     "score_plan",

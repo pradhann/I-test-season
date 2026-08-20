@@ -155,8 +155,15 @@ def test_rank_utility_refuses_to_run_without_a_provider():
     assert isinstance(exc.value, NotImplementedError)
 
 
-def test_rank_utility_with_a_provider_is_still_not_implemented():
-    """A provider must not silently fall back to a linearised surrogate."""
+def test_rank_utility_with_a_provider_points_at_rank_mv_instead():
+    """F1 in the argmax loop is refused, and the refusal names the alternative.
+
+    ``rank_objectives.md`` §8.2 settled this: the simulator is a validator, not
+    a searcher (§7.4 -- it could not separate 0 of 6 candidate swaps at 2 SE).
+    So a supplied provider must still not be used to optimise; the caller is
+    directed to ``RANK_MV`` for the choice and to the paired-CRN validator for
+    the check.
+    """
     problem = synthetic_problem(per_position=SMALL, n_gws=1)
     config = OptimizerConfig(mode=ObjectiveMode.RANK_UTILITY, allowed_chips=frozenset())
 
@@ -169,7 +176,9 @@ def test_rank_utility_with_a_provider_is_still_not_implemented():
 
     with pytest.raises(NotImplementedError) as exc:
         solve_horizon(problem, config, rank_utility=Stub())
-    assert "trust-region" in str(exc.value)
+    message = str(exc.value)
+    assert "RANK_MV" in message
+    assert "VALIDATOR, not a searcher" in message
 
 
 def test_scoring_a_rank_utility_plan_refuses_to_use_means():

@@ -24,9 +24,9 @@ MILP and this scorer use them, so agreement is meaningful:
 from __future__ import annotations
 
 import itertools
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 
-from fpl_edge.opt.config import ObjectiveMode, OptimizerConfig
+from fpl_edge.opt.config import REPORT_DECAY_BASES, ObjectiveMode, OptimizerConfig
 from fpl_edge.opt.plan import GwDecision, HorizonPlan
 from fpl_edge.opt.problem import CHIP_NAMES, HorizonProblem, Ruleset
 from fpl_edge.types import Money, PlayerCode, Position, selling_price
@@ -36,12 +36,24 @@ class PlanInvalidError(ValueError):
     """A plan violates a rule the optimiser claims to enforce."""
 
 
-def score_plan(problem: HorizonProblem, plan: HorizonPlan, config: OptimizerConfig) -> float:
+def score_plan(
+    problem: HorizonProblem,
+    plan: HorizonPlan,
+    config: OptimizerConfig,
+    *,
+    rank_mv: object | None = None,
+) -> float:
     """Recompute the declared objective for ``plan`` from its decisions alone.
 
-    Raises for :data:`ObjectiveMode.RANK_UTILITY`: scoring a rank objective
-    means running the simulator, and approximating it with means here would
-    reintroduce exactly the bug the mode exists to avoid.
+    Raises for :data:`ObjectiveMode.RANK_UTILITY`: scoring a *simulated* rank
+    objective means running the simulator, and approximating it with means here
+    would reintroduce exactly the bug the mode exists to avoid.
+
+    :data:`ObjectiveMode.RANK_MV` is scorable, because its objective is a
+    closed-form function of per-player coefficients rather than a simulation --
+    which is the whole reason F2 can live inside the argmax loop. It still needs
+    the same ``rank_mv`` coefficients the solve used; scoring it without them
+    would silently score expected points instead.
     """
     if config.mode is ObjectiveMode.RANK_UTILITY:
         from fpl_edge.opt.interfaces import RankUtilityUnavailableError
@@ -51,18 +63,41 @@ def score_plan(problem: HorizonProblem, plan: HorizonPlan, config: OptimizerConf
             "Call provider.evaluate_plan(plan) instead; the simulated value is the "
             "only honest number for that mode."
         )
-    return sum(
+    if config.mode is ObjectiveMode.RANK_MV and rank_mv is None:
+        from fpl_edge.opt.interfaces import RankInputsUnavailableError
+
+        raise RankInputsUnavailableError(
+            "score_plan cannot evaluate RANK_MV without the RankCoefficients the "
+            "solve used. Pass rank_mv=; recomputing on problem.xpts alone would "
+            "silently return the expected-points objective under a rank name."
+        )
+    total = sum(
         contribution
-        for _, contribution in gw_contributions(problem, plan, config)
+        for _, contribution in gw_contributions(problem, plan, config, rank_mv=rank_mv)
     )
+    return total + banked_ft_value(problem, plan, config)
+
+
+def _coefficient_matrices(
+    problem: HorizonProblem, config: OptimizerConfig, rank_mv: object | None
+) -> tuple[object, object]:
+    """``(lineup, captain)`` coefficients, exactly as :mod:`fpl_edge.opt.milp` builds them."""
+    if config.mode is ObjectiveMode.RANK_MV:
+        return rank_mv.align(problem)  # type: ignore[union-attr]
+    return problem.xpts, problem.xpts
 
 
 def gw_contributions(
-    problem: HorizonProblem, plan: HorizonPlan, config: OptimizerConfig
+    problem: HorizonProblem,
+    plan: HorizonPlan,
+    config: OptimizerConfig,
+    *,
+    rank_mv: object | None = None,
 ) -> list[tuple[int, float]]:
     """Per-gameweek discounted objective contributions, for reporting."""
     idx = problem.index_of
     discount = config.discount_for(problem.n_gws)
+    lineup_coef, captain_coef = _coefficient_matrices(problem, config, rank_mv)
     out: list[tuple[int, float]] = []
 
     for j, decision in enumerate(plan.decisions):
@@ -70,7 +105,8 @@ def gw_contributions(
             raise PlanInvalidError(
                 f"plan gameweek {decision.gw} does not match problem gameweek {problem.gws[j]}"
             )
-        xp = {c: float(problem.xpts[idx[c], j]) for c in decision.fielded}
+        xp = {c: float(lineup_coef[idx[c], j]) for c in decision.fielded}
+        arm = {c: float(captain_coef[idx[c], j]) for c in decision.fielded}
         value = sum(xp[c] for c in decision.starting_xi)
 
         cap_mult = (
@@ -78,18 +114,90 @@ def gw_contributions(
             if decision.chip == "3xc"
             else problem.ruleset.captain_multiplier
         )
-        value += (cap_mult - 1) * xp[decision.captain]
+        value += (cap_mult - 1) * arm[decision.captain]
 
         p_cap_plays = float(problem.p_play[idx[decision.captain], j])
         value += (
             (problem.ruleset.captain_multiplier - 1)
             * (1.0 - p_cap_plays)
-            * xp[decision.vice_captain]
+            * arm[decision.vice_captain]
         )
 
         value += _bench_value(decision, xp, config, problem.ruleset)
         value += problem.ruleset.hit_cost * decision.hits  # hit_cost is negative
         out.append((int(decision.gw), discount[j] * value))
+    return out
+
+
+def banked_ft_value(
+    problem: HorizonProblem, plan: HorizonPlan, config: OptimizerConfig
+) -> float:
+    """The telescoping banked-FT potential, replayed from the plan's decisions.
+
+    Mirrors :meth:`fpl_edge.opt.milp._Builder._banked_ft_terms` exactly,
+    including the terminal state after the last modelled gameweek -- which is
+    the term's entire reason for existing. Zero when the term is off.
+    """
+    if config.ft_value_list is None:
+        return 0.0
+    rs = problem.ruleset
+    lo, hi = rs.free_per_gw, rs.max_banked_ft
+    values = config.ft_state_values(lo, hi)
+    discount = config.discount_for(problem.n_gws)
+
+    def clamp(s: int) -> int:
+        return min(max(int(s), lo), hi)
+
+    # ft entering each modelled gameweek, then one step beyond the horizon.
+    states = [d.free_transfers_available for d in plan.decisions]
+    last = plan.decisions[-1]
+    free_gw = last.chip in _FREE_CHIPS_SCORING or (
+        len(plan.decisions) == 1
+        and problem.state.is_preseason
+        and rs.unlimited_before_first_deadline
+    )
+    used = 0 if free_gw else min(last.n_transfers, states[-1])
+    terminal = min(rs.max_banked_ft, states[-1] - used + rs.free_per_gw)
+
+    total = 0.0
+    prior = clamp(problem.initial_free_transfers)
+    for j in range(1, len(states)):
+        d = discount[min(j, problem.n_gws - 1)]
+        prev = clamp(states[j - 1]) if j - 1 else prior
+        total += d * (values[clamp(states[j])] - values[prev])
+    j = len(states)
+    d = discount[min(j, problem.n_gws - 1)]
+    prev = clamp(states[-1]) if j - 1 else prior
+    total += d * (values[clamp(terminal)] - values[prev])
+    return total
+
+
+#: Chips that make a gameweek's transfers free. Mirrors ``milp._FREE_CHIPS``.
+_FREE_CHIPS_SCORING = ("wildcard", "freehit")
+
+
+def decay_metrics(
+    problem: HorizonProblem,
+    plan: HorizonPlan,
+    config: OptimizerConfig,
+    *,
+    bases: Sequence[float] | None = None,
+    rank_mv: object | None = None,
+) -> dict[float, float]:
+    """Re-score ``plan`` under alternative geometric discounts (SOTA §1.3).
+
+    Reported, never optimised. The spread between bases is a free read on how
+    much of a plan's value is parked in gameweeks the forecast is least
+    confident about: two plans with equal objectives but different decay
+    profiles are not equally trustworthy, and this is what says so.
+    """
+    from dataclasses import replace
+
+    chosen = REPORT_DECAY_BASES if bases is None else tuple(float(b) for b in bases)
+    out: dict[float, float] = {}
+    for base in chosen:
+        alt = replace(config, gw_discount=None, decay_base=base)
+        out[base] = score_plan(problem, plan, alt, rank_mv=rank_mv)
     return out
 
 

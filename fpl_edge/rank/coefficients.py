@@ -51,6 +51,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
+from fpl_edge.opt.interfaces import RankInputsUnavailableError as _RankInputsUnavailableError
 from fpl_edge.rank.policy import theta
 from fpl_edge.rank.state import RankState
 
@@ -64,13 +65,11 @@ SHARE_COLUMNS = ("code", "gw", "own_share", "captain_share")
 PROVENANCE_OWNERSHIP_MARGINALS = "ownership_marginals:prior"
 
 
-class RankInputsUnavailableError(NotImplementedError):
-    """Raised when RANK_MV is requested without coefficients.
-
-    The sibling of :class:`~fpl_edge.opt.interfaces.RankUtilityUnavailableError`
-    and for the same reason: falling back to expected points here would return
-    means while reporting a rank objective.
-    """
+#: Re-exported so callers can catch it without importing the optimiser. Defined
+#: in :mod:`fpl_edge.opt.interfaces` next to its sibling
+#: :class:`~fpl_edge.opt.interfaces.RankUtilityUnavailableError`, because the
+#: optimiser is what raises it.
+RankInputsUnavailableError = _RankInputsUnavailableError
 
 
 @dataclass(frozen=True)

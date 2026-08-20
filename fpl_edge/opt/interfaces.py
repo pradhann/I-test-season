@@ -58,6 +58,41 @@ class RankUtilityUnavailableError(NotImplementedError):
     """
 
 
+class RankInputsUnavailableError(NotImplementedError):
+    """Raised when RANK_MV is requested but no rank coefficients were supplied.
+
+    The sibling of :class:`RankUtilityUnavailableError`, and for the same
+    reason. ``RANK_MV`` needs three things the optimiser does not own -- a
+    :class:`~fpl_edge.rank.state.RankState`, per-player variances, and the
+    near-threshold cohort's ownership and captaincy shares. Absent any of them
+    the honest answer is to stop, because the available fallback (drop the rank
+    terms) is precisely expected points wearing a rank objective's name.
+    """
+
+
+#: Columns a variance forecast must return, one row per (code, gw).
+#: ``points_variance`` is Var(points) for that player in that gameweek,
+#: including the double-gameweek case, on the same scale as ``xpts``.
+VARIANCE_FORECAST_COLUMNS = ("code", "gw", "points_variance")
+
+
+@runtime_checkable
+class PointsVarianceForecast(Protocol):
+    """Second moments of the per-gameweek points distribution.
+
+    Split from :class:`PointsForecast` rather than widening it, because the
+    two have genuinely different sources: a mean can come from any projection
+    CSV, while an honest variance comes from the simulator's own draws (or from
+    a model that emits a distribution rather than a point estimate). Keeping
+    them separate makes "we have means but no variances" an expressible and
+    visible state instead of a silently-zero column.
+    """
+
+    def forecast(self, snapshot: Snapshot, season: Season, gws: list[GwId]) -> pd.DataFrame:
+        """Return a frame with :data:`VARIANCE_FORECAST_COLUMNS`."""
+        ...
+
+
 @runtime_checkable
 class RankUtilityProvider(Protocol):
     """Simulated rank utility, in the two forms a MILP can use.
