@@ -119,28 +119,65 @@ PHASE 1 — WIRE WHAT ALREADY EXISTS
     is kept as research, say so in its docstring.
 
 PHASE 2 — THE EDGE NOBODY SHIPS
-Ranked by (market gap) x (effect on rank). Each is something no
-competitor does, verified by market research.
-2.1 EO AS A COVARIANCE STRUCTURE, NOT A SCALAR. Every tool treats
-    effective ownership as a per-player number. Owning 9/11 of the
-    template plus two differentials is a completely different rank
-    distribution from 11 mid-EO players with identical total EV. Build
-    joint ownership from real top-10k picks and simulate rival scores as
-    CORRELATED draws. LiveFPL's combination-ownership widget is the only
-    hint anyone has of this, and it is a lookup, not a model input.
-2.2 STATE-DEPENDENT RISK. The right risk in GW5 at rank 400k is not the
-    right risk in GW32 at rank 12k. Every tool's risk setting is a static
-    user preference. Yours knows rank trajectory, chips remaining, and
-    weeks left, so risk appetite should be DERIVED, not configured. Your
-    rank_objectives.md already has the sufficient statistic (D, tau) and
-    the boundary D* ~ -1.06*tau. Wire it.
-2.3 EO SEGMENTED BY RANK TIER. Top-10k EO and overall EO diverge sharply.
-    Optimising against overall ownership is optimising against the wrong
-    opponent. This requires Phase 3.2.
-2.4 CHIP TIMING AGAINST THE FIELD'S CHIP SUPPLY. A Bench Boost is worth
-    far more when 60% of the top-10k has already burned theirs. Nobody
-    models the remaining-chip distribution. Your own simulation already
-    found cohort chip usage dominates your own chip choice.
+READ THIS FIRST — it invalidates the obvious approach:
+
+  Your rank-relevant contribution from player i is p_i*x_i - p_i*o_i,
+  where o_i is ownership and x_i is your holding. The ownership term is
+  CONSTANT in your decision variables. Therefore EO-adjusted expected-
+  points maximisation has the IDENTICAL argmax to plain expected-points
+  maximisation. Bolting an ownership term onto a linear objective is a
+  no-op. EO can only enter through VARIANCE, or through the probability
+  functional itself. (alpscode.com/blog/optimal-in-fpl/)
+
+  This means FPL Review's EV x EO "Risk Position" — the only rank-aware
+  term shipped by anyone — cannot be doing what its name suggests unless
+  it acts on variance. Do not copy it uncritically.
+
+2.1 BUILD THE ACTUAL OBJECTIVE: maximise P(final_points >= threshold_10k).
+    Two published DFS papers are the blueprint and neither has been
+    applied to FPL:
+    - Hunter, Vielma & Zaman, arXiv:1604.01455. Maximises
+      P(union of {X_i >= t}). Two ideas transfer directly: (a) induce
+      variance STRUCTURALLY via stacking constraints rather than a
+      quadratic penalty, which keeps the model a MILP; (b) diversify with
+      a LINEAR overlap cut against each previously built lineup. They won
+      real money with forecast R^2 of only 0.024-0.086 — the edge was
+      portfolio construction, not forecasting.
+    - Haugh & Singal, Management Science 67(1) 2021. Models the OPPONENT
+      FIELD explicitly: Dirichlet-multinomial over opponents' selections
+      with copulas for cross-position dependence, then Monte-Carlo. Your
+      P(top-10k) is their formulation with a 0.14% quantile threshold.
+    Note the ceiling: only ~6.5% of top-10k finishers repeat, and even
+    world-class skill converts at roughly 50-55%. JUDGE THE ENGINE ON
+    CALIBRATION, NOT OUTCOMES. A season that misses top-10k is not
+    evidence the model is wrong.
+2.2 EO AS A COVARIANCE STRUCTURE, NOT A SCALAR — this is the mechanism
+    by which 2.1 actually bites. Owning 9/11 of the template plus two
+    differentials is a completely different rank distribution from 11
+    mid-EO players with identical total EV. Build joint ownership from
+    real top-10k picks (Phase 3.2) and simulate rival scores as
+    CORRELATED draws. LiveFPL publishes ownership COMBINATIONS, not just
+    marginals — that is the right input and nobody models it.
+2.3 STATE-DEPENDENT RISK, derived not configured. Let z = shortfall to
+    the top-10k threshold divided by the SD of your remaining-season
+    score. z < -0.5 (ahead): converge to template, minimise tracking
+    error. |z| <= 0.5: plain EV. z > +0.5: raise variance monotonically
+    in z. The key term is that the SD shrinks as weeks remain falls, so
+    the same deficit demands MORE variance later — the formal version of
+    "punts in the last 10 weeks". Your rank_objectives.md already has the
+    sufficient statistic (D, tau) and D* ~ -1.06*tau; reconcile the two
+    parameterisations and wire it.
+2.4 CHIPS: CONSTRUCTION BEATS TIMING, and the field's chip calendar
+    beats both. Measured (PLOS ONE, n~900k): in the SAME chip in the SAME
+    gameweek, strong managers returned 23.2 vs 13.8 points — a 68% edge
+    from squad construction alone. Separately, 79.4% of top managers used
+    BB in the key DGW vs 28.9% of the field. But crowding matters: an
+    FFScout survey (n~3,700) has 97.5% of managers planning Bench Boost
+    in GW1-2 this season, which makes an early BB close to rank-neutral
+    and moves the entire differential to bench QUALITY. Value a chip as
+    E[return | your squad] - E[return | cohort's squad], never as a flat
+    prior. Hard constraint: the first chip set expires at the GW19
+    deadline with no carryover.
 2.5 DISAGREEMENT AS THE VARIANCE ESTIMATE. You ingest 5 projection
     sources. Their disagreement is a better uncertainty signal than any
     single vendor's internal one — and it is free. Note projection_weight
@@ -149,7 +186,32 @@ competitor does, verified by market research.
 2.6 TOP-N DISTINCT PLANS, not one optimum. Near-optimal plans differ
     hugely in rank variance; you need the frontier to choose among them.
     (FPL Review ships this as "Solve Lines"; the no-good-cut enumeration
-    is already substantially built in fpl_edge/rank/.)
+    is already substantially built in fpl_edge/rank/.) Every recent
+    champion reports overriding tools with judgement — so output RANKED
+    CANDIDATES WITH REASONS, not a single prescription.
+2.7 MINUTES ARE THE MEASURED COMMERCIAL EDGE. OpenFPL (arXiv:2508.09992)
+    matches FPL Review on Tickers and Haulers but loses clearly on Zeros
+    (RMSE 0.818 vs 0.689) and Blanks. The paper's own explanation is that
+    FPL Review has expected-minutes derived from team news and odds while
+    OpenFPL uses only FPL availability tags. The entire measured edge of
+    the best commercial model is knowing who starts. Multiply xPts by
+    P(start) explicitly — a 6.0 xPts player at 60% start probability is a
+    3.6 xPts asset.
+2.8 CHEAP MEASUREMENTS NOBODY HAS PUBLISHED, all computable from the
+    public API, each worth more than another model tweak:
+    - The DISTRIBUTION of chip returns. Every published figure is a mean;
+      for a tail objective the percentiles and skew are the whole point.
+    - How much the top-10k points bar RISES in heavy-chip gameweeks.
+    - FT value under the 5-transfer banking rule. The industry constant
+      (1.5-1.75) is unvalidated and predates the rule, which mechanically
+      raises roll option value.
+    - Any empirical hit threshold at all. No distribution of realised hit
+      outcomes exists anywhere. Then build the rank-space version: a -4
+      that raises variance can be rank-positive while points-negative.
+    - Team value causality: regress final rank on team value CONTROLLING
+      for points-to-date. One regression, never run, settles whether it
+      is a lever or an artefact. Current evidence says overrated — the
+      elite gap is only ~£1.5m, worth ~33 points.
 
 PHASE 3 — DATA THAT BUYS RANK
 3.1 CONFIRMED LINEUPS AT T-60m — the highest-latency edge in FPL, and the
@@ -245,8 +307,39 @@ semantically differentiated timestamps (points finalise 09:00 UK the day after
 the last match; fixtures get two rows, schedule at deadline and result at
 kickoff+2h); 100% identity resolution with zero conflicts across four seasons.
 
-**Still outstanding:** a research track on measured rank levers — what
-quantitatively separates top-10k finishers, captaincy's share of rank variance,
-hit thresholds, and the real value of team value — was still running when this
-was written. Treat the Phase 2 ordering as evidence-informed but not
-evidence-complete, and revisit once that lands.
+**Measured rank levers, in effect-size order.** Strong evidence: chip
+*construction* (+9.4 pts on the same chip in the same gameweek, PLOS ONE
+n≈900k); chip deployment in the right DGW (79.4% of top managers vs 28.9%);
+expected-minutes accuracy (the sole measured edge of the best commercial model
+over the best open one); captaincy (21–29% of a champion's points, but the
+elite-vs-elite edge is only ~25 pts/season and comes from avoiding disasters,
+not hitting hauls); not taking hits (elite ≈0.1 pts/GW vs 0.6 for top-1M);
+team value (+21.8 pts per £1m but R²=0.169 and mostly reverse-causal).
+Everything in Phase 2.1–2.3 is *inferred* — mechanism sound, magnitude
+unmeasured in FPL. That is precisely why it is unoccupied ground.
+
+**Convergent elite behaviour**, across multiple independent top managers:
+near-zero hits except in blank/double gameweeks and GW38; transfers made late
+on Friday/Saturday after team news, explicitly trading price movement for
+information (74.3% of players the top-50 sold were fully available, so these
+are planned upgrades, not injury reactions); high-EV near-template captaincy;
+a template-heavy core differentiated by *timing of entry* rather than by owning
+off-template players; a 5–6 gameweek horizon with an explicit fixed/flexible
+squad split; and deliberate decision-fatigue management.
+
+**Two cautions on the evidence.** No overall winner in the last five seasons
+reports using a solver — but winners are a maximum-variance sample of one draw
+from ~9M, so discount this heavily; the relevant reference class is *consistent*
+finishers. And treat differential-captaincy-by-rank rules with suspicion: every
+circulating "captain below X% EO when rank is Y" figure traces to uncited
+AI-generated content, and the recent champions' stated practice contradicts it.
+
+**Simulation trap worth guarding against:** Joshua Bull's random-squad generator
+made 5-4-1 look strong purely because a £4.0m defender has fewer price rungs
+below the premium ceiling than a £4.0m forward. Any simulation-based engine
+needs a check for sampler bias masquerading as football insight.
+
+**Access gaps in the research:** reddit.com blocked every agent, so r/FantasyPL
+data posts are unchecked; fplreview.com's main domain 403s (docs subdomain
+works); the Wiley-gated Mlčoch et al. 2024 generative-opponent-model paper was
+not read. Worth a human pass.
