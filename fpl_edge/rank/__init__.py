@@ -54,6 +54,12 @@ from fpl_edge.rank.policy import (
     theta,
     variance_credit_sign,
 )
+from fpl_edge.rank.validate import (
+    PairedSimulator,
+    PlanDelta,
+    squad_plan_from_horizon,
+    validate_plans,
+)
 from fpl_edge.rank.state import (
     PROVENANCE_LIVE_STANDINGS,
     PROVENANCE_PRESEASON,
@@ -69,24 +75,26 @@ from fpl_edge.rank.state import (
 )
 
 __all__ = [
+    "Archetype",
     "BALANCED",
     "BASELINE_MENU",
     "DIFFERENTIAL",
+    "DeficitMoments",
     "PROVENANCE_LIVE_STANDINGS",
     "PROVENANCE_OWNERSHIP_MARGINALS",
     "PROVENANCE_PRESEASON",
     "PROVENANCE_SIM_PAIRED",
     "PROVENANCE_STYLISED_MENU",
     "PUNT",
+    "PairedSimulator",
+    "PlanDelta",
+    "RankCoefficients",
+    "RankInputsUnavailableError",
+    "RankState",
     "SEASON_GWS",
     "SHARE_COLUMNS",
     "TEMPLATE",
     "TOP_K",
-    "Archetype",
-    "DeficitMoments",
-    "RankCoefficients",
-    "RankInputsUnavailableError",
-    "RankState",
     "boundary_slope",
     "build_rank_coefficients",
     "captaincy_score",
@@ -105,6 +113,8 @@ __all__ = [
     "shares_from_frame",
     "should_gamble",
     "sigma_with_candidate",
+    "squad_plan_from_horizon",
     "theta",
+    "validate_plans",
     "variance_credit_sign",
 ]
