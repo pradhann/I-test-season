@@ -30,10 +30,13 @@ sampler fills the tables.
 
 from __future__ import annotations
 
+import datetime as dt
 from dataclasses import dataclass
 
 import numpy as np
+import pandas as pd
 
+from fpl_edge.models.field.cohorts import CohortRates, measure_cohort
 from fpl_edge.models.field.contracts import (
     PROVENANCE_EMPIRICAL,
     PROVENANCE_EMPIRICAL_DRIFTED,
@@ -48,6 +51,14 @@ from fpl_edge.models.field.drift import (
     measure_flow_velocity,
 )
 from fpl_edge.models.field.observed import load_observed_squads
+from fpl_edge.models.field.share import (
+    EffectiveOwnership,
+    InclusionProbability,
+    effective_ownership,
+    inclusion_probability,
+    require_inclusion,
+    share_table,
+)
 from fpl_edge.sim.field import DEFAULT_FIELD_SIZE, FieldConfig, FieldModel, FieldSquads
 from fpl_edge.sim.squad import PlayerUniverse
 from fpl_edge.store import Snapshot
@@ -112,30 +123,58 @@ class HybridFieldSampler:
         n: int,
         cohort: str = "top1k",
         *,
-        gw: int,
-        ownership: np.ndarray | None = None,
+        as_of: dt.datetime | None = None,
+        gw: int | None = None,
+        ownership: InclusionProbability | np.ndarray | None = None,
         captaincy: np.ndarray | None = None,
         expected_points: np.ndarray | None = None,
         seed: int | None = None,
     ) -> FieldSample:
-        """Draw ``n`` rival squads for the given cohort and gameweek.
+        """Draw ``n`` rival squads for the given cohort, as of an instant.
 
-        ``ownership`` / ``captaincy`` / ``expected_points`` are
-        ``(n_players,)`` arrays aligned to the universe. ``ownership`` is the
-        **overall squad-inclusion share** (not EO -- see
-        ``engine._align_ownership`` for that scar) and is used for the
-        transfer-flow denominators and as the marginal fallback; when the
-        cohort has measured picks, the marginal *component* uses the measured
-        cohort marginals instead, because 600 elite squads say more about the
-        elite template than an overall forecast does.
+        ``as_of`` is the decision instant -- normally the deadline being solved
+        for. Everything the sample rests on is read through a Snapshot at that
+        instant, so a backtest at GW9 cannot see GW9's picks (they are private
+        until the deadline passes) or GW10's transfer flow. Passing an ``as_of``
+        later than the sampler's own Snapshot is refused rather than silently
+        widened: a Snapshot is a promise about what was knowable, and quietly
+        extending it is how leakage gets into a backtest.
+
+        ``gw`` defaults to the gameweek that ``as_of`` is deciding -- the first
+        one whose deadline has not yet passed. The observed squads will be from
+        the gameweek *before* it; the gap is what :mod:`.drift` covers.
+
+        ``ownership`` is the **squad-inclusion share** and is accepted either as
+        an :class:`~fpl_edge.models.field.share.InclusionProbability` (preferred:
+        an EO array is then rejected by type) or as a bare array for callers
+        that predate the wrapper. It supplies the transfer-flow denominators and
+        the marginal fallback. ``captaincy`` is the share of the cohort
+        captaining each player. When the cohort has measured picks, the marginal
+        *component* uses the measured cohort marginals instead, because 600
+        elite squads say more about the elite template than an overall forecast
+        does.
         """
         rng = np.random.default_rng(self.config.seed if seed is None else seed)
         notes: list[str] = []
+        if isinstance(ownership, InclusionProbability):
+            ownership = require_inclusion(ownership)
+        elif ownership is not None:
+            ownership = np.asarray(ownership, dtype=float)
+            if ownership.size and ownership.max() > 1.0:
+                raise ValueError(
+                    f"ownership has a value of {ownership.max():.4f}, above 1. "
+                    "A squad-inclusion share is a probability; a value above 1 "
+                    "is effective ownership, which counts a captain twice. Wrap "
+                    "the right quantity in InclusionProbability."
+                )
+
+        snapshot, as_of = self._resolve_snapshot(as_of, notes)
+        gw = self._resolve_gw(gw, snapshot, as_of)
 
         observed = None
-        if cohort in ("top1k", "elite") and self.snapshot is not None:
+        if cohort in ("top1k", "elite") and snapshot is not None:
             observed, reason = load_observed_squads(
-                self.snapshot, self.season, self.universe, cohort
+                snapshot, self.season, self.universe, cohort
             )
             notes.append(reason)
             if observed is not None and observed.n < self.config.min_observed:
@@ -161,8 +200,8 @@ class HybridFieldSampler:
         chips[n_emp:] = None
 
         drifted = False
-        if self.snapshot is not None and gw > observed.gw:
-            velocity = measure_flow_velocity(self.snapshot, self.season, self.universe)
+        if snapshot is not None and gw > observed.gw:
+            velocity = measure_flow_velocity(snapshot, self.season, self.universe)
             if velocity is None:
                 notes.append(
                     f"observed squads are from GW{observed.gw} but no transfer flow "
@@ -170,7 +209,7 @@ class HybridFieldSampler:
                 )
             else:
                 horizon = max(
-                    (self.snapshot.as_of - observed.as_of).total_seconds() / 86400.0, 0.0
+                    (snapshot.as_of - observed.as_of).total_seconds() / 86400.0, 0.0
                 )
                 denom = ownership if ownership is not None else observed.ownership(
                     self.universe.n_players
@@ -220,6 +259,94 @@ class HybridFieldSampler:
             drift_applied=drifted, chips=chips, notes=tuple(notes),
             chip_rates=observed.chip_rates(),
         )
+
+    # -- derived quantities, deliberately separate ----------------------------
+    #
+    # inclusion_probability() and effective_ownership() return DIFFERENT TYPES
+    # holding DIFFERENTLY NAMED arrays. See share.py: this package exists
+    # because those two numbers were once the same anonymous float array and
+    # one was passed where the other belonged.
+
+    def inclusion_probability(self, sample: FieldSample) -> InclusionProbability:
+        """P(a cohort member holds p), measured off the sampled squads."""
+        return inclusion_probability(sample, self.universe.n_players)
+
+    def effective_ownership(self, sample: FieldSample) -> EffectiveOwnership:
+        """Mean multiplier the cohort applies to p. Sums to ~12, not 15."""
+        return effective_ownership(sample, self.universe.n_players)
+
+    def share_table(self, sample: FieldSample) -> pd.DataFrame:
+        """``(code, gw, own_share, captain_share)`` for the rank-aware solver.
+
+        ``own_share`` is inclusion, not EO -- see
+        :func:`fpl_edge.models.field.share.share_table`.
+        """
+        return share_table(sample, self.universe)
+
+    def cohort_rates(self, cohort: str, *, gw: int | None = None) -> CohortRates:
+        """Measured captaincy shares and chip-play rates for a cohort.
+
+        Returns an ``unmeasured``-provenance object rather than raising when
+        the cohort has not been crawled; every array is then None, because a
+        zero would be a claim.
+        """
+        if self.snapshot is None:
+            return CohortRates(cohort=cohort, gw=gw, n_managers=0,
+                               provenance="unmeasured (no snapshot)")
+        return measure_cohort(
+            self.snapshot, self.season, self.universe, cohort, gw=gw
+        )
+
+    # -- timing ----------------------------------------------------------------
+
+    def _resolve_snapshot(
+        self, as_of: dt.datetime | None, notes: list[str]
+    ) -> tuple[Snapshot | None, dt.datetime | None]:
+        """The Snapshot to read at, honouring ``as_of`` without widening it."""
+        if self.snapshot is None:
+            return None, as_of
+        if as_of is None:
+            return self.snapshot, self.snapshot.as_of
+        if as_of > self.snapshot.as_of:
+            raise ValueError(
+                f"as_of={as_of.isoformat()} is later than this sampler's Snapshot "
+                f"({self.snapshot.as_of.isoformat()}). Reading forward would show "
+                "picks and transfer flow that were not public at the requested "
+                "instant. Build the sampler from a Snapshot at or after as_of."
+            )
+        if as_of == self.snapshot.as_of:
+            return self.snapshot, as_of
+        wh = self.snapshot.escape_hatch_unfiltered(
+            "narrowing to a strictly earlier as_of for a field sample; an earlier "
+            "Snapshot is a subset of the current one, so nothing escapes "
+            "point-in-time filtering"
+        )
+        notes.append(f"reading at as_of={as_of.isoformat()} (narrowed from the sampler's Snapshot)")
+        return wh.snapshot_at(as_of), as_of
+
+    def _resolve_gw(
+        self, gw: int | None, snapshot: Snapshot | None, as_of: dt.datetime | None
+    ) -> int:
+        """The gameweek being decided at ``as_of``: the next one to lock."""
+        if gw is not None:
+            return int(gw)
+        if snapshot is None:
+            raise ValueError(
+                "sample_squads needs a gameweek: pass gw=, or construct the "
+                "sampler with a Snapshot so it can be derived from as_of."
+            )
+        events = snapshot.table("dim_event", where="season = ?", params=[self.season])
+        if events.empty:
+            raise ValueError(f"no dim_event rows for {self.season}; cannot derive gw")
+        at = as_of or snapshot.as_of
+        deadlines = pd.to_datetime(events["deadline_utc"], utc=True)
+        upcoming = events[deadlines > at]
+        if upcoming.empty:
+            raise ValueError(
+                f"every {self.season} deadline has passed at {at.isoformat()}; "
+                "there is no gameweek to decide"
+            )
+        return int(upcoming["gw"].min())
 
     # -- fallback -------------------------------------------------------------
 
