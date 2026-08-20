@@ -32,6 +32,7 @@ import contextlib
 import datetime as dt
 import re
 import shutil
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -239,6 +240,7 @@ def _frame_to_rows(df: pd.DataFrame) -> list[dict[str, Any]]:
 
 def guarded_query(
     sql: str,
+    params: Sequence[Any] = (),
     *,
     as_of: dt.datetime | None = None,
     db: Path | str = DEFAULT_DB,
@@ -247,6 +249,12 @@ def guarded_query(
     warehouse: Warehouse | None = None,
 ) -> QueryResult:
     """Execute one read-only statement against a private read copy.
+
+    ``params`` binds ``?`` placeholders. It is not exposed over HTTP -- the
+    query endpoint takes literal SQL -- but panel scripts and chat tools use it
+    so that a season string or an entry id is never formatted into SQL text.
+    Interpolation is how a guard that reads SQL correctly still ends up
+    executing something the caller did not intend.
 
     ``warehouse`` exists for callers that already hold a read copy (panel
     scripts run several queries per invocation and should not copy the file
@@ -275,12 +283,14 @@ def guarded_query(
         # Fetch one extra row so truncation is detectable rather than assumed.
         body = sql.strip().rstrip(";").strip()
         if _WRAPPABLE.match(body):
-            df = wh.sql(f"SELECT * FROM ({body}) AS _guarded LIMIT {int(max_rows) + 1}")
+            df = wh.sql(
+                f"SELECT * FROM ({body}) AS _guarded LIMIT {int(max_rows) + 1}", params
+            )
         else:
             # EXPLAIN / DESCRIBE / SHOW are not table subqueries in DuckDB.
             # They are also bounded by construction, so capping after the fact
             # is honest rather than a hole.
-            df = wh.sql(body)
+            df = wh.sql(body, params)
 
     truncated = len(df) > max_rows
     if truncated:
