@@ -52,9 +52,14 @@ class StaleSessionError(RuntimeError):
 
 SETUP_STEPS = (
     "  1. Log in at https://fantasy.premierleague.com in your browser.\n"
-    "  2. DevTools -> Network -> click any /api/ request.\n"
-    "  3. Copy the full Cookie request-header value.\n"
-    "  4. Run: uv run fpl myteam auth --paste-cookie   (prompts, stores, done)\n"
+    "  2. DevTools -> Application -> Storage -> Cookies -> the\n"
+    "     https://fantasy.premierleague.com entry. (Network -> any /api/\n"
+    "     request -> the Cookie request header works too, if you prefer.)\n"
+    "  3. Copy the `access_token` and `refresh_token` values. Pasting the whole\n"
+    "     Cookie header is fine; so is just those two as\n"
+    "     `access_token=...; refresh_token=...` -- only refresh_token is\n"
+    "     required, and the issuer and client id are read out of the JWT.\n"
+    "  4. Run: uv run fpl myteam auth --paste-cookie   (hidden prompt, stores, done)\n"
     "That is a ONE-TIME step: the stored refresh token renews itself for about "
     "six months. No password is stored and none is ever asked for; revoke by "
     "logging out of that browser session."
@@ -135,6 +140,7 @@ class PrivateTeamClient:
 
         url = f"{self._base}/my-team/{int(entry_id)}/"
         manager = self._tokens if self._tokens is not None else TokenManager()
+        bearer_reason = ""
 
         if manager.configured:
             try:
@@ -155,7 +161,11 @@ class PrivateTeamClient:
             except (AuthNotConfiguredError, RefreshRefusedError) as exc:
                 if not self._cookie:
                     raise StaleSessionError(str(exc)) from exc
-                # fall through to the cookie path
+                # Fall through to the cookie path, but keep the reason. The
+                # bearer failure is the *first* and usually the true story; if
+                # the cookie then fails too, reporting only "cookie rejected"
+                # sends the manager to fix the wrong thing.
+                bearer_reason = str(exc)
 
         if not self._cookie:
             raise NoSessionError(
@@ -166,11 +176,14 @@ class PrivateTeamClient:
         with httpx.Client(timeout=self._timeout, follow_redirects=True) as client:
             resp = client.get(url, headers=headers)
         if resp.status_code in (401, 403):
-            raise StaleSessionError(
-                f"FPL rejected the session cookie (HTTP {resp.status_code}). "
-                "It has expired or the session was logged out. Refresh it:\n"
-                + SETUP_STEPS
+            preamble = (
+                f"Bearer auth failed first: {bearer_reason}\nThe cookie "
+                f"fallback then also failed (HTTP {resp.status_code}).\n"
+                if bearer_reason
+                else f"FPL rejected the session cookie (HTTP {resp.status_code}). "
+                "It has expired or the session was logged out.\n"
             )
+            raise StaleSessionError(preamble + "Refresh it:\n" + SETUP_STEPS)
         resp.raise_for_status()
         return self._parse(resp.json())
 

@@ -220,3 +220,83 @@ def test_bearer_401_after_refresh_is_a_revoked_session(monkeypatch) -> None:
     fake = _FakeTokens(["tokA", "tokB"])
     with pytest.raises(StaleSessionError, match="revoked"):
         PrivateTeamClient(cookie="", tokens=fake).fetch(4490171)
+
+
+def test_a_refused_refresh_reason_survives_the_cookie_fallback(monkeypatch) -> None:
+    """The first failure is the true one; the fallback must not overwrite it.
+
+    Observed live: the refresh grant was refused (HTTP 400, revoked) and the
+    stale cookie then 403'd. The manager was told only "FPL rejected the session
+    cookie", which points at the wrong thing to fix. Both reasons must appear.
+    """
+    import httpx
+
+    from fpl_edge.myteam.tokens import RefreshRefusedError
+
+    class RefusingTokens(_FakeTokens):
+        def access_token(self) -> str:
+            raise RefreshRefusedError("the token endpoint refused the refresh grant")
+
+    def cookie_403(self, url, headers=None):
+        return httpx.Response(403, request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(httpx.Client, "get", cookie_403)
+    with pytest.raises(StaleSessionError) as exc:
+        PrivateTeamClient(
+            cookie="pl_profile=stale", tokens=RefusingTokens(["a", "b"])
+        ).fetch(4490171)
+    message = str(exc.value)
+    assert "refused the refresh grant" in message, "the true first cause was lost"
+    assert "403" in message, "the fallback's own failure should still be reported"
+
+
+def test_a_plain_cookie_setup_still_gets_the_simple_cookie_message(monkeypatch) -> None:
+    """No bearer configured means no bearer preamble to confuse the reader."""
+    import httpx
+
+    class Unconfigured(_FakeTokens):
+        def __init__(self) -> None:
+            super().__init__(["a", "b"])
+            self.configured = False
+
+    monkeypatch.setattr(
+        httpx.Client, "get",
+        lambda self, url, headers=None: httpx.Response(
+            403, request=httpx.Request("GET", url)
+        ),
+    )
+    with pytest.raises(StaleSessionError) as exc:
+        PrivateTeamClient(cookie="pl_profile=stale", tokens=Unconfigured()).fetch(4490171)
+    message = str(exc.value)
+    assert "rejected the session cookie" in message
+    assert "Bearer auth failed first" not in message
+
+
+def test_status_never_calls_an_unexpired_refresh_token_valid() -> None:
+    """Rotating tokens can be revoked long before `exp`.
+
+    Saying "valid" from `exp` alone sent a manager chasing the wrong fix while
+    the issuer was refusing the grant outright.
+    """
+    import base64
+    import datetime as dt
+    import json
+
+    from fpl_edge.myteam.tokens import TokenManager
+
+    def token(days: int) -> str:
+        exp = dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=days)
+        payload = base64.urlsafe_b64encode(
+            json.dumps({"exp": int(exp.timestamp())}).encode()
+        ).decode().rstrip("=")
+        return f"x.{payload}.y"
+
+    manager = TokenManager()
+    manager._read = lambda: {  # type: ignore[method-assign]
+        "FPL_ACCESS_TOKEN": token(1),
+        "FPL_REFRESH_TOKEN": token(177),
+    }
+    status = manager.status()
+    assert "refresh token unexpired" in status
+    assert "refresh token valid" not in status
+    assert "revoke" in status

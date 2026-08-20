@@ -135,9 +135,14 @@ class TokenManager:
         else:
             parts.append("no access token cached")
         rexp = jwt_expiry(refresh)
+        # Not-expired is necessary but NOT sufficient: these are rotating
+        # refresh tokens, so the issuer can revoke or supersede one long before
+        # its own `exp`. Saying "valid" here once sent a manager to re-paste a
+        # cookie that was never the problem. Only a live grant proves validity.
         parts.append(
-            f"refresh token {'EXPIRED' if rexp <= now else 'valid'} "
-            f"(exp {rexp:%Y-%m-%d %H:%MZ}, {max(0, (rexp - now).days)} days left)"
+            f"refresh token {'EXPIRED' if rexp <= now else 'unexpired'} "
+            f"(exp {rexp:%Y-%m-%d %H:%MZ}, {max(0, (rexp - now).days)} days left; "
+            f"the issuer can still revoke it -- only a live refresh proves it works)"
         )
         return "; ".join(parts)
 

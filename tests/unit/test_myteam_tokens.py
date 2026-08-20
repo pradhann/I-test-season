@@ -149,7 +149,7 @@ def test_ingest_from_cookie_stores_issuer_and_client_from_the_jwt(tmp_path) -> N
     assert "KEEP=me" in text                      # existing vars survive
     assert f"FPL_OAUTH_ISSUER={ISSUER}" in text
     assert f"FPL_OAUTH_CLIENT_ID={CLIENT}" in text
-    assert "refresh token valid" in status
+    assert "refresh token unexpired" in status
     assert a not in status and r not in status    # status never leaks tokens
 
 
@@ -198,3 +198,36 @@ def test_every_myteam_command_named_in_the_docs_exists() -> None:
             continue
         for cmd in set(re.findall(r"fpl myteam ([a-z-]+)", doc.read_text())):
             assert cmd in listed, f"{doc} references `fpl myteam {cmd}`, which does not exist"
+
+
+def test_just_the_two_token_cookies_are_enough_to_configure(tmp_path) -> None:
+    """The steps promise a partial paste works; prove it does.
+
+    Hunting the full Cookie header in the Network tab is the fiddliest part of
+    the one-time setup, so the steps offer the Application -> Cookies route and
+    a two-value paste. That promise has to be executable.
+    """
+    import base64
+    import datetime as dt
+    import json
+
+    from fpl_edge.myteam.tokens import TokenManager
+
+    def token(days: int, **extra: str) -> str:
+        exp = dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=days)
+        payload = base64.urlsafe_b64encode(
+            json.dumps({"exp": int(exp.timestamp()), **extra}).encode()
+        ).decode().rstrip("=")
+        return f"x.{payload}.y"
+
+    env = tmp_path / ".env"
+    manager = TokenManager(env_path=env)
+    access = token(1, iss="https://auth.example/as", client_id="abc")
+    status = manager.ingest_from_cookie(
+        f"access_token={access}; refresh_token={token(177)}"
+    )
+    assert manager.configured
+    assert "refresh token unexpired" in status
+    text = env.read_text()
+    assert "FPL_OAUTH_ISSUER=https://auth.example/as" in text
+    assert "FPL_OAUTH_CLIENT_ID=abc" in text
