@@ -308,8 +308,10 @@ def claim(wh, due: Due, *, now: dt.datetime, outcome: str = "running") -> bool:
 
 def _finish_sql(due: Due, outcome: str, detail: str) -> tuple[str, list]:
     return (
-        "UPDATE dag_firing SET outcome = ?, detail = ? "
-        "WHERE task = ? AND season = ? AND gw = ? AND due_utc = ?",
+        (
+            "UPDATE dag_firing SET outcome = ?, detail = ? "
+            "WHERE task = ? AND season = ? AND gw = ? AND due_utc = ?"
+        ),
         [outcome, detail[:800], due.task, due.season, due.gw, due.due_utc],
     )
 
@@ -658,8 +660,10 @@ def price_radar(ctx: TaskContext) -> TaskResult:
         return result
 
     lines = [
-        f"Net-transfer velocity over the last {hours:.1f}h "
-        f"(threshold {VELOCITY_THRESHOLD:,.0f}/h):",
+        (
+            f"Net-transfer velocity over the last {hours:.1f}h "
+            f"(threshold {VELOCITY_THRESHOLD:,.0f}/h):"
+        ),
         "",
     ]
     for r in movers.head(10).itertuples(index=False):
@@ -756,8 +760,10 @@ def final_solve_delivery(ctx: TaskContext) -> TaskResult:
     xi = list(block.get("starting_xi") or [])
     bench = list(block.get("bench") or [])
     lines = [
-        f"Deadline in {_fmt_delta(ctx.deadline_utc, ctx.now)}. "
-        f"Plan generated {gen.isoformat()} ({age.total_seconds() / 3600:.1f}h ago).",
+        (
+            f"Deadline in {_fmt_delta(ctx.deadline_utc, ctx.now)}. "
+            f"Plan generated {gen.isoformat()} ({age.total_seconds() / 3600:.1f}h ago)."
+        ),
         "",
         f"Captain: {nm(block.get('captain'))}   Vice: {nm(block.get('vice_captain'))}",
     ]
@@ -769,9 +775,11 @@ def final_solve_delivery(ctx: TaskContext) -> TaskResult:
         lines.append("Bench: " + ", ".join(nm(c) for c in bench))
     lines += [
         "",
-        f"Objective {plan.get('objective_mode', '?')} = "
-        f"{float(plan.get('objective', 0.0)):.1f} over GWs "
-        f"{plan.get('horizon_gws')}; {plan.get('n_sims', '?')} sims.",
+        (
+            f"Objective {plan.get('objective_mode', '?')} = "
+            f"{float(plan.get('objective', 0.0)):.1f} over GWs "
+            f"{plan.get('horizon_gws')}; {plan.get('n_sims', '?')} sims."
+        ),
         f"Source: {path}",
     ]
     return TaskResult(

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.fpledge.dag</string>
+  <key>WorkingDirectory</key><string>/Users/nripeshpradhan/Documents/Github/i-test-season</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/nripeshpradhan/Documents/Github/i-test-season/.venv/bin/python</string>
+    <string>-m</string><string>fpl_edge.jobs.deadline_dag</string>
+    <string>--once</string>
+  </array>
+
+  <!-- Every 10 minutes, not a calendar schedule. The DAG's firings are
+       deadline-relative and move with the fixture list, so the tick has to be
+       frequent enough that any due instant is picked up promptly and the job
+       itself decides what is owed. StartInterval also means a tick MISSED while
+       the machine was asleep is not replayed by launchd on wake -- the DAG's
+       own stale window (2h) decides that, which is the behaviour we want:
+       recorded as skipped_stale, never burst-fired. -->
+  <key>StartInterval</key><integer>600</integer>
+
+  <!-- The tick is cheap when nothing is due (one read-only warehouse copy) and
+       idempotent when something is, so running one at load is safe and gives
+       immediate feedback that the install worked. -->
+  <key>RunAtLoad</key><true/>
+
+  <key>StandardOutPath</key><string>/Users/nripeshpradhan/Documents/Github/i-test-season/data/warehouse/jobs/dag.log</string>
+  <key>StandardErrorPath</key><string>/Users/nripeshpradhan/Documents/Github/i-test-season/data/warehouse/jobs/dag.log</string>
+</dict>
+</plist>

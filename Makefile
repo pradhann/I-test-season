@@ -71,3 +71,24 @@ undeploy:  ## Remove the launchd services
 	launchctl unload ~/Library/LaunchAgents/com.fpledge.telegram.plist 2>/dev/null || true
 	launchctl unload ~/Library/LaunchAgents/com.fpledge.postgw.plist 2>/dev/null || true
 	rm -f ~/Library/LaunchAgents/com.fpledge.telegram.plist ~/Library/LaunchAgents/com.fpledge.postgw.plist
+
+.PHONY: deploy-dag undeploy-dag dag-tick dag-status
+deploy-dag:  ## Install the deadline DAG as a launchd service (10-minute tick)
+	mkdir -p data/warehouse/jobs ~/Library/LaunchAgents
+	cp deploy/com.fpledge.dag.plist ~/Library/LaunchAgents/
+	launchctl unload ~/Library/LaunchAgents/com.fpledge.dag.plist 2>/dev/null || true
+	launchctl load ~/Library/LaunchAgents/com.fpledge.dag.plist
+	@echo "dag: every 600s. T-30h / 02:00 UK / T-4h / T-90m off dim_event deadlines."
+	@echo "next due times: make dag-tick"
+
+undeploy-dag:  ## Remove the deadline DAG service
+	launchctl unload ~/Library/LaunchAgents/com.fpledge.dag.plist 2>/dev/null || true
+	rm -f ~/Library/LaunchAgents/com.fpledge.dag.plist
+
+dag-tick:  ## Run one DAG tick by hand (idempotent; will not double-send)
+	uv run python -m fpl_edge.jobs.deadline_dag --once
+
+dag-status:  ## What the DAG has fired, newest first
+	@launchctl list | grep com.fpledge.dag || echo "com.fpledge.dag not loaded"
+	uv run python -c "from fpl_edge.store import Warehouse; \
+	  print(Warehouse.read_copy().sql('SELECT task, gw, due_utc, outcome, detail FROM dag_firing ORDER BY due_utc DESC LIMIT 20').to_string())"
