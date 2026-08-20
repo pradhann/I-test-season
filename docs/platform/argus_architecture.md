@@ -511,4 +511,140 @@ confirmation before firing, widening repeat notifications, and *no* auto-pause.
 
 ---
 
-*(Section 6 follows — written incrementally.)*
+### 4.4 Delivery mechanics worth copying verbatim
+
+`scripts-service/deliver.ts` is a textbook durable outbox in ~130 lines:
+`INSERT OR IGNORE` keyed by evaluation id, enqueued **in the same SQLite transaction as
+evaluation completion** ("neither record can commit without the other", deliver.ts:125-128);
+a 30s worker retries `POST /internal/delivered` with exponential backoff capped at 1h
+(deliver.ts:51-53); the receiver must return `{delivered: true}` — a 2xx without the
+acknowledgement body still retries (deliver.ts:76-88); non-retryable 4xx marks `failed`
+instead of looping (deliver.ts:89-93); delivered/failed rows are pruned after 30 days.
+
+---
+
+## 6. Mapping Argus onto the FPL platform
+
+The FPL side's existing Python core (`fpl_edge/`) already has the *engine* half of what
+Argus pairs with a product shell. Its surfaces, briefly:
+
+- **Warehouse** (`fpl_edge/store/warehouse.py`): DuckDB, chosen for native `ASOF JOIN` /
+  `QUALIFY` point-in-time reads (module docstring, warehouse.py:1-16). Single-writer by
+  design (`WarehouseLockedError`, warehouse.py:50-51); readers open read-only.
+- **`snapshot_at(as_of)`** (warehouse.py:404): the *only* sanctioned read path for model
+  inputs. `Snapshot` raises `LeakageError` if you touch `.warehouse` directly, and
+  unfiltered access requires `escape_hatch_unfiltered(reason)` with a ≥20-char justification
+  so intent is greppable (warehouse.py:73-113). `ConflictingFactError` refuses two different
+  values for one entity at one instant (warehouse.py:54-64).
+- **QA router** (`fpl_edge/interfaces/qa.py`): `QuestionRouter.route(text)` — regex-intent
+  conversational access over Telegram ("review my team", "top mids", creator queries,
+  fixture targets…), fully offline-testable, deliberately not an LLM (qa.py:1-14).
+- **Idea inbox** (`fpl_edge/interfaces/inbox.py`): `IdeaInbox.submit(text)` is "the seam
+  every surface goes through" — Telegram, CLI, and the MCP server all call it; ordering is
+  load-bearing (parse → persist thesis → persist context → *then* verdict, so a slow/failed
+  model can never lose the thought, inbox.py:10-22).
+- **Report** (`fpl_edge/interfaces/report.py`): assembled from `register_section(name,
+  render, priority)` — sections owned by other subsystems arrive by registration, and the
+  report *states which parts are missing* rather than looking falsely complete
+  (report.py:1-17, 61-68, 145-147).
+- **Jobs** (`fpl_edge/jobs/post_gw.py`): the post-gameweek settlement job — refresh
+  snapshot, pull odds, settle idea observations, score creator claims, crawl elite picks,
+  re-render retro report — every step isolated and idempotent, sequential because DuckDB is
+  single-writer (post_gw.py:1-23). Scheduled by launchd (deploy/).
+- Plus `opt/` (solver), `sim/`, `oracle/`, `intel/`, `myteam/`, and an MCP server exposing
+  the engine's tools to coding agents.
+
+### 6.1 Concept-by-concept mapping
+
+| Argus concept | FPL analog | Notes / impedance |
+|---|---|---|
+| ClickHouse/Postgres **query tools** (source registry, one adapter per transport, `assertReadOnlySql`) | **DuckDB warehouse query tools** — one source over `fpl.duckdb`, plus sources for the intel/ideas SQLite stores and the FPL API | Direct fit, with one FPL-specific twist Argus doesn't have: leakage. The warehouse's `snapshot_at` discipline must survive the tool boundary — the query tool should take an `as_of` and route through `Snapshot`, or expose the raw SQL surface only for present-time analysis. Argus's "guard code lives with the creds, every surface funnels through one `runQuery`" (server/http/internal.ts:17-21) is the pattern: one Python query function with the leakage guard, called by chat, scripts, and dashboards alike. |
+| **Agent loop** (SDK session per conversation, resume, SSE turn streaming, replayable buffer) | The platform's chat pane over the FPL engine | Direct fit; the Agent SDK has both TS and Python variants. Argus's turn-as-server-side-job + replay-buffer + boot recovery (server/agent/turns.ts) is stack-independent design. Single-user drops the membership machinery entirely. |
+| **Scripts** (git-versioned typed-JSON data functions, pinned by SHA) | Named, versioned warehouse queries/analyses: "next-6-GW projections for my squad", "price-change candidates", "creator consensus deltas" — authored in chat, pinned into dashboards and jobs | The contract maps cleanly (params JSON Schema → run form; resultSchema → typed result). The runtime is the mismatch — see §6.2. Argus reserved `runtime:` in the manifest from day one for exactly this (scripts-design.md §4, manifest.ts:107). |
+| **Internal query endpoint / broker** (creds live in one process; scripts-service and children are credential-free) | A thin engine-API seam: whatever executes scripts brokers reads to the process that owns the DuckDB file | For FPL the "credential" is mostly *the write lock and leakage discipline*, not secrets. A broker keeps single-writer DuckDB semantics honest: script children never open the file, they ask the one owner. |
+| **Dashboards** (compiled React, sandboxed iframe, data only via pinned scripts) | Squad dashboard, price radar board, fixture ticker, mini-league tracker | The whole §3 pipeline is reusable as-is if the platform UI is TS. The "scripts are the only data path" rule matters just as much here: a dashboard that could `SELECT` freely would bypass `snapshot_at` and the single-writer lock. |
+| **Monitors: alerts** (one deterministic script → `{triggered, title, body}`; LLM only polishes fired copy) | **Price radar** (predicted rises/falls on my targets), injury-news flags, deadline reminders | Near-perfect fit. Price-change detection *must* be deterministic and auditable; an LLM has no business deciding whether Haaland's price is about to rise. The `observations` tuning series (scheduler.ts:148-169) maps to storing the ownership-delta numbers every quiet run, which is exactly what threshold-tuning a price model needs. |
+| **Monitors: reports** (cron + pinned scripts + `prompt.md` → LLM-written edition) | The **weekly decision report** and pre-deadline brief | fpl_edge already has the deterministic half (`register_section`); Argus shows how to add an LLM-written layer *on top of* pinned deterministic data without letting the LLM near the data collection. Its "no fabricated fallback — an LLM failure is a failed evaluation" rule (internal.ts:103-105) matches the report's own "admitting the gap beats looking complete" philosophy (report.py:14-17). |
+| **Cron scheduler** (croner, tz, overlap-skip, stale-forward) | **Deadline-DAG jobs** — post_gw settlement, pre-deadline T-24h/T-1h passes | Impedance: Argus schedules are pure cron; FPL scheduling is *event-relative* (deadlines move, BGW/DGW). The seam is small — `nextDueAt()` (scheduler.ts:39-42) is one function; an FPL version computes next-due from `dim_event` deadlines instead of a cron string. Everything downstream (tick loop, overlap skip, outcome rows) transfers unchanged. post_gw.py's isolated-idempotent-steps discipline stays regardless. |
+| **Inbox + Slack delivery** (durable outbox, canonical message, threaded recovery) | **Telegram + in-app inbox** | The outbox (deliver.ts) and canonical-message design transfer directly; Telegram replaces Slack as the destination adapter — `deliver()` was explicitly designed as the multi-destination seam (scripts-design.md §12). Threaded recovery replies map to Telegram reply-to-message. The existing Telegram bot's security stance (exact-token command table, text-is-data — telegram.py:16-30) must survive the upgrade. |
+| **Portable chart spec** (one fenced spec → interactive web, Slack blocks, headless PNG) | Same spec → web inbox, Telegram photo (headless PNG render → `sendPhoto`) | shared/chart-spec.ts + chart-render.ts are the reusable pieces; Telegram's constraints slot in where Slack's stricter block rules do. |
+| **Provenance/audit** (commit author + conversation URL; ClickHouse activity with runId) | Idea/thesis provenance already exists (ideas keyed to submission context); extend to scripts: which chat produced this pinned query | Lighter-weight for one user, but the chain chat → commit → run → query log is what makes "why did the bot tell me to sell?" answerable months later. |
+| **AUTH_MODE / membership / sharing** | Mostly drops away (single user); keep `AUTH_MODE=none` posture + Telegram chat-id allowlist as the only identity gate | Argus proves the same build can serve both postures; the FPL platform only needs the local one, but keeping the seam costs nothing. |
+| **GitHub/Linear per-user write-back** | No analog needed | Skip; the pattern (structural denial over policy: withhold the credential that would enable the dangerous verb) is still worth remembering. |
+
+### 6.2 The stack question — facts both ways, no verdict
+
+The core mismatch: **fpl_edge is Python** (pandas/DuckDB/httpx, launchd jobs, a Telegram
+bot), **Argus is TypeScript end-to-end** (Fastify + React + Node script runner, three
+deployables in one npm workspace with shared wire types in `shared/`).
+
+**Option A — adopt/adapt the Argus TS stack as the platform shell.** What it costs:
+
+- A **bridge to the Python engine** becomes mandatory. The natural shape is exactly Argus's
+  own broker pattern: a small HTTP surface on the Python side (`/internal/query` with
+  snapshot semantics, plus endpoints for solver/sim/report calls) that the TS shell and
+  script runner call — Argus already proves this seam works and keeps credentials/locks in
+  one process (scripts-service/broker.ts → server/http/internal.ts). Cost: defining and
+  maintaining that API; every new engine capability needs a bridge endpoint.
+- **Scripts execute in Node.** Pure-SQL scripts work immediately (DuckDB SQL over the
+  broker is expressive — ASOF joins etc. live in SQL, not pandas). But anything needing
+  the Python model stack (projections, solver, sim) can't be *authored as a script* — it
+  becomes a broker endpoint instead, or waits for the `runtime: "python"` shim Argus
+  designed for but never built (scripts-design.md §4: "A future Python runtime reuses the
+  same broker protocol with a different shim"). The sandbox story (Node `--permission`,
+  process groups, runner UID) would need a Python equivalent for that shim.
+- What it buys: §1's turn machinery, §3's entire dashboard pipeline (compiler, smoke check,
+  iframe bridge), §4's scheduler/outbox/inbox, and the chart spec — all shipped, tested,
+  and hardened (the details in this doc — optimistic-concurrency retries, push rollback,
+  jsdom viewport stubs, ack-required outbox — are months of accumulated correctness).
+- Duplication risk: two languages, two lint/test/CI stacks, wire types defined twice
+  (Argus's `shared/` types would need Python mirrors or codegen for the bridge).
+
+**Option B — build a thin new UI over the Python core.** What it costs:
+
+- Rebuild, in Python (FastAPI/Starlette + the Python Agent SDK), the parts of Argus you
+  want: SSE turn streaming with replay buffers, in-process tool registration, the scripts
+  contract (git commits, pins, runner), the scheduler + outbox, the inbox. None is
+  individually hard; §1–§4 of this doc is effectively the spec. The genuinely expensive
+  piece to re-create is the **dashboard pipeline** — server-side TS typecheck + sandbox
+  lint + esbuild + jsdom smoke is intrinsically a TS toolchain even if the host is Python
+  (you'd shell out to Node for compilation, which is workable but a new seam of its own).
+- What it buys: the engine's surfaces stay native — scripts *are* Python, with direct
+  (broker-mediated) access to Snapshot, the solver, and sim; no bridge API to maintain; one
+  language, one test suite; the leakage guard stays a Python type-system-and-convention
+  property instead of crossing a serialization boundary.
+- Loss: everything in Argus's `web/` and `scripts-service/` is reference material rather
+  than running code; a React (or HTMX/lighter) front end still has to exist for dashboards
+  regardless, so "one language" is never fully true.
+
+**Facts that cut across both options:**
+
+- The *decisions* transfer either way and are stack-free: scripts as the only dashboard
+  data path; pins by immutable-id + SHA; deterministic triggers with LLM-copy-only;
+  durable outbox with required acknowledgement; explicit registries over auto-discovery;
+  turn-as-server-side-job; latency budgets enforced at authoring time.
+- Argus itself is single-instance, SQLite-backed, and one-box — the same operational class
+  as fpl_edge today. Neither option changes deployment complexity much.
+- fpl_edge already exposes an MCP server; in Option A the TS shell's agent can consume it
+  remotely (Argus's own remote-MCP path, server/tools/mcp.ts, shows the shape), which is a
+  lower-commitment bridge than a bespoke HTTP API — at chat-shaped rather than
+  script-shaped result caps (the distinction internal.ts:17-24 exists to fix).
+
+---
+
+## Reading map (where to look first when building)
+
+| Concern | Files |
+|---|---|
+| SDK session, options, resume, recovery | server/agent/run.ts, session-recovery.ts |
+| Turn lifecycle, SSE, drain, boot recovery | server/agent/turns.ts, server/http/routes/chat.ts |
+| Tool families + registration | server/agent/tool-registry.ts, mcp-servers.ts, server/tools/agent-tools.ts, docs/adding-tools-and-sources.md |
+| Query sources + guards | server/tools/query/{source-registry,run,family}.ts, adapters/, sources/ |
+| Readonly enforcement | server/agent/readonly.ts, server/config.ts:43-50 |
+| Scripts contract + tools | server/tools/scripts/tools.ts, shared/authoring-contract.ts |
+| Git store | scripts-service/git.ts, store.ts |
+| Runner + sandbox + broker | scripts-service/{runner,runner-runtime,runner-permissions,runner-query,broker}.ts, server/http/internal.ts |
+| Dashboards | scripts-service/{dashboards-compiler,dashboards-smoke,dashboards-sdk}.ts, web/src/dashboards/{DashboardFrame,bridge}.tsx/ts |
+| Monitors | scripts-service/{scheduler,deliver,monitors-store}.ts, server/agent/{generate,alert-message}.ts, server/triggers/ |
+| Charts | shared/{chart-spec,chart-render,chart-theme}.ts |
+| Design rationale | README.md, docs/scripts-design.md |
