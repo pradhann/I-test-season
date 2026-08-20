@@ -516,6 +516,245 @@ PROVIDERS: tuple[Provider, ...] = (
         measured_status=(("/robots.txt", 200),),
     ),
     Provider(
+        key="premierinjuries",
+        name="Premier Injuries",
+        home="https://www.premierinjuries.com/injury-table.php",
+        publishes=(
+            "Every flagged Premier League player, with an EXPLICIT probability "
+            "the player features: the Status column takes 'Ruled Out', '25%', "
+            "'50%', '75%' or '100%'. Also the reason, a dated news quote, a "
+            "potential return date, and a Condition label."
+        ),
+        interface=(
+            "Server-rendered HTML table at /injury-table.php; no login, no key, "
+            "no JavaScript. Parse path: tr.heading names the club, the "
+            "tr.sub-head that follows carries the team_<id> class, and every "
+            "tr.player-row.team_<id> is one flagged player with six cells "
+            "(Player, Reason, Further Detail, Potential Return, Condition, "
+            "Status), each prefixed by a div.mob-title that must be stripped."
+        ),
+        cost="Free.",
+        licence=(
+            "robots.txt is HTTP 200 and reads, in full, 'Sitemap: ... / "
+            "User-agent: * / Disallow:'. An empty Disallow is RFC 9309's "
+            "'nothing is disallowed' -- the most permissive policy of any "
+            "provider evaluated, and the site publishes a sitemap index "
+            "inviting crawlers. Content is copyright; rows land in a private "
+            "warehouse and are never republished."
+        ),
+        rate_limit=(
+            "None published. One 275KB page per run, POLITE_DELAY_S=3.0 before "
+            "the request."
+        ),
+        covers_2026_27=True,
+        verdict="ingested",
+        reason=(
+            "HTTP 200, 275,041 bytes, 91 flagged players across all 20 clubs "
+            "for GW1 2026-27, Status distributed Ruled Out 48 / 25% 20 / "
+            "50% 19 / 75% 3 / 100% 1. 86 of 91 resolve onto FPL codes."
+        ),
+        probe_urls=("https://www.premierinjuries.com/robots.txt",
+                    "https://www.premierinjuries.com/injury-table.php"),
+        measured_status=(("/robots.txt", 200), ("/injury-table.php", 200)),
+        notes=(
+            "The only free source found that publishes P(plays) as a NUMBER "
+            "rather than as a label a consumer has to convert by guessing. It "
+            "lands in p_appear and nowhere else -- a 50% chance of featuring "
+            "is not an expectation of 45 minutes.",
+            "The 'Potential Return' date is a real signal for gameweeks 2..N "
+            "and is deliberately not expanded across them: doing so needs a "
+            "recovery model and a fixture-date mapping, which is inventing an "
+            "opinion the publisher never stated.",
+        ),
+    ),
+    Provider(
+        key="gh_fplbench",
+        name="fplbench (GitHub, PascalAI2024)",
+        home="https://github.com/PascalAI2024/fplbench",
+        publishes=(
+            "A leakage-safe player-gameweek panel with three heads: predicted "
+            "MINUTES (pred_minutes), Defensive Contribution probability "
+            "(pred_defcon) and points (pred_points, pred_points_decomposed, "
+            "e_points_final), plus p10/p90 bands. Self-scoring: a CI job joins "
+            "each gameweek's predictions to official actuals and appends the "
+            "result to RESULTS.md."
+        ),
+        interface=(
+            "raw.githubusercontent.com CSV at "
+            "outputs/predictions/gw{gw}_{season}.csv. Deterministic path, no "
+            "discovery call needed. Keys on `player_code` -- FPL's stable "
+            "cross-season code -- so no element_id remap and no name matching."
+        ),
+        cost="Free.",
+        licence=(
+            "MIT for the code, with an explicit data note in LICENSE: "
+            "'Underlying player data is owned by the Premier League and its "
+            "data providers... Research and personal modelling use only.' The "
+            "cleanest licence position of any community feed found. "
+            "raw.githubusercontent.com serves 404 for /robots.txt, which RFC "
+            "9309 makes 'no policy published'."
+        ),
+        rate_limit="GitHub raw: generous. One fetch per run.",
+        covers_2026_27=True,
+        verdict="ingested",
+        reason=(
+            "HTTP 200, 118,253 bytes, 587 players for GW1 2026-27 with "
+            "pred_minutes and e_points_final on every row. All 587 codes "
+            "validated against dim_player; 0 unresolved."
+        ),
+        probe_urls=(
+            "https://raw.githubusercontent.com/PascalAI2024/fplbench/main/outputs/predictions/gw1_2026-27.csv",
+        ),
+        measured_status=(("outputs/predictions/gw1_2026-27.csv", 200),
+                         ("raw.githubusercontent.com/robots.txt", 404)),
+        notes=(
+            "Publishes several points heads. We store e_points_final only -- "
+            "their own board's ranking number, and the only head that includes "
+            "the Defensive Contribution points that score under the 2026-27 "
+            "rules. Storing two heads from one publisher under two provider "
+            "names would let one source vote twice in the ensemble.",
+            "Also carries the FPL API's own ep_next. Not taken from here: we "
+            "read it first-hand under provider 'fpl_ep', and second-hand would "
+            "double-count the same number.",
+        ),
+    ),
+    Provider(
+        key="gh_blueladd",
+        name="fpl-projections (GitHub, blueladd11)",
+        home="https://github.com/blueladd11-commits-tocode/fpl-projections",
+        publishes=(
+            "xP and xMins per player for the next gameweek, a six-gameweek xP "
+            "horizon in one semicolon-joined cell, P(starts), a standard "
+            "deviation per projection, and a sidecar meta.json carrying "
+            "deadline_utc, generated_at_utc and hours_before_deadline."
+        ),
+        interface=(
+            "raw.githubusercontent.com CSV under out/, filename stamped with "
+            "the build time (projections_gw1_20260818T174829Z_gw1.csv), so the "
+            "path is discovered via one api.github.com contents listing per "
+            "run and the newest stamp wins. Keys on `element` (per-season id), "
+            "remapped through dim_player."
+        ),
+        cost="Free.",
+        licence=(
+            "NO LICENSE FILE. Public and freely fetchable, and the README's "
+            "stated purpose is a publicly auditable accuracy record, but "
+            "nothing grants reuse rights. Private-warehouse read only, never "
+            "republished. Ranked below the MIT feeds for exactly this reason."
+        ),
+        rate_limit=(
+            "api.github.com is 60 requests/hour unauthenticated; discovery "
+            "costs one per run. raw.githubusercontent is generous."
+        ),
+        covers_2026_27=True,
+        verdict="ingested",
+        reason=(
+            "HTTP 200, 47,526 bytes, 469 eligible players for GW1 2026-27 with "
+            "xp, xmins, p_start and a six-gameweek horizon, expanded to 2,814 "
+            "rows. 0 unresolved element_ids."
+        ),
+        probe_urls=(
+            "https://api.github.com/repos/blueladd11-commits-tocode/fpl-projections/contents/out",
+        ),
+        measured_status=(("contents/out", 200), ("out/projections_gw1_*.csv", 200)),
+        notes=(
+            "Rebuilt hourly by a GitHub Action, with every pre-deadline "
+            "snapshot kept under out/archive/. The freshest cadence of any "
+            "free source measured, and the only one whose past projections are "
+            "retrievable WITH their publication timestamps -- which is what a "
+            "track record needs and what every self-overwriting site denies.",
+            "Publishes p_start, which is P(STARTS) and not P(any minutes). It "
+            "is deliberately not written to p_appear: a 60-minute substitute "
+            "has p_start near 0 and p_appear near 1, and conflating them would "
+            "make this source look catastrophically wrong about bench players.",
+        ),
+    ),
+    Provider(
+        key="sportsgambler",
+        name="SportsGambler predicted lineups",
+        home="https://www.sportsgambler.com/lineups/football/england-premier-league/",
+        publishes="Predicted and confirmed XIs for every Premier League fixture.",
+        interface=(
+            "Server-rendered HTML index with ten fixture rows; each XI is "
+            "behind a per-fixture 'view lineups' page, so a full read costs "
+            "eleven requests rather than one."
+        ),
+        cost="Free.",
+        licence=(
+            "robots.txt is HTTP 200 and permits everything relevant -- the "
+            "Disallows are /admin/, /r/, /odds.php, /betting-sites/go/* and "
+            "/team-news_player.php. It additionally publishes "
+            "sitemap-lineups.xml, which is an explicit invitation to crawl the "
+            "lineup pages."
+        ),
+        rate_limit="None published.",
+        covers_2026_27=True,
+        verdict="watchlist",
+        reason=(
+            "HTTP 200, 174,590 bytes, 20 lineup-row entries and 10 fixture "
+            "toggles on the index -- but the index's toggle-content blocks are "
+            "empty, so the XIs need ten further per-fixture fetches. Viable "
+            "and permitted; not ingested yet because Rotowire already supplies "
+            "the same signal for one request, and a second lineup source earns "
+            "its eleven requests only once the ensemble can measure whether it "
+            "disagrees usefully."
+        ),
+        probe_urls=("https://www.sportsgambler.com/robots.txt",
+                    "https://www.sportsgambler.com/lineups/football/england-premier-league/"),
+        measured_status=(("/robots.txt", 200),
+                         ("/lineups/football/england-premier-league/", 200)),
+    ),
+    Provider(
+        key="fantasyfootballpundit",
+        name="Fantasy Football Pundit",
+        home="https://www.fantasyfootballpundit.com",
+        publishes="FPL team news, predicted lineups and points projections.",
+        interface="Unknown -- never reached.",
+        cost="Unknown.",
+        licence="Unreadable: GET /robots.txt returns HTTP 403.",
+        rate_limit="n/a",
+        covers_2026_27=None,
+        verdict="forbidden",
+        reason=(
+            "403 on /robots.txt and 403 on /fpl-team-news/ (52-byte body). An "
+            "unreadable crawl policy is a no, and getting past the 403 would "
+            "mean impersonating a browser. Same rule that kept FBref and "
+            "Sofascore out."
+        ),
+        probe_urls=("https://www.fantasyfootballpundit.com/robots.txt",),
+        measured_status=(("/robots.txt", 403), ("/fpl-team-news/", 403)),
+    ),
+    Provider(
+        key="derekkuang",
+        name="Fantasy-Premier-League (GitHub, derekkuang)",
+        home="https://github.com/derekkuang/Fantasy-Premier-League",
+        publishes=(
+            "A from-scratch Dixon-Coles match engine and FPL prediction "
+            "system, with a web interface."
+        ),
+        interface="Public GitHub repository.",
+        cost="Free to view.",
+        licence=(
+            "EXPLICITLY CLOSED. LICENSE reads 'All rights reserved... No "
+            "licence, express or implied, is granted to any person to use, "
+            "copy, modify, merge, publish, distribute... Viewing this "
+            "repository does not grant any right to reuse its contents.'"
+        ),
+        rate_limit="n/a",
+        covers_2026_27=True,
+        verdict="forbidden",
+        reason=(
+            "The author has written down, in the file whose job it is to say "
+            "so, that we may not use this. Recorded here rather than quietly "
+            "skipped so nobody rediscovers it in three months and wonders why "
+            "a live, current, free feed is missing from the inventory."
+        ),
+        probe_urls=(
+            "https://api.github.com/repos/derekkuang/Fantasy-Premier-League/license",
+        ),
+        measured_status=(("/license", 200),),
+    ),
+    Provider(
         key="fpl_projections_site",
         name="Community GitHub projections (fpl-projections-site)",
         home="https://github.com/Juz92backup/fpl-projections-site",
