@@ -26,6 +26,21 @@ Boundaries, unchanged from the rest of this package:
 * If the grant is refused (revoked session, rotated client, or the endpoint
   demanding interaction), the failure mode is a clear instruction to paste a
   fresh browser session -- not a retry loop against an auth server.
+
+Two facts measured against the live API on 2026-08-20, both counter-intuitive:
+
+* **A session cookie alone no longer authenticates.** ``GET /api/my-team/{id}/``
+  with the full browser Cookie header and no bearer returns 403
+  ``"Authentication credentials were not provided."`` The ``FPL_SESSION_COOKIE``
+  path in :mod:`fpl_edge.myteam.private` therefore cannot succeed on its own; it
+  survives only so a pre-token setup fails loudly rather than silently. The
+  bearer is not an optimisation, it is the only door.
+* **Redemption is single-use and cross-process.** The issuer burns a refresh
+  token the moment it is redeemed, so two processes refreshing concurrently
+  leave one holding a spent token and receiving an HTTP 400 that is
+  indistinguishable from a revoked session. This is why the refresh is guarded
+  by a file lock (:meth:`TokenManager._process_lock`) and not merely a
+  ``threading.Lock``.
 """
 
 from __future__ import annotations
@@ -34,6 +49,7 @@ import base64
 import datetime as dt
 import json
 import re
+import contextlib
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -96,6 +112,40 @@ class TokenManager:
     def __post_init__(self) -> None:
         object.__setattr__(self, "_lock", threading.Lock())
 
+    @contextlib.contextmanager
+    def _process_lock(self):
+        """Serialise refreshes across PROCESSES, not just threads.
+
+        The refresh token rotates: the issuer invalidates it the instant it is
+        redeemed. The bot, the launchd DAG and a CLI command are separate
+        processes, so a `threading.Lock` guards none of them from each other.
+        Two of them refreshing at once means one wins, and the loser replays a
+        token the issuer has already burned -- an HTTP 400 that reads exactly
+        like a revoked session and sends the manager to re-paste a cookie that
+        was never the problem. Observed in production, hence the flock.
+
+        Whoever waits here re-reads `.env` afterwards (see `access_token`) and
+        finds the winner's fresh token, so the second refresh never happens.
+        """
+        try:
+            import fcntl
+        except ImportError:  # pragma: no cover - non-POSIX
+            yield
+            return
+        lock_path = self.env_path.with_name(self.env_path.name + ".lock")
+        try:
+            handle = open(lock_path, "a+")  # noqa: SIM115 - closed in finally
+        except OSError:  # pragma: no cover - unwritable dir; degrade, never block
+            yield
+            return
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            yield
+        finally:
+            with contextlib.suppress(OSError):
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            handle.close()
+
     # -- storage --------------------------------------------------------------
 
     def _read(self) -> dict[str, str]:
@@ -148,7 +198,9 @@ class TokenManager:
 
     def access_token(self) -> str:
         """A currently-valid access token, refreshing through the issuer if needed."""
-        with self._lock:
+        with self._lock, self._process_lock():
+            # Read inside the lock: a process that queued here while another
+            # was refreshing must see the winner's newly-persisted pair.
             env = self._read()
             access = env.get("FPL_ACCESS_TOKEN")
             now = dt.datetime.now(dt.timezone.utc)
@@ -200,11 +252,23 @@ class TokenManager:
             timeout=30,
         )
         if resp.status_code != 200:
+            # OAuth error bodies are the diagnosis: invalid_grant means the
+            # token really is spent, invalid_client means we are asking the
+            # wrong issuer. Discarding them made every failure look identical.
+            reason = ""
+            try:
+                err = resp.json()
+                reason = "; ".join(
+                    str(err[k]) for k in ("error", "error_description") if err.get(k)
+                )
+            except Exception:  # noqa: BLE001 - a non-JSON body is still a clue
+                reason = resp.text[:200].strip()
             raise RefreshRefusedError(
-                f"The token endpoint refused the refresh grant "
-                f"(HTTP {resp.status_code}). The session was likely revoked or "
-                f"rotated. Log in once in your browser and re-run "
-                f"`uv run fpl myteam auth --paste-cookie`."
+                f"The token endpoint at {issuer} refused the refresh grant "
+                f"(HTTP {resp.status_code})"
+                + (f": {reason}. " if reason else ". ")
+                + "Log in once in your browser and re-run "
+                "`uv run fpl myteam auth --paste-cookie`."
             )
         body = resp.json()
         access = body.get("access_token")

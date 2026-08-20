@@ -18,3 +18,6 @@ dist/
 data/warehouse/jobs/
 data/odds_expansion_ledger.json
 code_bases/
+
+# refresh-grant cross-process lock (see fpl_edge/myteam/tokens.py)
+.env.lock

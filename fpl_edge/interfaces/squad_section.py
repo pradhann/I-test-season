@@ -9,6 +9,7 @@ computed and refuses to render one solved against a different gameweek.
 from __future__ import annotations
 
 import datetime as dt
+import itertools
 import json
 from pathlib import Path
 
@@ -93,7 +94,76 @@ def render_squad(wh: Warehouse, season: str, gw: int, as_of: dt.datetime) -> str
             "an early-window chip call as 'the chip would not be wasted', not "
             "'this is the best week for it'. Holding it is the sound default.",
         ]
+    lines += _render_diff(wh, season, gw, as_of, plan, name, pos, price)
     return "\n".join(lines)
+
+
+def _render_diff(
+    wh: Warehouse, season: str, gw: int, as_of: dt.datetime, plan: dict,
+    name: dict, pos: dict, price: dict,
+) -> list[str]:
+    """Your actual fifteen against the recommended fifteen.
+
+    Before the first deadline transfers are unlimited and free, so the whole
+    decision is this set difference -- there is no hit to weigh and no free
+    transfer to spend. Printing the recommended squad beside a squad the
+    manager already owns, without saying which players actually differ, leaves
+    the only real GW1 question as an exercise for the reader.
+
+    A section must never fail the report, so an unreadable squad (no auth,
+    dead endpoint) degrades to a note rather than an exception.
+    """
+    from fpl_edge.myteam.report import current_state
+
+    try:
+        state = current_state(wh, season, as_of, gw=gw)
+    except Exception as exc:  # noqa: BLE001 - never let a section kill the report
+        return ["", f"_Your own squad could not be read ({type(exc).__name__}), "
+                    "so no comparison is shown._"]
+    if state.picks is None:
+        return ["", "_Your own squad is not known yet, so no comparison is "
+                    "shown. `fpl myteam auth` or `fpl myteam set` enables it._"]
+
+    mine = {int(pick.code) for pick in state.picks}
+    theirs = {int(c) for c in plan["gw1"]["squad"]}
+    # Sort both sides by position: an FPL transfer is always like-for-like, so
+    # position-ordered columns pair each row into a swap the game would allow.
+    # Index-ordered columns imply swaps that are not legal moves.
+    def by_pos(codes: set[int]) -> list[int]:
+        return sorted(codes, key=lambda c: (pos.get(c, 9), name.get(c, str(c))))
+
+    out_, in_ = by_pos(mine - theirs), by_pos(theirs - mine)
+    lines = ["", "### Versus your actual squad", ""]
+    if not out_ and not in_:
+        lines.append("Identical to what you already own. Nothing to change.")
+    else:
+        cost = sum(price.get(c, 0) for c in in_) - sum(price.get(c, 0) for c in out_)
+        lines += [
+            f"{len(in_)} change(s). Transfers before the first deadline are "
+            "unlimited and free, so this costs no hit.",
+            "",
+            "| Out | In |", "| --- | --- |",
+        ]
+        for o, i in itertools.zip_longest(out_, in_):
+            left = f"{_POS.get(pos.get(o), '?')} {name.get(o, o)}" if o else "—"
+            right = f"{_POS.get(pos.get(i), '?')} {name.get(i, i)}" if i else "—"
+            lines.append(f"| {left} | {right} |")
+        lines += ["", f"Net price change £{cost / 10:+.1f}m against your "
+                      f"£{state.bank.tenths / 10:.1f}m bank."]
+
+    mine_cap = next(
+        (int(pick.code) for pick in state.picks if pick.is_captain), None
+    )
+    rec_cap = int(plan["gw1"]["captain"])
+    if mine_cap is not None:
+        lines += ["", (
+            f"Captain: you have **{name.get(mine_cap, mine_cap)}**, the plan "
+            f"says **{name.get(rec_cap, rec_cap)}**."
+            if mine_cap != rec_cap
+            else f"Captain: you and the plan agree on "
+                 f"**{name.get(rec_cap, rec_cap)}**."
+        )]
+    return lines
 
 
 def register() -> None:

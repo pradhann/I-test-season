@@ -7,6 +7,8 @@ status text or errors.
 
 from __future__ import annotations
 
+import pathlib
+
 import base64
 import datetime as dt
 import json
@@ -231,3 +233,83 @@ def test_just_the_two_token_cookies_are_enough_to_configure(tmp_path) -> None:
     text = env.read_text()
     assert "FPL_OAUTH_ISSUER=https://auth.example/as" in text
     assert "FPL_OAUTH_CLIENT_ID=abc" in text
+
+
+CHILD = '''
+import base64, json, sys, time, datetime as dt, pathlib
+from fpl_edge.myteam.tokens import TokenManager
+
+env_path, counter = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+
+def mint(seconds):
+    exp = dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=seconds)
+    body = base64.urlsafe_b64encode(
+        json.dumps({"exp": int(exp.timestamp())}).encode()
+    ).decode().rstrip("=")
+    return "x." + body + ".y"
+
+class Counting(TokenManager):
+    def _refresh(self, env):
+        # Record the redemption, hold the lock a beat so a racing sibling would
+        # certainly collide, then persist a fresh pair like the real grant does.
+        with counter.open("a") as fh:
+            fh.write("redeem\\n")
+        time.sleep(0.6)
+        access = mint(8 * 3600)
+        self._persist(access, mint(180 * 86400))
+        return access
+
+Counting(env_path=env_path).access_token()
+'''
+
+
+def test_two_processes_refreshing_at_once_redeem_the_token_only_once(tmp_path) -> None:
+    """The rotating refresh token must be redeemed once, ever, per rotation.
+
+    This is the bug that actually bit: the bot and the DAG are separate
+    processes, a `threading.Lock` does not span them, and the loser replayed a
+    token the issuer had already burned -- an HTTP 400 indistinguishable from a
+    revoked session. Two real processes here; exactly one redemption.
+    """
+    import base64
+    import datetime as dt
+    import json
+    import subprocess
+    import sys
+
+    def mint(seconds: int) -> str:
+        exp = dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=seconds)
+        body = base64.urlsafe_b64encode(
+            json.dumps({"exp": int(exp.timestamp())}).encode()
+        ).decode().rstrip("=")
+        return f"x.{body}.y"
+
+    env = tmp_path / ".env"
+    env.write_text(
+        f"FPL_ACCESS_TOKEN={mint(-60)}\n"          # already expired
+        f"FPL_REFRESH_TOKEN={mint(180 * 86400)}\n"
+        "FPL_OAUTH_ISSUER=https://auth.example/as\n"
+        "FPL_OAUTH_CLIENT_ID=abc\n"
+    )
+    counter = tmp_path / "redemptions"
+    counter.touch()
+    script = tmp_path / "child.py"
+    script.write_text(CHILD)
+
+    procs = [
+        subprocess.Popen(
+            [sys.executable, str(script), str(env), str(counter)],
+            cwd=str(pathlib.Path(__file__).resolve().parents[2]),
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        for _ in range(2)
+    ]
+    for p in procs:
+        _, err = p.communicate(timeout=90)
+        assert p.returncode == 0, err
+
+    redemptions = counter.read_text().count("redeem")
+    assert redemptions == 1, (
+        f"the refresh token was redeemed {redemptions} times across two "
+        "processes; the second replay is the HTTP 400 that broke live auth"
+    )
