@@ -201,6 +201,18 @@ def to_projection_rows(
         "xp": rows["xp"].astype(float),
         "xp_if_appears": rows["xp_if_appears"].astype(float),
         "p_appear": rows["p_appear"].astype(float),
+        # FPL Form publishes P(appears), not expected minutes. Deriving one from
+        # the other needs a minutes model; this platform copies minutes opinions
+        # rather than building one, so the column it does not publish stays NULL.
+        #
+        # `index=rows.index` is load-bearing. `rows` has been filtered, so its
+        # index is non-contiguous, and a bare `pd.Series([...])` carries a fresh
+        # RangeIndex that pandas then ALIGNS against it -- silently producing
+        # extra all-NaN rows and NULL gameweeks rather than an error. That
+        # exact mistake is what made this provider's first live run die on a
+        # NOT NULL constraint on `gw`, three columns away from the column
+        # actually at fault.
+        "xmins": pd.Series([None] * len(rows), index=rows.index, dtype="float64"),
         "as_of": as_of,
     })
     rows["as_of"] = pd.to_datetime(rows["as_of"], utc=True)

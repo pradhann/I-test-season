@@ -157,34 +157,67 @@ class AmbiguousSeasonError(LiveFplError):
     """The element_ids in a LiveFPL file do not identify one season."""
 
 
+#: Largest share of a file's ids that may disagree with a season's id set
+#: before we refuse to call it that season.
+MAX_SEASON_MISMATCH = 0.10
+
+#: How many times worse the runner-up season must fit. Measured in mismatched
+#: ids, not in a ratio: 0.999 against 0.969 sounds like a photo finish and is
+#: actually 1 wrong id against 27.
+MIN_SEASON_MISMATCH_RATIO = 3.0
+
+
 def infer_season(element_ids: set[int], catalogs: dict[str, set[int]]) -> str:
-    """Which season's element_id table contains every id in the file.
+    """Which season's element_id table this file's ids belong to.
 
     ``catalogs`` maps season -> the set of element_ids ``dim_player`` holds for
-    it. Raises when no season is a superset, or when more than one is: guessing
-    here reassigns a projection to a different human, and doing that silently is
-    worse than failing.
+    it. Scored by MISMATCHED IDS -- the size of the symmetric difference -- not
+    by containment and not by a similarity ratio.
+
+    Containment was the first implementation and it is wrong in the one way
+    that matters. On 2026-08-20 ``predictedEOs/1.json`` carried 595 element_ids
+    while ``dim_player`` held 592 for 2026-27 -- LiveFPL had picked up three
+    players signed since our last squad refresh. The current season was
+    therefore NOT a superset, so containment fell through to 2022-23, whose 778
+    ids happen to contain all 595, and the file was written under
+    ``season='2022-23', gw=38``. Every id was then remapped onto whichever
+    player held it four years ago. Nothing raised. Those rows had to be deleted
+    by hand.
+
+    Symmetric difference is immune to that, because being three hundred ids too
+    BIG counts against a season exactly as much as being three ids too small.
+    2026-27 mismatches by 3; 2022-23 mismatches by 183.
+
+    Counting rather than ratio-ing matters for the second test too. Against
+    ``top10k.json`` (840 ids) the two best seasons score Jaccard 0.999 and
+    0.969, which reads like a photo finish and would fail any sane margin on a
+    ratio. In mismatched ids it is 1 against 27, which is not close at all.
     """
-    supersets = [s for s, ids in catalogs.items() if element_ids <= ids]
-    if not supersets:
-        best = max(catalogs.items(), key=lambda kv: len(element_ids & kv[1]),
-                   default=("none", set()))
+    if not element_ids:
+        raise AmbiguousSeasonError("empty id set identifies no season")
+    scored = sorted(
+        (len(element_ids ^ ids), season)
+        for season, ids in catalogs.items() if ids
+    )
+    if not scored:
+        raise AmbiguousSeasonError("no season catalogues to compare against")
+    best_diff, best = scored[0]
+    runner_diff = scored[1][0] if len(scored) > 1 else float("inf")
+    detail = ", ".join(f"{s}:{d} wrong" for d, s in scored[:4])
+    if best_diff > MAX_SEASON_MISMATCH * len(element_ids):
         raise AmbiguousSeasonError(
-            f"no season's element_id table contains all {len(element_ids)} ids in "
-            f"this file. Closest is {best[0]} with {len(element_ids & best[1])} of "
-            f"them. Refusing to map ids onto players they do not identify."
+            f"no season's element_id set is within {MAX_SEASON_MISMATCH:.0%} of "
+            f"these {len(element_ids)} ids ({detail}). Refusing to map ids onto "
+            f"players they do not identify."
         )
-    if len(supersets) > 1:
-        # Prefer the season whose catalogue is the tightest fit; only tie -> raise.
-        sized = sorted(supersets, key=lambda s: len(catalogs[s]))
-        if len(catalogs[sized[0]]) == len(catalogs[sized[1]]):
-            raise AmbiguousSeasonError(
-                f"{len(supersets)} seasons ({', '.join(sorted(supersets))}) each "
-                f"contain all these element_ids and are the same size. Cannot tell "
-                f"which season this file describes."
-            )
-        return sized[0]
-    return supersets[0]
+    # `max(best_diff, 1)` keeps a perfect match from being blocked by a
+    # runner-up that is merely also good: 0 * anything is 0.
+    if runner_diff < MIN_SEASON_MISMATCH_RATIO * max(best_diff, 1):
+        raise AmbiguousSeasonError(
+            f"{best} and {scored[1][1]} fit these ids comparably well "
+            f"({detail}). A file that could be either season identifies neither."
+        )
+    return best
 
 
 def parse_code_map(body: Any) -> dict[int, int]:

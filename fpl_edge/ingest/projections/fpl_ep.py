@@ -103,10 +103,18 @@ def to_projection_rows(
         rows.append({
             "provider": "fpl_ep", "season": season, "gw": gw,
             "code": int(el["code"]), "xp": xp,
-            "xp_if_appears": None, "p_appear": p_appear, "as_of": as_of,
+            "xp_if_appears": None, "p_appear": p_appear,
+            # The official API publishes no minutes expectation at all.
+            "xmins": None, "as_of": as_of,
         })
     if not rows:
         raise FplEpError("bootstrap-static carried no elements with ep_next")
     frame = pd.DataFrame(rows)
+    # An all-None column arrives as dtype object, which DuckDB refuses to bind
+    # to a DOUBLE. Coerce explicitly rather than letting the register call
+    # decide -- the failure would otherwise only appear on the one run where
+    # every element happens to be unflagged.
+    for col in ("xp", "xp_if_appears", "p_appear", "xmins"):
+        frame[col] = pd.to_numeric(frame[col], errors="coerce").astype("float64")
     frame["as_of"] = pd.to_datetime(frame["as_of"], utc=True)
     return frame

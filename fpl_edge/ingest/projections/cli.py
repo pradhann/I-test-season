@@ -5,27 +5,70 @@
     uv run python -m fpl_edge.ingest.projections.cli ingest --season 2026-27
     uv run python -m fpl_edge.ingest.projections.cli probe
     uv run python -m fpl_edge.ingest.projections.cli report
+    uv run python -m fpl_edge.ingest.projections.cli providers
 
 Deliberately in this package rather than in ``scripts/``: this team owns
 ``fpl_edge/ingest/projections/**`` and nothing else, and an entry point that
 lives outside the directory it belongs to is how two teams end up editing one
 file.
+
+Failure isolation
+-----------------
+Every provider runs inside its own ``try``. This is not defensive habit; it is
+the deadline requirement. The run that matters happens in the ninety minutes
+before a Friday 17:30 deadline, and on that run a provider that has changed its
+HTML, let its certificate expire or simply gone dark must cost us *that
+provider's* rows and nothing else. A bare loop without isolation converts one
+site's bad afternoon into a blind transfer.
+
+A failed provider is reported with its real exception type and message and
+recorded as ``ok=False``. It is never retried into silence and never replaced
+with a stale copy, a zero, or an interpolation: the ensemble downstream is
+allowed to see that a source is missing, and is not allowed to be lied to about
+why.
 """
 
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import datetime as dt
 import sys
+import traceback
 
 import pandas as pd
 
-from fpl_edge.ingest.projections import fpl_ep, fplform, livefpl, rotowire
+from fpl_edge.ingest.projections import fpl_ep, fplform, github_csv, livefpl, rotowire
 from fpl_edge.ingest.projections.providers import PROVIDERS, probe_all
 from fpl_edge.ingest.projections.store import ProjectionStore
 from fpl_edge.store import Warehouse
 
 SEASON = "2026-27"
+
+
+@dataclasses.dataclass
+class StepResult:
+    """What one provider's ingest actually did, success or failure.
+
+    ``rows`` is rows *appended*, which is 0 on an idempotent re-run of an
+    unchanged feed -- that is a success, not a failure, and the two are
+    distinguished by ``ok`` rather than by the count.
+    """
+
+    provider: str
+    ok: bool
+    rows: int = 0
+    parsed: int = 0
+    unresolved: int = 0
+    detail: str = ""
+    error: str = ""
+
+    def line(self) -> str:
+        if not self.ok:
+            return f"{self.provider:16} FAILED  {self.error}"
+        return (f"{self.provider:16} ok      {self.rows:>6,} appended  "
+                f"{self.parsed:>6,} parsed  {self.unresolved:>4} unresolved  "
+                f"{self.detail}")
 
 
 def element_catalogs(warehouse: Warehouse, as_of: dt.datetime) -> dict[str, set[int]]:
@@ -41,10 +84,9 @@ def element_id_to_code(warehouse: Warehouse, season: str,
                        as_of: dt.datetime) -> dict[int, int]:
     """The FPL API's own mapping, read point-in-time.
 
-    Every provider keys on ``element_id``. Resolving through ``dim_player``
-    rather than through the provider's own name strings means a rename, a
-    transfer or a duplicate surname cannot move a projection onto the wrong
-    player.
+    Providers that key on ``element_id`` resolve through ``dim_player`` rather
+    than through their own name strings, so a rename, a transfer or a duplicate
+    surname cannot move a projection onto the wrong player.
     """
     frame = warehouse.snapshot_at(as_of).table(
         "dim_player", where="season = ?", params=[season]
@@ -54,37 +96,77 @@ def element_id_to_code(warehouse: Warehouse, season: str,
     return dict(zip(frame["element_id"].astype(int), frame["code"].astype(int)))
 
 
+def known_codes(warehouse: Warehouse, season: str, as_of: dt.datetime) -> set[int]:
+    """Every stable player code the season knows about at ``as_of``.
+
+    A feed that publishes ``code`` directly still has to be checked against
+    this: a code we have never seen is either a typo, a different key space, or
+    a player who signed after our last dim_player refresh, and all three are
+    reasons to drop-and-count rather than to write.
+    """
+    frame = warehouse.snapshot_at(as_of).table(
+        "dim_player", where="season = ?", params=[season]
+    )
+    return set(frame["code"].astype(int))
+
+
+# ---------------------------------------------------------------------------
+# the run
+# ---------------------------------------------------------------------------
+
+
 def ingest(season: str = SEASON, *, first_gw: int = 1, last_gw: int = 8,
-           db: str | None = None) -> dict[str, int]:
+           db: str | None = None, only: tuple[str, ...] = (),
+           verbose: bool = False) -> dict[str, StepResult]:
     """Fetch every reachable provider and land it in the warehouse.
 
-    Each provider runs inside its own try/except: one provider changing shape
-    or going dark must not cost us the others' rows at a deadline. A failure
-    is printed with its real error and recorded as -1 in the result -- never
-    papered over with fabricated rows.
+    Returns one :class:`StepResult` per provider attempted. Nothing raises out
+    of here except a failure to open the warehouse itself: a provider's
+    exception belongs in its own row of the report, not at the top of a
+    traceback that hides the four providers that worked.
     """
-    written: dict[str, int] = {}
+    steps = [
+        ("fplform", _ingest_fplform),
+        ("livefpl", _ingest_livefpl),
+        ("fpl_ep", _ingest_fpl_ep),
+        ("rotowire", _ingest_rotowire),
+    ]
+    steps += [(f.key, _github_step(f.key)) for f in github_csv.FEEDS]
+    if only:
+        steps = [s for s in steps if s[0] in only]
+        missing = set(only) - {s[0] for s in steps}
+        if missing:
+            raise SystemExit(f"unknown provider(s) {sorted(missing)}")
+
+    results: dict[str, StepResult] = {}
     with Warehouse(db) if db else Warehouse() as warehouse:
         store = ProjectionStore(warehouse)
-        applied = store.migrate()
-        if applied:
-            print(f"applied migrations: {', '.join(applied)}")
+        if store.applied_migrations:
+            print(f"applied migrations: {', '.join(store.applied_migrations)}")
 
-        for name, step in (("fplform", _ingest_fplform),
-                           ("livefpl", _ingest_livefpl),
-                           ("fpl_ep", _ingest_fpl_ep),
-                           ("rotowire", _ingest_rotowire)):
+        for name, step in steps:
             try:
-                written[name] = step(warehouse, store, season,
+                results[name] = step(warehouse, store, season,
                                      first_gw=first_gw, last_gw=last_gw)
             except Exception as exc:  # noqa: BLE001 -- isolation is the point
-                written[name] = -1
-                print(f"{name}: FAILED ({type(exc).__name__}: {exc})")
-    return written
+                if verbose:
+                    traceback.print_exc()
+                results[name] = StepResult(
+                    provider=name, ok=False,
+                    error=f"{type(exc).__name__}: {exc}".replace("\n", " ")[:400],
+                )
+            print(results[name].line())
+
+    ok = sum(1 for r in results.values() if r.ok)
+    print(f"\n{ok}/{len(results)} providers ok, "
+          f"{sum(r.rows for r in results.values()):,} rows appended, "
+          f"{sum(r.unresolved for r in results.values()):,} names/ids unresolved")
+    return results
 
 
 def _ingest_fplform(warehouse: Warehouse, store: ProjectionStore, season: str,
-                    *, first_gw: int, last_gw: int) -> int:
+                    *, first_gw: int, last_gw: int) -> StepResult:
+    got = fplform.fetch_csv(first_gw=first_gw, last_gw=last_gw)
     warehouse.record_fetch(
         source="projections_fplform", endpoint=fplform.EXPORT_PATH,
         params=f"firstgw={first_gw}&lastgw={last_gw}&all=1",
@@ -97,19 +179,20 @@ def _ingest_fplform(warehouse: Warehouse, store: ProjectionStore, season: str,
         parsed, season=season, as_of=got.fetched_at, id_to_code=id_to_code
     )
     n = store.append("fact_projection", rows)
-    print(f"fplform: HTTP {got.http_status}, {len(parsed):,} parsed rows "
-          f"({parsed['element_id'].nunique()} players x GW{first_gw}-{last_gw}), "
-          f"{len(rows):,} resolved, {len(unresolved)} unresolved element_ids, "
-          f"{n:,} appended")
     if not unresolved.empty:
-        print("  unresolved:",
+        print("  fplform unresolved element_ids:",
               unresolved[["element_id", "provider_name", "provider_team"]]
               .drop_duplicates().head(10).to_dict("records"))
-    return n
+    return StepResult(
+        provider="fplform", ok=True, rows=n, parsed=len(parsed),
+        unresolved=int(unresolved["element_id"].nunique()) if not unresolved.empty else 0,
+        detail=(f"HTTP {got.http_status}, {parsed['element_id'].nunique()} players "
+                f"x GW{first_gw}-{last_gw}"),
+    )
 
 
 def _ingest_livefpl(warehouse: Warehouse, store: ProjectionStore, season: str,
-                    *, first_gw: int, last_gw: int) -> int:
+                    *, first_gw: int, last_gw: int) -> StepResult:
     info = livefpl.fetch("player_info")
     warehouse.record_fetch(
         source="projections_livefpl", endpoint="/planner/all_player_info.json",
@@ -119,11 +202,12 @@ def _ingest_livefpl(warehouse: Warehouse, store: ProjectionStore, season: str,
     id_to_code = element_id_to_code(warehouse, season, info.fetched_at)
     provider_map = livefpl.parse_code_map(info.body)
     agree = sum(1 for k, v in provider_map.items() if id_to_code.get(k) == v)
-    print(f"livefpl: code map {len(provider_map)} entries, {agree} agree with "
+    print(f"  livefpl code map: {len(provider_map)} entries, {agree} agree with "
           f"dim_player, {len(provider_map) - agree} differ")
 
     catalogs = element_catalogs(warehouse, info.fetched_at)
-    total = 0
+    total = parsed_total = unresolved_total = 0
+    notes: list[str] = []
     for kind in ("predicted_eo", "top10k", "elite"):
         got_own = livefpl.fetch(kind, gw=first_gw)
         warehouse.record_fetch(
@@ -149,15 +233,15 @@ def _ingest_livefpl(warehouse: Warehouse, store: ProjectionStore, season: str,
         )
         n = store.append("fact_external_ownership", own_rows)
         total += n
-        flag = "" if file_season == season else "  <- NOT the current season"
-        print(f"  {kind}: HTTP {got_own.http_status}, {len(parsed_own)} entries, "
-              f"season={file_season} gw={file_gw}, {len(own_rows)} resolved, "
-              f"{len(own_unres)} unresolved, {n} appended{flag}")
-    return total
+        parsed_total += len(parsed_own)
+        unresolved_total += len(own_unres)
+        notes.append(f"{kind}@{file_season}/gw{file_gw}:{n}")
+    return StepResult(provider="livefpl", ok=True, rows=total, parsed=parsed_total,
+                      unresolved=unresolved_total, detail=" ".join(notes))
 
 
 def _ingest_fpl_ep(warehouse: Warehouse, store: ProjectionStore, season: str,
-                   *, first_gw: int, last_gw: int) -> int:
+                   *, first_gw: int, last_gw: int) -> StepResult:
     got = fpl_ep.fetch_bootstrap()
     warehouse.record_fetch(
         source=fpl_ep.SOURCE, endpoint="/bootstrap-static/", params=None,
@@ -165,14 +249,19 @@ def _ingest_fpl_ep(warehouse: Warehouse, store: ProjectionStore, season: str,
         body_path=str(got.body_path), http_status=got.http_status,
     )
     rows = fpl_ep.to_projection_rows(got.body, season=season, as_of=got.fetched_at)
+    # ep_next is keyed on `code` inside the same document, so there is no
+    # cross-document id crossing and therefore nothing that can fail to
+    # resolve. Recorded as 0 rather than omitted, so the report's unresolved
+    # column means the same thing in every row.
     n = store.append("fact_projection", rows)
-    print(f"fpl_ep: HTTP {got.http_status}, {len(rows):,} elements with ep_next "
-          f"for GW{int(rows['gw'].iloc[0])}, {n:,} appended")
-    return n
+    return StepResult(
+        provider="fpl_ep", ok=True, rows=n, parsed=len(rows), unresolved=0,
+        detail=f"HTTP {got.http_status}, ep_next for GW{int(rows['gw'].iloc[0])}",
+    )
 
 
 def _ingest_rotowire(warehouse: Warehouse, store: ProjectionStore, season: str,
-                     *, first_gw: int, last_gw: int) -> int:
+                     *, first_gw: int, last_gw: int) -> StepResult:
     got = rotowire.fetch()
     warehouse.record_fetch(
         source="projections_rotowire", endpoint=rotowire.LINEUPS_PATH, params=None,
@@ -201,13 +290,49 @@ def _ingest_rotowire(warehouse: Warehouse, store: ProjectionStore, season: str,
     )
     n = store.append("fact_predicted_lineup", rows)
     starters = int(rows["predicted_start"].sum()) if not rows.empty else 0
-    print(f"rotowire: HTTP {got.http_status}, {len(entries)} names on "
-          f"{len({e.team_abbr for e in entries})} team sheets for GW{gw}, "
-          f"{len(rows)} resolved ({starters} starters), "
-          f"{len(unresolved)} unresolved, {n} appended")
     if not unresolved.empty:
-        print("  unresolved:", unresolved.head(10).to_dict("records"))
-    return n
+        print("  rotowire unresolved names:", unresolved.head(12).to_dict("records"))
+    return StepResult(
+        provider="rotowire", ok=True, rows=n, parsed=len(entries),
+        unresolved=len(unresolved),
+        detail=(f"HTTP {got.http_status}, {len({e.team_abbr for e in entries})} "
+                f"team sheets for GW{gw}, {starters} starters"),
+    )
+
+
+def _github_step(key: str):
+    """Build the ingest step for one community GitHub feed."""
+
+    def step(warehouse: Warehouse, store: ProjectionStore, season: str,
+             *, first_gw: int, last_gw: int) -> StepResult:
+        feed = github_csv.BY_KEY[key]
+        got = github_csv.fetch(feed, season=season, gw=first_gw)
+        warehouse.record_fetch(
+            source=f"projections_{feed.key}", endpoint=got.body_path.name,
+            params=f"gw={first_gw}", fetched_at=got.fetched_at, sha256=got.sha256,
+            body_path=str(got.body_path), http_status=got.http_status,
+        )
+        parsed = github_csv.parse(feed, got.body)
+        rows, unresolved = github_csv.to_projection_rows(
+            feed, parsed, season=season, as_of=got.fetched_at,
+            id_to_code=(element_id_to_code(warehouse, season, got.fetched_at)
+                        if feed.key_column_kind == "element_id" else None),
+            valid_codes=known_codes(warehouse, season, got.fetched_at),
+            default_gw=first_gw,
+        )
+        n = store.append("fact_projection", rows)
+        if not unresolved.empty:
+            print(f"  {feed.key} unresolved:",
+                  unresolved.head(8).to_dict("records"))
+        gws = sorted(rows["gw"].unique().tolist()) if not rows.empty else []
+        return StepResult(
+            provider=feed.key, ok=True, rows=n, parsed=len(parsed),
+            unresolved=len(unresolved),
+            detail=(f"HTTP {got.http_status}, {feed.repo}@{got.body_path.name}, "
+                    f"gw={gws}, xmins={'yes' if feed.xmins_column else 'no'}"),
+        )
+
+    return step
 
 
 def _next_gw(warehouse: Warehouse, season: str, as_of: dt.datetime) -> int:
@@ -235,12 +360,17 @@ def _last_finished_gw(warehouse: Warehouse, season: str, as_of: dt.datetime) -> 
     return int(gw)
 
 
+# ---------------------------------------------------------------------------
+# reporting
+# ---------------------------------------------------------------------------
+
+
 def probe() -> None:
     results = probe_all()
     width = max(len(r.url) for r in results)
     for r in results:
         status = r.error or f"{r.status} {r.bytes_:,}B {r.content_type[:30]}"
-        print(f"{r.provider:20} {r.url:<{width}} robots={str(r.robots_allows):5} {status}")
+        print(f"{r.provider:22} {r.url:<{width}} robots={str(r.robots_allows):5} {status}")
 
 
 def report() -> None:
@@ -252,20 +382,62 @@ def report() -> None:
     print(pd.DataFrame(rows).to_string(index=False))
 
 
+def providers(db: str | None = None) -> None:
+    """What is actually in the warehouse, per source."""
+    with Warehouse.read_copy(db) if db else Warehouse.read_copy() as wh:
+        for table in ("fact_projection", "fact_external_ownership",
+                      "fact_predicted_lineup"):
+            try:
+                frame = wh.sql(
+                    f"SELECT provider, count(*) AS rows, count(DISTINCT code) AS players, "
+                    f"min(gw) AS first_gw, max(gw) AS last_gw, max(as_of) AS last_seen "
+                    f"FROM {table} GROUP BY 1 ORDER BY 1"
+                )
+            except Exception as exc:  # noqa: BLE001
+                print(f"\n{table}: {type(exc).__name__}: {str(exc).splitlines()[0]}")
+                continue
+            print(f"\n{table}")
+            print(frame.to_string(index=False) if not frame.empty else "  (empty)")
+        try:
+            norm = wh.sql(
+                "SELECT source, count(*) AS rows, count(xmins) AS with_xmins, "
+                "count(xpts) AS with_xpts, max(fetched_at) AS fetched_at "
+                "FROM projection_normalized GROUP BY 1 ORDER BY 1"
+            )
+            print("\nprojection_normalized (source, player_code, gw, xmins, xpts, fetched_at)")
+            print(norm.to_string(index=False) if not norm.empty else "  (empty)")
+        except Exception as exc:  # noqa: BLE001
+            print(f"\nprojection_normalized: {type(exc).__name__}: {exc}")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["ingest", "probe", "report"])
+    parser.add_argument("command", choices=["ingest", "probe", "report", "providers"])
     parser.add_argument("--season", default=SEASON)
     parser.add_argument("--first-gw", type=int, default=1)
     parser.add_argument("--last-gw", type=int, default=8)
     parser.add_argument("--db", default=None)
+    parser.add_argument("--only", default="",
+                        help="comma-separated provider keys; default is all")
+    parser.add_argument("--verbose", action="store_true",
+                        help="print a full traceback for each failed provider")
     args = parser.parse_args(argv)
     if args.command == "probe":
         probe()
     elif args.command == "report":
         report()
+    elif args.command == "providers":
+        providers(args.db)
     else:
-        ingest(args.season, first_gw=args.first_gw, last_gw=args.last_gw, db=args.db)
+        results = ingest(
+            args.season, first_gw=args.first_gw, last_gw=args.last_gw, db=args.db,
+            only=tuple(k for k in args.only.split(",") if k), verbose=args.verbose,
+        )
+        # A provider failing is a reported fact, not a non-zero exit: the run
+        # succeeded at the thing it exists to do, which is landing whatever was
+        # reachable. Only a total wipe-out is worth failing a cron job over.
+        if results and not any(r.ok for r in results.values()):
+            return 1
     return 0
 
 

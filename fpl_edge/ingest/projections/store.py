@@ -62,7 +62,12 @@ class ProjectionStore:
 
     def __init__(self, warehouse: Warehouse) -> None:
         self.wh = warehouse
-        self.migrate()
+        #: Migrations this instance applied, so the caller can report them.
+        #: Constructing the store is what applies them, so a second
+        #: ``migrate()`` call from the CLI would always return an empty list and
+        #: the run log would claim nothing happened on the run that built the
+        #: schema.
+        self.applied_migrations: list[str] = self.migrate()
 
     # -- schema --------------------------------------------------------------
 

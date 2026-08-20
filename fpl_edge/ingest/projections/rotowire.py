@@ -68,8 +68,12 @@ POLITE_DELAY_S = 3.0
 #: abbreviation is an error, not a guess -- see :func:`to_lineup_rows`.
 ABBR_TO_FPL = {"NOT": "NFO"}
 
-#: Rotowire's player-level injury flags -> our ``certainty`` labels.
-_INJ_LABEL = {"OUT": "out", "QUES": "questionable"}
+#: Rotowire's player-level unavailability flags -> our ``certainty`` labels.
+#: "SUS" (suspended) appeared on the GW1 2026-27 page and is a genuinely
+#: different fact from an injury: a suspension has a known, fixed length and
+#: expires on a schedule, where a knock does not. Kept as its own label rather
+#: than folded into "out".
+_INJ_LABEL = {"OUT": "out", "QUES": "questionable", "SUS": "suspended"}
 
 
 class RotowireError(RuntimeError):
@@ -164,9 +168,16 @@ def parse_lineups(html: str) -> list[LineupEntry]:
                 if in_injuries:
                     inj_el = li.select_one(".lineup__inj")
                     flag = inj_el.get_text(strip=True) if inj_el else ""
-                    certainty = _INJ_LABEL.get(flag)
-                    if certainty is None:
-                        raise RotowireError(f"{team}: unknown injury flag {flag!r} for {name}")
+                    # An unrecognised flag is ONE PLAYER's problem, not the
+                    # page's. Raising here would throw away twenty correctly
+                    # parsed team sheets because Rotowire introduced a new
+                    # three-letter code -- which it did, mid-run, with "SUS".
+                    # The entry is marked and dropped downstream with the other
+                    # unresolved rows, where it is counted and visible.
+                    # A missing <ul> or a nine-man XI still raises: that is the
+                    # page shape changing, which no amount of per-row tolerance
+                    # can make safe.
+                    certainty = _INJ_LABEL.get(flag, f"unknown:{flag}")
                     entries.append(LineupEntry(team, opp, side == "is-home",
                                                name, pos, False, certainty))
                 else:
@@ -208,13 +219,61 @@ def resolve_teams(entries: list[LineupEntry], short_to_code: dict[str, int]) -> 
     return out
 
 
+def _given_names_compatible(a: str, b: str) -> bool:
+    """Are two renderings of a given name plausibly the same person's?
+
+    Rotowire and FPL disagree constantly on given names in ways that are not
+    errors: Ben/Benjamin, Will/William, Oli/Oliver, Vitaliy/Vitalii,
+    Tino/Valentino. All five appeared on the GW1 2026-27 page. This accepts
+    prefix relationships, a shared four-character stem (transliteration), and
+    containment (the Tino/Valentino case, where the short form is a suffix).
+
+    It is deliberately a *guard*, not a matcher. Nothing resolves on this alone
+    -- it only vetoes a surname match that has already been shown unique inside
+    one club's roster.
+    """
+    if not a or not b:
+        return False
+    if a == b or a.startswith(b) or b.startswith(a):
+        return True
+    if a in b or b in a:
+        return True
+    common = 0
+    for x, y in zip(a, b):
+        if x != y:
+            break
+        common += 1
+    return common >= 4
+
+
+def _surname_of(full: str) -> str:
+    return full.split()[-1] if full.split() else ""
+
+
 def _resolve_name(name: str, roster: pd.DataFrame) -> int | None:
     """One provider name -> the unique matching code on one team's roster.
 
     Match ladder, strict to loose, stopping at the first rung with exactly one
-    hit: exact ``first second``, exact ``web_name``, token-subset (every token
-    of the shorter name appears in the longer). More than one hit at any rung
-    is ambiguity, and ambiguity is None -- never a coin flip.
+    hit. More than one hit at any rung is ambiguity, and ambiguity is None --
+    never a coin flip.
+
+    1. exact ``first second``
+    2. exact ``web_name``
+    3. token subset in either direction
+    4. **unique surname within this club's roster**, vetoed by
+       :func:`_given_names_compatible`
+
+    Rung 4 exists because rungs 1-3 refused twenty of 308 GW1 entries, and
+    almost all of them were the same non-error: "Ben White" against FPL's
+    "Benjamin White", "Will Osula" against "William Osula", "Tino Livramento"
+    against "Valentino Livramento". None of those is a hard case; refusing them
+    threw away real starter information.
+
+    What makes rung 4 safe is not the surname, it is the SCOPE. The roster
+    passed in is one club's ~25 players, already resolved through
+    ``dim_team``. A surname that is unique inside 25 team-mates is close to an
+    identifier; the same surname across 600 players is not. If two team-mates
+    share it, the uniqueness test refuses and we are back to a counted drop.
     """
     target = normalize_name(name)
     tokens = set(target.split())
@@ -232,6 +291,27 @@ def _resolve_name(name: str, roster: pd.DataFrame) -> int | None:
     ]
     if len(subset) == 1:
         return int(roster.loc[subset[0], "code"])
+    if len(subset) > 1:
+        return None
+
+    surname = _surname_of(target)
+    if not surname:
+        return None
+    hits = roster.index[
+        (roster["norm_web"] == surname)
+        | (roster["norm_full"].map(_surname_of) == surname)
+    ]
+    if len(hits) != 1:
+        return None
+    row = roster.loc[hits[0]]
+    given_target = target.split()[0]
+    given_roster = str(row["norm_full"]).split()
+    if len(target.split()) == 1:
+        # The page gave a bare surname. Unique inside the club is enough; there
+        # is no given name to contradict.
+        return int(row["code"])
+    if given_roster and _given_names_compatible(given_target, given_roster[0]):
+        return int(row["code"])
     return None
 
 
@@ -261,35 +341,82 @@ def to_lineup_rows(
     rows: list[dict[str, object]] = []
     unresolved: list[dict[str, object]] = []
     for e in entries:
+        if e.certainty.startswith("unknown:"):
+            unresolved.append({"team_abbr": e.team_abbr, "player_name": e.player_name,
+                               "position": e.position, "certainty": e.certainty,
+                               "reason": f"unrecognised Rotowire flag "
+                                         f"{e.certainty.split(':', 1)[1]!r}"})
+            continue
         team_code = team_codes[e.team_abbr]
         roster = prepared[prepared["team_code"] == team_code].reset_index(drop=True)
         code = _resolve_name(e.player_name, roster)
         if code is None:
             unresolved.append({"team_abbr": e.team_abbr, "player_name": e.player_name,
-                               "position": e.position, "certainty": e.certainty})
+                               "position": e.position, "certainty": e.certainty,
+                               "reason": "no unique match on this club's roster"})
             continue
         rows.append({"provider": "rotowire", "season": season, "gw": int(gw),
                      "code": code, "team_code": team_code,
                      "predicted_start": bool(e.predicted_start),
-                     "certainty": e.certainty, "as_of": as_of})
+                     "certainty": e.certainty, "as_of": as_of,
+                     "_name": e.player_name, "_abbr": e.team_abbr})
     frame = pd.DataFrame(rows)
     if not frame.empty:
         frame["as_of"] = pd.to_datetime(frame["as_of"], utc=True)
-        dup = frame.duplicated(["code"], keep=False)
-        if dup.any():
-            # Two entries resolved onto one human (e.g. a name in both the XI
-            # and the injury list, or two provider names collapsing to one
-            # code). Writing both would violate the table's key with two
-            # different truths; hand them all back instead.
-            clash_codes = set(frame.loc[dup, "code"])
-            clashed = frame[dup]
-            frame = frame[~dup].reset_index(drop=True)
-            for _, r in clashed.iterrows():
-                unresolved.append({"team_abbr": "?", "player_name": f"code={r['code']}",
-                                   "position": "", "certainty": r["certainty"],
-                                   "reason": f"multiple entries resolved to code {r['code']}"})
-            _ = clash_codes
+        frame, merged_back = _collapse_duplicates(frame)
+        unresolved.extend(merged_back)
+        frame = frame.drop(columns=["_name", "_abbr"]).reset_index(drop=True)
     return frame, pd.DataFrame(unresolved)
+
+
+#: Sheet-level labels, as opposed to the player-level unavailability flags.
+_SHEET_LABELS = {"expected", "confirmed"}
+
+
+def _collapse_duplicates(frame: pd.DataFrame) -> tuple[pd.DataFrame, list[dict]]:
+    """One row per player, or none.
+
+    Rotowire routinely names the same player twice on one team sheet: once in
+    the eleven and once on the doubtful list. On the GW1 2026-27 page that was
+    Garnacho, Abraham, Fatawu and Florentino Luis. That is not the page
+    contradicting itself -- it is the page saying "we expect him to start, but
+    he is a doubt", which is a *more* informative claim than either half, and
+    the exact claim an xMins consumer wants.
+
+    So a starter-plus-questionable pair collapses into one row that keeps both
+    halves: ``predicted_start = True`` with ``certainty = 'questionable'``.
+    Dropping the pair, as the first implementation did, threw away four
+    predicted starters to avoid a primary-key collision.
+
+    Everything else duplicated is still refused: a player who is both in the XI
+    and flagged OUT or suspended is a genuine contradiction, and two different
+    provider names collapsing onto one code is a resolution failure wearing a
+    disguise. Both go back to the caller counted.
+    """
+    keep: list[pd.DataFrame] = []
+    dropped: list[dict] = []
+    for code, group in frame.groupby("code", sort=False):
+        if len(group) == 1:
+            keep.append(group)
+            continue
+        starters = group[group["predicted_start"] & group["certainty"].isin(_SHEET_LABELS)]
+        doubts = group[~group["predicted_start"] & (group["certainty"] == "questionable")]
+        names = set(group["_name"])
+        if len(starters) == 1 and len(doubts) == 1 and len(group) == 2 and len(names) == 1:
+            merged = starters.copy()
+            merged["certainty"] = "questionable"
+            keep.append(merged)
+            continue
+        for _, r in group.iterrows():
+            dropped.append({
+                "team_abbr": r["_abbr"], "player_name": r["_name"],
+                "position": "", "certainty": r["certainty"],
+                "reason": (f"{len(group)} entries resolved to code {code} "
+                           f"({sorted(names)}) and do not merge"),
+            })
+    out = (pd.concat(keep, ignore_index=True) if keep
+           else frame.iloc[0:0].reset_index(drop=True))
+    return out, dropped
 
 
 def validate_fixture_pairs(
