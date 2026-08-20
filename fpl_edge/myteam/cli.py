@@ -475,14 +475,75 @@ def whynot(entry: int = EntryOpt) -> None:
     )
 
 
+class _CookieInputError(RuntimeError):
+    """The cookie could not be read; the message explains which route to use."""
+
+
+#: A terminal line discipline in canonical mode accepts at most this many bytes
+#: on one line (macOS ``TTYDEFCHARS``/``MAX_CANON``). A full FPL Cookie header is
+#: two JWTs and runs to ~3KB, so an interactive prompt silently stops accepting
+#: keystrokes partway through and *looks like a hang*. That is not a paste the
+#: user got wrong -- it is an input path that cannot work, so the file and pipe
+#: routes below are the real ones and the prompt is the fallback.
+_TTY_LINE_LIMIT = 1024
+
+_COOKIE_ROUTES = (
+    "Use one of these instead -- both avoid the terminal's 1024-character "
+    "line limit:\n"
+    "  pbpaste | uv run fpl myteam auth --paste-cookie\n"
+    "      (copy the Cookie header in DevTools, then run that one line)\n"
+    "  uv run fpl myteam auth --from-file /path/to/cookie.txt\n"
+    "      (paste into a file, run this, then delete the file)"
+)
+
+
+def _read_cookie_input(from_file: Path | None) -> str:
+    """The Cookie header, from a file, a pipe, or -- last resort -- a prompt."""
+    if from_file is not None:
+        if not from_file.exists():
+            raise _CookieInputError(f"No such file: {from_file}")
+        text = from_file.read_text().strip()
+        if not text:
+            raise _CookieInputError(f"{from_file} is empty.")
+        return text
+
+    if not sys.stdin.isatty():        # piped: `pbpaste | ...`, no length limit
+        text = sys.stdin.read().strip()
+        if not text:
+            raise _CookieInputError("Nothing arrived on stdin.\n" + _COOKIE_ROUTES)
+        return text
+
+    console.print(
+        "Paste the Cookie header and press Enter.\n"
+        f"[yellow]Note:[/yellow] this terminal truncates a typed line at "
+        f"{_TTY_LINE_LIMIT} characters and an FPL cookie is longer, so a paste "
+        "here often stalls.\n" + _COOKIE_ROUTES
+    )
+    # Visible, not hidden: hiding the input removes the only cue that the paste
+    # was truncated, and the value is about to be checked anyway.
+    text = typer.prompt("Cookie header").strip()
+    if len(text) >= _TTY_LINE_LIMIT - 1:
+        raise _CookieInputError(
+            f"The input is {len(text)} characters, at the terminal's limit, so "
+            "it is almost certainly truncated.\n" + _COOKIE_ROUTES
+        )
+    return text
+
+
 @app.command("auth")
 def auth(
     entry: int = EntryOpt,
     paste_cookie: bool = typer.Option(
         False,
         "--paste-cookie",
-        help="Prompt for a browser Cookie header (hidden input) and store the "
-        "self-renewing token pair extracted from it.",
+        help="Store the self-renewing token pair from a browser Cookie header. "
+        "Reads stdin when piped (`pbpaste | ...`), else prompts.",
+    ),
+    from_file: Path = typer.Option(
+        None,
+        "--from-file",
+        help="Read the Cookie header from a file instead of typing it. Delete "
+        "the file afterwards; the tokens are the credential.",
     ),
 ) -> None:
     """Set up or inspect FPL auth. One paste lasts about six months.
@@ -495,8 +556,12 @@ def auth(
     from fpl_edge.myteam.tokens import AuthNotConfiguredError, TokenManager
 
     manager = TokenManager()
-    if paste_cookie:
-        pasted = typer.prompt("Paste the Cookie header", hide_input=True)
+    if paste_cookie or from_file is not None:
+        try:
+            pasted = _read_cookie_input(from_file)
+        except _CookieInputError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(1)
         try:
             status = manager.ingest_from_cookie(pasted)
         except AuthNotConfiguredError as exc:

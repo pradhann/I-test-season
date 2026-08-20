@@ -46,8 +46,19 @@ Fires on its own, keyed to the real UTC deadline:
 1. `uv run fpl myteam auth` — reports token state and verifies against the live
    account, refreshing the 8-hour access token through the stored refresh token.
    That is the everyday case and needs no input. If it reports the grant was
-   *refused*, the session was revoked: `uv run fpl myteam auth --paste-cookie`
-   once (hidden prompt) and the ~6-month refresh token takes over again.
+   *refused*, re-supply the session — copy the Cookie header from DevTools
+   (Application → Cookies → fantasy.premierleague.com) and pipe it in:
+
+   ```bash
+   pbpaste | uv run fpl myteam auth --paste-cookie
+   ```
+
+   Do not type it at a prompt. A terminal truncates one typed line at 1024
+   characters and the header is roughly three times that, so the prompt stops
+   accepting keystrokes partway through and looks frozen. `--from-file
+   /path/to/cookie.txt` works the same way if you would rather use a file
+   (delete it afterwards). Setup redeems the token once to prove the grant
+   really works, so a dead chain is reported now rather than at the deadline.
 2. `uv run python scripts/gw1_squad.py` — re-solves the plan. The recommended
    squad section leads with the solve time and warns past 24h; acting on a
    stale plan means acting on stale prices, injuries and odds.

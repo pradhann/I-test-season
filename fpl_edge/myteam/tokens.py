@@ -301,8 +301,10 @@ class TokenManager:
         if not refresh:
             raise AuthNotConfiguredError(
                 "The pasted cookie contains no refresh_token. Make sure you are "
-                "logged in and copied the FULL Cookie header from a request to "
-                "fantasy.premierleague.com/api/..."
+                "logged in and copied the FULL Cookie header. If you typed it "
+                "at a prompt it was almost certainly truncated at the "
+                "terminal's 1024-character line limit; pipe it instead: "
+                "`pbpaste | uv run fpl myteam auth --paste-cookie`."
             )
         text = self.env_path.read_text() if self.env_path.exists() else ""
         if access:
