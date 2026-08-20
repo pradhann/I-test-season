@@ -187,4 +187,142 @@ the same build runs solo-local and shared without forking code paths.
 
 ---
 
-*(Sections 2–4 and 6 follow — written incrementally.)*
+## 2. Scripts: the git-versioned typed-JSON contract
+
+A **script** is a small TypeScript program that returns JSON validated against a declared
+schema. It is the single reusable "data function" primitive: dashboards and monitors *pin*
+scripts; nothing else fetches data. (Design rationale: docs/scripts-design.md §0–§7.)
+
+### 2.1 Authoring — the whole loop stays in chat
+
+The agent authors scripts through five MCP tools (`server/tools/scripts/tools.ts:104-340`):
+`save_script`, `get_script`, `delete_script`, `run_script`, `get_run`, `get_run_result`.
+
+- `save_script` validates (entrypoint `index.ts` required; manifest required on full saves;
+  datasource ids checked against the live source registry, tools.ts:139-155) and forwards to
+  the scripts-service. Partial saves merge changed files onto a required `base_sha`.
+- **Optimistic concurrency built for a flaky agent**: the tool tracks saves whose HTTP call
+  died without an answer (`uncommitted` set) and on retry re-reads head as the base —
+  a lost-but-landed save becomes a no-op, a concurrent edit becomes a clean 409 instead of a
+  silent clobber (tools.ts:106-117).
+- `run_script` is a *test* run (`mode: "draft"`): 5-minute timeout, capped logs, blocks up to
+  ~50s then hands off to `get_run` polling (tools.ts:31, 242-280). Results default to a
+  `summary` view (arrays truncated to 25 items with omitted-count markers); `get_run_result`
+  pages the complete JSON in character-offset chunks so full outputs never depend on one
+  oversized tool response (tools.ts:318-337).
+- **The 10-second budget as a tool contract**: a draft run that succeeds but exceeds 10s
+  comes back `isError: true` with a `performance` verdict and concrete remediation text —
+  "push filtering and aggregation into SQL… If it genuinely cannot fit the budget, say so"
+  (tools.ts:36, 66-80, 100). The latency constraint of the dashboards that will pin the
+  script is enforced at authoring time, on the agent, not discovered by users later.
+
+### 2.2 Versioning: git is the store, SQLite is the index
+
+Every save is **one serialized commit to main** of the scripts repo
+(`scripts-service/git.ts:122-163`):
+
+- Layout: `scripts/<owner-uuid>/<name>/{manifest.json, index.ts, …}` with sibling roots
+  `dashboards/` and `monitors/` sharing the same commit machinery (git.ts:106-108).
+- Commits are **authored as the acting user** (`--author="name <email>"`) with the
+  conversation URL in the message (git.ts:145-148) — provenance chain: chat message → commit →
+  run row → per-run query activity.
+- Push discipline: with `SCRIPTS_REPO_URL` set, a failed push **rolls the commit back**
+  (`git reset --hard HEAD~1`) and fails the save visibly — the remote repo is the source of
+  truth and local state never silently diverges (git.ts:151-160). The PAT travels as an
+  `http.extraheader`, never in the origin URL, so it can't leak into `.git/config` or error
+  messages (git.ts:18-25).
+- Saves are serialized through a promise chain because concurrent commits to one working
+  tree would corrupt the index and per-script `baseSha` checks assume ordering (git.ts:97-104).
+- Deletion is a removal commit; history keeps the code recoverable (git.ts:168-198). No-op
+  saves (identical content) produce no commit (git.ts:137-143).
+- The SQLite side (`scripts-service/store.ts`) is only registry rows and pointers: name,
+  immutable resource UUID, `head_sha`, run telemetry, `avg_duration_ms` over the last 20
+  successful runs (used by the dashboard loading bars).
+
+There is deliberately **no promotion/versioning UI**: scripts run at head; *pins* (dashboards,
+monitors) freeze exact SHAs, so later saves never silently change a deployed artifact
+(scripts-design.md §2 "No pointers, no promotion").
+
+### 2.3 The typed-JSON contract
+
+The manifest (`scripts-service/manifest.ts:98-110`) is zod-validated at save:
+`description`, `datasources` (the run's grant allowlist), `timeoutMinutes` (capped),
+`runtime: "node"` (reserved for a future Python shim — the field exists from day one),
+`params` (a full object-root JSON Schema → run forms + dispatch-time validation), and
+**`resultSchema`** (JSON Schema the run output must satisfy). On completion the runner
+validates the emitted JSON against `resultSchema` before storing it
+(`validateRunResult`, scripts-service/runner.ts:219-221) — a script that returns the wrong
+shape *fails*, so a dashboard or monitor pinned to it can trust the shape statically.
+
+### 2.4 Execution: process-per-run, credential-free, broker-only I/O
+
+`scripts-service/runner.ts` supervises runs:
+
+1. **Materialize from git at the exact SHA** — `readTree(sha, owner, name)` (runner.ts:117),
+   never from a working directory; the pin is what runs.
+2. Compile to one bundle (esbuild via `script-compiler.ts`), copy a secret-free harness +
+   loader shim into the sandbox (`runner-runtime.ts` — the child must not read the service's
+   own module directory, where a computed import could inspect config).
+3. `sealSandboxForRunner` chmods/chowns the tree to a dedicated runner group
+   (`runner-permissions.ts`) — in production the trusted supervisor runs as root purely so it
+   can drop each child to the `argus-runner` OS identity that cannot read `/data`.
+4. Spawn Node **detached in its own process group** with
+   `--permission --allow-fs-read=<sandbox>` and a custom ESM loader; env contains only
+   `PATH`, params, limits, and the entry path — **no credentials of any kind**
+   (runner.ts:147-172). Timeout/cancel `SIGTERM`s then `SIGKILL`s the whole group
+   (runner.ts:50-66).
+5. The child talks to the parent over **IPC only**: `ready` (reached user code — used to
+   attribute a non-zero exit to the script vs. the sandbox), `result` (exactly one), and
+   `query` messages (runner.ts:184-199).
+
+`ctx.query(source, sql)` is the sole data path: the parent checks the requested source
+against the **pinned manifest's `datasources`** (`handleRunQuery`,
+scripts-service/runner-query.ts:16-21), then `forwardQuery` POSTs to argus's
+`POST /internal/query` with the shared secret and bounded retries on 502/503/504
+(scripts-service/broker.ts:5-38). Argus's endpoint (server/http/internal.ts:66-100) re-runs
+the **exact same guard + client code as chat** (`runQuery` with `assertReadOnlySql` etc.) but
+with script-sized caps — 100k rows / 50MB instead of chat's LIMIT-1000/100k-chars — and
+records every call in the ClickHouse activity feed keyed by `runId`. Credentials therefore
+exist in exactly one process (argus); the scripts service and every run child are
+structurally credential-free. Membership is re-checked at query time
+(`hasWriteAccess(actingUser)`, internal.ts:73-75), so an offboarded owner's scripts stop
+reaching data immediately.
+
+Concurrency: a `pump()` loop with a `launching` counter dispatches queued runs up to
+`maxConcurrentRuns` (default 8) without over-committing during async launches
+(runner.ts:89-114). Boot reconciliation marks orphaned queued/running rows `interrupted` and
+clears sandboxes — never a silent retry (runner.ts:261-268). Logs/results live only in a
+bounded in-process cache (32MiB/15min); durable state is git + light SQLite rows.
+
+### 2.5 Why scripts are the ONLY data path for dashboards — failure modes this kills
+
+`docs/scripts-design.md §11`: a dashboard's "**only** data path is
+`runScript<Result>(name, params)` against `manifest.scripts: [{id, name, sha}]` … Direct
+dashboard queries do not exist". What that single decision eliminates:
+
+1. **Credential exposure in generated UI code.** Dashboard source is model-authored and runs
+   in a browser; if it could query, it would need a credential or an open query proxy. With
+   pins, the browser can only trigger pre-committed, read-only, schema-validated programs.
+2. **Silent drift.** Pins are `{id, name, sha}` — an exact commit of an immutable resource
+   UUID. Editing a script never changes a deployed dashboard until the pin is bumped; the
+   name isn't even the identity, so renames can't repoint anything.
+3. **Untyped data → runtime UI breakage.** `resultSchema` is enforced at run completion, so
+   the dashboard's `runScript<Result>` generic is honest — shape errors fail the *run*, not
+   the render.
+4. **Dangling references.** Deleting a pinned script is refused with 409; deleting the
+   dashboard cascades to its now-unpinned scripts unless another artifact still pins them
+   (`scripts-service/cascade.ts`) — dependencies exist to serve what pins them.
+5. **Unbounded/unvetted query cost from viewers.** Shared viewers may run only the
+   dashboard's immutable pinned scripts; every execution is an ordinary attributed run with
+   the same timeouts, caps, and activity trail. There is no ad-hoc SQL surface to abuse.
+6. **Latency surprises.** The 10s draft budget plus per-query timings graded at authoring
+   time (tools.ts:66-80) means a dashboard's data dependencies were performance-vetted
+   before they could be pinned.
+7. **N implementations of data access.** Chat, remote MCP, scripts, dashboards, and monitors
+   all funnel to one `runQuery` + one source registry — one place for guards, retries, caps,
+   and audit (docs/scripts-design.md §9: "Datasource clients or SQL guards in the scripts
+   service" is on the deliberately-not-building list).
+
+---
+
+*(Sections 3, 4 and 6 follow — written incrementally.)*
