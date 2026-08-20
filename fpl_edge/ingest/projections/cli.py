@@ -38,7 +38,14 @@ import traceback
 
 import pandas as pd
 
-from fpl_edge.ingest.projections import fpl_ep, fplform, github_csv, livefpl, rotowire
+from fpl_edge.ingest.projections import (
+    fpl_ep,
+    fplform,
+    github_csv,
+    livefpl,
+    premierinjuries,
+    rotowire,
+)
 from fpl_edge.ingest.projections.providers import PROVIDERS, probe_all
 from fpl_edge.ingest.projections.store import ProjectionStore
 from fpl_edge.store import Warehouse
@@ -130,6 +137,7 @@ def ingest(season: str = SEASON, *, first_gw: int = 1, last_gw: int = 8,
         ("livefpl", _ingest_livefpl),
         ("fpl_ep", _ingest_fpl_ep),
         ("rotowire", _ingest_rotowire),
+        ("premierinjuries", _ingest_premierinjuries),
     ]
     steps += [(f.key, _github_step(f.key)) for f in github_csv.FEEDS]
     if only:
@@ -297,6 +305,37 @@ def _ingest_rotowire(warehouse: Warehouse, store: ProjectionStore, season: str,
         unresolved=len(unresolved),
         detail=(f"HTTP {got.http_status}, {len({e.team_abbr for e in entries})} "
                 f"team sheets for GW{gw}, {starters} starters"),
+    )
+
+
+def _ingest_premierinjuries(warehouse: Warehouse, store: ProjectionStore, season: str,
+                            *, first_gw: int, last_gw: int) -> StepResult:
+    got = premierinjuries.fetch()
+    warehouse.record_fetch(
+        source=f"projections_{premierinjuries.PROVIDER}",
+        endpoint=premierinjuries.TABLE_PATH, params=None,
+        fetched_at=got.fetched_at, sha256=got.sha256,
+        body_path=str(got.body_path), http_status=got.http_status,
+    )
+    entries = premierinjuries.parse_table(got.body)
+    gw = _next_gw(warehouse, season, got.fetched_at)
+    snap = warehouse.snapshot_at(got.fetched_at)
+    teams = snap.table("dim_team", where="season = ?", params=[season])
+    rosters = snap.table("dim_player", where="season = ?", params=[season])
+    rows, unresolved = premierinjuries.to_projection_rows(
+        entries, season=season, gw=gw, as_of=got.fetched_at,
+        rosters=rosters[["code", "team_code", "web_name", "first_name", "second_name"]],
+        name_to_team_code=dict(zip(teams["name"], teams["team_code"].astype(int))),
+    )
+    n = store.append("fact_projection", rows)
+    if not unresolved.empty:
+        print("  premierinjuries unresolved:", unresolved.head(10).to_dict("records"))
+    ruled_out = int((rows["p_appear"] == 0.0).sum()) if not rows.empty else 0
+    return StepResult(
+        provider="premierinjuries", ok=True, rows=n, parsed=len(entries),
+        unresolved=len(unresolved),
+        detail=(f"HTTP {got.http_status}, {len({e.club for e in entries})} clubs "
+                f"for GW{gw}, {ruled_out} ruled out, p_appear only"),
     )
 
 
