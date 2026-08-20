@@ -27,6 +27,20 @@ The verdicts, in one line each
   unreadable. Not ingested.
 * **FotMob** -- ``robots.txt`` explicitly disallows ``/api/*`` for everyone but
   named search engines. Not ingested.
+* **Rotowire** -- free server-rendered predicted/confirmed EPL lineups,
+  robots-permitted, with an ``llms.txt`` welcoming automated readers. The
+  best free xMins proxy found. Ingested.
+* **FPL's own ep_next** -- the official API's expected points for the next
+  gameweek; crude but free, universal, and the natural ensemble baseline.
+  Ingested.
+* **Fantasy Football Scout** -- robots fully permissive, but the free
+  team-news page carries ~15 teaser names for 20 clubs; the full predicted
+  XIs are member content. Not ingested.
+* **WhoScored** -- ``robots.txt`` disallows ``/Predictions/`` for everyone,
+  which is precisely the projections product. Not ingested.
+* **Community GitHub projections** (fpl-projections-site) -- free raw JSON of
+  Monte-Carlo xPts percentiles, but anonymous, unlicensed and days old.
+  Watchlist, not ingested.
 """
 
 from __future__ import annotations
@@ -40,7 +54,7 @@ import httpx
 from fpl_edge.ingest.http import USER_AGENT
 from fpl_edge.ingest.projections.robots import fetch_policy
 
-Verdict = Literal["ingested", "paywalled", "blocked", "dead", "forbidden"]
+Verdict = Literal["ingested", "paywalled", "blocked", "dead", "forbidden", "watchlist"]
 
 #: When the statuses recorded in this module were observed.
 MEASURED_AT = dt.datetime(2026, 8, 19, 0, 0, tzinfo=dt.timezone.utc)
@@ -363,6 +377,187 @@ PROVIDERS: tuple[Provider, ...] = (
         ),
         probe_urls=("https://www.fotmob.com/robots.txt",),
         measured_status=(("/robots.txt", 200), ("/api/leagues?id=47", 404)),
+    ),
+    Provider(
+        key="rotowire",
+        name="Rotowire soccer lineups",
+        home="https://www.rotowire.com/soccer/lineups.php",
+        publishes=(
+            "Predicted starting XIs for every fixture of the next EPL matchday, "
+            "upgraded to confirmed XIs when official team news lands ~60-75 min "
+            "before kickoff, plus each club's OUT/QUES injury list. The classic "
+            "free xMins proxy: a named starter is the strongest pre-deadline "
+            "evidence of 60+ minutes that exists."
+        ),
+        interface=(
+            "Server-rendered HTML at /soccer/lineups.php; no login, no key, no "
+            "JavaScript. Parse path: div.lineup__box per fixture, .lineup__abbr "
+            "team codes, ul.lineup__list.is-home/.is-visit with li.lineup__player "
+            "a[title] full names; li.lineup__title 'Injuries' separates the XI "
+            "from the OUT/QUES list; .lineup__status is-expected|is-confirmed."
+        ),
+        cost="Free. Premium exists for other sports tools; the lineups page is open.",
+        licence=(
+            "robots.txt allows User-agent: * everywhere relevant (Disallows are "
+            "accounts/forum/legacy paths only). The site also publishes an "
+            "llms.txt that explicitly welcomes automated readers to its lineup "
+            "and projection pages, asking only that content be attributed and "
+            "never fabricated. Content is copyright Roto Sports Inc.; rows land "
+            "in a private warehouse and are never republished."
+        ),
+        rate_limit=(
+            "None published. One 450KB page per run; POLITE_DELAY_S=3.0 before "
+            "the request. Refreshing hourly on deadline day is well within "
+            "politeness."
+        ),
+        covers_2026_27=True,
+        verdict="ingested",
+        reason=(
+            "HTTP 200, 461,432 bytes, 10 EPL fixture boxes with 11 predicted "
+            "starters per side (220 names) plus injury lists, all 2026-27 GW1 "
+            "fixtures. Names resolve onto FPL codes within each club's roster."
+        ),
+        probe_urls=("https://www.rotowire.com/robots.txt",
+                    "https://www.rotowire.com/soccer/lineups.php"),
+        measured_status=(("/robots.txt", 200), ("/soccer/lineups.php", 200),
+                         ("/llms.txt", 200)),
+        notes=(
+            "Rotowire's team abbreviations differ from FPL's short_name in one "
+            "case measured so far (NOT vs NFO); rotowire.ABBR_TO_FPL holds the "
+            "aliases and an unknown abbreviation refuses rather than fuzzy-matches.",
+            "The page shows the next MATCHDAY, not necessarily the next FPL "
+            "gameweek; validate_fixture_pairs() checks every pair on the page "
+            "against fact_fixture for the target gw before anything is written.",
+        ),
+    ),
+    Provider(
+        key="fpl_ep",
+        name="FPL official ep_next",
+        home="https://fantasy.premierleague.com/api/bootstrap-static/",
+        publishes=(
+            "The game's own expected points for the next gameweek (ep_next) for "
+            "every element, plus chance_of_playing_next_round, the availability "
+            "percentage behind the flags. Form-derived and crude, but universal, "
+            "instant, and published by the party that also sets prices."
+        ),
+        interface=(
+            "The bootstrap-static JSON this repo already polls. ep_next / ep_this "
+            "are strings on each element; chance_of_playing_next_round is an "
+            "integer or null (null + status 'a' means unflagged, i.e. 100%)."
+        ),
+        cost="Free.",
+        licence="The official public API, already relied on for prices and flags.",
+        rate_limit="Shared with the existing bootstrap polling; no extra load.",
+        covers_2026_27=True,
+        verdict="ingested",
+        reason=(
+            "Already reachable (the repo's price polls read the same document). "
+            "Stored under provider 'fpl_ep' so its track record is measured "
+            "exactly like any third party's, and because a projection must be "
+            "stored at fetch time to be scoreable at all."
+        ),
+        probe_urls=("https://fantasy.premierleague.com/api/bootstrap-static/",),
+        measured_status=(("/api/bootstrap-static/", 200),),
+        notes=(
+            "ep_this is deliberately not ingested: once a gameweek kicks off it "
+            "describes the past. ep_next always refers to the decision ahead.",
+            "ep_next already includes FPL's own availability scaling, so it is "
+            "an xp, not an xp_if_appears.",
+        ),
+    ),
+    Provider(
+        key="fantasyfootballscout",
+        name="Fantasy Football Scout",
+        home="https://www.fantasyfootballscout.co.uk",
+        publishes=(
+            "Team news, predicted lineups for all 20 clubs, and editorial. The "
+            "historical reference source for predicted XIs."
+        ),
+        interface=(
+            "WordPress; /team-news is server-rendered. The free page carries 20 "
+            "club headers but only ~15 player names in total -- one teaser per "
+            "club -- with the full predicted XIs marked member content."
+        ),
+        cost="Freemium; full predicted lineups require membership.",
+        licence="robots.txt is fully permissive (User-agent: * / empty Disallow).",
+        rate_limit="Not established.",
+        covers_2026_27=True,
+        verdict="paywalled",
+        reason=(
+            "HTTP 200 on /team-news (563,862 bytes, 'FPL 2026/27 - Predicted "
+            "Line-ups') but only 15 player-name nodes across 20 clubs; the XIs "
+            "themselves are behind membership. Rotowire gives the same signal "
+            "free, so there is nothing here worth paying-and-scraping for."
+        ),
+        probe_urls=("https://www.fantasyfootballscout.co.uk/robots.txt",
+                    "https://www.fantasyfootballscout.co.uk/team-news/"),
+        measured_status=(("/robots.txt", 200), ("/team-news/", 200)),
+    ),
+    Provider(
+        key="whoscored",
+        name="WhoScored",
+        home="https://www.whoscored.com",
+        publishes="Ratings, detailed match stats, and predicted lineups under /Predictions/.",
+        interface="JS-heavy site; predictions live under /Predictions/.",
+        cost="Free to view.",
+        licence=(
+            "robots.txt disallows /Predictions/ (and /predictions/) for "
+            "User-agent: * -- the one section that carries the projections."
+        ),
+        rate_limit="n/a",
+        covers_2026_27=None,
+        verdict="forbidden",
+        reason=(
+            "The crawl policy permits most of the site but explicitly closes "
+            "/Predictions/ to everyone. The part we want is the part they "
+            "forbid; ToS additionally prohibits automated extraction."
+        ),
+        probe_urls=("https://www.whoscored.com/robots.txt",),
+        measured_status=(("/robots.txt", 200),),
+    ),
+    Provider(
+        key="fpl_projections_site",
+        name="Community GitHub projections (fpl-projections-site)",
+        home="https://github.com/Juz92backup/fpl-projections-site",
+        publishes=(
+            "Monte-Carlo xPts for 564 players over a 5-GW horizon: mean and "
+            "p10/p25/median/p75/p90 per player per gameweek, 10,000 iterations, "
+            "keyed on what appear to be stable FPL codes. Also a manifest with "
+            "run timestamp and season/gameweek labels."
+        ),
+        interface=(
+            "raw.githubusercontent.com JSON: data/manifest.json (run_at, season, "
+            "gameweek), data/horizons.json (per-GW percentile rows), "
+            "data/players.json, data/samples-h{1,3,5}.bin. Versioned by git "
+            "history, so every past projection is retrievable with its date."
+        ),
+        cost="Free.",
+        licence=(
+            "NO LICENSE file. Anonymous single author, 'derived outputs only'. "
+            "Public and fetchable, but nothing grants reuse, and the account "
+            "name ('...backup') suggests it may vanish."
+        ),
+        rate_limit="GitHub raw: generous; one fetch per run is nothing.",
+        covers_2026_27=True,
+        verdict="watchlist",
+        reason=(
+            "HTTP 200 on every data file; manifest run_at 2026-08-18T03:00Z, "
+            "season 2026-27, gameweek 1 -- genuinely current. Not ingested yet: "
+            "no licence, no track record, unknown author, and the ensemble "
+            "would give it weight 0 until a season of history exists anyway. "
+            "Re-check after a few gameweeks of published runs."
+        ),
+        probe_urls=(
+            "https://raw.githubusercontent.com/Juz92backup/fpl-projections-site/main/data/manifest.json",
+            "https://raw.githubusercontent.com/Juz92backup/fpl-projections-site/main/data/horizons.json",
+        ),
+        measured_status=(("data/manifest.json", 200), ("data/horizons.json", 200)),
+        notes=(
+            "GitHub repo search ('fpl projections', 2026-08-19) surfaced ~12 "
+            "active personal projection engines but only this one publishing "
+            "machine-readable weekly outputs; theFPLkiwi, the best-known "
+            "historical community sheet, is dormant (last push 2023-12).",
+        ),
     ),
 )
 

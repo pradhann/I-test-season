@@ -20,7 +20,7 @@ import sys
 
 import pandas as pd
 
-from fpl_edge.ingest.projections import fplform, livefpl
+from fpl_edge.ingest.projections import fpl_ep, fplform, livefpl, rotowire
 from fpl_edge.ingest.projections.providers import PROVIDERS, probe_all
 from fpl_edge.ingest.projections.store import ProjectionStore
 from fpl_edge.store import Warehouse
@@ -56,7 +56,13 @@ def element_id_to_code(warehouse: Warehouse, season: str,
 
 def ingest(season: str = SEASON, *, first_gw: int = 1, last_gw: int = 8,
            db: str | None = None) -> dict[str, int]:
-    """Fetch every reachable provider and land it in the warehouse."""
+    """Fetch every reachable provider and land it in the warehouse.
+
+    Each provider runs inside its own try/except: one provider changing shape
+    or going dark must not cost us the others' rows at a deadline. A failure
+    is printed with its real error and recorded as -1 in the result -- never
+    papered over with fabricated rows.
+    """
     written: dict[str, int] = {}
     with Warehouse(db) if db else Warehouse() as warehouse:
         store = ProjectionStore(warehouse)
@@ -64,74 +70,157 @@ def ingest(season: str = SEASON, *, first_gw: int = 1, last_gw: int = 8,
         if applied:
             print(f"applied migrations: {', '.join(applied)}")
 
-        # -- FPL Form ------------------------------------------------------
-        got = fplform.fetch_csv(first_gw=first_gw, last_gw=last_gw)
-        warehouse.record_fetch(
-            source="projections_fplform", endpoint=fplform.EXPORT_PATH,
-            params=f"firstgw={first_gw}&lastgw={last_gw}&all=1",
-            fetched_at=got.fetched_at, sha256=got.sha256,
-            body_path=str(got.body_path), http_status=got.http_status,
-        )
-        parsed = fplform.parse_csv(got.body)
-        id_to_code = element_id_to_code(warehouse, season, got.fetched_at)
-        rows, unresolved = fplform.to_projection_rows(
-            parsed, season=season, as_of=got.fetched_at, id_to_code=id_to_code
-        )
-        written["fplform"] = store.append("fact_projection", rows)
-        print(f"fplform: HTTP {got.http_status}, {len(parsed):,} parsed rows "
-              f"({parsed['element_id'].nunique()} players x GW{first_gw}-{last_gw}), "
-              f"{len(rows):,} resolved, {len(unresolved)} unresolved element_ids, "
-              f"{written['fplform']:,} appended")
-        if not unresolved.empty:
-            print("  unresolved:",
-                  unresolved[["element_id", "provider_name", "provider_team"]]
-                  .drop_duplicates().head(10).to_dict("records"))
-
-        # -- LiveFPL -------------------------------------------------------
-        info = livefpl.fetch("player_info")
-        warehouse.record_fetch(
-            source="projections_livefpl", endpoint="/planner/all_player_info.json",
-            params=None, fetched_at=info.fetched_at, sha256=info.sha256,
-            body_path=str(info.body_path), http_status=info.http_status,
-        )
-        provider_map = livefpl.parse_code_map(info.body)
-        agree = sum(1 for k, v in provider_map.items() if id_to_code.get(k) == v)
-        print(f"livefpl: code map {len(provider_map)} entries, {agree} agree with "
-              f"dim_player, {len(provider_map) - agree} differ")
-
-        catalogs = element_catalogs(warehouse, info.fetched_at)
-        total = 0
-        for kind in ("predicted_eo", "top10k", "elite"):
-            got_own = livefpl.fetch(kind, gw=first_gw)
-            warehouse.record_fetch(
-                source="projections_livefpl", endpoint=livefpl._path(kind, first_gw),
-                params=None, fetched_at=got_own.fetched_at, sha256=got_own.sha256,
-                body_path=str(got_own.body_path), http_status=got_own.http_status,
-            )
-            parsed_own = livefpl.parse_ownership(got_own.body, kind)
-            # Which season's element_ids is this file keyed on? Asked of the data,
-            # never assumed: top10k.json and elite.json still described 2025-26
-            # when predictedEOs/1.json had already rolled over to 2026-27.
-            file_season = livefpl.infer_season(
-                set(parsed_own["element_id"].astype(int)), catalogs
-            )
-            file_gw = first_gw if file_season == season else _last_finished_gw(
-                warehouse, file_season, got_own.fetched_at
-            )
-            file_map = (id_to_code if file_season == season
-                        else element_id_to_code(warehouse, file_season, got_own.fetched_at))
-            own_rows, own_unres = livefpl.to_ownership_rows(
-                parsed_own, kind=kind, season=file_season, gw=file_gw,
-                as_of=got_own.fetched_at, id_to_code=file_map,
-            )
-            n = store.append("fact_external_ownership", own_rows)
-            total += n
-            flag = "" if file_season == season else "  <- NOT the current season"
-            print(f"  {kind}: HTTP {got_own.http_status}, {len(parsed_own)} entries, "
-                  f"season={file_season} gw={file_gw}, {len(own_rows)} resolved, "
-                  f"{len(own_unres)} unresolved, {n} appended{flag}")
-        written["livefpl"] = total
+        for name, step in (("fplform", _ingest_fplform),
+                           ("livefpl", _ingest_livefpl),
+                           ("fpl_ep", _ingest_fpl_ep),
+                           ("rotowire", _ingest_rotowire)):
+            try:
+                written[name] = step(warehouse, store, season,
+                                     first_gw=first_gw, last_gw=last_gw)
+            except Exception as exc:  # noqa: BLE001 -- isolation is the point
+                written[name] = -1
+                print(f"{name}: FAILED ({type(exc).__name__}: {exc})")
     return written
+
+
+def _ingest_fplform(warehouse: Warehouse, store: ProjectionStore, season: str,
+                    *, first_gw: int, last_gw: int) -> int:
+    warehouse.record_fetch(
+        source="projections_fplform", endpoint=fplform.EXPORT_PATH,
+        params=f"firstgw={first_gw}&lastgw={last_gw}&all=1",
+        fetched_at=got.fetched_at, sha256=got.sha256,
+        body_path=str(got.body_path), http_status=got.http_status,
+    )
+    parsed = fplform.parse_csv(got.body)
+    id_to_code = element_id_to_code(warehouse, season, got.fetched_at)
+    rows, unresolved = fplform.to_projection_rows(
+        parsed, season=season, as_of=got.fetched_at, id_to_code=id_to_code
+    )
+    n = store.append("fact_projection", rows)
+    print(f"fplform: HTTP {got.http_status}, {len(parsed):,} parsed rows "
+          f"({parsed['element_id'].nunique()} players x GW{first_gw}-{last_gw}), "
+          f"{len(rows):,} resolved, {len(unresolved)} unresolved element_ids, "
+          f"{n:,} appended")
+    if not unresolved.empty:
+        print("  unresolved:",
+              unresolved[["element_id", "provider_name", "provider_team"]]
+              .drop_duplicates().head(10).to_dict("records"))
+    return n
+
+
+def _ingest_livefpl(warehouse: Warehouse, store: ProjectionStore, season: str,
+                    *, first_gw: int, last_gw: int) -> int:
+    info = livefpl.fetch("player_info")
+    warehouse.record_fetch(
+        source="projections_livefpl", endpoint="/planner/all_player_info.json",
+        params=None, fetched_at=info.fetched_at, sha256=info.sha256,
+        body_path=str(info.body_path), http_status=info.http_status,
+    )
+    id_to_code = element_id_to_code(warehouse, season, info.fetched_at)
+    provider_map = livefpl.parse_code_map(info.body)
+    agree = sum(1 for k, v in provider_map.items() if id_to_code.get(k) == v)
+    print(f"livefpl: code map {len(provider_map)} entries, {agree} agree with "
+          f"dim_player, {len(provider_map) - agree} differ")
+
+    catalogs = element_catalogs(warehouse, info.fetched_at)
+    total = 0
+    for kind in ("predicted_eo", "top10k", "elite"):
+        got_own = livefpl.fetch(kind, gw=first_gw)
+        warehouse.record_fetch(
+            source="projections_livefpl", endpoint=livefpl._path(kind, first_gw),
+            params=None, fetched_at=got_own.fetched_at, sha256=got_own.sha256,
+            body_path=str(got_own.body_path), http_status=got_own.http_status,
+        )
+        parsed_own = livefpl.parse_ownership(got_own.body, kind)
+        # Which season's element_ids is this file keyed on? Asked of the data,
+        # never assumed: top10k.json and elite.json still described 2025-26
+        # when predictedEOs/1.json had already rolled over to 2026-27.
+        file_season = livefpl.infer_season(
+            set(parsed_own["element_id"].astype(int)), catalogs
+        )
+        file_gw = first_gw if file_season == season else _last_finished_gw(
+            warehouse, file_season, got_own.fetched_at
+        )
+        file_map = (id_to_code if file_season == season
+                    else element_id_to_code(warehouse, file_season, got_own.fetched_at))
+        own_rows, own_unres = livefpl.to_ownership_rows(
+            parsed_own, kind=kind, season=file_season, gw=file_gw,
+            as_of=got_own.fetched_at, id_to_code=file_map,
+        )
+        n = store.append("fact_external_ownership", own_rows)
+        total += n
+        flag = "" if file_season == season else "  <- NOT the current season"
+        print(f"  {kind}: HTTP {got_own.http_status}, {len(parsed_own)} entries, "
+              f"season={file_season} gw={file_gw}, {len(own_rows)} resolved, "
+              f"{len(own_unres)} unresolved, {n} appended{flag}")
+    return total
+
+
+def _ingest_fpl_ep(warehouse: Warehouse, store: ProjectionStore, season: str,
+                   *, first_gw: int, last_gw: int) -> int:
+    got = fpl_ep.fetch_bootstrap()
+    warehouse.record_fetch(
+        source=fpl_ep.SOURCE, endpoint="/bootstrap-static/", params=None,
+        fetched_at=got.fetched_at, sha256=got.sha256,
+        body_path=str(got.body_path), http_status=got.http_status,
+    )
+    rows = fpl_ep.to_projection_rows(got.body, season=season, as_of=got.fetched_at)
+    n = store.append("fact_projection", rows)
+    print(f"fpl_ep: HTTP {got.http_status}, {len(rows):,} elements with ep_next "
+          f"for GW{int(rows['gw'].iloc[0])}, {n:,} appended")
+    return n
+
+
+def _ingest_rotowire(warehouse: Warehouse, store: ProjectionStore, season: str,
+                     *, first_gw: int, last_gw: int) -> int:
+    got = rotowire.fetch()
+    warehouse.record_fetch(
+        source="projections_rotowire", endpoint=rotowire.LINEUPS_PATH, params=None,
+        fetched_at=got.fetched_at, sha256=got.sha256,
+        body_path=str(got.body_path), http_status=got.http_status,
+    )
+    entries = rotowire.parse_lineups(got.body)
+    gw = _next_gw(warehouse, season, got.fetched_at)
+    snap = warehouse.snapshot_at(got.fetched_at)
+    teams = snap.table("dim_team", where="season = ?", params=[season])
+    short_to_code = dict(zip(teams["short_name"], teams["team_code"].astype(int)))
+    fixtures = snap.table(
+        "fact_fixture", where="season = ? AND gw = ?", params=[season, gw]
+    )
+    rotowire.validate_fixture_pairs(
+        entries,
+        set(zip(fixtures["home_team_code"].astype(int),
+                fixtures["away_team_code"].astype(int))),
+        short_to_code,
+    )
+    rosters = snap.table("dim_player", where="season = ?", params=[season])
+    rows, unresolved = rotowire.to_lineup_rows(
+        entries, season=season, gw=gw, as_of=got.fetched_at,
+        rosters=rosters[["code", "team_code", "web_name", "first_name", "second_name"]],
+        short_to_code=short_to_code,
+    )
+    n = store.append("fact_predicted_lineup", rows)
+    starters = int(rows["predicted_start"].sum()) if not rows.empty else 0
+    print(f"rotowire: HTTP {got.http_status}, {len(entries)} names on "
+          f"{len({e.team_abbr for e in entries})} team sheets for GW{gw}, "
+          f"{len(rows)} resolved ({starters} starters), "
+          f"{len(unresolved)} unresolved, {n} appended")
+    if not unresolved.empty:
+        print("  unresolved:", unresolved.head(10).to_dict("records"))
+    return n
+
+
+def _next_gw(warehouse: Warehouse, season: str, as_of: dt.datetime) -> int:
+    """The first gameweek whose deadline is still ahead of ``as_of``."""
+    frame = warehouse.sql(
+        "SELECT min(gw) AS gw FROM dim_event "
+        "WHERE season = ? AND deadline_utc > ? AND as_of <= ?",
+        [season, as_of, as_of],
+    )
+    gw = frame.iloc[0]["gw"]
+    if pd.isna(gw):
+        raise RuntimeError(f"no future deadline for {season} at {as_of}")
+    return int(gw)
 
 
 def _last_finished_gw(warehouse: Warehouse, season: str, as_of: dt.datetime) -> int:

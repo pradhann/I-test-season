@@ -37,6 +37,7 @@ UTC = dt.timezone.utc
 PROJECTION_KEYS: dict[str, tuple[str, ...]] = {
     "fact_projection": ("provider", "season", "gw", "code"),
     "fact_external_ownership": ("provider", "season", "gw", "code", "metric"),
+    "fact_predicted_lineup": ("provider", "season", "gw", "code"),
 }
 
 
