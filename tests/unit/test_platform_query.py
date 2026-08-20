@@ -174,6 +174,24 @@ def test_as_of_is_reported_in_the_result(db):
     assert any("as_of" in n for n in res.notes)
 
 
+def test_as_of_survives_a_registered_but_absent_pit_table(db, monkeypatch):
+    """PIT_KEYS is a mutable registry that feature modules extend at import
+    time, so it routinely lists tables a given warehouse file does not have
+    (an older database, or one built before a migration). A registered-but-
+    absent table must be skipped, not turned into a catalog error about a
+    table the caller never mentioned -- which would break EVERY as_of query.
+    """
+    from fpl_edge.platform import query as query_mod
+
+    monkeypatch.setitem(
+        query_mod.PIT_KEYS, "fact_not_migrated_yet", ("season", "code"))
+    res = guarded_query(
+        "SELECT web_name FROM dim_player ORDER BY code",
+        as_of=dt.datetime(2026, 8, 5, tzinfo=UTC), db=db,
+    )
+    assert [r["web_name"] for r in res.rows] == ["Early"]
+
+
 def test_naive_as_of_is_refused(db):
     with pytest.raises(QueryError, match="timezone-aware"):
         guarded_query("SELECT 1", as_of=dt.datetime(2026, 8, 5), db=db)

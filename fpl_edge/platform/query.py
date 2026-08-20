@@ -178,7 +178,8 @@ def assert_read_only(sql: str) -> None:
         )
 
 
-def _pit_view_sql(as_of: dt.datetime, catalog: str) -> list[str]:
+def _pit_view_sql(as_of: dt.datetime, catalog: str,
+                  present: set[str] | None = None) -> list[str]:
     """Replace each point-in-time table with a latest-row-per-entity view.
 
     This is the same window function :meth:`Snapshot.table` uses. Doing it as
@@ -191,10 +192,21 @@ def _pit_view_sql(as_of: dt.datetime, catalog: str) -> list[str]:
     view being defined and DuckDB refuses it as infinite recursion. The catalog
     alias is read from the connection rather than assumed, because it is derived
     from the database *filename* and a test warehouse is not called ``fpl``.
+
+    ``present`` restricts the views to tables the connected file actually has.
+    ``PIT_KEYS`` is a *mutable module-level registry* that feature modules
+    extend at import time (the odds team adds ``fact_odds_derived``), so which
+    tables it lists depends on what has been imported, while which tables exist
+    depends on when the warehouse was built and which migrations have run. Those
+    two sets are routinely different, and without this filter a single
+    registered-but-absent table makes EVERY as_of query fail with a catalog
+    error about a table the caller never mentioned.
     """
     stmts = []
     stamp = as_of.astimezone(dt.timezone.utc).isoformat()
     for table, keys in PIT_KEYS.items():
+        if present is not None and table not in present:
+            continue
         cols = ", ".join(keys)
         stmts.append(
             f'CREATE OR REPLACE TEMP VIEW {table} AS '
@@ -212,6 +224,14 @@ def catalog_name(wh: Warehouse) -> str:
     if rows.empty:
         raise QueryError("no user database attached to this connection")
     return str(rows.iloc[0]["database_name"])
+
+
+def base_tables(wh: Warehouse) -> set[str]:
+    """Tables that physically exist in the connected database."""
+    rows = wh.sql(
+        "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'"
+    )
+    return set(rows["table_name"]) if not rows.empty else set()
 
 
 def _frame_to_rows(df: pd.DataFrame) -> list[dict[str, Any]]:
@@ -274,7 +294,7 @@ def guarded_query(
         if as_of is not None:
             if as_of.tzinfo is None:
                 raise QueryError("as_of must be timezone-aware UTC")
-            for stmt in _pit_view_sql(as_of, catalog_name(wh)):
+            for stmt in _pit_view_sql(as_of, catalog_name(wh), base_tables(wh)):
                 wh.sql(stmt)
             notes.append(
                 "point-in-time tables were replaced by views filtered to as_of; "

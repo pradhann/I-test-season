@@ -65,9 +65,14 @@ INCLUSION_SUM_TOLERANCE = 1.5
 #: captain (1). Anything above this is not effective ownership.
 MAX_MULTIPLIER = 3.0
 
-#: A full field starts eleven and captains one, so EO totals ~12; chips move it
-#: (bench boost adds up to 4, triple captain adds 1 per player who plays it).
-EO_SUM_RANGE = (9.0, 17.0)
+#: A full field starts eleven and captains one, so EO totals **exactly 12** in
+#: the absence of chips. Chips only push it up: bench boost adds up to 4 per
+#: manager playing it, triple captain adds 1. The ceiling therefore encodes a
+#: claim -- that no single gameweek sees chip rates high enough to add 1.5 to
+#: the total (that would need ~37% of the cohort bench-boosting at once) -- and
+#: the range is kept tight on purpose, because a wide one would not catch a
+#: squad-inclusion vector (total 15) being labelled as EO.
+EO_SUM_RANGE = (11.5, 13.5)
 
 
 class ShareTypeError(TypeError):
@@ -177,6 +182,16 @@ class EffectiveOwnership:
     def __post_init__(self) -> None:
         arr = _clean(self.multiplier, "multiplier")
         object.__setattr__(self, "multiplier", arr)
+        # Checked first: ``EO = ownership - captaincy`` produces negatives, and
+        # the generic range message would hide the specific sign error.
+        if self.start_share is not None:
+            ss = _clean(self.start_share, "start_share")
+            object.__setattr__(self, "start_share", ss)
+            if (arr + 1e-9 < ss).any():
+                raise ValueError(
+                    "EO must be at least start_share: captaincy is additive. "
+                    "EO = ownership - captaincy is the classic sign error."
+                )
         if arr.size and (arr.min() < -1e-9 or arr.max() > MAX_MULTIPLIER + 1e-9):
             raise ValueError(
                 f"effective ownership is a mean multiplier in [0, {MAX_MULTIPLIER}]; "
@@ -191,14 +206,6 @@ class EffectiveOwnership:
                     f"(eleven starters plus one armband, moved by chips); got "
                     f"{total:.3f}. A total near 15 means this is squad-inclusion "
                     f"ownership -- use InclusionProbability."
-                )
-        if self.start_share is not None:
-            ss = _clean(self.start_share, "start_share")
-            object.__setattr__(self, "start_share", ss)
-            if (arr + 1e-9 < ss).any():
-                raise ValueError(
-                    "EO must be at least start_share: captaincy is additive. "
-                    "EO = ownership - captaincy is the classic sign error."
                 )
 
     def __array__(self, *args, **kwargs):  # pragma: no cover - guard

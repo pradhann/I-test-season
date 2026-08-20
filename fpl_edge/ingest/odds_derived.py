@@ -29,10 +29,11 @@ Method names written to ``fact_odds_derived.method``
 ----------------------------------------------------
 * ``cs_grid#<devig>`` -- clean sheet as a sum over a de-vigged correct-score
   grid (e.g. ``cs_grid#power``).
-* ``poisson_indep`` -- bivariate-Poisson inversion of 1X2 (+ totals) with
-  ``rho = 0``.
-* ``dixon_coles`` -- the same inversion with the backtest-fitted low-score
-  dependence ``rho`` (:data:`RHO_STAR`).
+* ``poisson_indep`` -- independent-Poisson inversion of 1X2 (+ totals),
+  ``rho = 0``. **This is the preferred method** (:data:`PREFERRED_CS_METHOD`):
+  the Dixon-Coles correction was measured and does not pay, see below.
+* ``dixon_coles`` -- the same inversion with the fitted low-score dependence
+  ``rho`` (:data:`RHO_STAR`), retained for comparison only.
 * ``team_totals`` -- Poisson rate solved from the team-totals over/under
   ladder, where a book quotes one (US books only as of 2026-08-19).
 * ``scorer_power`` -- per-player scoring rate from the anytime-scorer card
@@ -87,11 +88,41 @@ D_TEAM_LAMBDA = "team_lambda"
 D_ANYTIME = "anytime_prob"
 D_XG_SHARE = "xg_share"
 
-#: Dixon-Coles low-score dependence used for the ``dixon_coles`` method rows.
-#: Fitted by ``scripts/backtest_clean_sheets.py`` on 2022-23 (minimum Brier
-#: against realised clean sheets) and held fixed out-of-sample thereafter.
-#: See docs/platform/odds_derivation.md for the fit and its evaluation.
-RHO_STAR = -0.05
+#: Low-score dependence for the ``dixon_coles`` rows: the scoreline-likelihood
+#: MLE on 2022-23, measured by ``scripts/backtest_clean_sheets.py`` over rho in
+#: [-0.30, +0.30]. **It is not significantly different from zero** -- the
+#: likelihood-ratio statistic against rho = 0 is 0.317 on 1 df (p = 0.57), and
+#: out-of-sample on 2023-25 the correction makes clean sheets very slightly
+#: *worse* (pooled Brier 0.16199 vs 0.16198). It is kept only so the two
+#: derivations sit side by side in the table for anyone who wants to re-check
+#: the comparison; :data:`PREFERRED_CS_METHOD` is what consumers should read.
+#: See docs/platform/odds_derivation.md, "The rho verdict".
+RHO_STAR = 0.04
+
+#: The clean-sheet derivation the ensemble should consume when a fixture has
+#: no correct-score card. Backed by the backtest above: adding rho does not
+#: pay, so the simpler inversion wins on the tie-break.
+PREFERRED_CS_METHOD = "poisson_indep"
+
+#: Minimum quoted cells before a correct-score card is allowed to produce a
+#: ``cs_grid`` row. A truncated grid has no "any other score" bucket, so the
+#: de-vig pushes the missing tail back onto the quoted cells and inflates the
+#: low-score corner. Measured on GW1 2026-27 (10 fixtures) by asking each
+#: de-vigged grid to reproduce the same book-consensus 1X2 and Over 2.5 that
+#: the featured markets quote:
+#:
+#: ====================  =========  ==========  ==========
+#: grid                  mean |dP| mean |dP|   mean dP
+#:                       home win   over 2.5    over 2.5
+#: ====================  =========  ==========  ==========
+#: William Hill, 44-47      0.019      0.027      +0.027
+#: Betfair ex., 4x4 = 16    0.063      0.062      -0.062
+#: ====================  =========  ==========  ==========
+#:
+#: The exchange's signed -6.2pp on Over 2.5 is the truncation signature: a 4x4
+#: grid cannot express a total above 6, and renormalising moves that mass into
+#: the low-score corner. So 16-cell cards are excluded rather than averaged in.
+CS_GRID_MIN_CELLS = 24
 
 _SCHEMA_SQL = f"""
 CREATE TABLE IF NOT EXISTS {TABLE} (
@@ -411,6 +442,7 @@ def derive_fixture_rows(
     *,
     player_team: dict[int, int] | None = None,
     cs_grid_method: DevigMethod = "power",
+    cs_grid_min_cells: int = CS_GRID_MIN_CELLS,
 ) -> tuple[list[dict[str, Any]], str | None]:
     """All derivable ``fact_odds_derived`` rows for one fixture.
 
@@ -472,6 +504,8 @@ def derive_fixture_rows(
             if not m:
                 continue
             cells[(int(m.group(1)), int(m.group(2)))] = float(r["price_decimal"])
+        if len(cells) < cs_grid_min_cells:
+            continue  # truncated card; see CS_GRID_MIN_CELLS for the measurement
         try:
             d = clean_sheets_from_correct_score(cells, method=cs_grid_method)
         except ValueError:
@@ -549,6 +583,7 @@ def derive_gameweek_priors(
     *,
     as_of: dt.datetime | None = None,
     cs_grid_method: DevigMethod = "power",
+    cs_grid_min_cells: int = CS_GRID_MIN_CELLS,
 ) -> DerivationReport:
     """Derive priors for every fixture with a future kickoff date in its key.
 
@@ -596,6 +631,7 @@ def derive_gameweek_priors(
         fixture_rows, reason = derive_fixture_rows(
             str(key), season, g, home_code, away_code, now,
             player_team=player_team, cs_grid_method=cs_grid_method,
+            cs_grid_min_cells=cs_grid_min_cells,
         )
         if reason:
             skipped.append(reason)

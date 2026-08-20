@@ -15,3 +15,5 @@ data/raw/**/*.bin
 *.egg-info/
 dist/
 .DS_Store
+data/warehouse/jobs/
+data/odds_expansion_ledger.json
