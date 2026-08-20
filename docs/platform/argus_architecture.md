@@ -325,4 +325,190 @@ dashboard queries do not exist". What that single decision eliminates:
 
 ---
 
-*(Sections 3, 4 and 6 follow — written incrementally.)*
+## 3. Dashboards: compile server-side, run in a hostile-code sandbox, feed via pins
+
+A dashboard is React + TS + Tailwind source under `dashboards/<owner>/<name>/` in the same
+scripts repo (same commit machinery, same optimistic concurrency). Pipeline:
+
+### 3.1 Compilation (`scripts-service/dashboards-compiler.ts`)
+
+`compileDashboard(files)` produces **one self-contained `index.html`** and enforces the
+sandbox statically before anything runs:
+
+- **Typecheck** with the real TS compiler against a generated `argus-dashboards.d.ts`
+  (dashboards-compiler.ts:159-188) — 8-error cap, path:line messages the agent can act on.
+- **Sandbox lint via AST walk** (dashboards-compiler.ts:78-157): `<form>`/`onSubmit`,
+  `localStorage`/`sessionStorage`/`document.cookie`, `fetch`/`XMLHttpRequest`/`WebSocket`/
+  `EventSource`, `alert/confirm/prompt`, `window.open`/`target="_blank"`,
+  `navigator.clipboard` are all *compile errors* with messages that name the sanctioned
+  alternative ("no network; all data comes from runScript", dashboards-compiler.ts:24-32).
+  The runtime CSP would block these anyway — linting turns silent runtime failure into an
+  authoring-time fix.
+- **Import allowlist**: only `react`, `react-dom/client`, jsx runtimes, `recharts`, relative
+  imports inside `src/`, and the virtual `@argus/dashboards` SDK module resolve; anything
+  else, or a path escaping the source dir, is a build error (dashboards-compiler.ts:15-21,
+  190-224). The SDK module is injected from an in-memory string (`APP_SDK_RUNTIME`) — it
+  ships `runScript`, `WindowSelector`/`TimeWindow`, `ThemeToggle`, `dashboardStorage`,
+  `copyText`, `openLink`.
+- esbuild → minified IIFE; Tailwind compiled over the dashboard's own sources *plus* the SDK
+  runtime (so shared component classes survive the content scan), with the argus theme
+  appended last so a dashboard cannot redefine `:root`/`.dark`
+  (dashboards-compiler.ts:253-286). Output is inlined into one HTML string, size-capped
+  (dashboards-compiler.ts:287-291).
+
+### 3.2 Save-time smoke check
+
+Before a dashboard save commits, the compiled bundle is rendered in **jsdom inside a forked
+child with an empty environment and a capped heap** (`scripts-service/dashboards-smoke.ts`;
+README.md:101-103). An empty render, console error, page error, unhandled rejection, timeout,
+or excessive button inventory fails the save; a passing run reports the buttons found and the
+`runScript` calls their clicks produced (scripts-design.md §11). Model-authored code gets
+*executed* at save time, so the fork holds no repo token, shared key, or datasource
+credential, and a bundle that never settles is killed rather than wedging the service. The
+child stubs a fixed viewport + `ResizeObserver` because jsdom does no layout — without them
+every Recharts dashboard would measure itself as 0×0 and fail its own smoke check.
+
+### 3.3 The sandboxed iframe + postMessage bridge
+
+Rendering (`web/src/dashboards/DashboardFrame.tsx`, `bridge.ts`):
+
+- `<iframe sandbox="allow-scripts" srcDoc=…>` — no `allow-same-origin`, so the frame is an
+  **opaque origin**: no cookies, no argus API access, nothing another window can match
+  (DashboardFrame.tsx:232-240, comment at 60-64).
+- A CSP is injected into the compiled HTML at display time:
+  `default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:
+  blob:; …; connect-src 'none'` (bridge.ts:4-6) — belt over the lint's braces: zero network.
+- `buildSrcdoc` injects the CSP plus an ES5 bridge runtime into `<head>` (bridge.ts:82-96).
+  The bridge exposes `window.argus.runScript(name, params)` → postMessage to the parent, and
+  forwards uncaught errors / unhandled rejections / `console.error` up as structured error
+  messages the host displays (bridge.ts:9-80); theme flows down the same channel.
+
+### 3.4 Data injection via pinned scripts
+
+The parent side of the bridge is the *only* data plane (DashboardFrame.tsx:115-197): it
+validates `ev.source` is its own iframe's contentWindow, calls the authenticated dashboards
+API (`api.runDashboardScript(dashboardName, scriptName, params, owner)`) — where the server
+resolves the script through the dashboard's **pinned `{id, name, sha}` manifest**, refusing
+anything unpinned — polls the run to terminal state, and posts `{ok, result}` back into the
+frame. Every call is recorded to a call log that powers both the Data inspection view and the
+host-owned progress overlay (per-script bars paced against each script's saved
+`avg_duration_ms`, linear to 90% then asymptotic decay — `script-progress.ts`,
+scripts-design.md §11). The dashboard never holds a token, never sees SQL, and can request
+nothing its manifest didn't pin at an exact commit.
+
+---
+
+## 4. Monitors: deterministic triggers, LLM copy-polish, cron, Inbox + Slack
+
+A monitor = pinned script(s) + a cron schedule + delivery. One entity, two kinds
+(shared/monitors-types.ts, scripts-design.md §13):
+
+- **Report** — delivers on every run; an LLM *writes* the report from pinned-script results
+  under the owner's `prompt.md` ("the prompt is the product"). 1–10 pins.
+- **Alert** — exactly one pinned script decides. No `prompt.md`.
+
+### 4.1 Exactly where the deterministic/LLM boundary sits
+
+**Alert triggering never calls an LLM.** The boundary is a schema contract: an alert's
+pinned script must declare `resultSchema` containing `triggered: boolean`, `title: string`,
+`body: string` (charts optional). The scheduler reads `{triggered, title, body}` **directly
+from the validated script result** — the fire/no-fire decision, the episode state machine,
+and recovery detection are all pure data (scripts-design.md §13 "Evaluation flow";
+`scripts-service/scheduler.ts`). Historical prompt-driven alerts were force-paused until
+edited into the deterministic contract — the migration deliberately removed LLM judgment
+from triggering.
+
+The LLM appears in exactly two places, both argus-side (the scripts service holds no LLM
+credentials, mirroring how `ctx.query` brokers data):
+
+1. `POST /internal/generate` (server/http/internal.ts:106-137) → `generateMonitorOutput`
+   (server/agent/generate.ts): writes **report** copy from prompt + script results using
+   `MONITOR_MODEL` (default claude-sonnet-5), forced tool use, prompt-injection hardening,
+   ~150k-char result budget. No fabricated fallback: an LLM failure is a *failed evaluation*
+   that counts toward auto-pause (internal.ts:103-105).
+2. `POST /internal/alert-message` (internal.ts:142-170) → `generateAlertMessage`
+   (server/agent/alert-message.ts): after a **fired edge only**, `ALERT_MESSAGE_MODEL`
+   (default claude-haiku-4-5) rewrites the script's title/body into a one-headline,
+   1–3-sentence incident summary. **Best-effort**: on failure the script's own bounded
+   title/body is delivered — "an alert is never dropped for presentation polish"
+   (scripts-design.md §13).
+
+Why this split: triggering must be reproducible, auditable, cheap, and immune to model
+drift/hallucination — a paged human must be able to read the script and know why it fired;
+copy quality is the only thing an LLM adds, so it is confined to prose, applied after the
+decision, and allowed to fail without consequence. Cost follows the same gradient (Haiku for
+alert copy, Sonnet for reports, Opus only for interactive chat — README.md:120-122).
+
+### 4.2 Cron scheduling and failure containment (`scripts-service/scheduler.ts`)
+
+Note: the shipped scheduler evolved past the design doc in three ways worth knowing —
+confirmation before firing, widening repeat notifications, and *no* auto-pause.
+
+- 30s tick (`TICK_MS`, scheduler.ts:29) over `next_due_at`, computed with `croner` —
+  timezone-aware, DST-correct; schedules store an explicit timezone (`nextDueAt`,
+  scheduler.ts:39-42). `STALE_DUE_MS = 1h`: a due pointer older than that is recomputed
+  forward rather than fired, so an outage never burst-fires (scheduler.ts:30).
+- A scheduled tick **advances `next_due_at` before dispatch** so a slow evaluation can't
+  double-fire; a manual "Run now" must not postpone the next regular delivery
+  (scheduler.ts:232-234). Overlap → the evaluation is recorded `skipped` with "previous
+  evaluation still running" (idempotent `tryCreate`, scheduler.ts:227-231).
+- Each pin runs through the **ordinary runner** (normal run rows, normal concurrency);
+  the evaluation awaits all pins within the sum of pinned timeouts plus queue slack
+  (`awaitRuns`, scheduler.ts:122-144).
+- **Confirmation before firing** (flap suppression): an episode opens only after
+  `FIRE_AFTER = 2` consecutive triggering evaluations — but the wait is taken only when the
+  confirming run is due within 65 minutes (`confirmationDueSoon`, scheduler.ts:32-33,
+  95-100); a slow-cadence monitor fires on first sighting as it always did.
+- **Widening repeat notifications**: an open episode re-delivers on a cadence equal to half
+  the episode's age, clamped to [1h, 24h] — "no counter, no stored state"
+  (`repeatNotifyDue`, scheduler.ts:102-116). A three-day-old condition cannot have been
+  silent for three days.
+- **No auto-pause** (design doc §5/§13 said 5-failure auto-disable; the code deliberately
+  reversed it): "A monitor never disables itself: failures streak on the row as evidence
+  for whoever reads it, but the schedule keeps running, so a check that broke because its
+  infrastructure broke starts working again on its own the moment that infrastructure does"
+  (scheduler.ts:24-27). Infra faults are still distinguished from monitor-actionable ones
+  (shared/monitor-failure.ts) so the streak measures the monitor, not the platform.
+- **The deterministic alert protocol is validated in code**, not just schema:
+  `alertOutput()` (scheduler.ts:174-211) requires boolean `triggered`, string title/body
+  (non-empty on a delivered edge), ≤2 validated chart specs, and an optional `observations`
+  object of finite numbers — the tuning series stored on *every* run, quiet ones included,
+  "exactly the ones a threshold needs" (scheduler.ts:148-169). Its synthesized "model" is
+  literally `"code"` with `costUsd: 0` (scheduler.ts:206-207).
+- Alert episodes: registry row carries `alert_state` (`healthy`/`alerting`),
+  `alerting_since`, `alerting_eval_id`. While alerting, `triggered=true` → `still_alerting`
+  (suppressed); the first `triggered=false` delivers the recovery note and closes the
+  episode. Each evaluation records its edge as `outcome ∈ {fired, quiet, still_alerting,
+  recovered}`. Manual fires are quiet test runs — Inbox only, no state change, no Slack.
+
+### 4.3 Delivery: durable outbox → Inbox + Slack
+
+- `deliver()` (`scripts-service/deliver.ts`) commits each hand-off to a **durable SQLite
+  outbox in the same transaction as evaluation completion**; a worker retries
+  `POST /internal/delivered` until argus acknowledges (internal.ts:175-193 — a 5xx keeps the
+  item pending, and the handler `handleDelivered` in server/triggers/delivered.ts is
+  idempotent). Delivery survives either service dying mid-hand-off.
+- **Inbox**: the `evaluations` table *is* the inbox — one row per delivered evaluation,
+  newest first, bounded (90 days / 500 per monitor; delivered report editions retained 365
+  days as the report's archive). Unseen badge is a client-side localStorage high-water mark —
+  deliberately no server-side read tracking. Each delivered edition keeps a durable
+  `/inbox/:id` route where the underlying script data can be inspected.
+- **Slack**: manifests may carry up to ten channel IDs; only *scheduled* evaluations publish.
+  The bot posts the same canonical title/body stored in history. Recovery posts a ✅
+  **threaded reply in every fired destination** — argus records each root thread so
+  recovery/investigation fan back to the same places (server/triggers/report-delivery.ts).
+- **Portable charts**: script results may include fenced chart specs
+  (shared/chart-spec.ts) that render interactively in the Inbox and are re-rendered per
+  destination: a fired alert maps up to two specs onto native Slack line/bar blocks (with
+  Slack's stricter constraints validated when the result is read, and a text-only retry if
+  Slack rejects them); a report — whose charts routinely exceed what those blocks accept —
+  is rendered through the shared headless renderer (shared/chart-render.ts) and uploaded as
+  images into the message's thread. Images are best-effort; the message must read without
+  them. One spec, three renderers (web/src/chat/ChartBlock.tsx, Slack blocks, headless PNG) —
+  the spec, not any renderer, is the contract.
+- Optional `investigate` flag opens a pre-seeded conversation from a delivery — the alert →
+  investigation loop stays in-product.
+
+---
+
+*(Section 6 follows — written incrementally.)*
