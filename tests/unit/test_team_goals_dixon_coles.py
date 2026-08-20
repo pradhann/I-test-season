@@ -207,11 +207,56 @@ def test_a_gameweek_one_snapshot_sees_no_current_season_matches(warehouse) -> No
 
 
 def test_mis_stamped_result_rows_are_rejected(league, tmp_path: Path) -> None:
-    """A row whose as_of predates its own kickoff must not silently train us."""
+    """A row whose as_of predates its own kickoff must not silently train us.
+
+    Defence in depth. `Warehouse.append` now refuses such a row at WRITE time,
+    so the poisoned row is injected through a raw DuckDB connection —
+    simulating a row written before that guard existed, or by any other
+    process — to prove the READ guard still catches it independently. If the
+    two guards ever collapse into one, this test fails and says why.
+    """
+    import duckdb
+
+    db = tmp_path / "bad.duckdb"
     bad = league.fixtures.copy()
     wh = build_warehouse(
         type(league)(bad, league.truth, league.routes, league.odds, league.events, league.teams),
-        tmp_path / "bad.duckdb",
+        db,
+    )
+    wh.close()
+
+    poisoned = bad.iloc[0]
+    raw = duckdb.connect(str(db))
+    raw.execute("SET TimeZone='UTC'")
+    raw.execute(
+        """
+        INSERT INTO fact_fixture
+            (season, fixture_id, gw, kickoff_utc, home_team_code, away_team_code,
+             finished, home_score, away_score, as_of)
+        VALUES (?, 999999, ?, TIMESTAMPTZ '2030-01-01 00:00:00+00', ?, ?, TRUE, ?, ?,
+                TIMESTAMPTZ '2020-01-01 00:00:00+00')
+        """,
+        [poisoned["season"], int(poisoned["gw"]),
+         int(poisoned["home_team_code"]), int(poisoned["away_team_code"]),
+         int(poisoned["home_score"]), int(poisoned["away_score"])],
+    )
+    raw.close()
+
+    reopened = Warehouse(db, read_only=True)
+    snap = reopened.snapshot_at(dt.datetime(2026, 1, 1, tzinfo=dt.UTC))
+    with pytest.raises(LeakageError, match="kickoff at or after"):
+        read_finished_matches(snap)
+    reopened.close()
+
+
+def test_write_guard_refuses_a_result_stamped_before_its_kickoff(
+    league, tmp_path: Path
+) -> None:
+    """The other half of the pair: the warehouse refuses to store it at all."""
+    bad = league.fixtures.copy()
+    wh = build_warehouse(
+        type(league)(bad, league.truth, league.routes, league.odds, league.events, league.teams),
+        tmp_path / "guard.duckdb",
     )
     poisoned = bad.iloc[:1][
         ["season", "fixture_id", "gw", "kickoff_utc", "home_team_code", "away_team_code",
@@ -221,10 +266,9 @@ def test_mis_stamped_result_rows_are_rejected(league, tmp_path: Path) -> None:
     poisoned["as_of"] = pd.Timestamp("2020-01-01", tz="UTC")
     poisoned["fixture_id"] = 999_999
     poisoned["kickoff_utc"] = pd.Timestamp("2030-01-01", tz="UTC")
-    wh.append("fact_fixture", poisoned)
-    snap = wh.snapshot_at(dt.datetime(2026, 1, 1, tzinfo=dt.UTC))
-    with pytest.raises(LeakageError, match="as_of"):
-        read_finished_matches(snap)
+    with pytest.raises(ValueError, match="before their own kickoff"):
+        wh.append("fact_fixture", poisoned)
+    wh.close()
 
 
 def test_refuses_to_fit_on_too_little_history(warehouse) -> None:
