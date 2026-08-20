@@ -305,10 +305,34 @@ def test_chat_requires_text(client):
 # -- static / health ---------------------------------------------------------
 
 
-def test_root_explains_itself_when_no_bundle_is_built(client):
-    body = client.get("/").json()
+def test_root_explains_itself_when_no_bundle_is_built(tmp_path, monkeypatch, db):
+    """With no built UI, / must still explain the API rather than 404.
+
+    Pinned against a bundle-less path rather than the repo's own web/dist:
+    once a bundle exists the mount takes over, and a test that asserted the
+    explanation from repo state started failing the moment the UI shipped.
+    """
+    import fpl_edge.platform.app as app_module
+
+    monkeypatch.setattr(app_module, "WEB_DIST", tmp_path / "absent")
+    bare = TestClient(app_module.create_app(db=db))
+    body = bare.get("/").json()
     assert body["ok"] is True
     assert "/api/panels" in body["detail"]
+
+
+def test_root_serves_the_bundle_when_one_is_built(tmp_path, monkeypatch, db):
+    """And when a bundle IS present, / serves it."""
+    import fpl_edge.platform.app as app_module
+
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<!doctype html><title>i-test</title>")
+    monkeypatch.setattr(app_module, "WEB_DIST", dist)
+    built = TestClient(app_module.create_app(db=db))
+    resp = built.get("/")
+    assert resp.status_code == 200
+    assert "i-test" in resp.text
 
 
 def test_health_reports_the_warehouse_and_sha(client, db):
