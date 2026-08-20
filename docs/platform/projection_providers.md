@@ -21,6 +21,9 @@ The machine-readable version of this table is
 `fpl_edge/ingest/projections/providers.py`; it and this document are two
 renderings of one registry, and the registry is the one that runs.
 
+**21 candidates evaluated. 7 ingested, 2 on the watchlist, 3 paywalled, 1
+blocked by obfuscation, 6 forbidden by a crawl policy or a licence, 2 dead.**
+
 ---
 
 ## 1. The normalised contract

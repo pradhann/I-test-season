@@ -725,6 +725,32 @@ PROVIDERS: tuple[Provider, ...] = (
         measured_status=(("/robots.txt", 403), ("/fpl-team-news/", 403)),
     ),
     Provider(
+        key="fbref",
+        name="FBref",
+        home="https://fbref.com",
+        publishes=(
+            "Per-90 and per-match underlying stats (xG, xAG, progressive "
+            "actions, minutes) for every Premier League player -- the input a "
+            "points projection would be built FROM, rather than a projection."
+        ),
+        interface="Server-rendered HTML tables; no documented API.",
+        cost="Free to view.",
+        licence="Unreadable: GET /robots.txt returns HTTP 403.",
+        rate_limit="n/a",
+        covers_2026_27=None,
+        verdict="forbidden",
+        reason=(
+            "403 on /robots.txt and 403 on /en/comps/9/Premier-League-Stats "
+            "(5,625-byte challenge body). Getting past it would mean "
+            "impersonating a browser or a TLS fingerprint, which this package "
+            "does not do. Listed for completeness: this repo settled the same "
+            "question elsewhere and the answer has not changed."
+        ),
+        probe_urls=("https://fbref.com/robots.txt",),
+        measured_status=(("/robots.txt", 403),
+                         ("/en/comps/9/Premier-League-Stats", 403)),
+    ),
+    Provider(
         key="derekkuang",
         name="Fantasy-Premier-League (GitHub, derekkuang)",
         home="https://github.com/derekkuang/Fantasy-Premier-League",
