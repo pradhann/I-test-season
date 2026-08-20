@@ -1,4 +1,4 @@
-.PHONY: help install test test-all lint ingest ingest-odds ingest-content intel rules-doc solve oracle weekly audit clean
+.PHONY: help install test test-all lint ingest ingest-odds ingest-content intel rules-doc solve oracle weekly audit platform platform-test clean
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -45,6 +45,12 @@ weekly: ingest  ## Full decision report for the upcoming deadline, from cold
 
 audit:  ## Run the leakage / adversarial audit suite
 	uv run pytest tests/audit -q
+
+platform:  ## Serve the decision platform on http://127.0.0.1:8321
+	uv run python -m fpl_edge.cli.main platform serve --port 8321
+
+platform-test:  ## Offline tests for the platform spine
+	uv run pytest tests/unit/test_platform_*.py -q
 
 clean:
 	rm -f data/warehouse/*.duckdb data/warehouse/*.wal

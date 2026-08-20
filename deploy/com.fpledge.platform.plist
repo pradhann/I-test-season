@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The platform web server. Same shape as com.fpledge.telegram.plist: always on,
+  KeepAlive, logs appended next to the other jobs.
+
+  Bound to 127.0.0.1 explicitly. /api/query is an unauthenticated SQL endpoint
+  and the platform has no auth layer by design (single operator, local-first,
+  DESIGN.md §4), so it must not answer on the local network.
+
+  Note this does NOT hold the DuckDB write lock: every panel read opens a
+  private read copy, so the server can run permanently alongside the Telegram
+  bot and the ingest jobs without starving either.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.fpledge.platform</string>
+  <key>WorkingDirectory</key><string>/Users/nripeshpradhan/Documents/Github/i-test-season</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/nripeshpradhan/Documents/Github/i-test-season/.venv/bin/python</string>
+    <string>-m</string><string>fpl_edge.cli.main</string>
+    <string>platform</string><string>serve</string>
+    <string>--host</string><string>127.0.0.1</string>
+    <string>--port</string><string>8321</string>
+  </array>
+  <key>KeepAlive</key><true/>
+  <key>RunAtLoad</key><true/>
+  <key>ThrottleInterval</key><integer>15</integer>
+  <key>StandardOutPath</key><string>/Users/nripeshpradhan/Documents/Github/i-test-season/data/warehouse/jobs/platform.log</string>
+  <key>StandardErrorPath</key><string>/Users/nripeshpradhan/Documents/Github/i-test-season/data/warehouse/jobs/platform.log</string>
+</dict>
+</plist>

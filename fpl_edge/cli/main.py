@@ -523,6 +523,40 @@ def weekly(
         echo(weekly_report(wh, season=season, gw=gw, as_of=when).render())
 
 
+# -- fpl platform ------------------------------------------------------------
+#
+# The web platform (fpl_edge/platform/). Imported inside the command rather than
+# at module scope so that `fpl` stays fast and keeps working on a checkout where
+# FastAPI is not installed: the CLI, the bot and the MCP server predate the
+# platform and must not acquire a hard dependency on it.
+
+platform_app = typer.Typer(no_args_is_help=True, help="The decision platform web server.")
+app.add_typer(platform_app, name="platform")
+
+
+@platform_app.command("serve")
+def platform_serve(
+    db: Path = DbOpt,
+    host: str = typer.Option(
+        "127.0.0.1", "--host",
+        help="Loopback by default: there is no auth layer, and /api/query is a "
+             "SQL endpoint that should not answer on the local network.",
+    ),
+    port: int = typer.Option(8321, "--port"),
+    reload: bool = typer.Option(False, "--reload", help="Auto-reload on code change."),
+) -> None:
+    """Serve the panels, the guarded query path and the chat route."""
+    try:
+        from fpl_edge.platform.app import serve
+    except ImportError as exc:  # pragma: no cover - depends on the install
+        raise typer.BadParameter(
+            f"the platform needs FastAPI and uvicorn: {exc}. "
+            f"Run `uv pip install -e '.[dev]'` to pick them up."
+        ) from exc
+    echo(f"platform on http://{host}:{port}  (warehouse {db}, docs at /docs)")
+    serve(host=host, port=port, db=db, reload=reload)
+
+
 # -- fpl dossier / fpl intel -------------------------------------------------
 #
 # Owned by the intel team (fpl_edge/intel/, fpl_edge/interfaces/dossier.py). They
