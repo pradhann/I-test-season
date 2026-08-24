@@ -151,3 +151,74 @@ CREATE TABLE IF NOT EXISTS fact_odds_derived (
     as_of        TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (fixture_key, entity_type, entity_code, market, method, as_of)
 );
+
+-- ---------------------------------------------------------------------------
+-- Projection tables. Historically created only by the projections package's
+-- migrations, which meant a fresh warehouse did not have them and the
+-- semantic layer (views.sql) could not even be created. The migrations remain
+-- (IF NOT EXISTS keeps them idempotent) and stay authoritative for
+-- *evolution*; this is the base shape so every warehouse is complete at birth.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS fact_projection (
+    provider       VARCHAR NOT NULL,   -- 'fplform' | 'internal' | 'market' | 'ppg' | ...
+    season         VARCHAR NOT NULL,
+    gw             INTEGER NOT NULL,   -- the gameweek being projected
+    code           INTEGER NOT NULL,   -- stable FPL player code
+    xp             DOUBLE,             -- expected points, appearance-weighted
+    xp_if_appears  DOUBLE,             -- expected points conditional on appearing
+    p_appear       DOUBLE,             -- provider's own P(any minutes)
+    as_of          TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (provider, season, gw, code, as_of)
+);
+
+ALTER TABLE fact_projection ADD COLUMN IF NOT EXISTS xmins DOUBLE;
+
+CREATE TABLE IF NOT EXISTS fact_external_ownership (
+    provider   VARCHAR NOT NULL,
+    season     VARCHAR NOT NULL,
+    gw         INTEGER NOT NULL,
+    code       INTEGER NOT NULL,
+    metric     VARCHAR NOT NULL,
+    value      DOUBLE NOT NULL,
+    as_of      TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (provider, season, gw, code, metric, as_of)
+);
+
+CREATE TABLE IF NOT EXISTS projection_weight (
+    fit_id         VARCHAR NOT NULL,   -- one id per fit run
+    provider       VARCHAR NOT NULL,
+    weight         DOUBLE NOT NULL,
+    loss           DOUBLE,             -- provider's own held-out loss
+    loss_metric    VARCHAR,            -- 'mae' | 'crps' | 'brier' | 'log_loss'
+    baseline_loss  DOUBLE,             -- the loss the provider had to beat
+    n_obs          INTEGER,            -- held-out observations behind the number
+    earned         BOOLEAN NOT NULL,   -- FALSE => provisional, never measured
+    holdout        VARCHAR,            -- human description of the held-out set
+    as_of          TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (fit_id, provider)
+);
+
+CREATE TABLE IF NOT EXISTS fact_predicted_lineup (
+    provider        VARCHAR NOT NULL,   -- 'rotowire' | ...
+    season          VARCHAR NOT NULL,
+    gw              INTEGER NOT NULL,
+    code            INTEGER NOT NULL,   -- stable FPL player code
+    team_code       INTEGER NOT NULL,
+    predicted_start BOOLEAN NOT NULL,
+    certainty       VARCHAR NOT NULL,
+    as_of           TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (provider, season, gw, code, as_of)
+);
+
+CREATE OR REPLACE VIEW projection_normalized AS
+SELECT
+    provider AS source,
+    code     AS player_code,
+    season,
+    gw,
+    xmins,
+    xp       AS xpts,
+    xp_if_appears,
+    p_appear,
+    as_of    AS fetched_at
+FROM fact_projection;

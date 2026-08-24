@@ -28,6 +28,7 @@ import duckdb
 import pandas as pd
 
 _SCHEMA_PATH = Path(__file__).with_name("schema.sql")
+_VIEWS_PATH = Path(__file__).with_name("views.sql")
 
 DEFAULT_DB = Path("data/warehouse/fpl.duckdb")
 
@@ -363,6 +364,10 @@ class Warehouse:
         if not read_only:
             self._con.execute(_SCHEMA_PATH.read_text())
             self._migrate()
+            # The semantic layer: PIT-parameterised macros stored in the file
+            # itself, so every read copy carries them. CREATE OR REPLACE makes
+            # this idempotent and lets views.sql evolve with the code.
+            self._con.execute(_VIEWS_PATH.read_text())
 
     def _connect(self, read_only: bool, timeout_s: float) -> duckdb.DuckDBPyConnection:
         """Open the database, waiting briefly for a conflicting writer.
