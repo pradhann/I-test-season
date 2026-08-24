@@ -328,125 +328,147 @@ ACCEPTANCE
 You are building the CHAT layer of the FPL edge engine at
 ~/Documents/Github/i-test-season. This session is ONLY about chat: the
 agent loop, its tools, and the chat UI pane. Do not change the warehouse
-schema, the solver, or the other UI views.
+schema, the solver's maths, or the other UI views.
+
+THE GOAL, STATED PLAINLY
+An analyst you can ask ANYTHING. Not a menu of templated intents — the
+current router's fixed patterns ("review my team", "find ideas") are
+exactly the ceiling this session removes. The user must be able to ask a
+question nobody anticipated, spanning any of the data the engine holds,
+and get a correct, data-backed answer with tables and charts as needed —
+or an honest "that data does not exist, here is the nearest thing". The
+agent must also be able to SUGGEST TRANSFERS INDEPENDENTLY, reasoning
+over projections, ownership, fixtures, form and the user's actual squad,
+and grounding itself in the solver's machinery rather than vibes.
+
+THE ANTI-TEMPLATING RULE (absolute)
+You may NOT satisfy any acceptance question by adding a regex intent,
+keyword pattern, or per-question handler. The existing router stays as a
+millisecond cache for its current intents and gains NOTHING new. Every
+new capability must come from the AGENT + TOOLS, generalising. The test
+of success is questions you never saw — see acceptance.
 
 READ FIRST
-- docs/platform/argus_architecture.md — THE blueprint. Especially §1 (the
-  agent loop: turn-runs-to-completion server-side, persist-then-broadcast,
-  SSE re-attach, session recovery from the durable transcript), §1.2
-  (explicit typed tool registry, in-process MCP, tools closed over the
-  conversation context), §2 (scripts as the typed-JSON primitive the agent
-  AUTHORS from chat: params schema + enforced result schema, git-versioned
-  with the conversation in the commit message, the 10s budget returned as
-  an error WITH remediation text, summary-view results with paged full
-  output), and §5 (the credential posture: the agent's environment holds
-  no datasource credentials; tools broker all I/O).
-- fpl_edge/interfaces/qa.py — the deterministic router (the FAST path;
-  it stays: instant answers for known intents, and it now covers manager/
-  elite questions). Its Answer type is text + PNG charts.
-- fpl_edge/platform/app.py — /api/chat (router) and /api/chat/stream (the
-  SSE escalation stub); DESIGN.md §2 point 6: escalation runs headless
-  `claude -p` on the MAX PLAN with the fpl-server MCP attached — the
-  server holds NO API key. That constraint is absolute.
+- docs/platform/argus_architecture.md — THE blueprint. §1: the agent
+  loop (turn runs to completion server-side, persist-then-broadcast, SSE
+  re-attach, session recovery from the durable transcript). §1.2: an
+  explicit typed tool registry, tools closed over conversation context.
+  §2: scripts as the typed-JSON primitive the agent AUTHORS from chat —
+  params schema + enforced result schema, git provenance back to the
+  conversation, the 10s budget returned as an ERROR with remediation
+  text, summary views with paged full results. §5: the credential
+  posture — the agent environment holds no datasource credentials; tools
+  broker all I/O.
+- fpl_edge/interfaces/qa.py (the router that stays as-is),
+  fpl_edge/platform/app.py (/api/chat, /api/chat/stream stub; DESIGN.md
+  §2.6: escalation runs headless `claude -p` on the MAX PLAN with MCP
+  attached — the server holds NO API key, ever).
 - fpl_edge/store/views.sql + docs/platform/semantic_layer.md — the ten
-  sem_* macros are the agent's query vocabulary.
-- fpl_edge/platform/{query,registry}.py — guarded_query (read-only,
-  row/byte caps) and the panel registry.
-- web/dist/js/views/chat.js and js/app.js — the current pane and shell.
+  sem_* macros. fpl_edge/platform/{query,registry}.py — guarded_query
+  and the panels. fpl_edge/myteam/recommend.py + scripts/gw1_squad.py —
+  the transfer recommendation machinery the agent will call as a tool.
 - ~/Documents/Github/FPL-MCP/tools/ — the MCP server the headless agent
-  attaches; semantic_tools.py already speaks the macros.
+  attaches (semantic_tools.py already speaks six macros).
+- web/dist/js/views/chat.js + js/app.js — the pane and shell.
 
-THE ARCHITECTURE (Argus folded onto what exists)
-Two speeds, one contract:
-1. FAST PATH (unchanged): the deterministic router answers known intents
-   in milliseconds. Extend it only where a question below maps cleanly to
-   one macro query.
-2. AGENT PATH (the build): anything unrouted escalates to a real agent
-   session — headless claude on the Max plan with a TOOLBELT, streaming
-   SSE to the pane. Argus rules apply:
-   - The turn runs to completion server-side; events are persisted to a
-     conversation table THEN broadcast; a reload re-attaches to the
-     stream; the transcript survives restarts.
-   - The agent gets TOOLS, never credentials: every warehouse read goes
-     through guarded_query over the sem_* macros (the FPL-MCP server
-     already provides six semantic tools + query — attach it, extend it
-     where the questions below need more).
-   - CHARTS ARE A TOOL: make_chart(spec) -> PNG rendered server-side with
-     matplotlib from a small declarative spec (bar/line/scatter, one
-     series colour system reused from the router's existing chart code).
-     The agent never emits raw image bytes itself. Load the `dataviz`
-     skill's rules into the tool's docstring: one hue for magnitude,
-     labels always, no rainbow.
-   - ANALYSIS SCRIPTS, the Argus crown jewel, v1-simple: a save_analysis /
-     run_analysis tool pair that stores small parameterised SQL-over-
-     macros scripts (name, description, params schema, the SQL) in a
-     repo-committed registry (analyses/*.json or .sql files, committed
-     with the conversation id in the message). run enforces the 10s
-     budget and returns Argus-style summary views (25 rows + omitted
-     count) with a paged full-result tool. "Ask once, keep forever":
-     the router can then serve a saved analysis by name instantly.
-   - IDEAS: the agent can call submit_idea (the inbox exists) when the
-     user says "track that" — never silently.
-   - EXTERNAL data: the agent may use the FPL-MCP live-API tools (team/
-     entry endpoints) that already exist. No new scraping in this session.
+WHAT MAKES IT INTELLIGENT (build these; this is the session)
 
-THE SEVEN QUESTIONS — the acceptance suite, each with its enabling path
-(verify each end to end in the pane, screenshot the answers):
-1. "which player has the highest xPoints in next 3 gws" →
-   sem_projection_consensus summed over gws [next..next+2]. Router-able:
-   add a deterministic intent (pattern: highest/top xpoints ... N gws).
-2. "which top-10-owned midfielder took the most shots in last 4 games" →
-   sem_player_match_stats (shots) joined to sem_players (position,
-   ownership). HONESTY TRAP: 2026-27 has 1 gameweek of shots data; the
-   answer must say "last 4 games spans 2025-26 via official form which
-   has no shots — here is GW1 shots + last-4 xG instead" or equivalent
-   truthful framing. Agent path.
-3. "what are the recommendations from FPLHarry, FPLAndy, FPLWire" →
-   content_claim/creator tables (creators are rostered; claims carry
-   direction + conviction + quote). Router-able; group by creator.
-4. "which players are injured or close to suspension" → sem_players
-   (status, news, chance_of_playing) for injuries; suspension proximity =
-   accumulated yellow cards from sem_player_form vs the 5-by-GW19 rule —
-   READ the rule from the rules registry, never hardcode 5.
-5. "plot graph of points per price of all strikers" → agent path:
-   guarded_query (sem_player_form totals ÷ price from sem_players,
-   position FWD) then make_chart scatter, points-per-£ labelled, value
-   printed. The chart returns inline in the pane.
-6. "which defenders hit defcon most consistently last 6 games" →
-   sem_player_form.defensive_contribution: consistency = share of last-6
-   appearances at/above the DEF threshold — thresholds come from the
-   rules registry (DEF 10 CBIT, MID/FWD 12), never hardcoded.
-7. "what transfers did Ben Crellin make?" → sem_manager_transfers
-   (already answers; keep green).
+1. THE WAREHOUSE BRIEFING — the agent cannot query what it does not know
+   exists. Generate, at session start, a compact live briefing injected
+   into the agent's system prompt: every sem_* macro with its columns and
+   grain, current coverage (which seasons/GWs actually have rows, per
+   feed), the metrics vocabulary (xG vs xPts vs EO vs DEFCON, and which
+   source each comes from), the rules registry highlights (hit cost,
+   suspension threshold, DEFCON thresholds), known honest gaps (no
+   forward xMins, shots only since 2026-27 GW1, transfers empty until
+   GW2), and the user's entry id + current squad summary. Build it as a
+   function that reads the live warehouse — never a hardcoded string
+   that rots. This briefing is the difference between an agent that
+   guesses table names and one that writes correct queries first try.
+
+2. THE TOOLBELT (typed registry, Argus-style; each tool's docstring
+   teaches its correct use):
+   - query(sql, as_of?) — guarded_query over the macros: read-only,
+     row/byte-capped, errors carry remediation ("filter in SQL, the cap
+     is N rows"). This is the workhorse; everything is reachable from it.
+   - make_chart(spec) — server-side matplotlib from a declarative spec
+     (bar/line/scatter/heatmap, one series-colour system shared with the
+     router's charts; dataviz rules in the docstring: one hue for
+     magnitude, values labelled, no rainbow). Returns a PNG the pane
+     renders inline. The agent NEVER emits image bytes itself.
+   - run_panel(name, params) — the registered panels, for anything a
+     panel already answers well (squad, difficulty, radar).
+   - suggest_transfers(constraints?) — wraps the myteam recommend
+     machinery: the user's real squad, bank, FTs, the consensus forecast,
+     rank-aware scoring; returns the ranked candidate moves WITH the
+     alternatives each beat. Optional constraints (max hits, must-keep,
+     horizon). The agent composes this with its own analysis (ownership,
+     fixtures, creator sentiment) into a reasoned recommendation — the
+     tool grounds the numbers so the agent never invents an xPts.
+   - save_analysis / run_analysis / list_analyses — the Argus crown
+     jewel, v1: parameterised SQL-over-macros scripts with a name,
+     description, params schema; committed to the repo with the
+     conversation id in the message; run enforces the 10s budget
+     (over-budget = error + remediation text, Argus's exact pattern);
+     results come back as summary views (25 rows + omitted count) with a
+     paged full-result tool. Ask once, keep forever.
+   - submit_idea(text) — the existing inbox, only when the user asks to
+     track something. list_creator_claims(creator?, player?) — the
+     content tables. get_entry(entry_or_name) — live FPL API via the
+     existing FPL-MCP tools for any public manager.
+   - NO other network access. No credentials in the agent environment.
+
+3. THE LOOP — Argus discipline on our stack: headless Max-plan claude
+   with the toolbelt via MCP; conversation + events persisted to the
+   warehouse-adjacent store BEFORE broadcast; SSE streaming with
+   re-attach after reload; session recovery from the transcript; a dead
+   turn (CLI crash, timeout) leaves an honest error and the conversation
+   survives. Multi-turn: follow-ups keep context ("now only defenders",
+   "chart that instead").
+
+4. THE PANE — the existing chat.js grows: streamed tokens, inline
+   charts, collapsible tool-call traces (Argus's CommandTrace idea: the
+   user can see WHICH queries produced the answer — provenance is the
+   product), and a stop button. Rendering stays injection-safe
+   (textContent + the table parser; the contract test pins it).
+
+EXAMPLE QUESTIONS — calibration probes, NOT the spec. The build must
+generalise far beyond these; do not special-case any of them:
+- "which player has the highest xPoints in next 3 gws"
+- "which top-10-owned midfielder took the most shots in last 4 games"
+  (honesty trap: shots exist only since 2026-27 GW1 — the answer says so)
+- "what are FPLHarry / FPLAndy / FPLWire recommending"
+- "which players are injured or close to suspension" (suspension = the
+  yellows rule READ from the rules registry, never hardcoded)
+- "plot points per price of all strikers" (chart inline)
+- "which defenders hit DEFCON most consistently last 6 games"
+- "what transfers did Ben Crellin make"
+- "should I sell Isak? who replaces him?" (suggest_transfers + analysis)
+- "compare my squad's fixtures to the template's next 4"
+- "make me an analysis I can rerun each week: xG overperformers"
 
 CONSTRAINTS
-- No API key on the server, ever: the agent runs through the Max-plan
-  claude CLI exactly as DESIGN.md §2.6 states. If the CLI is absent the
-  escalation degrades to a clear message, not a crash.
-- Answers carry provenance like panels do: which macro/analysis produced
-  the numbers, as-of instant.
-- The pane renders agent output safely: textContent + the existing table
-  parser; images as data URIs; never raw innerHTML (the contract test
-  pins this — keep it green).
-- A turn that dies (CLI crash, timeout) leaves an honest error in the
-  transcript, and the conversation survives to the next question.
-- Tests: tool registry (every tool schema-valid), analysis save/run round
-  trip with budget enforcement (a slow analysis returns the remediation
-  error — Argus's exact pattern), transcript persistence across a
-  simulated reconnect, and the seven questions as integration tests
-  against a seeded warehouse (router ones exact, agent ones asserting the
-  data reached the prompt). Break each meaningful test once, watch it
-  fail, restore, and say so.
+- No API key server-side; absent CLI degrades to a clear message.
+- Every numeric claim in an answer must be traceable to a tool call in
+  the trace — the agent never free-recalls FPL numbers from training.
+- Honest gaps stated, never papered over.
+- Full unit suite green; router's existing intents still answer in ms.
 
-ACCEPTANCE
-- All seven questions answered correctly in the real pane with real
-  warehouse data — screenshots of each, charts inline where asked.
-- A reload mid-answer re-attaches to the stream (demonstrate).
-- One analysis authored BY THE AGENT in chat, saved, re-run by name
-  instantly, and visible as a committed file with the conversation id in
-  the commit message.
-- The router still answers its existing intents in milliseconds; the
-  full unit suite is green.
+ACCEPTANCE — generalisation is the bar
+1. All ten probes answered correctly in the real pane (screenshots,
+   charts inline where asked).
+2. THE HELD-OUT TEST: when done, spawn a fresh reviewer agent that has
+   NOT seen this prompt and have it compose 5 NEW analytical questions
+   spanning at least three data domains each (e.g. projections ×
+   ownership × fixtures). At least 4 of 5 must come back correct and
+   data-backed on the first try, with the tool trace proving the numbers
+   came from queries. Include the transcript in the report.
+3. A transfer recommendation produced end to end in chat: grounded in
+   suggest_transfers, enriched with ownership/fixture/creator context,
+   with every number traceable.
+4. One analysis authored by the agent in chat, saved with conversation
+   provenance, re-run by name instantly.
+5. Reload mid-answer re-attaches to the stream (demonstrate).
 ```
 
 ## 6. Telegram — deferred, do later
