@@ -584,6 +584,16 @@ def presser_projection_refresh(ctx: TaskContext) -> TaskResult:
     else:
         lines.append("No injury news added in the last 48h.")
 
+    # Open watchlist items, so every pre-deadline delivery reminds the user
+    # what they said they wanted. Empty (or absent table) contributes nothing.
+    from fpl_edge.interfaces.watchlist import digest_lines as _watchlist_lines
+
+    with ctx.read() as wh:
+        watch = _watchlist_lines(wh, ctx.season)
+    if watch:
+        lines.append("")
+        lines.extend(watch)
+
     failed = [s.name for s in steps if not s.ok]
     detail = f"{len(steps) - len(failed)}/{len(steps)} steps ok, {len(news)} news items"
     if failed:
