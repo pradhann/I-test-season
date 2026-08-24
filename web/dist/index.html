@@ -1,341 +1,52 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8">
-<title>i-test</title>
+<html lang="en">
+<head>
+<meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700&family=Source+Sans+3:wght@400;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
-<style>
-/* Palette: the validated dataviz reference instance, same tokens the retro
-   report and Telegram charts use, so every surface reads as one system. */
-:root{
-  --bg:#fbfcfa; --panel:#f2f4ef; --raise:#ffffff; --ink:#171a16; --ink2:#565b52;
-  --ink3:#8a9084; --line:#dde1d8;
-  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100;
-  --good:#1a7f37; --bad:#c93c2c; --pitch:#356a43; --pitch2:#7ea98a;
-}
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
-  --bg:#16181a; --panel:#1e2124; --raise:#24282b; --ink:#f3f4f1; --ink2:#b3b8ad;
-  --ink3:#7c8277; --line:#2c3033;
-  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500;
-  --good:#4bc26b; --bad:#f07862; --pitch:#2c5738; --pitch2:#5d8168;
-}}
-:root[data-theme="dark"]{
-  --bg:#16181a; --panel:#1e2124; --raise:#24282b; --ink:#f3f4f1; --ink2:#b3b8ad;
-  --ink3:#7c8277; --line:#2c3033;
-  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500;
-  --good:#4bc26b; --bad:#f07862; --pitch:#2c5738; --pitch2:#5d8168;
-}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);
-  font:15.5px/1.55 "Source Sans 3",system-ui,sans-serif}
-header{position:sticky;top:0;z-index:5;background:var(--bg);
-  border-bottom:1px solid var(--line);padding:14px 22px;display:flex;
-  align-items:baseline;gap:16px;flex-wrap:wrap}
-h1{font:700 19px/1 Sora,system-ui,sans-serif;margin:0;letter-spacing:-.01em}
-.clock{font:500 13px "IBM Plex Mono",monospace;color:var(--ink2);
-  font-variant-numeric:tabular-nums}
-.clock b{color:var(--s2)}
-.spacer{flex:1}
-button{font:inherit;background:var(--panel);color:var(--ink);cursor:pointer;
-  border:1px solid var(--line);border-radius:7px;padding:5px 11px;font-size:13px}
-button:hover{background:var(--raise)}
-button:focus-visible{outline:2px solid var(--s1);outline-offset:2px}
-main{max-width:1280px;margin:0 auto;padding:20px 22px 80px;
-  display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
-section{background:var(--panel);border:1px solid var(--line);border-radius:11px;
-  padding:14px 16px;min-width:0}
-section.full{grid-column:1/-1}
-@media (max-width:900px){main{grid-template-columns:1fr}section{grid-column:1/-1}}
-h2{font:600 12.5px/1 Sora,sans-serif;letter-spacing:.06em;text-transform:uppercase;
-  color:var(--ink2);margin:0 0 3px}
-.desc{color:var(--ink3);font-size:12.5px;margin:0 0 12px}
-.empty{background:var(--raise);border:1px dashed var(--line);border-radius:8px;
-  padding:14px;color:var(--ink2);font-size:13.5px}
-.empty b{display:block;color:var(--ink);font-size:13px;margin-bottom:4px;
-  font-family:Sora,sans-serif;letter-spacing:.02em}
-table{border-collapse:collapse;width:100%;font-size:13.5px}
-th,td{text-align:left;padding:5px 8px;border-bottom:1px solid var(--line);
-  white-space:nowrap}
-th{color:var(--ink2);font-weight:600;font-size:12px;cursor:pointer;
-  position:sticky;top:0;background:var(--panel)}
-th:hover{color:var(--ink)}
-td.n{font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;
-  text-align:right}
-.wrap{overflow:auto;max-height:460px;border-radius:7px}
-.bar{display:inline-block;height:7px;border-radius:3px;background:var(--s1);
-  vertical-align:middle;margin-right:6px}
-.chip{font-size:11px;padding:1px 7px;border-radius:9px;background:var(--line);
-  color:var(--ink2)}
-.chip.ok{background:var(--good);color:#fff}.chip.no{background:var(--bad);color:#fff}
-.pitch{background:var(--pitch);border-radius:9px;padding:12px 8px;display:grid;
-  gap:10px}
-.row{display:flex;justify-content:center;gap:7px;flex-wrap:wrap}
-.card{background:var(--raise);border-radius:7px;padding:5px 7px;min-width:82px;
-  text-align:center;border:1px solid rgba(0,0,0,.06)}
-.card .nm{font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis}
-.card .sub{font-size:10.5px;color:var(--ink2);font-family:"IBM Plex Mono",monospace}
-.card.cap{outline:2px solid var(--s4)}
-.bench{display:flex;gap:7px;justify-content:center;margin-top:2px}
-.fx{display:grid;gap:3px;font-size:11.5px}
-.fx-row{display:grid;grid-template-columns:46px repeat(5,minmax(0,1fr));gap:3px;
-  align-items:center}
-.fx-cell{border-radius:5px;padding:4px 2px;text-align:center;
-  font-family:"IBM Plex Mono",monospace;font-size:11px;color:#10130f}
-.fx-team{font-weight:600;font-size:11.5px;color:var(--ink)}
-.idea{border-bottom:1px solid var(--line);padding:9px 0}
-.idea:last-child{border-bottom:0}
-.idea .t{font-size:13.5px}
-.idea .m{color:var(--ink3);font-size:12px;margin-top:2px;
-  font-family:"IBM Plex Mono",monospace}
-.prov{color:var(--ink3);font-size:11px;margin-top:10px;
-  font-family:"IBM Plex Mono",monospace}
-.err{color:var(--bad);font-size:13px}
-.sk{background:linear-gradient(90deg,var(--line) 25%,var(--raise) 50%,var(--line) 75%);
-  background-size:200% 100%;animation:sh 1.3s linear infinite;border-radius:6px;height:60px}
-@keyframes sh{to{background-position:-200% 0}}
-@media (prefers-reduced-motion:reduce){.sk{animation:none}}
-</style></head><body>
-<header>
-  <h1>i-test</h1>
-  <span class="clock" id="clock">…</span>
-  <span class="spacer"></span>
-  <button id="refresh">Refresh</button>
-  <button id="theme">Theme</button>
-</header>
-<main id="main"></main>
-<script>
-const $ = (s,r=document)=>r.querySelector(s);
-const el = (t,c,x)=>{const n=document.createElement(t);if(c)n.className=c;
-  if(x!==undefined)n.textContent=x;return n};
-let DEADLINE = null;   // fetched from /api/deadline; never hardcoded again
+<title>i-test</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div class="frame">
+  <nav class="rail">
+    <div class="brand">i<b>-test</b></div>
+    <a href="#home">Dashboard</a>
+    <a href="#planner">Planner</a>
+    <a href="#xpoints">xPoints</a>
+    <a href="#template">Template &amp; EO</a>
+    <a href="#fixtures">Fixtures</a>
+    <a href="#solver">Solver</a>
+    <a href="#chat">Chat</a>
+    <div class="foot">panels are the only data path</div>
+  </nav>
+  <main class="content">
+    <div class="topbar">
+      <h1 id="view-title">Dashboard</h1>
+      <span class="deadline" id="deadline">…</span>
+      <span class="spacer"></span>
+      <button id="theme-btn" title="Toggle theme">Theme</button>
+    </div>
+    <div id="view"></div>
+  </main>
+</div>
+<script type="module">
+import { register, start } from "/js/app.js";
+import home from "/js/views/home.js";
+import planner from "/js/views/planner.js";
+import xpoints from "/js/views/xpoints.js";
+import template from "/js/views/template.js";
+import fixtures from "/js/views/fixtures.js";
+import solver from "/js/views/solver.js";
+import chat from "/js/views/chat.js";
 
-function tick(){
-  if(!DEADLINE){ $("#clock").textContent = "deadline: …"; return; }
-  const ms = DEADLINE - new Date();
-  const past = ms < 0, a = Math.abs(ms);
-  const h = Math.floor(a/3.6e6), m = Math.floor(a%3.6e6/6e4);
-  const gw = window.DEADLINE_GW ? `GW${window.DEADLINE_GW}` : "Next";
-  const when = DEADLINE.toLocaleString("en-GB",
-    {weekday:"short", day:"numeric", month:"short", hour:"2-digit",
-     minute:"2-digit", timeZone:"UTC"}) + " UTC";
-  $("#clock").innerHTML = past
-    ? `${gw} deadline passed ${h}h ${m}m ago`
-    : `${gw} deadline in <b>${h}h ${m}m</b> · ${when}`;
-}
-setInterval(tick, 30000); tick();
-
-$("#theme").onclick = ()=>{
-  const cur = document.documentElement.getAttribute("data-theme");
-  const next = cur === "dark" ? "light" : cur === "light" ? null : "dark";
-  if(next) document.documentElement.setAttribute("data-theme", next);
-  else document.documentElement.removeAttribute("data-theme");
-};
-
-async function run(script, params={}){
-  const r = await fetch(`/api/scripts/${script}/run`,{method:"POST",
-    headers:{"content-type":"application/json"},body:JSON.stringify(params)});
-  if(!r.ok) throw new Error(`${r.status} ${await r.text()}`);
-  return r.json();
-}
-
-function emptyBox(reason){
-  const d = el("div","empty");
-  d.appendChild(el("b","Nothing to show yet"));
-  d.appendChild(el("div",null,reason||"No data."));
-  return d;
-}
-
-/* ---- renderers, one per layout the API declares ---- */
-function renderTable(res, host){
-  const rows = res.rows||[];
-  if(!rows.length) return host.appendChild(emptyBox(res.reason));
-  const wrap = buildTable(res, rows);
-  host.appendChild(wrap);
-}
-
-function buildTable(res, rows){
-  const cols = Object.keys(rows[0]).filter(k=>!["code"].includes(k));
-  const num = c => typeof rows[0][c] === "number";
-  const wrap = el("div","wrap"), t = el("table"),
-        th = el("thead"), tr = el("tr");
-  cols.forEach(c=>{const h=el("th",null,c.replace(/_/g," "));
-    // Re-sort by swapping ONLY this table in place. Clearing the host also
-    // deleted the provenance footer -- the one line the panel registry
-    // exists to guarantee.
-    h.onclick=()=>{const dir = t.dataset.sort===c?-1:1; t.dataset.sort=dir>0?c:"";
-      rows.sort((a,b)=> (a[c]>b[c]?1:a[c]<b[c]?-1:0)*(num(c)?-dir:dir));
-      wrap.replaceWith(buildTable(res, rows));};
-    tr.appendChild(h)});
-  th.appendChild(tr); t.appendChild(th);
-  const tb = el("tbody");
-  const maxima = {}; cols.forEach(c=>{ if(num(c))
-    maxima[c]=Math.max(...rows.map(r=>Math.abs(+r[c]||0)))||1; });
-  rows.forEach(r=>{
-    const row = el("tr");
-    cols.forEach(c=>{
-      const td = el("td", num(c)?"n":null);
-      if(c==="xpts" && num(c)){
-        const b = el("span","bar"); b.style.width = (30*r[c]/maxima[c])+"px";
-        td.appendChild(b); td.appendChild(document.createTextNode((+r[c]).toFixed(2)));
-      } else td.textContent = num(c)&&r[c]!==null ? (+r[c]).toFixed(2).replace(/\.00$/,"") : (r[c]??"—");
-      row.appendChild(td);
-    });
-    tb.appendChild(row);
-  });
-  t.appendChild(tb); wrap.appendChild(t); return wrap;
-}
-
-function renderPitch(res, host){
-  if(res.empty) return host.appendChild(emptyBox(res.reason));
-  const pitch = el("div","pitch");
-  const byPos = {GKP:[],DEF:[],MID:[],FWD:[]};
-  (res.starters||[]).forEach(p=>(byPos[p.pos]||byPos.MID).push(p));
-  ["GKP","DEF","MID","FWD"].forEach(pos=>{
-    const row = el("div","row");
-    byPos[pos].forEach(p=>{
-      const c = el("div","card"+(p.is_captain?" cap":""));
-      c.appendChild(el("div","nm",p.name+(p.is_captain?" (C)":p.is_vice?" (V)":"")));
-      c.appendChild(el("div","sub",`£${(+p.price).toFixed(1)}`+
-        (p.xpts!=null?` · ${(+p.xpts).toFixed(1)}`:"")));
-      row.appendChild(c);
-    });
-    if(byPos[pos].length) pitch.appendChild(row);
-  });
-  host.appendChild(pitch);
-  const bench = el("div","bench");
-  (res.bench||[]).forEach(p=>{
-    const c = el("div","card");
-    c.appendChild(el("div","nm",p.name));
-    c.appendChild(el("div","sub",`£${(+p.price).toFixed(1)}`));
-    bench.appendChild(c);
-  });
-  if((res.bench||[]).length) host.appendChild(bench);
-}
-
-function renderGrid(res, host){
-  const teams = res.teams||[];
-  if(!teams.length) return host.appendChild(emptyBox(res.reason));
-  // Colour by our own difficulty if present, else neutral: never invent a rating.
-  const g = el("div","fx");
-  const head = el("div","fx-row");
-  head.appendChild(el("div","fx-team",""));
-  (res.gws||[]).forEach(w=>head.appendChild(el("div","fx-cell","GW"+w)));
-  g.appendChild(head);
-  teams.forEach(t=>{
-    const row = el("div","fx-row");
-    row.appendChild(el("div","fx-team",t.short_name));
-    (res.gws||[]).forEach(w=>{
-      const f = (t.fixtures||[]).find(x=>x.gw===w);
-      const cell = el("div","fx-cell");
-      if(!f || f.blank){ cell.textContent="—"; cell.style.background="var(--line)";
-        cell.style.color="var(--ink3)"; }
-      else {
-        const labels = (f.opponents||[]).map(o=>o.is_home?o.label.toUpperCase():o.label.toLowerCase());
-        cell.textContent = labels.join(" ");
-        const d = f.opponents?.[0]?.difficulty;
-        cell.style.background = d==null ? "var(--raise)"
-          : `color-mix(in oklab, var(--s3) ${Math.round((1-d)*100)}%, var(--s2))`;
-        if(d==null) cell.style.color="var(--ink2)";
-        if(f.double) cell.style.outline="2px solid var(--s4)";
-      }
-      row.appendChild(cell);
-    });
-    g.appendChild(row);
-  });
-  host.appendChild(g);
-  // The caption must describe what is actually on screen. Claiming a live
-  // difficulty colouring while the schema carries no difficulty field was a
-  // standing lie; say which world we are in.
-  const anyDiff = teams.some(t=>(t.fixtures||[]).some(
-    f=>(f.opponents||[]).some(o=>o.difficulty!=null)));
-  host.appendChild(el("div","prov", anyDiff
-    ? "UPPER = home, lower = away. Colour is our own fitted difficulty."
-    : "UPPER = home, lower = away. No difficulty rating is wired yet (the "
-      + "cached Dixon-Coles artefact is pending), so every cell is neutral "
-      + "rather than an invented colour."));
-}
-
-function renderList(res, host){
-  const rows = res.rows||[];
-  if(!rows.length) return host.appendChild(emptyBox(res.reason));
-  rows.forEach(r=>{
-    const d = el("div","idea");
-    const t = el("div","t");
-    t.appendChild(document.createTextNode(r.thesis||r.raw_text));
-    // The panel's vocabulary is hit/miss (see scripts/ideas.py, which computes
-    // hit_rate from exactly those strings); the CLI's correct/incorrect is a
-    // different surface. Accept both so neither ever renders colourless.
-    const st = el("span","chip"+(["hit","correct"].includes(r.outcome)?" ok"
-      :["miss","incorrect"].includes(r.outcome)?" no":""));
-    st.textContent = r.outcome || r.status || "open";
-    t.appendChild(document.createTextNode(" "));
-    t.appendChild(st);
-    d.appendChild(t);
-    d.appendChild(el("div","m",
-      `"${(r.raw_text||"").slice(0,70)}" · GW${r.gw}+${r.horizon_gws??0} · ${r.acted?"acted":"not acted"}`));
-    host.appendChild(d);
-  });
-}
-
-function renderMovers(res, host){
-  const risers = res.risers||[], fallers = res.fallers||[];
-  if(!risers.length && !fallers.length){
-    const why = (res.notes||[]).join(" ") || res.reason;
-    return host.appendChild(emptyBox(why));
-  }
-  const w = res.window||{};
-  if(w.hours) host.appendChild(el("div","desc",
-    `Net transfer flow over the last ${(+w.hours).toFixed(0)}h.`));
-  [["Risers", risers, "ok"], ["Fallers", fallers, "no"]].forEach(([label, side, cls])=>{
-    if(!side.length) return;
-    host.appendChild(el("h3", null, label));
-    renderTable({rows: side}, host);
-  });
-}
-
-const RENDER = {table:renderTable, pitch:renderPitch, grid:renderGrid,
-                list:renderList, movers:renderMovers};
-
-async function loadDeadline(){
-  try{
-    const d = await (await fetch("/api/deadline")).json();
-    if(d.deadline_utc){ DEADLINE = new Date(d.deadline_utc);
-      window.DEADLINE_GW = d.gw; tick(); }
-  }catch(e){ /* clock shows "deadline: …" and the panels still load */ }
-}
-
-async function boot(){
-  loadDeadline();
-  const main = $("#main"); main.innerHTML = "";
-  let panels;
-  try{ panels = (await (await fetch("/api/panels")).json()).panels; }
-  catch(e){ main.appendChild(el("div","err","API unreachable: "+e.message)); return; }
-  for(const p of panels){
-    const s = el("section", p.width==="full"?"full":"");
-    s.appendChild(el("h2",null,p.title));
-    if(p.description) s.appendChild(el("p","desc",p.description));
-    const body = el("div"); body.appendChild(el("div","sk")); s.appendChild(body);
-    main.appendChild(s);
-    run(p.script, p.default_params||{}).then(out=>{
-      body.innerHTML="";
-      const render = RENDER[p.layout];
-      if(!render){
-        // Falling back to renderTable is how the price radar spent its life
-        // rendering "No data." over real data. An unknown layout is a bug;
-        // say so.
-        body.appendChild(el("div","err",
-          `Panel declares layout "${p.layout}" but this page has no renderer `
-          + `for it. The data is fine; the frontend is behind.`));
-      } else {
-        render(out.result, body);
-      }
-      const pr = out.provenance||{};
-      body.appendChild(el("div","prov",
-        `${pr.script} · ${(pr.repo_sha||"").slice(0,7)} · ${(pr.generated_at||"").slice(0,16).replace("T"," ")}Z`
-        + (out.performance==="over_budget" ? " · slow" : "")));
-    }).catch(e=>{ body.innerHTML=""; body.appendChild(el("div","err",e.message)); });
-  }
-}
-$("#refresh").onclick = boot;
-boot();
-</script></body></html>
+register("home", "Dashboard", home);
+register("planner", "Transfer planner", planner);
+register("xpoints", "Projections", xpoints);
+register("template", "Template & effective ownership", template);
+register("fixtures", "Fixtures", fixtures);
+register("solver", "Solver", solver);
+register("chat", "Chat", chat);
+start();
+</script>
+</body>
+</html>

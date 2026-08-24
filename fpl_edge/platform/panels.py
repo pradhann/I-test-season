@@ -95,6 +95,22 @@ PANELS: tuple[Panel, ...] = (
                     "cross-method spread) and player xG shares.",
     ),
     Panel(
+        id="planner",
+        title="Transfer planner",
+        script="planner_grid",
+        default_params={"horizon": 5},
+        layout="planner",
+        description="Plan moves across the horizon; xPts and cost update live.",
+    ),
+    Panel(
+        id="ownership",
+        title="Template & EO",
+        script="ownership_eo",
+        default_params={"limit": 50},
+        layout="table",
+        description="What the field owns: template, differentials, effective ownership.",
+    ),
+    Panel(
         id="ideas",
         title="Idea registry",
         script="idea_registry",

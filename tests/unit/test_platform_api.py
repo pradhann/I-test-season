@@ -58,7 +58,8 @@ def client(db):
 def test_panels_lists_every_panel_with_its_pinned_script(client):
     body = client.get("/api/panels").json()
     assert {p["id"] for p in body["panels"]} == {
-        "squad", "projections", "fixtures", "prices", "ideas", "market"}
+        "squad", "projections", "fixtures", "prices", "ideas", "market",
+        "planner", "ownership"}
     for panel in body["panels"]:
         assert panel["script"], f"{panel['id']} pins no script"
         assert panel["params_schema"]["type"] == "object"

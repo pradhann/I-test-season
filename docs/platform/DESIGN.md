@@ -99,6 +99,26 @@ What we adopt from Argus structurally (the audit checks these):
    fpl-server MCP attached for warehouse/codebase questions, streamed to the
    pane. No API key anywhere.
 
+### 2.2 Frontend stack — DECIDED 2026-08-24: zero-build, superseding §2's "React+Vite+TS"
+
+§2 named React+Vite+TS for `web/`; what shipped and what stays is
+**zero-build**: plain ES modules served as-is from `web/dist/`, hash routing,
+no bundler, no node_modules, no build step. Reasons, in order:
+
+1. One user, one deploy target (this Mac, launchd). A bundler is a permanent
+   deploy tax paid on every change, bought to solve problems (code-splitting
+   at scale, dependency graphs, JSX) this app does not have.
+2. The failure mode that matters here is "the dashboard is broken at T-30m
+   before a deadline". `cp`-is-the-deploy has no build to fail.
+3. The app IS app-like (planner, solver) — that argues for *modules*, not for
+   a compiler. Structure: `index.html` is a shell only; `js/app.js` holds the
+   API client/router/shared components; each view is one file in `js/views/`.
+   `index.html` growing back into one unmaintainable file is the failure §2.2
+   exists to prevent.
+
+Revisit only if a real dependency (a charting lib, a framework) is adopted —
+and the burden of proof is on the dependency.
+
 ### 2.1 Platform API contract (v1)
 
 - `GET  /api/panels` → registered panels with their pinned script names.
