@@ -199,7 +199,7 @@ Measured in an isolated environment:
 | `Understat(...).read_schedule()` **2026-27** | **shape (3, 0) — empty** |
 | `FBref(...).read_schedule()` 2025-26 | 380 rows × 13 cols in **269.4s** |
 
-It is not installed and is not a dependency of this repo. `fpl_edge/ingest/fbref.py`
+It is not installed and is not a dependency of this repo. `fpl_edge/ingest/fbref.py` (module deleted 2026-08-24; the negative result lives here and in git history)
 records the refusal and the reasoning rather than silently omitting the source.
 If the account holder wants FBref, that is their call to make knowingly — but it
 should not arrive as a transitive dependency.
@@ -555,7 +555,7 @@ do.
   requests.
 * One honest User-Agent identifying the project. No browser impersonation, no
   TLS fingerprint forgery, no cookie replay.
-* `understat.py` reads the live `robots.txt` and **fails closed** — an
+* `understat.py` (deleted 2026-08-24 — understat serves `Disallow: /` and has no 2026-27 season; its tested parsers live in git history should that change) read the live `robots.txt` and **failed closed** — an
   unreachable policy means "no", never "assume yes". The override is an explicit
   argument a human sets; it does not change how we identify ourselves and it
   does not skip the delay.

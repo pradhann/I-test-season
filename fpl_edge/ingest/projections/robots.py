@@ -1,6 +1,7 @@
 """Fail-closed robots.txt checking, shared by every provider in this package.
 
-``fpl_edge.ingest.understat`` established the policy for this repo: read the
+The understat evaluation established the policy for this repo (module since
+deleted; parsers live in git history): read the
 live ``robots.txt``, and treat an unreachable one as a refusal. This module
 generalises it and adds the two distinctions the projection providers actually
 forced us to make.

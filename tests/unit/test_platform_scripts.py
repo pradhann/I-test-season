@@ -136,6 +136,62 @@ def test_fixture_ticker_marks_a_blank_gameweek_explicitly(seeded_db):
     assert gw2["gw"] == 2 and gw2["blank"] is True and gw2["opponents"] == []
 
 
+def _write_difficulty_artefact(db_path, *, fitted_at, ars=0.25, che=0.80):
+    """A fixture_difficulty.parquet next to the database, as the nightly
+    ratings_cache job would leave it (fixture 1: ARS home vs CHE)."""
+    pd.DataFrame([
+        {"season": "2026-27", "gw": 1, "fixture_id": 1, "team_code": 1,
+         "opponent_code": 2, "is_home": True, "difficulty": ars,
+         "fitted_at": fitted_at, "snapshot_as_of": fitted_at},
+        {"season": "2026-27", "gw": 1, "fixture_id": 1, "team_code": 2,
+         "opponent_code": 1, "is_home": False, "difficulty": che,
+         "fitted_at": fitted_at, "snapshot_as_of": fitted_at},
+    ]).to_parquet(db_path.parent / "fixture_difficulty.parquet", index=False)
+
+
+def _opponent_of(run, short_name):
+    team = next(t for t in run.result["teams"] if t["short_name"] == short_name)
+    return team["fixtures"][0]["opponents"][0]
+
+
+def test_fixture_ticker_merges_cached_difficulty_when_fresh(seeded_db):
+    _write_difficulty_artefact(seeded_db, fitted_at=pd.Timestamp.now(tz="UTC"))
+    run = run_script("fixture_ticker", {"horizon": 1}, db=seeded_db)
+    assert _opponent_of(run, "ARS")["difficulty"] == 0.25
+    assert _opponent_of(run, "CHE")["difficulty"] == 0.80
+    assert not any("stale" in n.lower() for n in run.result["notes"])
+
+
+def test_fixture_ticker_omits_difficulty_when_no_artefact_exists(seeded_db):
+    """No cached fit means no number at all -- not a default, not a zero.
+    The frontend's caption flips on the field's presence, so absence is the
+    honest signal."""
+    run = run_script("fixture_ticker", {"horizon": 1}, db=seeded_db)
+    assert "difficulty" not in _opponent_of(run, "ARS")
+    assert "difficulty" not in _opponent_of(run, "CHE")
+
+
+def test_fixture_ticker_serves_stale_difficulty_with_a_note(seeded_db):
+    fitted = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=30)
+    _write_difficulty_artefact(seeded_db, fitted_at=fitted)
+    run = run_script("fixture_ticker", {"horizon": 1}, db=seeded_db)
+    # Still served: a month-old fitted rating beats a made-up fresh one.
+    assert _opponent_of(run, "ARS")["difficulty"] == 0.25
+    note = next(n for n in run.result["notes"] if "stale" in n.lower())
+    assert "30" in note
+
+
+def test_fixture_ticker_drops_out_of_range_difficulty(seeded_db):
+    """A corrupted cache value outside [0,1] would fail the result schema and
+    take the panel down; the reader treats it as absent instead."""
+    _write_difficulty_artefact(
+        seeded_db, fitted_at=pd.Timestamp.now(tz="UTC"), ars=1.7,
+    )
+    run = run_script("fixture_ticker", {"horizon": 1}, db=seeded_db)
+    assert "difficulty" not in _opponent_of(run, "ARS")
+    assert _opponent_of(run, "CHE")["difficulty"] == 0.80
+
+
 def test_price_radar_needs_two_snapshots_to_say_anything(tmp_path):
     path = tmp_path / "fpl.duckdb"
     wh = Warehouse(path)

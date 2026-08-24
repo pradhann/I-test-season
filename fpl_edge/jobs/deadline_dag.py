@@ -524,6 +524,13 @@ def presser_projection_refresh(ctx: TaskContext) -> TaskResult:
         run_step("ingest_content",
                  [py, "-m", "fpl_edge.ingest.content.pipeline", "ingest",
                   "--backfill-days", "2"]),
+        # Refresh the cached fixture-difficulty parquet so the ticker's
+        # colours reflect any midweek results and rescheduled fixtures the
+        # ingest above just landed. Fits from a read copy, writes only the
+        # parquet -- it cannot contend with the other steps for the DB lock.
+        run_step("fixture_difficulty",
+                 [py, "-m", "fpl_edge.models.team_goals.ratings_cache",
+                  "--season", ctx.season]),
     ]
 
     projections_cli = "fpl_edge.ingest.projections.cli"

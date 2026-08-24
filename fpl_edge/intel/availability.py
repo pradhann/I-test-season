@@ -1,6 +1,6 @@
 """The leak-proof injury feed: FPL's own ``news`` with FPL's own timestamp.
 
-:mod:`fpl_edge.ingest.injuries` surveyed the alternatives on 2026-08-18 and
+The injury-source survey (2026-08-18, recorded in docs/data_sources.md) 
 found premierinjuries behind a Cloudflare challenge (403), physioroom down
 (522), Fantasy Football Scout's team-news page substantively paywalled, and the
 BBC's robots.txt explicitly forbidding extraction. Its conclusion -- that the
@@ -37,7 +37,7 @@ UTC = dt.timezone.utc
 
 SOURCE = "fpl_api:bootstrap-static"
 
-#: FPL ``status`` codes, decoded. Mirrors ``fpl_edge.ingest.injuries``; kept as a
+#: FPL ``status`` codes, decoded. (The old ingest.injuries module is deleted;
 #: local constant so the intel package does not force that module (and its long
 #: survey docstring) into the import path of every dossier.
 STATUS_MEANING: dict[str, str] = {

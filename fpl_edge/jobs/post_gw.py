@@ -89,6 +89,12 @@ def main() -> int:
 
     _run(report, "ingest_live", [py, "scripts/ingest_live.py"])
     _run(report, "ingest_odds_fixtures", [py, "scripts/ingest_odds.py", "--fixtures"])
+    # Refit team strength now that results have landed and cache per-fixture
+    # difficulty as a parquet next to the database. The fixtures panel reads
+    # the artefact instead of paying for a ~1 minute fit inside its 10s budget.
+    # Reads via Warehouse.read_copy, writes only the parquet: no lock contention.
+    _run(report, "fixture_difficulty",
+         [py, "-m", "fpl_edge.models.team_goals.ratings_cache"])
     _run(report, "ingest_odds_props",
          [py, "scripts/ingest_odds.py", "--odds-api", "--max-credits", "30"])
     _run(report, "track_ideas", [py, "-m", "fpl_edge.cli.main", "idea", "track"])

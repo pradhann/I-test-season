@@ -9,7 +9,7 @@ Two rules, and neither has an override flag:
    unchanged, on every request. Nothing here forges a browser UA, spoofs a TLS
    fingerprint, solves a challenge, or routes around a paywall. When a site
    refuses us, the refusal is recorded as a fact and reported to the user;
-   :mod:`fpl_edge.ingest.understat` already established this position for a site
+   the understat evaluation (docs/data_sources.md) already established this position for a site
    whose robots.txt is a blanket ``Disallow: /``, and this module holds the same
    line for press-conference sources.
 
@@ -63,7 +63,7 @@ class Candidate:
 
 #: Press-conference and team-news candidates. The list is the survey, not an
 #: aspiration: each entry was reached at least once and the outcome recorded.
-#: :mod:`fpl_edge.ingest.injuries` documents the equivalent survey for injury
+#: docs/data_sources.md records the equivalent survey for injury
 #: tables and reached the same conclusion for the same reasons.
 PRESS_CANDIDATES: tuple[Candidate, ...] = (
     Candidate(

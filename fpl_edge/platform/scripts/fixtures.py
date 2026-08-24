@@ -1,11 +1,15 @@
 """fixture_ticker — the next N gameweeks per club, home and away.
 
-Deliberately *not* a difficulty model. FPL's own FDR is a fixed preseason
-number and our fitted Dixon-Coles ratings are a model run that costs far more
-than a panel's 10s budget. This panel reports the schedule -- who plays whom,
-where, and when -- which is a fact, and leaves difficulty to the panels that
-can afford to compute it honestly. A ticker with an invented difficulty colour
-is the most-read and least-earned number on a dashboard.
+Difficulty comes from a *cached artefact*, never a live fit. A Dixon-Coles fit
+costs about a minute and a panel has a 10s budget, so the post-gameweek job
+writes ``fixture_difficulty.parquet`` (see
+:mod:`fpl_edge.models.team_goals.ratings_cache`, which documents the formula)
+and this panel merely reads it. When the artefact is absent the ticker reports
+the schedule alone -- who plays whom, where, and when, which is a fact -- and
+the ``difficulty`` field simply never appears: an honest gap, not an invented
+colour. When the artefact is present but stale, the numbers are still served
+with a note saying how old the fit is, because a week-old fitted rating beats
+a made-up fresh one.
 
 Blanks and doubles fall out of the same query: a club with no fixture in a
 gameweek gets an explicit ``null`` slot rather than a missing key, and a club
@@ -14,10 +18,29 @@ with two gets two entries, because both are decisions the operator makes.
 
 from __future__ import annotations
 
+import datetime as dt
 from typing import Any
 
+import pandas as pd
+
 from fpl_edge.platform.registry import register_script
-from fpl_edge.platform.scripts.common import empty, latest_as_of, next_gw, q, season_param
+from fpl_edge.platform.scripts.common import (
+    UTC,
+    empty,
+    latest_as_of,
+    next_gw,
+    q,
+    season_param,
+    source_dir,
+)
+
+#: Written by fpl_edge.models.team_goals.ratings_cache, next to the database.
+DIFFICULTY_NAME = "fixture_difficulty.parquet"
+
+#: Older than this and the ratings are served WITH a staleness note. The fit
+#: only moves when matches finish, so within a normal week it cannot be more
+#: than one round out of date; beyond it the refresh job has stopped running.
+DIFFICULTY_STALE_DAYS = 7
 
 PARAMS: dict[str, Any] = {
     "type": "object",
@@ -76,6 +99,11 @@ RESULT: dict[str, Any] = {
                                             "is_home": {"type": "boolean"},
                                             "kickoff_utc": {"type": ["string", "null"]},
                                             "label": {"type": "string"},
+                                            "difficulty": {
+                                                "type": "number",
+                                                "minimum": 0,
+                                                "maximum": 1,
+                                            },
                                         },
                                     },
                                 },
@@ -87,6 +115,50 @@ RESULT: dict[str, Any] = {
         },
     },
 }
+
+
+def _load_difficulty(
+    wh, season: str, now: dt.datetime | None = None
+) -> tuple[dict[tuple[int, int], float], str | None]:
+    """``(fixture_id, team_code) -> difficulty`` from the cached artefact.
+
+    Returns an empty mapping when the artefact is absent, unreadable or
+    misshapen -- the ticker must degrade to schedule-only, never crash over a
+    cache. The second element is a staleness note, or None when fresh.
+    """
+    path = source_dir(wh) / DIFFICULTY_NAME
+    if not path.exists():
+        return {}, None
+    try:
+        df = pd.read_parquet(path)
+    except Exception:  # noqa: BLE001 - a corrupt cache is an absent cache
+        return {}, None
+    required = {"season", "fixture_id", "team_code", "difficulty", "fitted_at"}
+    if not required <= set(df.columns):
+        return {}, None
+    df = df[df["season"] == season]
+    if df.empty:
+        return {}, None
+
+    ok = df.dropna(subset=["difficulty"])
+    ok = ok[(ok["difficulty"] >= 0.0) & (ok["difficulty"] <= 1.0)]
+    mapping = {
+        (int(r.fixture_id), int(r.team_code)): float(r.difficulty)
+        for r in ok.itertuples(index=False)
+    }
+
+    note = None
+    fitted = pd.to_datetime(df["fitted_at"], utc=True).max()
+    if pd.notna(fitted):
+        age = (now or dt.datetime.now(UTC)) - fitted.to_pydatetime()
+        days = age.total_seconds() / 86400.0
+        if days > DIFFICULTY_STALE_DAYS:
+            note = (
+                f"Difficulty ratings were fitted {days:.0f} days ago "
+                f"({fitted.isoformat()}) and are stale; still shown, but re-run "
+                f"the post-gameweek job to refresh fixture_difficulty.parquet."
+            )
+    return mapping, note
 
 
 def fixture_ticker(
@@ -148,22 +220,33 @@ def fixture_ticker(
     short = dict(zip(teams["team_code"], teams["short_name"]))
     full = dict(zip(teams["team_code"], teams["name"]))
 
+    difficulty, stale_note = _load_difficulty(wh, season)
+    if stale_note:
+        notes.append(stale_note)
+
     # (team_code, gw) -> list of opponent entries. Built in one pass over the
     # fixtures so a double gameweek needs no special case.
     per: dict[tuple[int, int], list[dict[str, Any]]] = {}
     for _, r in fx.iterrows():
         gw = int(r["gw"])
+        fid = int(r["fixture_id"])
         home, away = int(r["home_team_code"]), int(r["away_team_code"])
         kick = None if r["kickoff_utc"] is None else str(r["kickoff_utc"])
         for me, them, is_home in ((home, away, True), (away, home, False)):
             label = short.get(them, str(them))
-            per.setdefault((me, gw), []).append({
+            entry: dict[str, Any] = {
                 "opponent": label,
                 "opponent_code": them,
                 "is_home": is_home,
                 "kickoff_utc": kick,
                 "label": label.upper() if is_home else label.lower(),
-            })
+            }
+            # Only ever attached when the cached artefact has a fitted number
+            # for this exact (fixture, team); a missing key stays missing.
+            d = difficulty.get((fid, me))
+            if d is not None:
+                entry["difficulty"] = d
+            per.setdefault((me, gw), []).append(entry)
 
     out = []
     for _, t in teams.iterrows():
