@@ -25,3 +25,6 @@ code_bases/
 
 # refresh-grant cross-process lock (see fpl_edge/myteam/tokens.py)
 .env.lock
+
+# chat conversations and chart assets are runtime data, not source
+data/warehouse/chat/

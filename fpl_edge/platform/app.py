@@ -7,7 +7,13 @@
     POST /api/inbox/{id}/ack          acknowledge one
     GET  /api/monitors                monitor definitions
     POST /api/chat                    QuestionRouter answer (text + images)
-    GET  /api/chat/stream             SSE escalation to the headless agent
+    POST /api/conversations           new agent conversation -> {conv_id}
+    GET  /api/conversations           conversation metas, newest first
+    POST /api/conversations/{id}/chat start an agent turn (202; 409 in-flight)
+    GET  /api/conversations/{id}/stream  SSE: replay > after, then live
+    GET  /api/conversations/{id}/events  JSON page (non-SSE fallback)
+    POST /api/conversations/{id}/stop kill the in-flight turn
+    GET  /api/chat/assets/{id}.png    charts the agent's make_chart produced
     /                                 the built web/ bundle, if present
 
 What is deliberately *absent* is as load-bearing as what is here: there is no
@@ -81,19 +87,37 @@ class ChatRequest(BaseModel):
     season: str | None = None
 
 
+class TurnRequest(BaseModel):
+    text: str
+
+
 class SolveRequest(BaseModel):
     mode: str = "both"
 
 
-def create_app(db: Path | str = DEFAULT_DB) -> FastAPI:
-    """Build the app. ``db`` is injectable so tests can seed a tmp warehouse."""
+def create_app(db: Path | str = DEFAULT_DB,
+               chat_root: Path | str | None = None) -> FastAPI:
+    """Build the app. ``db`` is injectable so tests can seed a tmp warehouse;
+    ``chat_root`` likewise for the agent conversation store."""
+    from fpl_edge.platform.chat_agent import (
+        CHAT_ROOT,
+        ChatAgent,
+        ChatAgentError,
+        TurnInFlight,
+        UnknownConversation,
+    )
+
     db_path = Path(db)
+    chat_agent = ChatAgent(root=Path(chat_root) if chat_root else CHAT_ROOT)
     app = FastAPI(
         title="i-test platform",
         version="1.0",
         description="Single-operator FPL decision platform. Panels, one guarded "
                     "query path, inbox, chat.",
     )
+    # Exposed for tests, which point the agent at a fake CLI script; the
+    # routes below close over the same object.
+    app.state.chat_agent = chat_agent
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
@@ -242,11 +266,76 @@ def create_app(db: Path | str = DEFAULT_DB) -> FastAPI:
     def post_chat(body: ChatRequest) -> JSONResponse:
         return JSONResponse(_chat(body, db_path))
 
-    @app.get("/api/chat/stream")
-    async def get_chat_stream(text: str):
+    # ---- agent conversations (fpl_edge/platform/chat_agent.py) ----
+    # The router fast-path above stays untouched; these routes are the
+    # explicit escalation. Argus discipline: the turn runs server-side to
+    # completion, events are persisted then broadcast, and /stream replays
+    # from any seq so a reload re-attaches mid-turn.
+
+    @app.post("/api/conversations")
+    def post_conversation() -> JSONResponse:
+        meta = chat_agent.create_conversation()
+        return JSONResponse({"conv_id": meta["conv_id"], "meta": meta})
+
+    @app.get("/api/conversations")
+    def get_conversations() -> JSONResponse:
+        return JSONResponse({"conversations": chat_agent.list_conversations()})
+
+    @app.post("/api/conversations/{conv_id}/chat")
+    def post_conversation_chat(conv_id: str, body: TurnRequest) -> JSONResponse:
+        try:
+            started = chat_agent.start_turn(conv_id, body.text)
+        except TurnInFlight as exc:
+            return JSONResponse(
+                {"detail": str(exc), **chat_agent.running(conv_id)},
+                status_code=409,
+            )
+        except UnknownConversation as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ChatAgentError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return JSONResponse(started, status_code=202)
+
+    @app.get("/api/conversations/{conv_id}/stream")
+    def get_conversation_stream(conv_id: str, after: int = -1, once: int = 0):
+        """SSE. ``once=1`` replays and closes (curl/tests); default follows
+        live with comment heartbeats, indefinitely."""
         from sse_starlette.sse import EventSourceResponse
 
-        return EventSourceResponse(_escalate(text))
+        try:
+            stream = chat_agent.subscribe(conv_id, after=after,
+                                          follow=not once)
+        except UnknownConversation as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return EventSourceResponse(stream)
+
+    @app.get("/api/conversations/{conv_id}/events")
+    def get_conversation_events(conv_id: str, after: int = -1) -> JSONResponse:
+        try:
+            events = chat_agent.events(conv_id, after=after)
+        except UnknownConversation as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return JSONResponse({
+            "events": events,
+            **chat_agent.running(conv_id),
+            "meta": chat_agent.meta(conv_id),
+        })
+
+    @app.post("/api/conversations/{conv_id}/stop")
+    def post_conversation_stop(conv_id: str) -> JSONResponse:
+        try:
+            return JSONResponse(chat_agent.stop(conv_id))
+        except UnknownConversation as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.get("/api/chat/assets/{asset_id}.png")
+    def get_chat_asset(asset_id: str):
+        from fastapi.responses import FileResponse
+
+        path = chat_agent.asset_path(asset_id)
+        if path is None:
+            raise HTTPException(status_code=404, detail="no such asset")
+        return FileResponse(path, media_type="image/png")
 
     if WEB_DIST.is_dir():
         app.mount("/", StaticFiles(directory=str(WEB_DIST), html=True), name="web")
@@ -549,46 +638,6 @@ def _intent_for(text: str, db_path: Path, season: str | None) -> str | None:
     except Exception:  # noqa: BLE001 - the trace is a nicety, never a failure
         return None
     return None
-
-
-async def _escalate(text: str):
-    """Stream a headless `claude -p` answer as SSE events.
-
-    No API key lives in this process: the CLI carries the Max-plan session, so
-    the escalation costs nothing per call and the server stays credential-free
-    (DESIGN §2 item 6). If the binary is not installed the stream says so once
-    and ends -- silence would be indistinguishable from a slow model.
-    """
-    import asyncio
-    import shutil
-
-    binary = shutil.which("claude") or str(Path.home() / ".local" / "bin" / "claude")
-    if not Path(binary).exists():
-        yield {"event": "error", "data":
-               "The `claude` CLI is not installed, so agent escalation is "
-               "unavailable. The deterministic router at POST /api/chat still works."}
-        return
-
-    yield {"event": "start", "data": text}
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            binary, "-p", text,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            cwd=str(Path(__file__).resolve().parents[2]),
-        )
-    except OSError as exc:
-        yield {"event": "error", "data": f"could not start the agent: {exc}"}
-        return
-    try:
-        assert proc.stdout is not None
-        async for line in proc.stdout:
-            yield {"event": "token", "data": line.decode("utf-8", "replace").rstrip("\n")}
-        await proc.wait()
-        yield {"event": "done", "data": str(proc.returncode)}
-    finally:
-        if proc.returncode is None:
-            proc.kill()
 
 
 #: Module-level app for `uvicorn fpl_edge.platform.app:app`.
