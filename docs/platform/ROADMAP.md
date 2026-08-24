@@ -84,14 +84,19 @@ stops), `projection_providers.md`, `odds_derivation.md`, `field_model.md`.
 
 ## Next (in priority order)
 
-### 1. Rank-aware solver — finish and wire (highest value)
-`fpl_edge/rank/` and the `RANK_MV` objective in `fpl_edge/opt/milp.py` are
-substantially built (no-good-cut plan enumeration, locked/banned, chip-week
-forcing all landed) but were mid-flight when the model quota hit. Remaining:
-- verify `RANK_MV` end-to-end and run a real GW1 solve in both modes side by side
-- Σ-from-paired-simulator-draws estimator wired into `RankState`
-- the F1 paired-CRN validator attaching ΔP(top-10k) with paired SE to each plan
-- `make solve` refresh so the T-4h delivery carries a fresh plan, not "no fresh solve"
+### 1. Rank-aware solver — WIRED (2026-08-24)
+`uv run fpl solve` runs the horizon in both objectives against the live
+warehouse and persists the plan + forecast artefacts the weekly report reads.
+Run live for GW2: the objectives genuinely disagree (5/15 squad players, the
+captain flips), with the evidence provenance printed. `fpl weekly --validate`
+supplies the F1 paired simulator so the shortlist carries ΔP(top-10k) with
+paired SEs. Evidence assembly lives in `fpl_edge/rank/assemble.py`.
+Remaining, honestly:
+- the deficit is an assumption until a top-10k pace series exists (the command
+  says so and takes `--deficit`); captaincy shares are zero without the EO feed
+- Σ-from-paired-simulator-draws estimator into `RankState` (still open)
+- state-dependent risk (master prompt Phase 2.3) is NOT wired: `fpl solve`
+  uses the stylised balanced archetype
 
 ### 2. Projection ensemble
 Tables and providers exist; the blend does not. Needs: per-provider calibration
@@ -143,6 +148,16 @@ test proves the wiring wakes up the moment a feed lands. This is the single
 highest-latency edge still missing.
 
 ---
+
+### 0. Correctness fixes shipped 2026-08-24 (see AUDIT_2026-08-20.md)
+Historical availability is no longer fabricated at read time (NULL status =
+unknown; backtests must opt into optimism in writing). `read_copy` owns and
+deletes its temp copies (462 orphans, 5.4GB, cleaned). `dim_event` is
+backfilled for 2022-26 so `Snapshot.deadline()` answers for every season.
+Report sections cannot vanish silently. The four UI bugs that discarded real
+data are fixed and the bundle has contract tests. `fact_odds_derived` has a
+reader (`market_watch` panel), core-schema DDL, and a store-registered PIT key.
+A chip-funded recommendation now declares the chip it plays.
 
 ## Known gaps and honest caveats
 
