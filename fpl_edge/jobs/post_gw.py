@@ -89,6 +89,12 @@ def main() -> int:
 
     _run(report, "ingest_live", [py, "scripts/ingest_live.py"])
     _run(report, "ingest_odds_fixtures", [py, "scripts/ingest_odds.py", "--fixtures"])
+    # Settle finished gameweeks into fact_player_fixture -- the audit's
+    # highest-leverage gap: without this the current season never gets actuals,
+    # so projection_weight can never be earned and claims are never scored.
+    # A still-provisional gameweek is refused by its own gate and retried on
+    # the next run.
+    _run(report, "settle_results", [py, "-m", "fpl_edge.ingest.results"])
     # Refit team strength now that results have landed and cache per-fixture
     # difficulty as a parquet next to the database. The fixtures panel reads
     # the artefact instead of paying for a ~1 minute fit inside its 10s budget.

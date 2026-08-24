@@ -63,7 +63,7 @@ import pandas as pd
 from fpl_edge.models.team_goals.dixon_coles import DixonColesFit, DixonColesModel
 from fpl_edge.store import DEFAULT_DB, Warehouse
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 #: Written next to the database file, like gw1_projection.parquet.
 ARTEFACT_NAME = "fixture_difficulty.parquet"

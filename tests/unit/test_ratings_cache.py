@@ -27,7 +27,7 @@ from fpl_edge.models.team_goals.ratings_cache import (
 )
 from fpl_edge.models.team_goals.synthetic import build_warehouse, load_league
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 SEASON = "2025-26"
 #: Mid-season, matching test_team_goals_dixon_coles: history behind, fixtures ahead.
