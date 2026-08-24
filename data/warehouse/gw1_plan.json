@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-08-24T03:29:11.565028+00:00",
+  "generated_at": "2026-08-24T16:33:14.358660+00:00",
   "snapshot_as_of": "2026-08-28T17:30:00+00:00",
   "season": "2026-27",
   "horizon_gws": [
@@ -10,54 +10,54 @@
     6
   ],
   "objective_mode": "rank_mv",
-  "objective": 316.85583507746185,
+  "objective": 314.77689362061284,
   "n_sims": 1000,
-  "solver": "status=Time limit reached gap=0.1021339740057825",
+  "solver": "status=Time limit reached gap=0.10705241035550701",
   "notes": [
-    "ownership: FPL selected_by_pct at the GW2 snapshot (mean 0.0290, max 0.6920, sums to 14.67 across 506 players)",
+    "ownership: FPL selected_by_pct at the GW2 snapshot (mean 0.0290, max 0.6900, sums to 14.87 across 513 players)",
     "captaincy share: no external EO feed for GW2; every share is zero, which prices the armband as a pure differential. Read the RANK_MV captain with that in mind.",
     "deficit NOT MEASURED (no top-10k pace series yet); assuming level with the pace at GW2. Pass --deficit to assert your real position."
   ],
   "gw1": {
     "squad": [
-      80201,
       97032,
-      109745,
       141746,
-      169359,
+      154561,
       177815,
       178301,
-      200834,
+      221466,
+      223827,
+      231747,
       243298,
-      430871,
+      247348,
+      424876,
       446008,
-      472769,
-      475168,
-      494521,
-      503139
+      484420,
+      489639,
+      494521
     ],
     "starting_xi": [
-      80201,
       97032,
       141746,
+      154561,
       177815,
       178301,
+      223827,
       243298,
-      430871,
+      424876,
       446008,
-      472769,
-      475168,
+      484420,
       494521
     ],
     "bench": [
-      109745,
-      503139,
-      200834,
-      169359
+      489639,
+      221466,
+      231747,
+      247348
     ],
     "captain": 141746,
-    "vice_captain": 430871,
+    "vice_captain": 97032,
     "chip": "3xc",
-    "bank_after": 0
+    "bank_after": 5
   }
 }

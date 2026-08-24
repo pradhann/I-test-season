@@ -3,7 +3,7 @@
    price radar renders its real risers/fallers shape, idea chips use the
    panel's own hit/miss vocabulary, and sorting never eats the provenance. */
 
-import { runPanel, el, emptyBox, errBox, provenance, dataTable,
+import { runPanel, el, emptyBox, errBox, provenance, dataTable, playerCard,
          fmtPrice, fmt1, fmt2, bar } from "/js/app.js";
 
 function card(title, sub) {
@@ -23,14 +23,7 @@ async function panelInto(host, script, params, render) {
 }
 
 function pcard(p) {
-  const d = el("div", "pcard" + (p.is_captain ? " cap" : ""));
-  d.appendChild(el("div", "nm",
-    p.name + (p.is_captain ? " (C)" : p.is_vice ? " (V)" : "")));
-  d.appendChild(el("div", "sub",
-    `${fmtPrice(p.price)}${p.xpts != null ? " · " + fmt1(p.xpts) : ""}`));
-  if (p.status && p.status !== "a")
-    d.appendChild(el("div", "chip warn", p.news || `status ${p.status}`));
-  return d;
+  return playerCard(p, { mark: p.is_captain ? "C" : p.is_vice ? "V" : null });
 }
 
 function renderSquad(res, host) {

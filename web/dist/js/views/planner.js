@@ -8,7 +8,7 @@
    `rules` block, which the panel script reads from the verified rule
    registry — this file never hardcodes a game rule. */
 
-import { runPanel, el, emptyBox, errBox, provenance,
+import { runPanel, el, emptyBox, errBox, provenance, faceImg, stat,
          fmtPrice, fmt1, fmt2 } from "/js/app.js";
 
 const PLANS_KEY = "itest-planner-plans-v1";
@@ -258,19 +258,19 @@ export default async function planner(host) {
     });
     table.appendChild(tbody); wrap.appendChild(table); summaryBox.appendChild(wrap);
 
-    const strip = el("p", "sub");
-    strip.append(el("span", "chip s1", `total xPts ${fmt1(c.totalX)}`), " ");
-    strip.append(el("span", c.totalHits ? "chip bad" : "chip",
-      `hits ${c.totalHits} (−${c.totalHits * R.hit_cost} pts)`), " ");
-    strip.append(el("span", "chip good", `net ${fmt1(c.net)}`), " ");
-    const negative = c.perGw.some(p => p.bank < 0);
-    if (negative) strip.append(el("span", "chip bad", "bank goes negative"), " ");
-    if (res.deadline_utc) {
-      const when = new Date(res.deadline_utc);
-      if (!isNaN(when)) strip.append(el("span", "chip",
-        `GW${res.gws[0]} deadline ${when.toUTCString().slice(0, 22)} UTC`));
-    }
+    const strip = el("div", "stats");
+    strip.append(stat(fmt1(c.net), "net xPts", "good"));
+    strip.append(stat(fmt1(c.totalX), "gross xPts"));
+    strip.append(stat(c.totalHits ? `−${c.totalHits * R.hit_cost}` : "0",
+                      "hit points", c.totalHits ? "bad" : ""));
+    const endBank = c.perGw.at(-1)?.bank ?? res.bank_tenths;
+    strip.append(stat(fmtPrice(endBank / 10), "bank at end",
+                      c.perGw.some(p => p.bank < 0) ? "bad" : ""));
+    strip.append(stat(String(moves.length), "moves planned"));
     summaryBox.appendChild(strip);
+    if (c.perGw.some(p => p.bank < 0))
+      summaryBox.appendChild(el("p", "sub")).appendChild(
+        el("span", "chip bad", "bank goes negative — plan is not affordable"));
   }
 
   // ---- candidate picker ----
@@ -320,7 +320,10 @@ export default async function planner(host) {
       for (const cd of rows) {
         const short = tenths(cd) > funds;
         const tr = el("tr");
-        tr.appendChild(el("td", null, cd.name));
+        const nameTd = el("td");
+        nameTd.appendChild(faceImg(cd.code, "avatar"));
+        nameTd.appendChild(document.createTextNode(cd.name));
+        tr.appendChild(nameTd);
         tr.appendChild(el("td", null, cd.team ?? "–"));
         tr.appendChild(el("td", "num", fmtPrice(cd.price)));
         tr.appendChild(el("td", "num", cd.own_pct == null ? "–" : fmt1(cd.own_pct)));
@@ -368,7 +371,7 @@ export default async function planner(host) {
     const inAt = new Map(moves.map(m => [m.in, m]));     // code -> move (in)
 
     const wrap = el("div", "scroll-x");
-    const table = el("table", "data");
+    const table = el("table", "data sticky-first");
     const thead = el("thead"); const hr = el("tr");
     for (const lbl of ["player", "pos", "team"]) hr.appendChild(el("th", null, lbl));
     hr.appendChild(el("th", "num", "price"));
@@ -394,7 +397,9 @@ export default async function planner(host) {
 
     const playerRow = (p, joinedGw) => {
       const tr = el("tr");
-      const nameTd = el("td", null, p.name + (p.is_captain ? " (C)" : ""));
+      const nameTd = el("td");
+      nameTd.appendChild(faceImg(p.code, "avatar"));
+      nameTd.appendChild(document.createTextNode(p.name + (p.is_captain ? " (C)" : "")));
       if (joinedGw != null) {
         nameTd.appendChild(document.createTextNode(" "));
         nameTd.appendChild(el("span", "chip good", `IN GW${joinedGw}`));
@@ -418,7 +423,7 @@ export default async function planner(host) {
           td.appendChild(chip);
         } else {
           xpCell(td, p.code, g);
-          td.style.cursor = "pointer";
+          td.classList.add("clickable");
           td.title = (td.title ? td.title + " · " : "") + `click to transfer out in GW${g}`;
           td.onclick = () => { picking = { gw: g, out: p.code }; render(); };
         }

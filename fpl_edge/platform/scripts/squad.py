@@ -49,6 +49,7 @@ _PLAYER = {
         "name": {"type": "string"},
         "pos": {"type": "string"},
         "team": {"type": ["string", "null"]},
+        "team_code": {"type": ["integer", "null"]},
         "price": {"type": "number"},
         "own_pct": {"type": ["number", "null"]},
         "is_starter": {"type": "boolean"},
@@ -100,6 +101,7 @@ def squad_overview(wh, *, season: str, entry_id: int | None = None) -> dict[str,
         wh,
         """
         SELECT s.code, p.web_name, p.position, t.short_name AS team,
+               p.team_code,
                s.price_tenths, s.selected_by_pct, s.status, s.news
         FROM (
             SELECT * EXCLUDE (rn) FROM (
@@ -177,6 +179,7 @@ def squad_overview(wh, *, season: str, entry_id: int | None = None) -> dict[str,
             "name": cell("web_name") or str(code),
             "pos": POSITION_NAME.get(int(row["position"]) if row is not None else 0, "?"),
             "team": cell("team"),
+            "team_code": cell("team_code", int),
             "price": round(float(row["price_tenths"]) / 10.0, 1) if row is not None else 0.0,
             "own_pct": cell("selected_by_pct", float),
             "is_starter": bool(pick.is_starter),

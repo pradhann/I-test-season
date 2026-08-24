@@ -132,27 +132,82 @@ table.data tr:hover td { background: var(--raised); }
        background: var(--s1); vertical-align: middle; margin-right: 6px;
        min-width: 2px; }
 
-/* chips */
-.chip { display: inline-block; padding: 1px 8px; border-radius: 999px;
-        font-size: 11px; font-weight: 600; border: 1px solid var(--line);
-        color: var(--muted); }
-.chip.good { color: var(--good); border-color: var(--good); }
-.chip.warn { color: var(--warn); border-color: var(--warn); }
-.chip.bad  { color: var(--bad);  border-color: var(--bad); }
-.chip.s1 { color: var(--s1); border-color: var(--s1); }
+/* chips — filled tints, never colour-alone (text always present) */
+.chip { display: inline-block; padding: 2px 9px; border-radius: 999px;
+        font-size: 11px; font-weight: 600; letter-spacing: .015em;
+        background: var(--raised); color: var(--muted);
+        border: 1px solid transparent; }
+.chip.good { color: var(--good);
+             background: color-mix(in oklab, var(--good) 13%, var(--surface)); }
+.chip.warn { color: var(--warn);
+             background: color-mix(in oklab, var(--warn) 15%, var(--surface)); }
+.chip.bad  { color: var(--bad);
+             background: color-mix(in oklab, var(--bad) 13%, var(--surface)); }
+.chip.s1   { color: var(--s1);
+             background: color-mix(in oklab, var(--s1) 13%, var(--surface)); }
+.chip.big  { font-size: 12.5px; padding: 5px 13px; }
 
-/* pitch */
-.pitch { background: var(--pitch); border-radius: 10px; padding: 14px 8px;
-         display: flex; flex-direction: column; gap: 10px; }
-.pitch .row { display: flex; justify-content: center; gap: 8px; flex-wrap: wrap; }
-.pcard { background: var(--surface); border-radius: 7px; padding: 5px 9px;
-         text-align: center; min-width: 74px; box-shadow: var(--shadow); }
-.pcard .nm { font-weight: 600; font-size: 12px; }
-.pcard .sub { color: var(--muted); font-size: 11px;
+/* stat tiles */
+.stats { display: flex; gap: 10px; flex-wrap: wrap; margin: 4px 0 12px; }
+.stat { background: var(--raised); border-radius: 9px; padding: 8px 14px;
+        min-width: 92px; }
+.stat .v { font: 600 17px/1.2 var(--mono); font-variant-numeric: tabular-nums; }
+.stat .k { color: var(--faint); font-size: 10.5px; letter-spacing: .06em;
+           text-transform: uppercase; margin-top: 1px; }
+.stat.good .v { color: var(--good); } .stat.bad .v { color: var(--bad); }
+
+/* planner grid: first column stays put while gameweeks scroll */
+table.sticky-first th:first-child, table.sticky-first td:first-child {
+  position: sticky; left: 0; background: var(--surface); z-index: 2;
+  box-shadow: 1px 0 0 var(--line); min-width: 170px; }
+table.sticky-first tr:hover td:first-child { background: var(--raised); }
+table.data td.clickable { cursor: pointer; }
+table.data td.clickable:hover { box-shadow: inset 0 0 0 1.5px var(--s1); }
+
+/* pitch — photo cards on stripes */
+.pitch {
+  background:
+    repeating-linear-gradient(180deg,
+      transparent 0 44px, rgb(255 255 255 / .045) 44px 88px),
+    linear-gradient(180deg,
+      color-mix(in oklab, var(--pitch) 92%, #fff) 0%, var(--pitch) 100%);
+  border-radius: 12px; padding: 18px 10px 14px;
+  display: flex; flex-direction: column; gap: 14px;
+  box-shadow: inset 0 0 0 2px rgb(255 255 255 / .10);
+}
+.pitch .row { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; }
+.pcard { background: var(--surface); border-radius: 9px;
+         text-align: center; width: 86px; box-shadow: var(--shadow);
+         position: relative; overflow: hidden; padding-bottom: 5px; }
+.pcard .face { display: block; width: 100%; height: 64px; object-fit: cover;
+               object-position: top center;
+               background: linear-gradient(180deg,
+                 color-mix(in oklab, var(--accent) 18%, var(--raised)), var(--raised)); }
+.pcard .face.missing { visibility: hidden; }
+.pcard .nm { font-weight: 650; font-size: 11.5px; padding: 3px 4px 0;
+             white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pcard .sub { color: var(--muted); font-size: 10.5px;
               font-family: var(--mono); font-variant-numeric: tabular-nums; }
-.pcard.cap { box-shadow: 0 0 0 1.5px var(--warn); }
-.bench { display: flex; gap: 8px; justify-content: center; margin-top: 8px;
+.pcard .badge { position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; }
+.pcard .ribbon { position: absolute; top: 3px; right: 3px;
+                 width: 17px; height: 17px; border-radius: 50%;
+                 font: 700 10px/17px inherit; color: #fff;
+                 background: var(--warn); font-family: var(--mono); }
+.pcard .ribbon.v { background: var(--faint); }
+.pcard .dot { position: absolute; top: 24px; right: 5px; width: 8px; height: 8px;
+              border-radius: 50%; background: var(--warn);
+              box-shadow: 0 0 0 2px var(--surface); }
+.pcard .dot.bad { background: var(--bad); }
+.pcard.cap { box-shadow: 0 0 0 2px var(--warn), var(--shadow); }
+.bench { display: flex; gap: 10px; justify-content: center; margin-top: 10px;
          flex-wrap: wrap; }
+.bench .pcard { opacity: .92; }
+
+/* small round face for table rows */
+.avatar { width: 24px; height: 24px; border-radius: 50%; object-fit: cover;
+          object-position: center 20%; vertical-align: middle; margin-right: 7px;
+          background: var(--raised); }
+.avatar.missing { visibility: hidden; }
 
 /* forms */
 select, input[type="text"], input[type="number"] {

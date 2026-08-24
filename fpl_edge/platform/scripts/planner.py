@@ -60,7 +60,7 @@ _SQUAD_PLAYER = {
         "code": {"type": "integer"},
         "name": {"type": "string"},
         "pos": {"type": "string"},
-        "team": {"type": ["string", "null"]},
+        "team": {"type": ["string", "null"]}, "team_code": {"type": ["integer", "null"]},
         "price": {"type": "number"},
         "is_captain": {"type": "boolean"},
     },
@@ -74,7 +74,7 @@ _CANDIDATE = {
         "code": {"type": "integer"},
         "name": {"type": "string"},
         "pos": {"type": "string"},
-        "team": {"type": ["string", "null"]},
+        "team": {"type": ["string", "null"]}, "team_code": {"type": ["integer", "null"]},
         "price": {"type": "number"},
         "own_pct": {"type": ["number", "null"]},
     },
@@ -150,7 +150,7 @@ def planner_grid(
 
     players = q(
         wh,
-        "SELECT code, web_name, position, team, price, selected_by_pct "
+        "SELECT code, web_name, position, team, team_code, price, selected_by_pct "
         "FROM sem_players(?) WHERE season = ?",
         (now, season),
     )
@@ -229,6 +229,7 @@ def planner_grid(
             "name": cell(row, "web_name", str) or str(code),
             "pos": POSITION_NAME.get(cell(row, "position", int) or 0, "?"),
             "team": cell(row, "team", str),
+            "team_code": cell(row, "team_code", int),
             "price": cell(row, "price", float) or 0.0,
             "is_captain": bool(pick.is_captain),
         })
@@ -259,6 +260,7 @@ def planner_grid(
             "name": cell(row, "web_name", str) or str(code),
             "pos": POSITION_NAME.get(cell(row, "position", int) or 0, "?"),
             "team": cell(row, "team", str),
+            "team_code": cell(row, "team_code", int),
             "price": cell(row, "price", float) or 0.0,
             "own_pct": cell(row, "selected_by_pct", float),
         })

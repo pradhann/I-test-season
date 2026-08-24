@@ -110,6 +110,49 @@ export function bar(value, max, text) {
   return span;
 }
 
+/* FPL's public image CDN, keyed by the same stable ids the warehouse uses.
+   Both verified live: photos p{code}.png, badges t{team_code}.png. A missing
+   image hides itself and the layout holds. */
+const PHOTO = c => `https://resources.premierleague.com/premierleague/photos/players/110x140/p${c}.png`;
+const BADGE = t => `https://resources.premierleague.com/premierleague/badges/50/t${t}.png`;
+
+export function faceImg(code, cls) {
+  const img = el("img", cls);
+  img.loading = "lazy"; img.alt = "";
+  img.src = PHOTO(code);
+  img.onerror = () => img.classList.add("missing");
+  return img;
+}
+
+/* The pitch card: photo, name, sub-line, captain/vice ribbon, status dot,
+   team badge. `p` needs {code, name}; everything else optional. */
+export function playerCard(p, { mark, sub } = {}) {
+  const d = el("div", "pcard" + (mark === "C" ? " cap" : ""));
+  d.appendChild(faceImg(p.code, "face"));
+  if (p.team_code != null) {
+    const b = el("img", "badge"); b.loading = "lazy"; b.alt = p.team ?? "";
+    b.src = BADGE(p.team_code); b.onerror = () => b.remove();
+    d.appendChild(b);
+  }
+  if (mark) d.appendChild(el("div", "ribbon" + (mark === "V" ? " v" : ""), mark));
+  if (p.status && p.status !== "a")
+    d.appendChild(el("div", "dot" + (["i","s","u"].includes(p.status) ? " bad" : ""),
+                     "")).title = p.news || `status ${p.status}`;
+  d.appendChild(el("div", "nm", p.name));
+  const line = sub ?? [p.price != null ? fmtPrice(p.price) : null,
+                       p.xpts != null ? fmt1(p.xpts) : null]
+    .filter(Boolean).join(" · ");
+  d.appendChild(el("div", "sub", line || "–"));
+  return d;
+}
+
+export function stat(value, label, cls) {
+  const d = el("div", "stat" + (cls ? " " + cls : ""));
+  d.appendChild(el("div", "v", value));
+  d.appendChild(el("div", "k", label));
+  return d;
+}
+
 export function fmtPrice(p) { return p == null ? "–" : `£${Number(p).toFixed(1)}`; }
 export function fmt1(x) { return x == null ? "–" : Number(x).toFixed(1); }
 export function fmt2(x) { return x == null ? "–" : Number(x).toFixed(2); }

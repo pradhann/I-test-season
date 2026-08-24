@@ -5,7 +5,7 @@
    rank-vs-points DIFF from the latest `--mode both` log gets its own card —
    the two objectives disagreeing is the whole reason this engine exists. */
 
-import { getJSON, postJSON, el, emptyBox, errBox, fmtPrice, fmt1 } from "/js/app.js";
+import { getJSON, postJSON, el, emptyBox, errBox, playerCard, fmtPrice, fmt1 } from "/js/app.js";
 
 const POLL_MS = 3000;
 
@@ -117,18 +117,15 @@ function runPanelInto(host, onFinished) {
 // ---------- plan panel ----------
 
 function lookup(players, code) {
-  return players[String(code)]
+  const p = players[String(code)]
     || { name: String(code), pos: "?", price: null, team: null };
+  return { ...p, code };
 }
 
 function pcard(entry, mark) {
-  const d = el("div", "pcard" + (mark === "C" ? " cap" : ""));
-  d.appendChild(el("div", "nm", entry.name + (mark ? ` (${mark})` : "")));
-  const sub = [entry.pos, entry.team,
-               entry.price != null ? fmtPrice(entry.price) : null]
+  const sub = [entry.team, entry.price != null ? fmtPrice(entry.price) : null]
     .filter(Boolean).join(" · ");
-  d.appendChild(el("div", "sub", sub || "–"));
-  return d;
+  return playerCard(entry, { mark: mark || null, sub });
 }
 
 function renderPlan(res, host) {
