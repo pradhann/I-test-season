@@ -388,3 +388,32 @@ def test_upstream_layout_is_unchanged() -> None:
     assert {"id", "code", "element_type", "team", "team_code"} <= set(raw.columns)
     assert {"element", "fixture", "GW", "value", "selected"} <= set(merged.columns)
     assert "code" not in merged.columns
+def test_the_derived_calendar_is_persisted_not_discarded() -> None:
+    """build_events turns the calendar into dim_event rows.
+
+    The calendar was always computed and then thrown away, leaving dim_event
+    empty for every historical season, so Snapshot.deadline() raised and a
+    backtest could not ask when any historical deadline was.
+    """
+    import datetime as dt
+
+    import pandas as pd
+
+    from fpl_edge.ingest.vaastav import build_calendar, build_events, season_epoch
+
+    fixtures = pd.DataFrame([
+        {"event": 1, "kickoff_time": "2022-08-05T19:00:00Z"},
+        {"event": 1, "kickoff_time": "2022-08-07T15:30:00Z"},
+        {"event": 2, "kickoff_time": "2022-08-13T11:30:00Z"},
+        {"event": None, "kickoff_time": None},        # unscheduled: contributes nothing
+    ])
+    calendar = build_calendar(fixtures)
+    rows = build_events("2022-23", calendar, season_epoch(calendar))
+
+    assert list(rows["gw"]) == [1, 2]
+    gw1 = rows[rows["gw"] == 1].iloc[0]
+    # first kickoff minus 90 minutes, the verified deadline rule
+    assert gw1["deadline_utc"] == dt.datetime(2022, 8, 5, 17, 30, tzinfo=dt.timezone.utc)
+    assert bool(gw1["is_finished"]) is True
+    # observable the moment the fixture list is: the season epoch
+    assert (rows["as_of"] == season_epoch(calendar)).all()

@@ -319,6 +319,35 @@ def season_epoch(calendar: Mapping[int, GameweekWindow]) -> dt.datetime:
 # ---------------------------------------------------------------------------
 
 
+def build_events(
+    season: str, calendar: Mapping[int, GameweekWindow], epoch: dt.datetime
+) -> pd.DataFrame:
+    """``dim_event`` rows from the derived calendar.
+
+    The calendar was always computed here and then thrown away, which left
+    ``dim_event`` empty for every historical season -- so
+    ``Snapshot.deadline()`` and ``next_gw()`` raised ``KeyError`` and a
+    backtest literally could not ask when a historical deadline was. The
+    deadlines are derived (first kickoff minus 90 minutes, the verified
+    rule), not observed; ``as_of`` is the season epoch, the same instant the
+    fixture list itself becomes visible, because the whole calendar is public
+    the moment the fixtures are.
+    """
+    rows = [
+        {
+            "season": season,
+            "gw": w.gw,
+            "deadline_utc": w.deadline_utc,
+            # A historical gameweek is finished by construction; recording
+            # False or NULL would claim these seasons are still being played.
+            "is_finished": True,
+            "as_of": epoch,
+        }
+        for w in calendar.values()
+    ]
+    return pd.DataFrame(rows).sort_values("gw").reset_index(drop=True)
+
+
 @dataclass
 class SeasonIngestReport:
     """Everything the caller needs to judge whether the load is trustworthy."""
@@ -662,6 +691,7 @@ def ingest_season(
     resolved = resolved[known_fixture]
 
     # -- writes --------------------------------------------------------------
+    report.rows["dim_event"] = wh.append("dim_event", build_events(season, calendar, epoch))
     report.rows["dim_team"] = wh.append("dim_team", build_teams(season, teams, epoch))
 
     fx_rows, dropped_fx = build_fixtures(season, fixtures, team_code_by_id, epoch)
