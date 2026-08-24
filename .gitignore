@@ -14,6 +14,10 @@ data/raw/**/*.bin
 .env
 *.egg-info/
 dist/
+# web/dist is NOT a build artefact: the UI is zero-build (DESIGN.md 2.2)
+# and these files are the source itself.
+!web/dist/
+!web/dist/**
 .DS_Store
 data/warehouse/jobs/
 data/odds_expansion_ledger.json
