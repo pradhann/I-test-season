@@ -8,6 +8,8 @@ vectors where both exist, statistical fit alone where the market is silent.
 
 Geometric rather than arithmetic because the models are additive in *log* rates,
 which is where their errors are roughly symmetric.
+
+STATUS: RESEARCH, not in the production import closure (reachability audit 2026-08-20, docs/platform/AUDIT_2026-08-20.md). Kept deliberately: the market/model blend, waiting on the calibration loop. Nothing imports this from production code, and anything that starts to should say so in ROADMAP.
 """
 
 from __future__ import annotations

@@ -16,6 +16,8 @@ size of it is a number rather than an argument.
 implied rates. Withholding the low-score correction from the baselines would
 make the comparison on clean sheets unfair to them and the headline result
 unearned.
+
+STATUS: RESEARCH, not in the production import closure (reachability audit 2026-08-20, docs/platform/AUDIT_2026-08-20.md). Kept deliberately: the baselines the Dixon-Coles fit is judged against. Nothing imports this from production code, and anything that starts to should say so in ROADMAP.
 """
 
 from __future__ import annotations

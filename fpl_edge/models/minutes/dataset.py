@@ -4,6 +4,8 @@ The evaluation harness needs a Warehouse to mint Snapshots from. Reading the
 committed CSVs straight into pandas and handing those to a model would defeat
 the entire point-in-time design, so the fixtures are loaded into an actual
 warehouse and every read then goes through ``snapshot_at``.
+
+STATUS: EVALUATION HARNESS, run via `python -m` (see docs/models/); not in the production import closure and not expected to be. It exists to mint the committed evidence CSVs, not to serve requests.
 """
 
 from __future__ import annotations

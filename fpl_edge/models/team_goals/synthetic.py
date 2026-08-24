@@ -14,6 +14,8 @@ parameter of the simulator*, not evidence about real bookmakers. Both caveats
 are repeated in docs/models/team_goals.md next to the numbers.
 
 Everything is seeded. Two runs with the same seed produce byte-identical CSVs.
+
+STATUS: RESEARCH, not in the production import closure (reachability audit 2026-08-20, docs/platform/AUDIT_2026-08-20.md). Kept deliberately: the synthetic league with known ground truth. Nothing imports this from production code, and anything that starts to should say so in ROADMAP.
 """
 
 from __future__ import annotations

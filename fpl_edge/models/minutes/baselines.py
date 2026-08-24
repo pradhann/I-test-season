@@ -3,6 +3,8 @@
 They are written to be *strong*, not straw men: the per-player baseline gets its
 smoothing constant fitted on the training seasons rather than an arbitrary
 Laplace 1, because beating a badly-tuned baseline proves nothing.
+
+STATUS: RESEARCH, not in the production import closure (reachability audit 2026-08-20, docs/platform/AUDIT_2026-08-20.md). Kept deliberately: the baselines the GBM must beat to justify itself. Nothing imports this from production code, and anything that starts to should say so in ROADMAP.
 """
 
 from __future__ import annotations

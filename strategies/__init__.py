@@ -44,6 +44,8 @@ Usage::
 can be replayed directly. Running the inner strategy alone and then wrapped
 gives a controlled comparison in which the difference is attributable to the
 policies.
+
+STATUS: RESEARCH, wholly outside the production import closure (reachability audit 2026-08-20). This package is the Backtesting phase's raw material: each module is a falsifiable policy for fpl_edge.eval.replay to grade. It becomes production the day the replay harness runs it, not before.
 """
 
 from __future__ import annotations

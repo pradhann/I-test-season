@@ -19,6 +19,8 @@ code, in the same spirit as ``fpl_edge/rules/registry.yaml``:
     project ingests, and this engine runs offline, so they cannot be recomputed.
     They carry an explicit tolerance and any conclusion that depends on them
     says so.
+
+STATUS: RESEARCH, not in the production import closure (reachability audit 2026-08-20, docs/platform/AUDIT_2026-08-20.md). Kept deliberately: anchors for validating the simulator against warehouse actuals. Nothing imports this from production code, and anything that starts to should say so in ROADMAP.
 """
 
 from __future__ import annotations

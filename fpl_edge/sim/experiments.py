@@ -13,6 +13,8 @@ Three questions, in order of how much they matter:
 3. **Does the simulated field look like the real one?** Checked against the
    verified warehouse anchors and the published rank ladder in
    :mod:`fpl_edge.sim.calibration`.
+
+STATUS: RESEARCH, not in the production import closure (reachability audit 2026-08-20, docs/platform/AUDIT_2026-08-20.md). Kept deliberately: the §9 divergence/breakeven studies re-run from here when calibration shifts. Nothing imports this from production code, and anything that starts to should say so in ROADMAP.
 """
 
 from __future__ import annotations

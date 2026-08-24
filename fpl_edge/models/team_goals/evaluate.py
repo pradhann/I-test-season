@@ -25,6 +25,8 @@ fixtures *all* models predicted, and coverage is reported beside it. Full
 coverage numbers for the non-market models are reported as a separate scope.
 
 Run: ``uv run python -m fpl_edge.models.team_goals.evaluate``
+
+STATUS: EVALUATION HARNESS, run via `python -m` (see docs/models/); not in the production import closure and not expected to be. It exists to mint the committed evidence CSVs, not to serve requests.
 """
 
 from __future__ import annotations

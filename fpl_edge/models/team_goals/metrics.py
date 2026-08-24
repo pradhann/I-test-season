@@ -13,6 +13,8 @@ one while losing another:
   version.
 * **Brier** on clean sheets. This is the number that actually prices defenders,
   so it gets measured directly rather than assumed to follow from the others.
+
+STATUS: EVALUATION HARNESS, run via `python -m` (see docs/models/); not in the production import closure and not expected to be. It exists to mint the committed evidence CSVs, not to serve requests.
 """
 
 from __future__ import annotations

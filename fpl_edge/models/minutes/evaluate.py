@@ -17,6 +17,8 @@ about nailed starters, which is exactly the failure mode that ruins a season.
 Run::
 
     uv run python -m fpl_edge.models.minutes.evaluate
+
+STATUS: EVALUATION HARNESS, run via `python -m` (see docs/models/); not in the production import closure and not expected to be. It exists to mint the committed evidence CSVs, not to serve requests.
 """
 
 from __future__ import annotations

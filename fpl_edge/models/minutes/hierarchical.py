@@ -30,6 +30,8 @@ machinery with the current-season evidence term structurally absent and the
 cell definition extended by whether the player is new to the club, because a
 summer signing's previous-season record is evidence about him but much weaker
 evidence about his role.
+
+STATUS: RESEARCH, not in the production import closure (reachability audit 2026-08-20, docs/platform/AUDIT_2026-08-20.md). Kept deliberately: the partial-pooling alternative if the GBM's cold-start behaviour degrades. Nothing imports this from production code, and anything that starts to should say so in ROADMAP.
 """
 
 from __future__ import annotations

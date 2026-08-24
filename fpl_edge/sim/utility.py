@@ -38,6 +38,8 @@ Design notes, because each choice is a claim:
 * :math:`U` is monotone: improving the rank in any single simulation weakly
   increases every term. An objective that could be gamed by finishing *worse*
   would be unusable, and ``test_sim_utility.py`` asserts this property.
+
+STATUS: RESEARCH, not in the production import closure (reachability audit 2026-08-20, docs/platform/AUDIT_2026-08-20.md). Kept deliberately: the rank-utility shapes the objective work draws on. Nothing imports this from production code, and anything that starts to should say so in ROADMAP.
 """
 
 from __future__ import annotations
