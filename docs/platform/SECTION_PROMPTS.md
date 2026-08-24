@@ -471,7 +471,96 @@ ACCEPTANCE — generalisation is the bar
 5. Reload mid-answer re-attaches to the stream (demonstrate).
 ```
 
-## 6. Telegram — deferred, do later
+## 6. Deploy — online for friends, solver served from the store
+
+```
+You are deploying the FPL edge engine at ~/Documents/Github/i-test-season
+so a few invited friends can reach the web UI like fplreview, and making
+solve results a stored, cache-served asset. This session is ONLY about
+deployment, auth, and solve persistence. Do not change the solver's
+maths, the warehouse's PIT semantics, or the chat agent's loop.
+
+CONTEXT AND CONSTRAINTS
+- The whole stack is Mac-resident BY DESIGN: launchd jobs, the DuckDB
+  file, the Max-plan claude CLI for chat. v1 keeps it that way and
+  exposes it through a tunnel; a VPS migration is a later session and
+  needs the warehouse + jobs story rethought. Do not start it here.
+- The chat agent spends the OWNER'S Max plan. Friends must not be able
+  to burn it. The solver holds the write lock and takes ~10 min. Friends
+  must not be able to queue solves. myteam data (the owner's squad,
+  bank, token-derived reads) is the owner's business.
+
+BUILD, in order:
+
+1. SOLVE RESULTS IN THE STORE (do this first; it is also what makes the
+   UI serve instantly). New table fact_solve in store/schema.sql:
+   (solve_id, season, gw_from, horizon, mode, objective_value, chip,
+   squad codes + captain/vice as a JSON column or child table
+   fact_solve_pick, bank_after, n_sims, solver_status, inputs_hash,
+   started_utc, finished_utc, repo_sha, as_of) — append-only like every
+   fact. inputs_hash = sha256 over (mode, horizon, gw, the forecast
+   artefact's content hash, squad codes + bank + FTs, rules version):
+   the exact inputs that make a solve reproducible.
+   - solve_runner persists the parsed plan into fact_solve on
+     completion (it already parses gw1_plan.json; the artefact stays
+     for backwards compat).
+   - POST /api/solve computes inputs_hash FIRST: an existing row with
+     the same hash returns {cached: true, solve} immediately — the
+     "don't rerun" the user asked for, with a force=true escape.
+   - GET /api/solve/history — recent solves from the store; the Solver
+     view gains a history list (click an old solve → its plan renders).
+   - Tests: hash stability (same inputs same hash, any input changes
+     it), cache hit returns without spawning, force bypasses. Break the
+     hash once, watch the cache test fail, restore.
+
+2. AUTH — Cloudflare Tunnel + Cloudflare Access (chosen; reasons: free
+   tier covers this, TLS and stable hostname with no port forwarding,
+   auth happens BEFORE traffic reaches the Mac, friends log in with an
+   emailed one-time code, zero passwords to manage, and the app needs
+   almost no auth code of its own).
+   - cloudflared as a launchd service tunneling to localhost:8321.
+   - Access application over the hostname: an allowlist policy with the
+     owner's email + the friends' emails.
+   - The app TRUSTS the Cf-Access-Authenticated-User-Email header ONLY
+     when a shared-secret header from the tunnel config is also present
+     (documented setup step), else treats the request as local-owner.
+   - Role middleware in app.py: OWNER (the configured email + all
+     localhost traffic) vs VIEWER (everyone else authenticated).
+     VIEWER gets: all GET panels/views, solve HISTORY, fixtures,
+     projections, template/EO. VIEWER is DENIED: POST /api/solve (403
+     with a friendly "ask Nripesh to run a solve"), the chat agent
+     escalation (router fast-path is fine — it is cheap and local),
+     /api/query free SQL, watchlist writes, idea writes, myteam panels
+     (squad panel returns an honest "owner-only" empty state for
+     viewers; the planner loads with the TEMPLATE squad instead of the
+     owner's, clearly labelled).
+   - Every denial is a clean styled message, not a 500.
+3. DEPLOY MECHANICS: make deploy-platform installs the platform +
+   cloudflared launchd services (the com.fpledge.platform.plist exists,
+   orphaned — wire it, don't rewrite it). make undeploy-platform
+   removes both. Document the one-time Cloudflare steps (tunnel create,
+   DNS, Access policy emails) in docs/platform/DEPLOY.md with exact
+   commands. Caffeinate note: the Mac sleeping takes the site down;
+   document `sudo pmset -a sleep 0` as the owner's choice, do not run it.
+4. VERIFY: role tests (viewer 403s on every denied route, owner passes;
+   header spoofing without the tunnel secret gets viewer treatment at
+   most — break the secret check, watch the spoof test fail, restore),
+   solve cache end to end, and a real tunnel smoke test IF the owner has
+   run the one-time Cloudflare setup — otherwise verify locally with
+   forged headers and list the owner's remaining manual steps precisely.
+
+ACCEPTANCE
+- A solve triggered from the UI lands in fact_solve; re-requesting with
+  unchanged inputs returns the stored plan instantly (demonstrate both).
+- Solver view shows history; old plans render.
+- Viewer/owner roles enforced with tests; chat and solve-trigger and
+  myteam are owner-only; viewers get honest denials.
+- make deploy-platform installs everything; DEPLOY.md lists the exact
+  one-time Cloudflare steps and which emails to allowlist.
+- Full unit suite green.
+```
+
+## 7. Telegram — deferred, do later
 
 ```
 You are working on the Telegram interface of the FPL edge engine at
