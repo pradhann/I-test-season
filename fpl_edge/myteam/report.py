@@ -60,6 +60,8 @@ def configure(
     points_forecast: object | None = None,
     price_forecast: object | None = None,
     rank_utility: object | None = None,
+    rank_mv: object | None = None,
+    validator: object | None = None,
     mode: ObjectiveMode | None = None,
     horizon: int | None = None,
 ) -> None:
@@ -73,6 +75,8 @@ def configure(
         ("points_forecast", points_forecast),
         ("price_forecast", price_forecast),
         ("rank_utility", rank_utility),
+        ("rank_mv", rank_mv),
+        ("validator", validator),
         ("mode", mode),
         ("horizon", horizon),
     ):
@@ -206,6 +210,8 @@ def render_transfers(
             price_forecast=_PROVIDERS.get("price_forecast"),
             mode=mode,                                   # type: ignore[arg-type]
             rank_utility=_PROVIDERS.get("rank_utility"),
+            rank_mv=_PROVIDERS.get("rank_mv"),
+            validator=_PROVIDERS.get("validator"),
         )
     except RankUtilityUnavailableError as exc:
         lines += [
@@ -237,9 +243,10 @@ def render_transfers(
             "substituting a projection nobody chose would make the recommendation "
             "untraceable.",
             "",
-            "Wire one up with `fpl_edge.myteam.report.configure(points_forecast=...)`, "
-            "building it from the points model via "
-            "`fpl_edge.myteam.forecast.SampledPointsForecast`.",
+            "Run `uv run fpl solve` -- it fits the models, solves the horizon "
+            "and commits both the plan and the forecast table this section "
+            "reads. (Programmatic callers can also "
+            "`fpl_edge.myteam.report.configure(points_forecast=...)` directly.)",
             "",
             f"_{exc}_",
         ]

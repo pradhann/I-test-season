@@ -516,11 +516,72 @@ def weekly(
     season: str = SeasonOpt,
     gw: int = typer.Option(None, "--gw", help="Defaults to the next open gameweek."),
     as_of: str = AsOfOpt,
+    validate: bool = typer.Option(
+        False, "--validate",
+        help="Also run F1 paired simulation on the transfer shortlist and "
+             "attach Delta P(top-10k) with paired standard errors. Builds the "
+             "season simulator, so expect minutes, not seconds.",
+    ),
 ) -> None:
     """The decision report for the upcoming deadline."""
     when = _parse_as_of(as_of)
+    _configure_report_providers(validate=validate)
     with _warehouse(db) as wh:
         echo(weekly_report(wh, season=season, gw=gw, as_of=when).render())
+
+
+def _configure_report_providers(*, validate: bool = False) -> None:
+    """Wire the transfer section to the artefacts `fpl solve` committed.
+
+    The squad section renders the persisted plan; until this existed the
+    transfer section read a DIFFERENT (empty) source and reported "no points
+    forecast is configured" beside a fully rendered squad. Both halves now
+    consume what one solve produced. No artefact -> no configuration -> the
+    section reports the gap and names `fpl solve` as the fix, which stays the
+    honest behaviour.
+    """
+    from fpl_edge.myteam.forecast import TablePointsForecast
+    from fpl_edge.myteam.report import configure
+    from fpl_edge.opt import ObjectiveMode
+
+    # Anchored to the repo root, not the cwd -- the squad section's plan once
+    # vanished purely because the command ran from another directory.
+    fc_path = Path(__file__).resolve().parents[2] / "data" / "warehouse" / "forecast.parquet"
+    if fc_path.exists():
+        import pandas as pd
+
+        frame = pd.read_parquet(fc_path)
+        configure(
+            points_forecast=TablePointsForecast(
+                frame=frame, name=f"table:forecast.parquet"
+            ),
+            # The surrogate, stated in writing (recommend()'s contract): the
+            # rank objective enters through --validate's paired simulation
+            # until the per-squad RankState assembly lands in this path.
+            mode=ObjectiveMode.EXPECTED_POINTS,
+        )
+    if validate:
+        from fpl_edge.sim.live import open_live_world
+
+        echo("Building the season simulator for paired validation "
+             "(minutes, not seconds)...")
+        from fpl_edge.sim.engine import SeasonSimulator
+
+        from fpl_edge.types import Season
+
+        lw = open_live_world()
+        sim = SeasonSimulator(
+            lw.universe, lw.points_model, lw.ownership_model, lw.snapshot,
+            Season(DEFAULT_SEASON), tuple(range(1, 39)), n_sims=2000,
+        )
+        configure(validator=sim)
+
+
+# -- fpl solve ---------------------------------------------------------------
+
+from fpl_edge.cli import solve as _solve_cmd  # noqa: E402
+
+_solve_cmd.register(app)
 
 
 # -- fpl platform ------------------------------------------------------------
