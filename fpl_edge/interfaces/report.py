@@ -30,7 +30,13 @@ from fpl_edge.store import Warehouse
 UTC = dt.timezone.utc
 
 #: A section renders itself from (warehouse, season, gw, as_of) and returns
-#: markdown-ish plain text, or None to omit itself entirely this week.
+#: markdown-ish plain text. Returning None does NOT omit the section: the
+#: report renders an explicit "nothing here, and here is the section that said
+#: so" note instead. Silent omission is how the recommended-squad section once
+#: vanished from the report with no trace (its own comment claimed the gap
+#: machinery would catch it; the gap machinery only knows about sections that
+#: were never registered). The dossier layer solved this by making a section
+#: without body or gap a hard error -- this is the report layer's version.
 SectionFn = Callable[[Warehouse, str, int, dt.datetime], "str | None"]
 
 
@@ -188,16 +194,33 @@ def weekly_report(
         except KeyError:
             gw = 1
 
+    # Snapshot the section list before rendering. Rendering a section can
+    # import a module that registers ANOTHER section (the squad diff imports
+    # myteam.report, which registers "transfers"): registered too late to be
+    # rendered this cycle but early enough to satisfy missing(), the newcomer
+    # would appear in neither the body nor the gaps -- invisible both ways.
+    # Gaps are therefore computed against what was actually rendered.
+    sections = list(_SECTIONS)
     chunks: list[str] = []
-    for section in _SECTIONS:
+    for section in sections:
         try:
             piece = section.render(warehouse, season, gw, when)
         except Exception as exc:  # noqa: BLE001 - one broken section must not kill the report
             piece = f"## {section.name}\n\nSection failed: {type(exc).__name__}: {exc}"
-        if piece:
-            chunks.append(piece)
+        if not piece:
+            # A registered section with nothing to say still owes the reader a
+            # line: an absent heading is indistinguishable from a broken one.
+            what = EXPECTED.get(section.provides, section.provides or section.name)
+            piece = (
+                f"## {section.name}\n\n_Nothing to report for {what} this "
+                f"week. (The section ran and chose to say nothing -- this "
+                f"line exists so silence is visible.)_"
+            )
+        chunks.append(piece)
 
+    rendered = {s.provides for s in sections}
     return WeeklyReport(
         season=season, gw=gw, as_of=when,
-        body="\n\n".join(chunks), gaps=missing(),
+        body="\n\n".join(chunks),
+        gaps=tuple(k for k in EXPECTED if k not in rendered),
     )

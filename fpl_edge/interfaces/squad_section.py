@@ -16,14 +16,25 @@ from pathlib import Path
 from fpl_edge.interfaces.report import register_section
 from fpl_edge.store import Warehouse
 
-PLAN_PATH = Path("data/warehouse/gw1_plan.json")
+#: Anchored to the repo root like every other artefact lookup (see
+#: dossier.py); a relative path made the plan "missing" -- and the section
+#: silently vanish -- whenever the command ran from any other directory.
+PLAN_PATH = Path(__file__).resolve().parents[2] / "data" / "warehouse" / "gw1_plan.json"
 
 _POS = {1: "GKP", 2: "DEF", 3: "MID", 4: "FWD"}
 
 
 def render_squad(wh: Warehouse, season: str, gw: int, as_of: dt.datetime) -> str | None:
     if not PLAN_PATH.exists():
-        return None  # declared as a gap by the report's missing-section list
+        # An explicit body, not None: the "missing-section list" only knows
+        # about sections that were never registered, so returning None here
+        # made the recommended squad silently vanish from the report.
+        return (
+            "## Recommended squad\n\nNo solved plan exists "
+            f"({PLAN_PATH.name} not found). Run "
+            "`uv run python scripts/gw1_squad.py` to produce one; until then "
+            "there is no recommendation, rather than a stale or invented one."
+        )
     plan = json.loads(PLAN_PATH.read_text())
     if plan["season"] != season or plan["horizon_gws"][0] != gw:
         return (

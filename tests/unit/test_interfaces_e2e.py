@@ -178,7 +178,14 @@ def test_weekly_report_is_honest_about_what_is_not_built(tmp_path) -> None:
     assert "2026-08-21 17:30Z" in rendered  # the API's UTC deadline, not local
     assert "Semenyo" in rendered
     assert "Not in this report yet" in rendered
-    assert "squad" in rendered and "transfers" in rendered
+    # Each expected topic must appear SOMEWHERE -- as a rendered section when
+    # its provider module happens to be imported (registration is an import
+    # side effect, so the set varies with what else this process touched), or
+    # as an explicit gap bullet when it is not. Case-insensitive because the
+    # section heading is "## Transfers" while the gap bullet is "**transfers**".
+    low = rendered.lower()
+    assert "squad" in low and "transfers" in low
+    assert "chips" in low and "risk" in low  # never registered: must be gaps
 
 
 def test_submission_latency_is_reported_to_the_caller(tmp_path) -> None:
@@ -314,3 +321,79 @@ def test_offset_semantics_against_the_real_getupdates(capsys) -> None:
         assert isinstance(updates, list)
     finally:
         transport.close()
+
+
+def test_a_section_that_returns_none_is_visible_not_vanished(tmp_path) -> None:
+    """A registered section with nothing to say must still leave a mark.
+
+    The recommended-squad section once returned None when its plan file was
+    missing, its comment claiming the gap machinery would report it. The gap
+    machinery only lists sections that were never REGISTERED, so the section
+    silently vanished: no squad, no statement that there was no squad. Silence
+    must be rendered, not swallowed.
+    """
+    from fpl_edge.interfaces.report import register_section
+
+    wh = seed_warehouse(tmp_path / "none.duckdb", n_gws=16)
+    register_section("mute", lambda *a: None, priority=95, provides="mute")
+    try:
+        rendered = weekly_report(wh, season=SEASON, as_of=TONIGHT).render()
+    finally:
+        # deregister so other tests see the normal section list
+        from fpl_edge.interfaces import report as _r
+        _r._SECTIONS = [s for s in _r._SECTIONS if s.name != "mute"]
+
+    assert "## mute" in rendered, "the silent section left no trace at all"
+    assert "chose to say nothing" in rendered
+
+
+def test_a_missing_plan_file_is_reported_in_the_body(tmp_path, monkeypatch) -> None:
+    """No plan file -> an explicit 'no solved plan' body, never omission."""
+    from fpl_edge.interfaces import squad_section
+
+    wh = seed_warehouse(tmp_path / "plan.duckdb", n_gws=16)
+    monkeypatch.setattr(squad_section, "PLAN_PATH", tmp_path / "absent.json")
+    rendered = weekly_report(wh, season=SEASON, as_of=TONIGHT).render()
+    assert "No solved plan exists" in rendered
+    assert "gw1_squad.py" in rendered
+
+
+def test_plan_path_is_anchored_to_the_repo_not_the_cwd() -> None:
+    """Running `fpl weekly` from any directory must find the same plan.
+
+    A relative path made the section vanish whenever the command ran from
+    outside the repo root.
+    """
+    from fpl_edge.interfaces.squad_section import PLAN_PATH
+
+    assert PLAN_PATH.is_absolute()
+    assert PLAN_PATH.parts[-3:] == ("data", "warehouse", "gw1_plan.json")
+
+
+def test_a_section_registered_mid_render_is_still_listed_as_a_gap(tmp_path) -> None:
+    """Gaps are judged against what was rendered, not the registry afterwards.
+
+    Rendering one section can import a module that registers another (the
+    squad diff imports myteam.report, which registers "transfers"). Registered
+    too late to render but early enough to satisfy missing(), that section
+    appeared in neither the body nor the gaps -- invisible both ways.
+    """
+    from fpl_edge.interfaces import report as R
+
+    wh = seed_warehouse(tmp_path / "race.duckdb", n_gws=16)
+
+    def sneaky(*a):
+        R.register_section("late", lambda *a: "## late\n\nnow you see me",
+                           provides="chips")
+        return "## sneaky\n\nregistered a sibling mid-render"
+
+    R.register_section("sneaky", sneaky, priority=95, provides="sneaky")
+    try:
+        rep = weekly_report(wh, season=SEASON, as_of=TONIGHT)
+    finally:
+        R._SECTIONS = [s for s in R._SECTIONS if s.name not in ("sneaky", "late")]
+
+    assert "now you see me" not in rep.body, "a mid-render registrant must wait a cycle"
+    assert "chips" in rep.gaps, (
+        "the section that could not render this cycle vanished from the gaps too"
+    )
