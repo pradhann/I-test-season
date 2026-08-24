@@ -21,8 +21,11 @@ The machine-readable version of this table is
 `fpl_edge/ingest/projections/providers.py`; it and this document are two
 renderings of one registry, and the registry is the one that runs.
 
-**21 candidates evaluated. 7 ingested, 2 on the watchlist, 3 paywalled, 1
-blocked by obfuscation, 6 forbidden by a crawl policy or a licence, 2 dead.**
+**24 candidates evaluated. 9 ingested, 2 on the watchlist, 3 paywalled, 1
+blocked by obfuscation, 6 forbidden by a crawl policy or a licence, 3 dead.**
+(Counts updated 2026-08-24: AIrsenal-via-fpl-apex and FPL-Core-Insights
+ingested; ClubElo measured dead. Their statuses were observed 2026-08-24;
+everything else 2026-08-19/20.)
 
 ---
 
@@ -100,6 +103,8 @@ Ranked on coverage × freshness × reliability × licence-cleanliness.
 | 5 | **Rotowire lineups** | ✕ | proxy | proxy | 20 team sheets: 220 starters + 88 injury-list names | Upgrades to *confirmed* ~60–75 min before kickoff | robots-permitted + `llms.txt` welcoming bots | Server-rendered HTML |
 | 6 | **Premier Injuries** | ✕ | ✕ | ✅ **explicit %** | 91 flagged players, all 20 clubs | Continuous editorial | `User-agent: * / Disallow:` — fully open | Server-rendered HTML table |
 | 7 | **LiveFPL** | ✕ | ✕ | ✕ | 592 players (ownership, not points) | Per-GW static JSON | `Allow: /`, no restriction | Static JSON |
+| 8 | **AIrsenal via fpl-apex** (GitHub) | ✅ | ✕ | ✕ | 604 elements × GW2–9 horizon | Per Apex workflow run; `generated_at` + AIrsenal commit sha on every row | **MIT** carrier running the **MIT** Turing-Institute model, pinned in `upstreams.lock.json` | raw.githubusercontent CSV, fixed path |
+| 9 | **FPL-Core-Insights** (GitHub) | ✕ | ✕ | ✕ | Per-player **per-match xG/xA/xGOT** + DEFCON actions, realised not forecast | Twice daily, 07:30/17:30 UTC | **No LICENSE**; README grants use verbatim, asks for a link back | raw.githubusercontent CSV per tournament/GW → `fact_player_match_stats` |
 
 Why this order:
 
@@ -130,6 +135,23 @@ Why this order:
 7. **LiveFPL** is not a points projection at all. It answers the other half of
    a rank-utility question (what the field will own and captain), which is why
    it is last here and not excluded.
+8. **AIrsenal via fpl-apex** (added 2026-08-24) is the breadth pick: the only
+   feed whose model family is public and genuinely different — a Bayesian
+   match-simulation model (bpl-next), against FPL Form's regression, fplbench's
+   decomposed heads and FPL's own form heuristic. Its quirks (Maguire at 5.4
+   xp) are the point: an ensemble learns from disagreement, not from five
+   copies of one method. First live run appended 4,832 rows (GW2–9). The
+   repo's own blended `apex_latest.json` is deliberately NOT ingested — a
+   blend of our inputs voting as a new source double-counts.
+9. **FPL-Core-Insights** (added 2026-08-24) is not a projection either: it is
+   the only reachable, licence-tolerable **per-match xG** source found —
+   Sofascore 403s its own robots.txt, FotMob disallows `/api/*`, FBref 403s,
+   Understat robots-forbids. Realised match stats land in
+   `fact_player_match_stats` under `source='fpl_core_insights'`, never in
+   `fact_projection`, so another party's read of a match can never be mistaken
+   for a forecast or for the official FPL numbers. First live run: 313 rows,
+   GW1 2026-27, 8 matches, 0 unresolved. Caution: fpl-apex pins this same
+   dataset as its enrichment source — shared upstream ⇒ not independent.
 
 ### Watchlist — reachable and permitted, not yet ingested
 
@@ -429,3 +451,12 @@ response tests it against the shape the site actually had.
    with their timestamps in git history. That is the only free feed whose track
    record can be reconstructed *backwards* instead of accumulated forwards, and
    a season of history is worth more to the ensemble than a season of waiting.
+5. **Re-probe ClubElo.** `api.clubelo.com` is the best free team-Elo API and a
+   team-strength opinion independent of our Dixon-Coles — but on 2026-08-24 it
+   accepted TCP and sent 0 bytes in 25–45 s on four attempts. Dead until it
+   answers; the fallback carrier is FPL-Core-Insights' `matches.csv`
+   `home_team_elo`/`away_team_elo`, which were empty when measured. Whichever
+   wakes first gets a `fact_team_rating` table.
+6. **FPL-Core-Insights' other tournaments.** Cups and friendlies (GW0) ship in
+   the same layout the Premier League ingest already parses; pre-season
+   minutes are the cheapest xMins prior that exists in August.

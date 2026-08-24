@@ -210,6 +210,58 @@ CREATE TABLE IF NOT EXISTS fact_predicted_lineup (
     PRIMARY KEY (provider, season, gw, code, as_of)
 );
 
+-- Third-party per-player per-match statistics -- xG, xA, shots, defensive
+-- actions -- COPIED from a publisher, never computed here. This is a different
+-- kind of fact from fact_player_fixture (the official FPL scoring return):
+-- it is another party's Opta-like read of the same match, carried under its
+-- own `source` so its numbers can never be mistaken for the official ones.
+--
+-- `match_id` is the PUBLISHER'S OWN match key (e.g. FPL-Core-Insights'
+-- '26-27-prem-arsenal-vs-coventry-city'), kept verbatim rather than remapped
+-- onto fact_fixture.fixture_id at write time: the mapping is an opinion that
+-- can be recomputed, the publisher's key is a fact that cannot.
+--
+-- as_of is the fetch instant, and rows describe finished matches only, so a
+-- snapshot_at(deadline) read can never see a stat before we could have.
+-- Lives in the core schema for the same reason fact_odds_derived does: a
+-- table that only exists after a particular module runs cannot be read by a
+-- fresh warehouse.
+CREATE TABLE IF NOT EXISTS fact_player_match_stats (
+    source                  VARCHAR NOT NULL,   -- 'fpl_core_insights' | ...
+    season                  VARCHAR NOT NULL,
+    code                    INTEGER NOT NULL,   -- stable FPL player code
+    match_id                VARCHAR NOT NULL,   -- the publisher's match key
+    tournament              VARCHAR NOT NULL,   -- 'Premier League' | 'EFL Cup' | ...
+    gw                      INTEGER,            -- publisher's gameweek label (0 = pre-season)
+    minutes_played          DOUBLE,
+    start_min               DOUBLE,
+    finish_min              DOUBLE,
+    goals                   DOUBLE,
+    assists                 DOUBLE,
+    penalties_scored        DOUBLE,
+    penalties_missed        DOUBLE,
+    total_shots             DOUBLE,
+    shots_on_target         DOUBLE,
+    xg                      DOUBLE,             -- publisher's expected goals
+    xa                      DOUBLE,             -- publisher's expected assists
+    xgot                    DOUBLE,             -- xG on target
+    chances_created         DOUBLE,
+    touches_opposition_box  DOUBLE,
+    tackles                 DOUBLE,
+    tackles_won             DOUBLE,
+    interceptions           DOUBLE,
+    recoveries              DOUBLE,
+    blocks                  DOUBLE,
+    clearances              DOUBLE,
+    defensive_contributions DOUBLE,
+    saves                   DOUBLE,
+    goals_conceded          DOUBLE,
+    xgot_faced              DOUBLE,             -- keeper: xG on target faced
+    goals_prevented         DOUBLE,             -- keeper: publisher's shot-stopping delta
+    as_of                   TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (source, season, code, match_id, as_of)
+);
+
 CREATE OR REPLACE VIEW projection_normalized AS
 SELECT
     provider AS source,

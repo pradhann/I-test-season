@@ -327,6 +327,44 @@ def test_github_feed_refuses_a_schema_change_rather_than_nulling_it():
         github_csv.parse(feed, text)
 
 
+def test_airsenal_reads_explicit_gw_rows_across_its_whole_horizon():
+    """One file, one explicit row per (player, gw) -- no horizon expansion.
+
+    The fixture is a trimmed copy of fpl-apex's real airsenal.csv fetched
+    2026-08-24: 6 element ids x GW2-GW9, xp only, with AIrsenal's run
+    provenance columns riding along untouched.
+    """
+    feed = github_csv.BY_KEY["gh_apex_airsenal"]
+    parsed = github_csv.parse(feed, _read("airsenal.csv"))
+    id_to_code = {426: 141746, 411: 223094, 154: 244851,
+                  12: 493250, 1: 154561, 604: 999999}
+    valid = set(id_to_code.values()) - {999999}  # 604 unknown to dim_player
+    rows, unresolved = github_csv.to_projection_rows(
+        feed, parsed, season="2026-27", as_of=AS_OF,
+        id_to_code={k: v for k, v in id_to_code.items() if v in valid},
+        valid_codes=valid, default_gw=1,
+    )
+    # The gw comes from the FILE's own column, never from the run's default.
+    assert sorted(rows["gw"].unique()) == [2, 3, 4, 5, 6, 7, 8, 9]
+    assert len(rows) == 5 * 8
+    assert len(unresolved) == 8, "an unmapped element id is dropped AND counted"
+
+    bruno = rows[rows["code"] == 141746].set_index("gw")["xp"]
+    assert bruno[2] == pytest.approx(7.448143, abs=1e-6)
+    assert bruno[9] == pytest.approx(5.368039, abs=1e-6)
+    # AIrsenal publishes points only; nothing is invented for the other columns.
+    assert rows["xmins"].isna().all()
+    assert rows["p_appear"].isna().all()
+    assert rows["xp_if_appears"].isna().all()
+
+
+def test_airsenal_refuses_a_schema_change_rather_than_nulling_it():
+    feed = github_csv.BY_KEY["gh_apex_airsenal"]
+    text = _read("airsenal.csv").replace("player_id,gw,xp", "player,round,pts")
+    with pytest.raises(github_csv.GithubFeedError, match="missing"):
+        github_csv.parse(feed, text)
+
+
 def test_every_registered_feed_declares_a_licence_and_a_cadence():
     for feed in github_csv.FEEDS:
         assert feed.licence.strip(), feed.key

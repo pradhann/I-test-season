@@ -1,7 +1,9 @@
 """The third-party projection providers we evaluated, and what each one is.
 
 Every ``status`` below is an HTTP code this repo actually received on
-2026-08-18/19 from a UK-routed connection with the project's honest User-Agent::
+2026-08-18/19 (2026-08-24 for the entries added then: gh_apex_airsenal,
+fpl_core_insights, clubelo) from a UK-routed connection with the project's
+honest User-Agent::
 
     fpl-edge/0.1 (personal research; contact via repo owner)
 
@@ -41,6 +43,16 @@ The verdicts, in one line each
 * **Community GitHub projections** (fpl-projections-site) -- free raw JSON of
   Monte-Carlo xPts percentiles, but anonymous, unlicensed and days old.
   Watchlist, not ingested.
+* **AIrsenal via fpl-apex** -- the Alan Turing Institute's Bayesian model,
+  run and published as CSV by an MIT-licensed repo with pinned provenance.
+  The only feed whose model family is public and genuinely different.
+  Ingested.
+* **FPL-Core-Insights** -- not a projection: per-player per-match xG and
+  Opta-like stats keyed on FPL ids, refreshed twice daily. The only
+  reachable per-match xG source found. Ingested into
+  ``fact_player_match_stats``.
+* **ClubElo** -- free team-Elo CSV API, but the server accepted TCP and then
+  sent nothing on every probe. Dead until it answers.
 """
 
 from __future__ import annotations
@@ -830,6 +842,170 @@ PROVIDERS: tuple[Provider, ...] = (
             "machine-readable weekly outputs; theFPLkiwi, the best-known "
             "historical community sheet, is dormant (last push 2023-12).",
         ),
+    ),
+    Provider(
+        key="gh_apex_airsenal",
+        name="AIrsenal via fpl-apex (mcnuggets651)",
+        home="https://github.com/mcnuggets651/fpl-apex",
+        publishes=(
+            "AIrsenal expected points per player per gameweek over an "
+            "8-gameweek horizon -- the Alan Turing Institute's Bayesian "
+            "team-strength + player-contribution model (bpl-next), run by the "
+            "fpl-apex repo as its projection worker and committed as "
+            "data/generated/airsenal.csv with generated_at, the AIrsenal "
+            "commit sha (source_version) and a per-run prediction_tag on "
+            "every row."
+        ),
+        interface=(
+            "raw.githubusercontent.com CSV at data/generated/airsenal.csv. "
+            "Fixed path, no discovery call. Keys on `player_id`, verified to "
+            "be the official FPL element id (604/604 resolved against "
+            "dim_player 2026-27); one explicit row per (player, gw), so no "
+            "horizon-cell expansion and no positional assumptions."
+        ),
+        cost="Free.",
+        licence=(
+            "MIT for fpl-apex; the model producing the numbers (AIrsenal, "
+            "alan-turing-institute/AIrsenal) is MIT too, pinned by commit in "
+            "the repo's upstreams.lock.json. The cleanest model provenance in "
+            "the inventory: both the carrier and the generator are named, "
+            "licensed and version-locked. Underlying player data remains the "
+            "Premier League's; private research use only."
+        ),
+        rate_limit="GitHub raw: generous. One fetch per run.",
+        covers_2026_27=True,
+        verdict="ingested",
+        reason=(
+            "HTTP 200 (measured 2026-08-24), 4,832 rows: 604 elements x "
+            "GW2-GW9 of 2026-27, generated 2026-08-23T05:52Z. Top of its "
+            "GW2 board (B.Fernandes 7.45, Cunha 6.19, Palmer 5.77) resolves "
+            "onto the right humans via dim_player, which is the sanity check "
+            "that the id space is what it claims to be."
+        ),
+        probe_urls=(
+            "https://raw.githubusercontent.com/mcnuggets651/fpl-apex/main/data/generated/airsenal.csv",
+        ),
+        measured_status=(("data/generated/airsenal.csv", 200),),
+        notes=(
+            "The value here is BREADTH OF OPINION: this is the only feed "
+            "whose model family is public and genuinely different -- a "
+            "Bayesian match-simulation model, against FPL Form's regression, "
+            "fplbench's decomposed heads and FPL's own form heuristic. Its "
+            "Maguire-at-5.4 quirks are the point: an ensemble learns from "
+            "disagreement, not from five copies of one method.",
+            "The repo's own blended outputs (apex_latest.json, "
+            "apex_recommendation_latest.json) are deliberately NOT ingested: "
+            "they mix AIrsenal with sources we already read first-hand, and "
+            "a blend of our inputs voting as a new source double-counts.",
+        ),
+    ),
+    Provider(
+        key="fpl_core_insights",
+        name="FPL-Core-Insights (olbauday, GitHub)",
+        home="https://github.com/olbauday/FPL-Core-Insights",
+        publishes=(
+            "Not a projection: per-player PER-MATCH statistics for 2024-25 "
+            "onwards including 2026-27 -- xG, xA, xGOT, shots, chances "
+            "created, tackles/interceptions/blocks/clearances (the DEFCON "
+            "inputs), keeper xGOT-faced and goals_prevented -- keyed on "
+            "official FPL element ids with the repo's own players.csv mapping "
+            "them to the stable player_code. Also covers cups and friendlies "
+            "the FPL API does not score. The data engine behind fplcore.com."
+        ),
+        interface=(
+            "raw.githubusercontent.com CSVs under data/{season}/By Tournament/"
+            "{tournament}/GW{n}/ (playermatchstats.csv, matches.csv, "
+            "shots.csv, xg_by_minute.csv), refreshed twice daily at 07:30 and "
+            "17:30 UTC. Every gameweek's file is pre-created; header-only "
+            "means not-played-yet, which the parser treats as absence, not "
+            "error."
+        ),
+        cost="Free.",
+        licence=(
+            "NO LICENSE FILE. The README says, verbatim: 'Feel free to use "
+            "the data from this repository in whatever way works best for "
+            "you -- whether for your website, blog posts, or other projects. "
+            "If possible, I'd greatly appreciate it if you could include a "
+            "link back to this repository as the data source.' An explicit "
+            "informal grant with an attribution request, but not a licence, "
+            "and the underlying match stats derive from data the Premier "
+            "League and its providers own. Private-warehouse read only; "
+            "never republished."
+        ),
+        rate_limit=(
+            "GitHub raw: generous. A full-season Premier League pass is 38 "
+            "small files plus players.csv, with POLITE_DELAY_S=1.0 between "
+            "requests."
+        ),
+        covers_2026_27=True,
+        verdict="ingested",
+        reason=(
+            "HTTP 200 (measured 2026-08-24), repo pushed 2026-08-23T23:47Z. "
+            "GW1 playermatchstats.csv: 313 player-match rows across 8 "
+            "matches, 111 with xg. The ONLY reachable, licence-tolerable "
+            "per-match xG source found -- Sofascore 403s its own robots.txt, "
+            "FotMob disallows /api/*, FBref 403s, WhoScored forbids the "
+            "useful path, and Understat robots-disallows. Lands in "
+            "fact_player_match_stats via fpl_edge/ingest/fpl_core_insights.py, "
+            "not in fact_projection: a realised match stat is not a forecast."
+        ),
+        probe_urls=(
+            "https://raw.githubusercontent.com/olbauday/FPL-Core-Insights/main/data/2026-2027/players.csv",
+            "https://raw.githubusercontent.com/olbauday/FPL-Core-Insights/main/data/2026-2027/By%20Tournament/Premier%20League/GW1/playermatchstats.csv",
+        ),
+        measured_status=(("data/2026-2027/players.csv", 200),
+                         ("By Tournament/Premier League/GW1/playermatchstats.csv", 200)),
+        notes=(
+            "Identity resolves through the REPO'S OWN players.csv "
+            "(player_id -> player_code), then every code is validated "
+            "against dim_player at the fetch instant. Their map is how a row "
+            "finds its code; our snapshot is what makes it a real player.",
+            "matches.csv carries home_team_elo/away_team_elo columns "
+            "(ClubElo-derived team strength), but they were EMPTY in the "
+            "measured 2026-27 GW1 rows -- so no team-rating claim is "
+            "ingested from here. Re-check once populated.",
+            "The fpl-apex repo pins this same dataset as its enrichment "
+            "source, which is corroboration of freshness but also a warning: "
+            "sources that share an upstream are not independent, and "
+            "fact_player_match_stats rows must never be scored as a second "
+            "opinion on anything fpl-apex also consumed.",
+        ),
+    ),
+    Provider(
+        key="clubelo",
+        name="ClubElo API",
+        home="http://api.clubelo.com",
+        publishes=(
+            "Team Elo ratings for every European club, daily, as CSV -- a "
+            "team-strength opinion independent of our Dixon-Coles fit and of "
+            "every bookmaker."
+        ),
+        interface=(
+            "Documented free CSV API: /{YYYY-MM-DD} for a day's full ranking, "
+            "/{ClubName} for one club's full history."
+        ),
+        cost="Free.",
+        licence=(
+            "Unestablished: the API host never answered, and clubelo.com's "
+            "robots.txt redirects into a Cloudflare-fronted page that "
+            "returned an empty 302-chain body on measurement."
+        ),
+        rate_limit="Site asks for at most one request per second.",
+        covers_2026_27=None,
+        verdict="dead",
+        reason=(
+            "Measured 2026-08-24 03:40-03:50 UTC: TCP connects to "
+            "api.clubelo.com:80 (37.128.134.74) but the server sent 0 bytes "
+            "in 25-45s on four attempts across /robots.txt, /2026-08-23 and "
+            "/Arsenal; https times out identically. Not a block -- the "
+            "handshake succeeds -- the service is simply not answering. "
+            "Re-probe before writing any ingest code; the FPL-Core-Insights "
+            "matches.csv Elo columns are the fallback carrier if they ever "
+            "populate."
+        ),
+        probe_urls=("http://api.clubelo.com/2026-08-23",),
+        measured_status=(("/robots.txt", None), ("/2026-08-23", None),
+                        ("/Arsenal", None)),
     ),
 )
 

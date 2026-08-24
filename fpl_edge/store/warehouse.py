@@ -47,6 +47,14 @@ PIT_KEYS: dict[str, tuple[str, ...]] = {
     # registration-by-import meant Snapshot.table("fact_odds_derived") raised
     # KeyError in any process that had not happened to import that module.
     "fact_odds_derived": ("fixture_key", "entity_type", "entity_code", "market", "method"),
+    # A third party's per-player per-match statistics (xG, xA, shots, defensive
+    # actions), copied verbatim from the publisher. `match_id` is the
+    # publisher's own match key, so one logical entity is one player in one of
+    # THEIR matches; the same real-world match seen by two sources is two
+    # entities on purpose. Registered here for the same reason as
+    # fact_odds_derived: registration-by-import breaks every process that did
+    # not happen to import the ingest module.
+    "fact_player_match_stats": ("source", "season", "code", "match_id"),
 }
 
 

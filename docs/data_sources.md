@@ -204,6 +204,89 @@ records the refusal and the reasoning rather than silently omitting the source.
 If the account holder wants FBref, that is their call to make knowingly — but it
 should not arrive as a transitive dependency.
 
+### 3.3 FPL-Core-Insights — the per-match xG gap, closed (added 2026-08-24)
+
+Section 3's conclusion — no reachable per-match xG source — had one survivor
+that the 2026-08-18 sweep missed: **[olbauday/FPL-Core-Insights](https://github.com/olbauday/FPL-Core-Insights)**,
+the open dataset behind fplcore.com. Measured 2026-08-24 (UTC), honest UA:
+
+| Check | Result |
+|---|---|
+| Repo `pushed_at` | 2026-08-23T23:47Z — refreshed twice daily, 07:30 / 17:30 UTC |
+| `data/2026-2027/players.csv` | HTTP 200; 609 rows mapping the repo's `player_id` (= official FPL element id) to `player_code` (the stable cross-season code) |
+| `…/By Tournament/Premier League/GW1/playermatchstats.csv` | HTTP 200; 313 player-match rows, 8 matches, 111 rows with `xg`; also `xa`, `xgot`, shots, chances created, the DEFCON actions, keeper `xgot_faced`/`goals_prevented` |
+| Future gameweeks | Files pre-created, header-only — the parser treats an empty file as "not played yet", never as an error |
+| `raw.githubusercontent.com/robots.txt` | 404 = no policy published (RFC 9309: permitted) |
+
+**Licence, verbatim (there is NO LICENSE file):** the README says *"Feel free
+to use the data from this repository in whatever way works best for you —
+whether for your website, blog posts, or other projects. If possible, I'd
+greatly appreciate it if you could include a link back to this repository as
+the data source."* That is an explicit informal grant with an attribution
+request — but it is not a licence, and the underlying match statistics derive
+from data whose ultimate owners (the Premier League and its data providers)
+granted nothing. **The ambiguity is recorded here on purpose.** Rows land in a
+private warehouse for one manager's own decisions and are never republished;
+if any derived analysis is ever published, credit the repo with a link.
+
+Ingested by `fpl_edge/ingest/fpl_core_insights.py` into
+`fact_player_match_stats` (core schema; PIT key
+`(source, season, code, match_id)`, `as_of` = fetch instant). Identity
+resolves through the repo's **own** `players.csv` map and is then validated
+against `dim_player` at the fetch instant; unresolvable ids are dropped and
+counted. First live run (2026-08-24): **313 rows, GW1 2026-27, 0 unresolved**.
+
+```bash
+uv run python -m fpl_edge.ingest.fpl_core_insights --season 2026-27
+```
+
+Two cautions, measured not assumed:
+
+* `matches.csv` advertises `home_team_elo` / `away_team_elo` (ClubElo-derived
+  team strength) but the columns were **empty** in the 2026-27 GW1 rows — so
+  no team-rating fact is ingested from here. Re-check once populated.
+* The fpl-apex repo (§3.4) pins this same dataset as its enrichment source.
+  Shared upstream ⇒ **not independent**: never score one as a second opinion
+  on anything the other consumed.
+
+### 3.4 AIrsenal via fpl-apex — a genuinely different model family (added 2026-08-24)
+
+**[mcnuggets651/fpl-apex](https://github.com/mcnuggets651/fpl-apex)** (MIT)
+runs the Alan Turing Institute's **AIrsenal** (MIT) as its projection worker
+and commits the output as `data/generated/airsenal.csv` — per-player,
+per-gameweek expected points from a public Bayesian team-strength +
+player-contribution model (bpl-next). Every row carries `generated_at`, the
+AIrsenal commit sha (`source_version`, pinned in the repo's
+`upstreams.lock.json`) and a per-run `prediction_tag`. The cleanest model
+provenance of any community feed measured: the carrier and the generator are
+both named, licensed and version-locked.
+
+Measured 2026-08-24: HTTP 200; one run generated 2026-08-23T05:52Z covering
+GW2–GW9 of 2026-27. `player_id` verified to be the official FPL element id
+(top of its GW2 board resolves to B.Fernandes 7.45, Cunha 6.19, Palmer 5.77
+via `dim_player`). Registered as feed `gh_apex_airsenal` in
+`fpl_edge/ingest/projections/github_csv.py`; lands in `fact_projection` and
+therefore in `projection_normalized`. First live run: **4,832 rows appended**
+(604 players × 8 gameweeks; 5 element ids newer than our `dim_player`
+snapshot dropped and counted, 40 row-drops).
+
+The repo's own blended outputs (`apex_latest.json`) are deliberately **not**
+ingested: they mix AIrsenal with sources this warehouse already reads
+first-hand, and a blend of our inputs voting as a new source double-counts.
+
+```bash
+uv run python -m fpl_edge.ingest.projections.cli ingest --only gh_apex_airsenal
+```
+
+### 3.5 Probed and not taken (2026-08-24)
+
+| Source | Measured | Verdict |
+|---|---|---|
+| **ClubElo** (`api.clubelo.com`) | TCP connects to 37.128.134.74:80 but the server sent **0 bytes in 25–45 s on four attempts** (`/robots.txt`, `/2026-08-23`, `/Arsenal`); https identical; `clubelo.com/robots.txt` 301→302 chain with empty body | **Dead** — not a block (the handshake succeeds), simply not answering. The best free team-Elo API when alive; re-probe before writing any code. Recorded in `providers.py` as `clubelo`. |
+| **theFPLkiwi** (GitHub) | `pushed_at` 2023-12-21 on both repos | **Dormant** — no 2026-27 data exists to ingest. |
+| **daniel-mehta/fpl-forecast** | AGPL-3.0, but `outputs/` holds only `synthetic_demo/`; DATA_NOTICE.md explicitly excludes real data from git | Nothing machine-readable to copy. |
+| **kritanusaha-cyber/fpl-xpts-engine**, **oberon-soft/oberon-fpl**, **utdady/fpl** | No LICENSE file; engines, not feeds — no committed per-GW outputs found | Watchlist at best. |
+
 ---
 
 ## 4. Injuries and press-conference team news
