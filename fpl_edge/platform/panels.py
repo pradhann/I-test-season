@@ -85,6 +85,16 @@ PANELS: tuple[Panel, ...] = (
         description="Observed transfer velocity between the two most recent ingests.",
     ),
     Panel(
+        id="market",
+        title="Market watch",
+        script="market_watch",
+        default_params={"limit": 20},
+        layout="table",
+        width="half",
+        description="Bookmaker-derived clean-sheet probabilities (with "
+                    "cross-method spread) and player xG shares.",
+    ),
+    Panel(
         id="ideas",
         title="Idea registry",
         script="idea_registry",

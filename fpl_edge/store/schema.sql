@@ -134,3 +134,20 @@ CREATE TABLE IF NOT EXISTS fact_odds (
 );
 
 CREATE SEQUENCE IF NOT EXISTS seq_fetch_id START 1;
+
+-- Derived odds: clean-sheet, team-lambda and scorer priors computed from
+-- stored fact_odds rows (see fpl_edge/ingest/odds_derived.py for the maths).
+-- Lives in the core schema, not module-created DDL: a table that only exists
+-- after a particular module runs cannot be read by a fresh warehouse, which is
+-- how this data spent its first days with no reader.
+CREATE TABLE IF NOT EXISTS fact_odds_derived (
+    fixture_key  VARCHAR NOT NULL,   -- same convention as fact_odds
+    season       VARCHAR NOT NULL,
+    entity_type  VARCHAR NOT NULL,   -- 'team' | 'player'
+    entity_code  INTEGER NOT NULL,   -- FPL team_code or player code
+    market       VARCHAR NOT NULL,   -- clean_sheet_prob | team_lambda | anytime_prob | xg_share
+    method       VARCHAR NOT NULL,   -- how the number was derived
+    value        DOUBLE  NOT NULL,   -- probability for *_prob markets, a rate for team_lambda
+    as_of        TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (fixture_key, entity_type, entity_code, market, method, as_of)
+);

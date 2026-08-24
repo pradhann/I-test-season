@@ -9,6 +9,6 @@ obvious one-line registry change in code review").
 
 from __future__ import annotations
 
-from fpl_edge.platform.scripts import fixtures, ideas, prices, projections, squad
+from fpl_edge.platform.scripts import fixtures, ideas, market, prices, projections, squad
 
-__all__ = ["fixtures", "ideas", "prices", "projections", "squad"]
+__all__ = ["fixtures", "ideas", "market", "prices", "projections", "squad"]

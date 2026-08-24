@@ -138,15 +138,20 @@ CREATE TABLE IF NOT EXISTS {TABLE} (
 );
 """
 
-#: Registered at import so that ``Warehouse.append``/``Snapshot.table`` accept
-#: the table. ``setdefault`` keeps a double import harmless.
-PIT_KEYS.setdefault(
-    TABLE, ("fixture_key", "entity_type", "entity_code", "market", "method")
-)
+# The table's PIT key lives in store/warehouse.py's PIT_KEYS with every other
+# table. It used to be registered here at import time, which made
+# Snapshot.table("fact_odds_derived") raise KeyError in any process that had
+# not imported this module -- a reader's correctness depending on an unrelated
+# import is exactly the kind of spooky action the store package exists to end.
+assert TABLE in PIT_KEYS, "fact_odds_derived must be registered in store PIT_KEYS"
 
 
 def ensure_derived_schema(wh: Warehouse) -> None:
-    """Create ``fact_odds_derived`` if absent. Additive and idempotent."""
+    """Create ``fact_odds_derived`` if absent. Additive and idempotent.
+
+    The table is also in ``store/schema.sql`` now, so any freshly built
+    warehouse has it; this survives for warehouses created before that.
+    """
     wh.sql(_SCHEMA_SQL)
 
 

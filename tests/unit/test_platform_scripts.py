@@ -233,3 +233,55 @@ def test_squad_overview_does_not_reach_the_network_without_players(empty_db, mon
     run = run_script("squad_overview", {}, db=empty_db)
     assert run.result["empty"] is True
     assert "ingest" in run.result["reason"].lower()
+
+
+def test_market_watch_reads_the_derived_odds_nobody_else_did(tmp_path) -> None:
+    """fact_odds_derived's first reader: real rows in, honest rows out.
+
+    The table held 1,720 rows of derived clean-sheet/lambda/xG-share priors
+    with no consumer anywhere -- the audit's "finished-looking output with no
+    downstream". This pins the read path, the cross-method spread, and the
+    coverage note that stops last week's market being read as this week's.
+    """
+    db = tmp_path / "m.duckdb"
+    wh = Warehouse(db)
+    T = dt.datetime(2026, 8, 20, 12, tzinfo=dt.timezone.utc)
+    wh.append("dim_team", pd.DataFrame([
+        {"season": "2026-27", "team_code": 3, "team_id": 1, "name": "Arsenal",
+         "short_name": "ARS", "as_of": T},
+    ]))
+    wh.append("dim_player", pd.DataFrame([
+        {"season": "2026-27", "code": 999, "element_id": 1, "web_name": "Scorer",
+         "first_name": "A", "second_name": "B", "position": 4, "team_code": 3,
+         "as_of": T},
+    ]))
+    fk = "2026-27:2026-08-21:arsenal:coventry-city"
+    wh.append("fact_odds_derived", pd.DataFrame([
+        {"fixture_key": fk, "season": "2026-27", "entity_type": "team",
+         "entity_code": 3, "market": "clean_sheet_prob", "method": "dixon_coles",
+         "value": 0.40, "as_of": T},
+        {"fixture_key": fk, "season": "2026-27", "entity_type": "team",
+         "entity_code": 3, "market": "clean_sheet_prob", "method": "cs_grid#power",
+         "value": 0.50, "as_of": T},
+        {"fixture_key": fk, "season": "2026-27", "entity_type": "player",
+         "entity_code": 999, "market": "xg_share", "method": "scorer_power",
+         "value": 0.31, "as_of": T},
+    ]))
+    wh.close()
+
+    run = run_script("market_watch", {}, db=db)
+    res = run.result
+    assert not res.get("empty")
+    cs = [r for r in res["rows"] if r["market"] == "clean sheet"]
+    assert cs and cs[0]["name"] == "ARS"
+    assert cs[0]["value"] == 0.45                       # mean of the two methods
+    assert cs[0]["spread"] == 0.10, "cross-method disagreement must be carried"
+    xg = [r for r in res["rows"] if r["market"] == "xG share"]
+    assert xg and xg[0]["name"] == "Scorer" and xg[0]["value"] == 0.31
+    assert "2026-08-21" in res["coverage"], "the reader must state WHICH fixtures"
+
+
+def test_market_watch_with_no_derivation_says_how_to_produce_one(empty_db) -> None:
+    run = run_script("market_watch", {}, db=empty_db)
+    assert run.result.get("empty")
+    assert "ingest_odds_extras" in run.result["reason"]

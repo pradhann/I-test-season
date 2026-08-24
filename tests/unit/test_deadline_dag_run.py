@@ -338,8 +338,11 @@ def test_a_firing_the_machine_slept_through_is_recorded_not_fired(db, monkeypatc
     seed(db, players=[(1, "MOVER"), (2, "STILL")],
          states=radar_states(fast_delta=30_000))
     monkeypatch.setattr(dag, "PLAN_DIR", tmp_path)
-    # Six hours after the 01:00Z radar, well past the 2h stale window.
-    now = dt.datetime(2026, 8, 20, 7, 0, tzinfo=UTC)
+    # Ten hours after the 01:00Z radar -- past even its own 8h stale window.
+    # (Six hours would now DELIVER: per-task windows deliberately give the
+    # radar 8h so a sleeping laptop does not discard an idempotent refresh;
+    # see STALE_WINDOWS in deadline_dag.py.)
+    now = dt.datetime(2026, 8, 20, 11, 0, tzinfo=UTC)
 
     report = run_tick(db, now)
     radar = [r for r in firings(db) if r[0] == "price_radar"]

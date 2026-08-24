@@ -41,6 +41,11 @@ PIT_KEYS: dict[str, tuple[str, ...]] = {
     "fact_fixture": ("season", "fixture_id"),
     "fact_player_fixture": ("season", "code", "fixture_id"),
     "fact_odds": ("fixture_key", "bookmaker", "market", "selection"),
+    # Derived odds (clean-sheet, xG-share, team-lambda priors). Registered
+    # HERE, not as an import-time side effect in ingest/odds_derived.py:
+    # registration-by-import meant Snapshot.table("fact_odds_derived") raised
+    # KeyError in any process that had not happened to import that module.
+    "fact_odds_derived": ("fixture_key", "entity_type", "entity_code", "market", "method"),
 }
 
 
