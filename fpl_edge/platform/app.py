@@ -81,6 +81,10 @@ class ChatRequest(BaseModel):
     season: str | None = None
 
 
+class SolveRequest(BaseModel):
+    mode: str = "both"
+
+
 def create_app(db: Path | str = DEFAULT_DB) -> FastAPI:
     """Build the app. ``db`` is injectable so tests can seed a tmp warehouse."""
     db_path = Path(db)
@@ -209,6 +213,31 @@ def create_app(db: Path | str = DEFAULT_DB) -> FastAPI:
             ),
         )
 
+    @app.post("/api/solve")
+    def post_solve(body: SolveRequest | None = None) -> JSONResponse:
+        # Unlike a monitor (the 501 above), the solve is safe to fire from a
+        # browser: the CLI subprocess owns its own locking and artefacts, the
+        # runner enforces one-at-a-time, and nothing here double-sends.
+        mode = (body.mode if body is not None else "both").strip().lower()
+        from fpl_edge.platform import solve_runner
+
+        if mode not in solve_runner.MODES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"mode must be one of {list(solve_runner.MODES)}",
+            )
+        return JSONResponse(solve_runner.start(mode))
+
+    @app.get("/api/solve/status")
+    def get_solve_status() -> JSONResponse:
+        from fpl_edge.platform import solve_runner
+
+        return JSONResponse(solve_runner.status())
+
+    @app.get("/api/solve/plan")
+    def get_solve_plan() -> JSONResponse:
+        return JSONResponse(_solve_plan(db_path))
+
     @app.post("/api/chat")
     def post_chat(body: ChatRequest) -> JSONResponse:
         return JSONResponse(_chat(body, db_path))
@@ -311,6 +340,132 @@ def _monitor_definitions(db_path: Path) -> dict[str, Any]:
             "after a firing and never decides one."
         ),
     }
+
+
+#: Anchored to the repo root like squad_section.PLAN_PATH -- a relative path
+#: made that section's plan "missing" whenever the process ran from another
+#: directory, and this route must not re-learn that lesson.
+_PLAN_PATH = Path(__file__).resolve().parents[2] / "data" / "warehouse" / "gw1_plan.json"
+
+
+def _solve_plan(db_path: Path) -> dict[str, Any]:
+    """The persisted solve artefact, with enough context to render it honestly.
+
+    The file (written by ``fpl solve --commit``) carries player *codes* only,
+    so names/positions/prices are resolved here from the warehouse -- through a
+    read copy, never a writable handle. The response also carries the next open
+    gameweek so the client can say "this plan targets a past deadline" instead
+    of rendering a stale squad as current, and the rank-vs-points DIFF block
+    recovered from the most recent solve log (the artefact persists one plan;
+    the diff of the two objectives exists only in the solve's own output).
+    """
+    import json
+
+    if not _PLAN_PATH.exists():
+        return {
+            "exists": False,
+            "reason": f"no plan artefact at {_PLAN_PATH.name}; run a solve first.",
+        }
+    try:
+        plan = json.loads(_PLAN_PATH.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        return {"exists": False,
+                "reason": f"plan artefact unreadable: {type(exc).__name__}: {exc}"}
+
+    players: dict[str, Any] = {}
+    next_gw = None
+    reason = None
+    if db_path.exists():
+        try:
+            with read_copy(db_path) as wh:
+                season = plan.get("season")
+                df = wh.sql(
+                    """
+                    SELECT p.code, p.web_name, p.position, t.short_name AS team,
+                           s.price_tenths
+                    FROM (
+                        SELECT * EXCLUDE (rn) FROM (
+                            SELECT *, row_number() OVER (PARTITION BY season, code
+                                                         ORDER BY as_of DESC) rn
+                            FROM dim_player WHERE season = ?
+                        ) WHERE rn = 1
+                    ) p
+                    LEFT JOIN (
+                        SELECT * EXCLUDE (rn) FROM (
+                            SELECT *, row_number() OVER (PARTITION BY season, code
+                                                         ORDER BY as_of DESC) rn
+                            FROM fact_player_state WHERE season = ?
+                        ) WHERE rn = 1
+                    ) s USING (season, code)
+                    LEFT JOIN (
+                        SELECT * EXCLUDE (rn) FROM (
+                            SELECT *, row_number() OVER (PARTITION BY season, team_code
+                                                         ORDER BY as_of DESC) rn
+                            FROM dim_team WHERE season = ?
+                        ) WHERE rn = 1
+                    ) t ON t.team_code = p.team_code
+                    """,
+                    [season, season, season],
+                )
+                pos_name = {1: "GKP", 2: "DEF", 3: "MID", 4: "FWD"}
+                wanted = {int(c) for c in plan.get("gw1", {}).get("squad", [])}
+                for row in df.to_dict(orient="records"):
+                    code = int(row["code"])
+                    if wanted and code not in wanted:
+                        continue
+                    price = row.get("price_tenths")
+                    players[str(code)] = {
+                        "name": str(row.get("web_name") or code),
+                        "pos": pos_name.get(int(row["position"]) if row.get("position") is not None else 0, "?"),
+                        "team": None if row.get("team") is None else str(row["team"]),
+                        "price": None if price is None or price != price else round(float(price) / 10.0, 1),
+                    }
+                gw_row = wh.sql(
+                    "SELECT gw FROM dim_event WHERE deadline_utc > ? "
+                    "ORDER BY deadline_utc LIMIT 1",
+                    [dt.datetime.now(UTC)],
+                )
+                if not gw_row.empty:
+                    next_gw = int(gw_row.iloc[0]["gw"])
+        except Exception as exc:  # noqa: BLE001 - names are a nicety, the plan is the payload
+            reason = f"could not resolve names: {type(exc).__name__}: {exc}"
+    else:
+        reason = f"no warehouse at {db_path}; codes shown unresolved."
+
+    return {
+        "exists": True,
+        "plan": plan,
+        "players": players,
+        "next_gw": next_gw,
+        "diff_lines": _solve_diff_lines(),
+        "reason": reason,
+    }
+
+
+def _solve_diff_lines() -> list[str]:
+    """The rank-vs-points DIFF block from the newest solve log, verbatim.
+
+    `fpl solve --mode both` prints the diff but persists only one plan, so the
+    log is the diff's only durable home. Verbatim lines rather than a parsed
+    structure: the solver's own words cannot drift from what it solved.
+    """
+    from fpl_edge.platform.solve_runner import JOBS_DIR
+
+    logs = sorted(JOBS_DIR.glob("solve_*.log"))
+    for log in reversed(logs):
+        try:
+            lines = log.read_text(errors="replace").splitlines()
+        except OSError:
+            continue
+        for i, line in enumerate(lines):
+            if line.startswith("--- DIFF"):
+                block = [line]
+                for nxt in lines[i + 1:]:
+                    if nxt.startswith(("note:", "plan committed", "forecast committed")):
+                        return block
+                    block.append(nxt)
+                return block
+    return []
 
 
 def _chat(body: ChatRequest, db_path: Path) -> dict[str, Any]:

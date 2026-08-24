@@ -1,13 +1,15 @@
 """The frontend's assumptions, checked against the backend's declarations.
 
-There was no frontend test of any kind, and four shipped bugs prove what that
-costs: a panel pinned to a layout whose renderer reads a key the panel's own
-schema forbids ("No data." rendered over real data); player cards reading
-`price_tenths` where the schema says `price` (fifteen cards of £NaN); an
-outcome vocabulary the panel never emits (chips that never colour); and a
-hardcoded deadline. These are CONTRACT tests: they parse the single-file
-bundle's JS and hold it against the registered panels and schemas, which is
-exactly the seam every one of those bugs lived on.
+Four shipped bugs prove what a missing frontend test costs: a renderer reading
+a key the panel's own schema forbids ("No data." over real data); player cards
+reading `price_tenths` where the schema says `price` (fifteen cards of £NaN);
+an outcome vocabulary the panel never emits; and a hardcoded deadline. These
+are CONTRACT tests on exactly that seam — the JS held against the registered
+panels and schemas.
+
+The UI is zero-build ES modules (DESIGN.md §2.2): `index.html` is a shell,
+`js/app.js` the shared layer, one file per view in `js/views/`. The tests scan
+those sources directly; there is no bundle to parse.
 """
 
 from __future__ import annotations
@@ -19,51 +21,16 @@ from fpl_edge.platform import panels as panels_mod
 import fpl_edge.platform.scripts  # noqa: F401 - registration is the import
 from fpl_edge.platform.registry import script as get_script
 
-BUNDLE = Path(__file__).resolve().parents[2] / "web" / "dist" / "index.html"
-
-
-def _js() -> str:
-    html = BUNDLE.read_text()
-    m = re.search(r"<script>(.*)</script>", html, re.S)
-    assert m, "no inline script in the bundle"
-    return m.group(1)
-
-
-def _render_map() -> dict[str, str]:
-    """layout -> renderer-function name, parsed from the RENDER map literal."""
-    m = re.search(r"const RENDER = \{([^}]*)\}", _js(), re.S)
-    assert m, "no RENDER map in the bundle"
-    return dict(re.findall(r"(\w+)\s*:\s*(\w+)", m.group(1)))
-
-
-def test_every_declared_layout_has_a_renderer() -> None:
-    """A layout without a renderer used to silently fall back to renderTable.
-
-    That fallback is how the price radar rendered empty over real data. The
-    fallback is now an explicit error; this test keeps the map complete so the
-    error stays theoretical.
-    """
-    render = _render_map()
-    for panel in panels_mod.PANELS:
-        assert panel.layout in render, (
-            f"panel {panel.id!r} declares layout {panel.layout!r}; the bundle "
-            f"renders only {sorted(render)}"
-        )
-
-
-def test_unknown_layouts_error_rather_than_masquerade_as_tables() -> None:
-    js = _js()
-    assert "RENDER[p.layout]||renderTable" not in js.replace(" ", ""), (
-        "the silent renderTable fallback is back; an unknown layout must "
-        "surface as an error"
-    )
-    assert "no renderer" in js
+WEB = Path(__file__).resolve().parents[2] / "web" / "dist"
+APP = (WEB / "js" / "app.js").read_text()
+HTML = (WEB / "index.html").read_text()
+VIEWS = {p.stem: p.read_text() for p in sorted((WEB / "js" / "views").glob("*.js"))}
+ALL_JS = APP + "".join(VIEWS.values())
 
 
 def _schema_props(script: str, *path: str) -> set[str]:
     node = get_script(script).result_schema
-    # registration wraps every schema in oneOf[real, EMPTY]; unwrap the real one
-    if "oneOf" in node:
+    if "oneOf" in node:                     # registration wraps in oneOf[real, EMPTY]
         node = node["oneOf"][0]
     for key in path:
         node = node["properties"][key]
@@ -72,71 +39,116 @@ def _schema_props(script: str, *path: str) -> set[str]:
     return set(node.get("properties", {}))
 
 
-def _renderer_body(name: str) -> str:
-    m = re.search(rf"function {name}\(res, host\)\{{(.*?)\n\}}", _js(), re.S)
-    assert m, f"renderer {name} not found"
+def _fn_body(src: str, name: str) -> str:
+    m = re.search(rf"function {name}\([^)]*\)\s*\{{(.*?)\n\}}", src, re.S)
+    assert m, f"function {name} not found"
     return m.group(1)
+
+
+def test_every_panel_script_is_rendered_by_some_view() -> None:
+    """A registered panel nobody calls is dead weight wearing a schema; a view
+    calling an unregistered script errors at runtime. Both directions pinned."""
+    called = set(re.findall(r'runPanel\(\s*"(\w+)"', ALL_JS))
+    called |= set(re.findall(r'panelInto\(\w+,\s*"(\w+)"', ALL_JS))
+    declared = {p.script for p in panels_mod.PANELS}
+    unrendered = declared - called
+    assert not unrendered, f"panels with no view rendering them: {sorted(unrendered)}"
+    unknown = called - declared
+    assert not unknown, f"views call scripts no panel declares: {sorted(unknown)}"
+
+
+def test_the_shell_is_a_shell_and_views_are_modules() -> None:
+    """index.html regrowing inline logic is the failure §2.2 exists to prevent."""
+    inline = re.search(r'<script type="module">(.*?)</script>', HTML, re.S)
+    assert inline, "the shell must load the app as a module"
+    body = inline.group(1)
+    assert len(body) < 1500, "the shell's inline script is growing logic again"
+    assert "register(" in body and "start()" in body
+    for name, src in VIEWS.items():
+        assert re.search(r"export default", src), f"view {name} has no default export"
 
 
 def test_the_pitch_reads_only_fields_the_squad_schema_carries() -> None:
     """`p.price_tenths` rendered £NaN on all fifteen cards; the schema says
     `price` and forbids everything else."""
     allowed = _schema_props("squad_overview", "starters")
-    body = _renderer_body("renderPitch")
+    body = _fn_body(VIEWS["home"], "pcard")
     used = set(re.findall(r"\bp\.(\w+)", body))
     unknown = used - allowed
     assert not unknown, (
-        f"renderPitch reads {sorted(unknown)}, which the squad player schema "
-        f"does not carry (it has {sorted(allowed)}); those render as undefined"
+        f"pcard reads {sorted(unknown)}, which the squad player schema does "
+        f"not carry (it has {sorted(allowed)}); those render as undefined"
     )
 
 
 def test_the_movers_renderer_reads_what_the_price_schema_declares() -> None:
     props = _schema_props("price_radar")
-    body = _renderer_body("renderMovers")
+    body = _fn_body(VIEWS["home"], "renderMovers")
     for key in ("risers", "fallers"):
         assert key in props and f"res.{key}" in body
     assert "res.rows" not in body, (
         "the price schema forbids `rows`; reading it is the original bug"
     )
+    row_props = _schema_props("price_radar", "risers")
+    used = set(re.findall(r"\br\.(\w+)", body))
+    unknown = used - row_props
+    assert not unknown, (
+        f"renderMovers reads {sorted(unknown)} which riser rows do not carry "
+        f"(they have {sorted(row_props)})"
+    )
 
 
 def test_idea_chips_speak_the_panel_vocabulary() -> None:
-    """The panel emits hit/miss (its own hit_rate counts exactly those); the
-    JS once tested only the CLI's correct/incorrect, so no chip ever coloured."""
-    body = _renderer_body("renderList")
+    """The panel emits hit/miss (its hit_rate counts exactly those); the JS
+    once tested only the CLI's correct/incorrect, so no chip ever coloured."""
+    body = _fn_body(VIEWS["home"], "renderIdeas")
     assert '"hit"' in body and '"miss"' in body
 
 
 def test_the_deadline_is_fetched_never_hardcoded() -> None:
-    js = _js()
-    assert not re.search(r'new Date\("\d{4}-\d{2}-\d{2}T', js), (
+    assert not re.search(r'new Date\("\d{4}-\d{2}-\d{2}T', ALL_JS + HTML), (
         "a hardcoded deadline literal is back; it expires and then counts up "
         "forever"
     )
-    assert "/api/deadline" in js
-
-
-def test_the_grid_caption_does_not_claim_difficulty_it_cannot_have() -> None:
-    """The fixture schema has no difficulty field today; the caption must not
-    describe the colouring as live. When the field arrives, the honest caption
-    flips on the data, not on the prose."""
-    body = _renderer_body("renderGrid")
-    fixture_props = _schema_props("fixture_ticker", "teams", "fixtures", "opponents")
-    if "difficulty" not in fixture_props:
-        assert "No difficulty rating is wired yet" in body
-
-
-def test_sorting_rebuilds_the_table_not_the_whole_panel() -> None:
-    """host.innerHTML="" on a header click deleted the provenance footer."""
-    js = _js()
-    assert 'host.innerHTML=""; renderTable' not in js
-    assert "replaceWith(buildTable" in js
+    assert "/api/deadline" in APP
 
 
 def test_the_clock_never_hardcodes_a_gameweek_label() -> None:
     """The countdown once said "GW1 ... Fri 21 Aug" forever, from prose baked
-    into tick() -- outliving the fetched date it counted down to."""
-    js = _js()
-    assert "GW1 deadline" not in js
-    assert "DEADLINE_GW" in js
+    into tick()."""
+    assert "GW1 deadline" not in ALL_JS
+    assert re.search(r"GW\$\{", APP), "the GW label must come from the fetch"
+
+
+def test_the_fixtures_caption_flips_on_data_not_prose() -> None:
+    """Difficulty is optional in the schema (the cached artefact may be
+    absent); the view must carry BOTH captions and choose by inspecting the
+    payload, never claim colouring it cannot have."""
+    props = _schema_props("fixture_ticker", "teams", "fixtures", "opponents")
+    assert "difficulty" in props, "the optional difficulty field left the schema"
+    src = VIEWS["fixtures"]
+    assert "anyDifficulty" in src
+    assert "No difficulty artefact present" in src
+    assert "difficulty != null" in src.replace("  ", " "), (
+        "colouring must be gated per-opponent on the field being present"
+    )
+
+
+def test_sorting_rebuilds_the_tbody_not_the_panel() -> None:
+    """host.innerHTML="" on a header click deleted the provenance footer."""
+    assert 'host.innerHTML=""' not in ALL_JS.replace(" ", "")
+    body = _fn_body(APP, "renderBody")
+    assert "tbody.textContent" in body, (
+        "sorting must clear and rebuild only the tbody"
+    )
+
+
+def test_no_raw_html_from_model_or_panel_output() -> None:
+    """Chat and panels render server/model text; innerHTML on raw output is an
+    injection seam. textContent/createTextNode only, except vetted literals."""
+    for name, src in VIEWS.items():
+        for m in re.finditer(r"\.innerHTML\s*=\s*(.+)", src):
+            rhs = m.group(1).strip()
+            assert rhs.startswith('"') or rhs.startswith("'") or rhs.startswith("`") and "${" not in rhs, (
+                f"view {name} assigns dynamic innerHTML: {rhs[:60]}"
+            )

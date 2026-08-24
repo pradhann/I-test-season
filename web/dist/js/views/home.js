@@ -28,7 +28,8 @@ function pcard(p) {
     p.name + (p.is_captain ? " (C)" : p.is_vice ? " (V)" : "")));
   d.appendChild(el("div", "sub",
     `${fmtPrice(p.price)}${p.xpts != null ? " · " + fmt1(p.xpts) : ""}`));
-  if (p.flag) d.appendChild(el("div", "chip warn", p.flag));
+  if (p.status && p.status !== "a")
+    d.appendChild(el("div", "chip warn", p.news || `status ${p.status}`));
   return d;
 }
 
