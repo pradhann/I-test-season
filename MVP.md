@@ -1,91 +1,80 @@
-# Using the platform
+# Your FPL tool — what it is and how to run it
 
-Three surfaces, all running now.
+Everything below was run and verified against the live warehouse on
+2026-08-24. Three commands are the tool; everything else supports them.
 
-## 1. The web dashboard
-
-```bash
-uv run fpl platform serve      # then open http://localhost:8321
-```
-
-Panels: your squad, the projection table (5 providers, 592 players), a 5-GW
-fixture ticker, the price radar, and your idea registry. A panel with no data
-tells you *why* rather than showing a plausible number.
-
-To keep it running like the bots:
+## The weekly loop (this is the product)
 
 ```bash
-make deploy-platform           # launchd, restarts on boot
+uv run fpl solve
 ```
+Fits the models, solves the coming 5 gameweeks in BOTH objectives —
+expected points and rank (P(top-10k)) — prints the squads and their diff,
+and commits the plan + forecast artefacts. Run live for GW2 the objectives
+disagreed: 5 of 15 players differ and the captain flips. Takes ~10-15 min
+at the default 300s solver limit. `--mode rank|points|both`, `--deficit`
+to assert how far behind the top-10k pace you are.
 
-## 2. Telegram — @fplpradhannbot (already deployed)
+```bash
+uv run fpl weekly
+```
+The decision report: your real squad (live from FPL), the recommended
+squad from the last solve, the exact transfer diff paired by position, a
+ranked transfer recommendation with every alternative it beat, and what
+data is missing. If a recommendation plays a chip it SAYS SO in capitals.
+Add `--validate` to attach ΔP(top-10k) with paired standard errors to the
+shortlist (builds the simulator; minutes, not seconds).
 
-Ask it anything the router understands:
-- "review my team" → pitch image with prices, flags, xPts
-- "which defenders have the highest xPoints"
-- "suggest me transfers"
-- "which fixtures to target next"
-- "summarize FPL Harry" / paste any YouTube link → transcript + analysis
-- "I like Rashford" → logged as a tracked idea with a falsifiable thesis
+```bash
+uv run fpl myteam auth
+```
+Verifies your FPL session and auto-refreshes the 8-hour token. One cookie
+paste lasts ~6 months: `pbpaste | uv run fpl myteam auth --paste-cookie`
+(never type it at a prompt — the terminal truncates at 1024 chars).
 
-## 3. The deadline DAG (already deployed)
+## The surfaces
 
-Fires on its own, keyed to the real UTC deadline:
+| Surface | Command | State |
+|---|---|---|
+| Dashboard | `uv run fpl platform serve` → localhost:8321 | 6 panels, verified in a browser: squad pitch with real prices, projections, fixtures, price radar (risers/fallers), market watch (bookmaker clean-sheet probs with cross-method spread), ideas. Live deadline clock from the API. |
+| Telegram | @fplpradhannbot (deployed via launchd) | review my team, transfers, projections, fixtures, YouTube link analysis, idea tracking |
+| Deadline DAG | `make dag-status` (deployed) | fires off the real deadline: T-30h refresh, nightly price radar, T-4h solve delivery, T-90m lineup check |
 
-| When | What |
-|---|---|
-| T-30h | presser + projection refresh, injury digest |
-| 02:00 UK nightly | price radar (only messages you if something moved) |
-| T-4h | the solve delivery |
-| T-90m | lineup captaincy check |
+## What the engine actually does
 
-`make dag-status` shows the next-due times. `make dag-tick` runs one now.
+- **Copies projections, never invents them.** 5 sources ingested; their
+  disagreement is the uncertainty estimate. `projection_weight` stays
+  empty until GW1 actuals score them — weighting without evidence is
+  fabrication.
+- **Optimises rank, not points.** RANK_MV prices variance and ownership:
+  behind the pace → variance is a good; ahead → it is a cost. Evidence
+  assembled from measured data (4 seasons of scoring variance, FPL's own
+  ownership, external EO where the feed exists) with provenance printed.
+- **Point-in-time everywhere.** A backtest cannot read the future
+  (`LeakageError`), cannot pick players whose availability was never
+  recorded (`UnknownAvailabilityError` — opt in explicitly), and can ask
+  for any historical deadline (all 5 seasons in `dim_event`).
+- **Honest about gaps.** A report section with nothing to say says so; a
+  panel with no data explains why; a recommendation that needs your
+  wildcard declares it.
 
-## Before the GW1 deadline (Fri 21 Aug 17:30 UTC)
+## Known limits (the honest list)
 
-1. `uv run fpl myteam auth` — reports token state and verifies against the live
-   account, refreshing the 8-hour access token through the stored refresh token.
-   That is the everyday case and needs no input. If it reports the grant was
-   *refused*, re-supply the session — copy the Cookie header from DevTools
-   (Application → Cookies → fantasy.premierleague.com) and pipe it in:
+- The rank solve's deficit is an assumption until a top-10k pace series
+  is ingested (pass `--deficit`); captaincy shares are zero without the
+  LiveFPL EO feed for the target GW.
+- No confirmed-lineup source yet. The Pulselive API is verified to carry
+  free lineups (see docs/platform/MASTER_PROMPT.md Phase 3.1) — the
+  highest-value next ingest.
+- No top-10k ownership crawl yet (Phase 3.2) — unlocks EO-by-tier and
+  chip-crowding.
+- Historical backtests exclude unknown-availability players unless you
+  opt in; the season replay baseline predates that and reads the raw pool.
 
-   ```bash
-   pbpaste | uv run fpl myteam auth --paste-cookie
-   ```
+## Where the plans live
 
-   Do not type it at a prompt. A terminal truncates one typed line at 1024
-   characters and the header is roughly three times that, so the prompt stops
-   accepting keystrokes partway through and looks frozen. `--from-file
-   /path/to/cookie.txt` works the same way if you would rather use a file
-   (delete it afterwards). Setup redeems the token once to prove the grant
-   really works, so a dead chain is reported now rather than at the deadline.
-2. `uv run python scripts/gw1_squad.py` — re-solves the plan. The recommended
-   squad section leads with the solve time and warns past 24h; acting on a
-   stale plan means acting on stale prices, injuries and odds.
-3. Open `localhost:8321` and confirm the dashboard renders — it was built after
-   browser automation got blocked here, so it is served and syntax-checked but
-   not visually confirmed.
-
-Once 1 and 2 are both done, `uv run fpl weekly` ends its recommended-squad
-section with **Versus your actual squad**: the exact players to move, paired
-by position so every row is a legal transfer, plus whether you and the plan
-agree on the captain. Before the first deadline those transfers are unlimited
-and free, so that diff *is* the GW1 decision.
-
-## Authentication, in one paragraph
-
-FPL authenticates with a bearer token, not a cookie — a session cookie on its
-own now returns 403. `auth --paste-cookie` extracts the `access_token` and
-`refresh_token` from a pasted browser Cookie header (pasting just those two
-values works too) and stores them in `.env`, which is gitignored; no password
-is stored or asked for. Refresh tokens are single-use, so redemption is
-serialised across processes with a lock on `.env.lock` — without it the bot
-and the DAG could refresh at once and the loser would replay a spent token.
-Revoke by logging out of that browser session.
-
-## What is not built yet
-
-See `docs/platform/ROADMAP.md`. Short version: the rank-aware solver is
-substantially built but unverified end to end, the projection *ensemble* (as
-opposed to the ingested sources) is not blended yet, and there is no
-confirmed-lineup feed.
+`docs/platform/MASTER_PROMPT.md` — the phased build plan, grounded in the
+audits and market research. Phases 0 (correctness) and 1 (wiring) are
+done; Phase 2 (the edge: EO as covariance, state-dependent risk) and
+Phase 3 (lineups, top-10k crawl) are next.
+`docs/platform/AUDIT_2026-08-20.md` — every finding, with file:line.
