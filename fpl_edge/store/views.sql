@@ -173,3 +173,163 @@ CREATE OR REPLACE MACRO sem_fixtures(p_as_of) AS TABLE (
     LEFT JOIN t th ON th.season = fx.season AND th.team_code = side.team_code
     LEFT JOIN t ta ON ta.season = fx.season AND ta.team_code = side.opponent_code
 );
+
+-- ---------------------------------------------------------------------------
+-- sem_player_match_stats(p_as_of): a third party's per-match read of the same
+-- matches -- xG, xA, shots, defensive actions -- COPIED from its publisher and
+-- carried under `source` so it can never be mistaken for the official FPL
+-- return (that is sem_player_form). One row per (source, season, code,
+-- publisher's own match_id).
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE MACRO sem_player_match_stats(p_as_of) AS TABLE (
+    WITH m AS (
+        SELECT * FROM (
+            SELECT *, row_number() OVER (
+                PARTITION BY source, season, code, match_id
+                ORDER BY as_of DESC) rn
+            FROM fact_player_match_stats WHERE as_of <= p_as_of) WHERE rn = 1
+    )
+    SELECT m.source, m.season, m.code, m.match_id, m.gw, m.tournament,
+           m.minutes_played, m.goals, m.assists,
+           m.total_shots, m.shots_on_target, m.xg, m.xa, m.xgot,
+           m.chances_created, m.touches_opposition_box,
+           m.tackles, m.interceptions, m.recoveries, m.blocks, m.clearances,
+           m.defensive_contributions,
+           m.saves, m.goals_conceded, m.goals_prevented
+    FROM m
+);
+
+-- ---------------------------------------------------------------------------
+-- sem_manager_picks(p_as_of): what each tracked manager's squad was, one row
+-- per (season, gw, entry_id, element). Picks are stamped as_of = the gameweek
+-- deadline at ingest, so at a deadline instant you see exactly the squads that
+-- had just locked and nothing later. element_id is resolved to the stable
+-- player `code` through dim_player AS KNOWN AT p_as_of; a pick whose element
+-- has no identity row yet keeps a NULL code rather than being dropped, so a
+-- resolution gap is visible instead of silently shrinking squads.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE MACRO sem_manager_picks(p_as_of) AS TABLE (
+    WITH mp AS (
+        SELECT * FROM (
+            SELECT *, row_number() OVER (
+                PARTITION BY entry_id, season, gw, element_id
+                ORDER BY as_of DESC) rn
+            FROM fact_manager_pick WHERE as_of <= p_as_of) WHERE rn = 1
+    ), m AS (
+        SELECT * FROM (
+            SELECT *, row_number() OVER (
+                PARTITION BY entry_id ORDER BY as_of DESC) rn
+            FROM dim_manager WHERE as_of <= p_as_of) WHERE rn = 1
+    ), g AS (
+        SELECT * FROM (
+            SELECT *, row_number() OVER (
+                PARTITION BY entry_id, season, gw ORDER BY as_of DESC) rn
+            FROM fact_manager_gw WHERE as_of <= p_as_of) WHERE rn = 1
+    ), dp AS (
+        SELECT * FROM (
+            SELECT *, row_number() OVER (
+                PARTITION BY season, element_id ORDER BY as_of DESC) rn
+            FROM dim_player WHERE as_of <= p_as_of) WHERE rn = 1
+    )
+    SELECT mp.season, mp.gw, mp.entry_id,
+           m.player_name AS manager_name, m.entry_name AS team_name, m.source,
+           g.overall_rank, g.points AS gw_points,
+           dp.code, dp.web_name,
+           mp.element_id, mp.slot, mp.multiplier,
+           mp.is_captain, mp.is_vice_captain
+    FROM mp
+    LEFT JOIN m  ON m.entry_id = mp.entry_id
+    LEFT JOIN g  ON g.entry_id = mp.entry_id
+             AND g.season = mp.season AND g.gw = mp.gw
+    LEFT JOIN dp ON dp.season = mp.season AND dp.element_id = mp.element_id
+);
+
+-- ---------------------------------------------------------------------------
+-- sem_manager_transfers(p_as_of): every tracked manager's transfers, named in
+-- both directions, one row per (season, gw, entry_id, element_in,
+-- element_out). as_of on the stored row is the deadline of the gameweek the
+-- transfer applied to (when it became public); time_utc is the private
+-- click-instant, kept because transfer timing is behaviour worth measuring.
+-- Costs arrive in FPL tenths and are exposed in millions like sem_players.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE MACRO sem_manager_transfers(p_as_of) AS TABLE (
+    WITH tr AS (
+        SELECT * FROM (
+            SELECT *, row_number() OVER (
+                PARTITION BY entry_id, season, gw, element_in, element_out
+                ORDER BY as_of DESC) rn
+            FROM fact_manager_transfer WHERE as_of <= p_as_of) WHERE rn = 1
+    ), m AS (
+        SELECT * FROM (
+            SELECT *, row_number() OVER (
+                PARTITION BY entry_id ORDER BY as_of DESC) rn
+            FROM dim_manager WHERE as_of <= p_as_of) WHERE rn = 1
+    ), dp AS (
+        SELECT * FROM (
+            SELECT *, row_number() OVER (
+                PARTITION BY season, element_id ORDER BY as_of DESC) rn
+            FROM dim_player WHERE as_of <= p_as_of) WHERE rn = 1
+    )
+    SELECT tr.season, tr.gw, tr.entry_id,
+           m.player_name AS manager_name, m.entry_name AS team_name, m.source,
+           pin.code  AS code_in,  pin.web_name  AS player_in,
+           pout.code AS code_out, pout.web_name AS player_out,
+           tr.element_in, tr.element_out,
+           tr.element_in_cost  / 10.0 AS price_in,
+           tr.element_out_cost / 10.0 AS price_out,
+           tr.time_utc
+    FROM tr
+    LEFT JOIN m ON m.entry_id = tr.entry_id
+    LEFT JOIN dp pin  ON pin.season  = tr.season AND pin.element_id  = tr.element_in
+    LEFT JOIN dp pout ON pout.season = tr.season AND pout.element_id = tr.element_out
+);
+
+-- ---------------------------------------------------------------------------
+-- sem_elite_ownership(p_as_of): what the tracked cohorts hold, one row per
+-- (season, gw, cohort, code). Cohorts follow the repo-wide rule
+-- (fpl_edge/models/field/observed.py): 'top1k' = any dim_manager row whose
+-- source starts with the standings sampler's prefix (the top-of-overall
+-- sample, growable toward 10k), 'elite' = everything else in the crawl pool
+-- (named elite list, experts, winners, snowball). Cohort membership is "ANY
+-- source row at or before p_as_of", not just the latest, so an entry sampled
+-- by both crawls counts in both cohorts instead of flip-flopping with as_of.
+-- Percentages are of the managers IN THAT COHORT WITH A STORED SQUAD for that
+-- (season, gw); eo_pct sums multipliers, so captaincy makes it exceed 100.
+-- A pick whose element_id resolves to no code groups under a NULL code row --
+-- counted, visible, and excludable by the consumer, never silently dropped.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE MACRO sem_elite_ownership(p_as_of) AS TABLE (
+    WITH mp AS (
+        SELECT * FROM (
+            SELECT *, row_number() OVER (
+                PARTITION BY entry_id, season, gw, element_id
+                ORDER BY as_of DESC) rn
+            FROM fact_manager_pick WHERE as_of <= p_as_of) WHERE rn = 1
+    ), cohorts AS (
+        SELECT DISTINCT entry_id,
+               CASE WHEN source LIKE 'top1k%' THEN 'top1k' ELSE 'elite' END AS cohort
+        FROM dim_manager WHERE as_of <= p_as_of
+    ), base AS (
+        SELECT c.cohort, mp.* FROM mp JOIN cohorts c USING (entry_id)
+    ), cohort_n AS (
+        SELECT season, gw, cohort, count(DISTINCT entry_id) AS n_managers
+        FROM base GROUP BY season, gw, cohort
+    ), dp AS (
+        SELECT * FROM (
+            SELECT *, row_number() OVER (
+                PARTITION BY season, element_id ORDER BY as_of DESC) rn
+            FROM dim_player WHERE as_of <= p_as_of) WHERE rn = 1
+    )
+    SELECT b.season, b.gw, b.cohort, dp.code,
+           any_value(dp.web_name) AS web_name,
+           n.n_managers,
+           count(DISTINCT b.entry_id) AS owned_by,
+           100.0 * count(DISTINCT b.entry_id) / n.n_managers AS own_pct,
+           100.0 * count(DISTINCT CASE WHEN b.is_captain THEN b.entry_id END)
+                 / n.n_managers AS captain_pct,
+           100.0 * sum(b.multiplier) / n.n_managers AS eo_pct
+    FROM base b
+    JOIN cohort_n n ON n.season = b.season AND n.gw = b.gw AND n.cohort = b.cohort
+    LEFT JOIN dp ON dp.season = b.season AND dp.element_id = b.element_id
+    GROUP BY b.season, b.gw, b.cohort, dp.code, n.n_managers
+);

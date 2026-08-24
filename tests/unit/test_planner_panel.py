@@ -211,3 +211,14 @@ def test_horizon_one_returns_a_single_gameweek(seeded_db, monkeypatch):
     assert run.result["gws"] == [2]
     assert "2" in run.result["xpts"]["100"]
     assert "3" not in run.result["xpts"]["100"]
+
+
+def test_the_payload_is_strict_json_never_nan(seeded_db, monkeypatch):
+    """`NaN or 0` keeps NaN (NaN is truthy), and starlette's json.dumps then
+    500s the whole panel. The payload must serialise with allow_nan=False.
+    This exact failure took the panel down live: NaN minutes in the metrics."""
+    import json
+
+    _fake_state(monkeypatch, bank=15, ft=2)
+    result = run_script("planner_grid", {"horizon": 5}, db=seeded_db).result
+    json.dumps(result, allow_nan=False)   # raises ValueError on any NaN/inf

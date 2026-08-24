@@ -18,6 +18,9 @@ import datetime as dt
 import pandas as pd
 import pytest
 
+# Registers the manager tables' PIT keys so wh.append accepts them; the tables
+# themselves are part of the base schema (see store/schema.sql).
+import fpl_edge.ingest.rivals.schema  # noqa: F401  (import for side effect)
 from fpl_edge.ingest.projections.store import ProjectionStore
 from fpl_edge.store import Warehouse
 
@@ -174,6 +177,9 @@ CONTRACT: dict[str, set[str]] = {
     "sem_fixtures": {"season", "fixture_id", "gw", "kickoff_utc", "finished",
                      "team_code", "opponent_code", "is_home", "team", "opponent",
                      "goals_for", "goals_against"},
+    "sem_player_match_stats": {"source", "season", "code", "match_id", "gw",
+                               "minutes_played", "goals", "assists",
+                               "total_shots", "xg", "xa", "chances_created"},
 }
 
 

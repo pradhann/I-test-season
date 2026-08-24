@@ -55,6 +55,34 @@ export default async function planner(host) {
   index();
   const xp = (code, gw) => res.xpts[String(code)]?.[String(gw)] ?? null;
   const sprd = (code, gw) => res.spread[String(code)]?.[String(gw)] ?? null;
+  const pApp = (code, gw) => res.p_appear?.[String(code)]?.[String(gw)] ?? null;
+  const met = code => res.metrics?.[String(code)] ?? null;
+
+  /* what the grid cells display — user-selectable */
+  const CELL_METRICS = {
+    xpts:   { label: "xPts (consensus)", get: xp,   fmt: fmt1, max: () => gridMax },
+    spread: { label: "source spread",    get: sprd, fmt: fmt2,
+              max: () => Math.max(0.001, ...Object.values(res.spread).flatMap(o => Object.values(o))) },
+    p_appear: { label: "p(appear)",      get: pApp, fmt: fmt2, max: () => 1 },
+  };
+  let cellMetric = "xpts";
+
+  /* pool metric columns — toggleable set */
+  const POOL_COLS = {
+    own:    { label: "own %",  get: c => c.own_pct,           fmt: fmt1 },
+    xsum:   { label: "ΣxPts",  get: c => c._xsum,             fmt: fmt2 },
+    xg:     { label: "xG",     get: c => met(c.code)?.xg,     fmt: fmt2 },
+    xa:     { label: "xA",     get: c => met(c.code)?.xa,     fmt: fmt2 },
+    shots:  { label: "shots",  get: c => met(c.code)?.shots,  fmt: v => String(v) },
+    mins:   { label: "mins",   get: c => met(c.code)?.mins,   fmt: v => String(Math.round(v)) },
+    goals:  { label: "G",      get: c => met(c.code)?.goals,  fmt: v => String(Math.round(v)) },
+    papp:   { label: "p(app)", get: c => pApp(c.code, res.gws[0]), fmt: fmt2 },
+  };
+  let poolCols = ["own", "xsum", "xg", "shots"];
+  let poolSort = "xsum";
+  let poolPos = "", poolTeam = "", poolMax = "", poolSearch = "";
+  let poolGw = null;               // which GW an added transfer lands in
+  let adding = null;               // candidate code while choosing who to sell
 
   // ---- plan state: an ordered list of {gw, out, in} ----
   let moves = [];
@@ -148,8 +176,9 @@ export default async function planner(host) {
   const summaryBox = el("div");
   const pickerBox = el("div");
   const gridBox = el("div");
+  const poolBox = el("div");
   const noteLine = el("p", "sub");
-  card.append(toolbar, summaryBox, pickerBox, gridBox, noteLine);
+  card.append(toolbar, summaryBox, pickerBox, gridBox, poolBox, noteLine);
   card.appendChild(provenance(prov));
 
   sub.textContent =
@@ -225,7 +254,16 @@ export default async function planner(host) {
       } catch (e) { card.appendChild(errBox(e)); }
     };
 
-    toolbar.append(sel, nameInput, saveBtn, delBtn, clearBtn, hzLabel, hz);
+    const cmLabel = el("label", null, "cells");
+    const cm = el("select");
+    for (const [k, m] of Object.entries(CELL_METRICS)) {
+      const o = el("option", null, m.label); o.value = k;
+      if (k === cellMetric) o.selected = true;
+      cm.appendChild(o);
+    }
+    cm.onchange = () => { cellMetric = cm.value; render(); };
+    toolbar.append(sel, nameInput, saveBtn, delBtn, clearBtn, hzLabel, hz,
+                   cmLabel, cm);
   }
 
   // ---- summary strip ----
@@ -355,14 +393,19 @@ export default async function planner(host) {
 
   // ---- the grid ----
   function xpCell(td, code, gw) {
-    const v = xp(code, gw);
+    const M = CELL_METRICS[cellMetric];
+    const v = M.get(code, gw);
     if (v == null) { td.textContent = "–"; return; }
-    const pct = Math.min(65, Math.round(65 * v / gridMax));
-    td.textContent = fmt1(v);
+    const pct = Math.min(65, Math.round(65 * v / M.max()));
+    td.textContent = M.fmt(v);
     td.style.background = `color-mix(in oklab, var(--s1) ${pct}%, var(--surface))`;
     if (pct > 55) td.style.color = "#fff";
-    const s = sprd(code, gw);
-    td.title = `xPts ${fmt2(v)}` + (s != null ? ` · spread ${fmt2(s)} across sources` : "");
+    const bits = [`xPts ${fmt2(xp(code, gw))}`];
+    const sp = sprd(code, gw); if (sp != null) bits.push(`spread ${fmt2(sp)}`);
+    const pa = pApp(code, gw); if (pa != null) bits.push(`p(app) ${fmt2(pa)}`);
+    const m = met(code);
+    if (m?.xg != null) bits.push(`xG ${fmt2(m.xg)} · ${m.shots ?? 0} shots so far`);
+    td.title = bits.join(" · ");
   }
 
   function renderGrid() {
@@ -444,11 +487,163 @@ export default async function planner(host) {
     gridBox.appendChild(wrap);
   }
 
+  function renderPool() {
+    poolBox.textContent = "";
+    const box = el("div", "card");
+    box.appendChild(el("h2", null, `Player pool — all ${res.candidates.length} players`));
+    box.appendChild(el("p", "sub",
+      `Browse anyone, add from the list. ${res.metrics_note || ""}`));
+
+    // -- filter row --
+    const f = el("div", "filters");
+    const search = el("input"); search.type = "text";
+    search.placeholder = "search player / team"; search.size = 16;
+    search.value = poolSearch;
+    search.oninput = () => { poolSearch = search.value; renderPool(); };
+
+    const posSel = el("select");
+    for (const v of ["", "GKP", "DEF", "MID", "FWD"])
+      posSel.appendChild(Object.assign(el("option", null, v || "all positions"), { value: v }));
+    posSel.value = poolPos;
+    posSel.onchange = () => { poolPos = posSel.value; renderPool(); };
+
+    const teams = [...new Set(res.candidates.map(c => c.team).filter(Boolean))].sort();
+    const teamSel = el("select");
+    teamSel.appendChild(Object.assign(el("option", null, "all teams"), { value: "" }));
+    for (const t of teams) teamSel.appendChild(Object.assign(el("option", null, t), { value: t }));
+    teamSel.value = poolTeam;
+    teamSel.onchange = () => { poolTeam = teamSel.value; renderPool(); };
+
+    const maxIn = el("input"); maxIn.type = "number"; maxIn.step = "0.5";
+    maxIn.placeholder = "max £"; maxIn.style.width = "68px"; maxIn.value = poolMax;
+    maxIn.oninput = () => { poolMax = maxIn.value; renderPool(); };
+
+    const sortSel = el("select");
+    for (const [k, c] of Object.entries(POOL_COLS))
+      sortSel.appendChild(Object.assign(el("option", null, `sort: ${c.label}`), { value: k }));
+    sortSel.value = poolSort;
+    sortSel.onchange = () => { poolSort = sortSel.value; renderPool(); };
+
+    const gwSel = el("select");
+    for (const g of res.gws)
+      gwSel.appendChild(Object.assign(el("option", null, `add in GW${g}`), { value: g }));
+    gwSel.value = String(poolGw ?? res.gws[0]);
+    gwSel.onchange = () => { poolGw = Number(gwSel.value); renderPool(); };
+
+    f.append(search, posSel, teamSel, maxIn, sortSel, gwSel);
+    box.appendChild(f);
+
+    // -- metric column toggles --
+    const cols = el("div", "filters");
+    cols.appendChild(el("label", null, "columns:"));
+    for (const [k, c] of Object.entries(POOL_COLS)) {
+      const chip = el("span", "chip" + (poolCols.includes(k) ? " s1" : ""), c.label);
+      chip.style.cursor = "pointer";
+      chip.onclick = () => {
+        poolCols = poolCols.includes(k)
+          ? poolCols.filter(x => x !== k) : [...poolCols, k];
+        renderPool();
+      };
+      cols.appendChild(chip);
+    }
+    box.appendChild(cols);
+
+    // -- rows --
+    const gw = poolGw ?? res.gws[0];
+    const remaining = res.gws.filter(g => g >= gw);
+    const inSquadNow = squadAt(gw);
+    const term = poolSearch.trim().toLowerCase();
+    let rows = res.candidates
+      .filter(c => !inSquadNow.has(c.code))
+      .filter(c => !poolPos || c.pos === poolPos)
+      .filter(c => !poolTeam || c.team === poolTeam)
+      .filter(c => !poolMax || c.price <= Number(poolMax))
+      .filter(c => !term || c.name.toLowerCase().includes(term)
+                         || (c.team || "").toLowerCase().includes(term))
+      .map(c => ({ ...c,
+        _xsum: remaining.reduce((a, g) => a + (xp(c.code, g) ?? 0), 0) }));
+    const S = POOL_COLS[poolSort];
+    rows.sort((a, b) => ((S.get(b) ?? -1e9) - (S.get(a) ?? -1e9)));
+    const total = rows.length;
+    rows = rows.slice(0, 40);
+
+    const wrap = el("div", "scroll-x");
+    const table = el("table", "data");
+    const thead = el("thead"); const hr = el("tr");
+    hr.appendChild(el("th", null, "player"));
+    hr.appendChild(el("th", null, "pos"));
+    hr.appendChild(el("th", null, "team"));
+    hr.appendChild(el("th", "num", "price"));
+    for (const k of poolCols) hr.appendChild(el("th", "num", POOL_COLS[k].label));
+    hr.appendChild(el("th", null, ""));
+    thead.appendChild(hr); table.appendChild(thead);
+    const tbody = el("tbody");
+
+    for (const c of rows) {
+      const tr = el("tr");
+      const nameTd = el("td");
+      nameTd.appendChild(faceImg(c.code, "avatar"));
+      nameTd.appendChild(document.createTextNode(c.name));
+      tr.appendChild(nameTd);
+      tr.appendChild(el("td", null, c.pos));
+      tr.appendChild(el("td", null, c.team ?? "–"));
+      tr.appendChild(el("td", "num", fmtPrice(c.price)));
+      for (const k of poolCols) {
+        const v = POOL_COLS[k].get(c);
+        tr.appendChild(el("td", "num", v == null ? "–" : POOL_COLS[k].fmt(v)));
+      }
+      const act = el("td");
+      const addBtn = el("button", null, "+ add");
+      addBtn.onclick = () => { adding = adding === c.code ? null : c.code; renderPool(); };
+      act.appendChild(addBtn);
+      tr.appendChild(act);
+      tbody.appendChild(tr);
+
+      // -- inline sell chooser --
+      if (adding === c.code) {
+        const sellTr = el("tr");
+        const td = el("td");
+        td.colSpan = 5 + poolCols.length;
+        td.appendChild(el("b", null, `Sell whom for ${c.name} in GW${gw}? `));
+        const sameNow = [...squadAt(gw)]
+          .map(code => byCode.get(code))
+          .filter(pl => pl && pl.pos === c.pos);
+        if (!sameNow.length)
+          td.appendChild(el("span", "chip bad", `no ${c.pos} to sell`));
+        for (const pl of sameNow) {
+          const bankAfter = bankBefore(gw) + tenths(pl) - tenths(c);
+          const chip = el("span",
+            "chip " + (bankAfter < 0 ? "bad" : "good"),
+            `${pl.name} → bank ${fmtPrice(bankAfter / 10)}`);
+          chip.style.cursor = "pointer"; chip.style.marginRight = "6px";
+          chip.title = bankAfter < 0 ? "not affordable" : "click to plan this transfer";
+          if (bankAfter >= 0) chip.onclick = () => {
+            moves.push({ gw, out: pl.code, in: c.code });
+            moves.sort((a, b) => a.gw - b.gw);
+            adding = null;
+            notice = `GW${gw}: planned ${pl.name} → ${c.name}.`;
+            render();
+          };
+          td.appendChild(chip);
+        }
+        sellTr.appendChild(td);
+        tbody.appendChild(sellTr);
+      }
+    }
+    table.appendChild(tbody); wrap.appendChild(table);
+    box.appendChild(wrap);
+    if (total > rows.length)
+      box.appendChild(el("p", "sub",
+        `showing 40 of ${total} — search or filter to narrow`));
+    poolBox.appendChild(box);
+  }
+
   function render() {
     renderToolbar();
     renderSummary();
     renderPicker();
     renderGrid();
+    renderPool();
     noteLine.textContent = notice;
   }
   render();

@@ -37,6 +37,7 @@ are pinned by `test_the_column_contract_only_ever_grows`.
 | `sem_player_form(t)` | (season, gw, code, fixture) | realised returns incl. official **xG/xA/xGC**, bps, defensive stats |
 | `sem_ownership(t)` | (season, code) × EO metric | FPL marginal ownership beside every external EO metric (eo_predicted, eo_top10k, eo_elite) |
 | `sem_fixtures(t)` | (season, fixture_id, side) | schedule unpivoted to one row per team-side, opponent named |
+| `sem_player_match_stats(t)` | (source, season, code, match) | a third party's per-match xG/xA/shots/defensive read, never mistaken for the official return |
 
 Column-level detail: the `CONTRACT` dict in
 `tests/unit/test_semantic_layer.py` is the machine-checked source of truth.

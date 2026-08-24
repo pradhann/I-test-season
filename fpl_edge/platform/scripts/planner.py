@@ -40,7 +40,7 @@ from fpl_edge.platform.scripts.common import (
 )
 from fpl_edge.rules import rules
 
-CANDIDATE_LIMIT = 150
+CANDIDATE_LIMIT = 1200   # sanity ceiling; the pool is ALL players
 
 PARAMS: dict[str, Any] = {
     "type": "object",
@@ -105,6 +105,23 @@ RESULT: dict[str, Any] = {
         "candidates": {"type": "array", "items": _CANDIDATE},
         "xpts": _PER_GW_MAP,
         "spread": _PER_GW_MAP,
+        "xmins": _PER_GW_MAP,
+        "p_appear": _PER_GW_MAP,
+        "metrics": {
+            "type": "object",
+            "additionalProperties": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "gp": {"type": "integer"}, "mins": {"type": "number"},
+                    "goals": {"type": "number"}, "assists": {"type": "number"},
+                    "xg": {"type": ["number", "null"]},
+                    "xa": {"type": ["number", "null"]},
+                    "shots": {"type": ["number", "null"]},
+                },
+            },
+        },
+        "metrics_note": {"type": "string"},
         "ft_entering": {"type": "integer", "minimum": 0},
         "bank_tenths": {"type": "integer"},
         "rules": {
@@ -162,7 +179,7 @@ def planner_grid(
 
     cons = q(
         wh,
-        "SELECT gw, code, position, xpts_mean, xpts_spread "
+        "SELECT gw, code, position, xpts_mean, xpts_spread, xmins_mean "
         "FROM sem_projection_consensus(?) WHERE season = ?",
         (now, season),
     )
@@ -241,22 +258,18 @@ def planner_grid(
             f"({', '.join(missing[:3])}…): price shown as 0.0."
         )
 
-    # Candidates: top by summed consensus xPts over the horizon, squad excluded.
+    # The pool is EVERY player the warehouse knows (the FPL-site idiom: browse
+    # anyone, not a pre-trimmed shortlist). Ordered by summed consensus xPts
+    # over the horizon; players no source projects sink to the bottom but stay
+    # selectable -- their grid cells are honest dashes, not zeros.
     horizon_cons = cons[cons["gw"].isin(gws)]
-    ranked = (
-        horizon_cons.groupby("code", as_index=False)["xpts_mean"].sum()
-        .sort_values("xpts_mean", ascending=False)
-    )
+    xsum = horizon_cons.groupby("code")["xpts_mean"].sum().to_dict()
     candidates: list[dict[str, Any]] = []
-    for _, r in ranked.iterrows():
-        code = int(r["code"])
+    for code, row in by_code.items():
         if code in squad_codes:
             continue
-        row = by_code.get(code)
-        if row is None:
-            continue  # projected but unknown to the warehouse: unpickable
         candidates.append({
-            "code": code,
+            "code": int(code),
             "name": cell(row, "web_name", str) or str(code),
             "pos": POSITION_NAME.get(cell(row, "position", int) or 0, "?"),
             "team": cell(row, "team", str),
@@ -264,12 +277,14 @@ def planner_grid(
             "price": cell(row, "price", float) or 0.0,
             "own_pct": cell(row, "selected_by_pct", float),
         })
-        if len(candidates) >= CANDIDATE_LIMIT:
-            break
+    candidates.sort(key=lambda c: (-(xsum.get(c["code"], 0.0)), c["name"]))
+    del candidates[CANDIDATE_LIMIT:]
 
     wanted = squad_codes | {c["code"] for c in candidates}
     xpts: dict[str, dict[str, float]] = {}
     spread: dict[str, dict[str, float]] = {}
+    xmins: dict[str, dict[str, float]] = {}
+    p_appear: dict[str, dict[str, float]] = {}
     for _, r in horizon_cons.iterrows():
         code = int(r["code"])
         if code not in wanted:
@@ -279,6 +294,21 @@ def planner_grid(
             xpts.setdefault(code_key, {})[gw_key] = round(float(r["xpts_mean"]), 3)
         if r["xpts_spread"] is not None and r["xpts_spread"] == r["xpts_spread"]:
             spread.setdefault(code_key, {})[gw_key] = round(float(r["xpts_spread"]), 3)
+        if r.get("xmins_mean") is not None and r["xmins_mean"] == r["xmins_mean"]:
+            xmins.setdefault(code_key, {})[gw_key] = round(float(r["xmins_mean"]), 1)
+
+    # Minutes risk: p(appear) per (code, gw), averaged over the sources that
+    # publish it (fplform today). xmins would be preferable but no source
+    # publishes it beyond GW1; the map stays and fills if that changes.
+    pa = q(
+        wh,
+        "SELECT code, gw, AVG(p_appear) pa FROM sem_projections(?) "
+        "WHERE season = ? AND p_appear IS NOT NULL GROUP BY 1, 2",
+        (now, season),
+    )
+    for _, r in pa.iterrows():
+        if int(r["gw"]) in set(gws):
+            p_appear.setdefault(str(int(r["code"])), {})[str(int(r["gw"]))] = round(float(r["pa"]), 3)
 
     deadline = q(
         wh,
@@ -291,6 +321,57 @@ def planner_grid(
     deadline_utc = (
         None if deadline.empty or deadline.iloc[0]["deadline_utc"] is None
         else str(deadline.iloc[0]["deadline_utc"]).replace(" ", "T")
+    )
+
+    # Season-to-date metrics. Two honest sources, clearly separated in origin:
+    # the OFFICIAL settled return (sem_player_form -- minutes, goals, assists)
+    # and a third party's per-match read (sem_player_match_stats -- xG, xA,
+    # shots), which the official feed does not publish per player pre-GW-settle.
+    metrics: dict[str, dict[str, Any]] = {}
+
+    def nn(v, default=0.0):
+        """nan-safe float: `NaN or 0` keeps NaN because NaN is truthy."""
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return default
+        return default if f != f else f
+
+    form = q(
+        wh,
+        "SELECT code, COUNT(*) gp, SUM(minutes) mins, SUM(goals_scored) goals, "
+        "SUM(assists) assists FROM sem_player_form(?) WHERE season = ? GROUP BY 1",
+        (now, season),
+    )
+    for _, r in form.iterrows():
+        metrics[str(int(r["code"]))] = {
+            "gp": int(r["gp"]), "mins": nn(r["mins"]),
+            "goals": nn(r["goals"]), "assists": nn(r["assists"]),
+            "xg": None, "xa": None, "shots": None,
+        }
+    third = q(
+        wh,
+        "SELECT code, COUNT(*) gp, SUM(minutes_played) mins, SUM(goals) goals, "
+        "SUM(assists) assists, SUM(xg) xg, SUM(xa) xa, SUM(total_shots) shots "
+        "FROM sem_player_match_stats(?) WHERE season = ? GROUP BY 1",
+        (now, season),
+    )
+    for _, r in third.iterrows():
+        key = str(int(r["code"]))
+        m = metrics.setdefault(key, {
+            "gp": int(r["gp"]), "mins": nn(r["mins"]),
+            "goals": nn(r["goals"]), "assists": nn(r["assists"]),
+            "xg": None, "xa": None, "shots": None,
+        })
+        for col in ("xg", "xa", "shots"):
+            v = r[col]
+            m[col] = round(float(v), 2) if v == v and v is not None else None
+    settled = not form.empty
+    metrics_note = (
+        f"Season-to-date over {season}. Minutes/goals/assists from the "
+        + ("official settled returns" if settled
+           else "publisher's per-match feed (official returns not settled yet)")
+        + "; xG/xA/shots from FPL-Core-Insights."
     )
 
     ft = int(getattr(state, "free_transfers", None) or free_per_gw)
@@ -309,6 +390,10 @@ def planner_grid(
         "candidates": candidates,
         "xpts": xpts,
         "spread": spread,
+        "xmins": xmins,
+        "p_appear": p_appear,
+        "metrics": metrics,
+        "metrics_note": metrics_note,
         "ft_entering": max(0, min(ft, max_banked)),
         "bank_tenths": int(getattr(state, "bank_tenths", None) or 0),
         "rules": {
