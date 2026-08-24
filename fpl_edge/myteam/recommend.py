@@ -82,6 +82,11 @@ class Move:
     hits: int
     bank_after: Money
     plan: HorizonPlan
+    #: The chip the plan plays THIS gameweek, or "". A wildcard or free hit is
+    #: why nine transfers can carry zero hit -- omitting it once produced a
+    #: recommendation that looked like nine free moves and silently required
+    #: the user's wildcard.
+    chip: str = ""
     label: str = ""
     infeasible_reason: str = ""
 
@@ -236,6 +241,13 @@ class TransferRecommendation:
                 "change as many players as you like at no cost."
             )
         if self.chosen.hits == 0:
+            if self.chosen.chip in ("wildcard", "freehit"):
+                return (
+                    f"No hit -- because this plan PLAYS YOUR "
+                    f"{self.chosen.chip.upper()}. Every change is free this "
+                    "gameweek only; without the chip the same moves would "
+                    f"cost {max(0, self.chosen.n_transfers - self.free_transfers) * 4} points."
+                )
             return "No hit: the move fits inside your free transfers."
         gain = self.gain_over_roll
         if gain is None:
@@ -271,9 +283,12 @@ class TransferRecommendation:
         lines = [headline]
         if self.unlimited_transfers and not self.chosen.is_roll:
             lines.append("  " + self.chosen.describe(index))
+        chip_line = (
+            f" PLAYING {self.chosen.chip.upper()}." if self.chosen.chip else ""
+        )
         lines += [
             f"  {budget}; {self.chosen.n_transfers} change(s) proposed; "
-            f"{self.chosen.hit_points} point hit.",
+            f"{self.chosen.hit_points} point hit.{chip_line}",
             f"  {self.hit_verdict()}",
             f"  bank after: {self.chosen.bank_after}",
         ]
@@ -879,5 +894,6 @@ def _move_from(
         hits=int(first.hits),
         bank_after=first.bank_after,
         plan=plan,
+        chip=str(first.chip or ""),
         label=label,
     )

@@ -337,3 +337,35 @@ def test_a_squad_command_failure_does_not_eat_the_message(commands) -> None:
     bot = install(FakeBot(), broken)
     reply = bot._dispatch("/myteam", chat_id=1)
     assert "Nothing was saved" in reply
+
+
+def test_a_chip_funded_recommendation_says_it_plays_the_chip() -> None:
+    """Nine transfers at zero hit means a wildcard is being played.
+
+    Observed live: the winner solved with the wildcard, and the render said
+    "No hit: the move fits inside your free transfers" beside nine changes on
+    one FT -- a recommendation that silently required the user's wildcard.
+    """
+    from fpl_edge.myteam.recommend import Move
+
+    move = Move(
+        out=tuple(range(1, 10)), into=tuple(range(11, 20)),
+        objective=100.0, hits=0, bank_after=None, plan=None, chip="wildcard",
+    )
+    assert move.chip == "wildcard"
+    assert move.hit_points == 0
+
+    # the verdict path, exercised without a full solve
+    from fpl_edge.myteam.recommend import TransferRecommendation
+
+    class _Rec(TransferRecommendation):
+        pass
+
+    rec = object.__new__(TransferRecommendation)
+    object.__setattr__(rec, "chosen", move)
+    object.__setattr__(rec, "unlimited_transfers", False)
+    object.__setattr__(rec, "free_transfers", 1)
+    verdict = rec.hit_verdict()
+    assert "WILDCARD" in verdict
+    assert "32 points" in verdict, "the counterfactual hit cost must be stated"
+    assert "fits inside your free transfers" not in verdict

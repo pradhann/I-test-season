@@ -1,58 +1,63 @@
 {
- "generated_at": "2026-08-19T16:42:14.880702+00:00",
- "snapshot_as_of": "2026-08-21T17:30:00+00:00",
- "season": "2026-27",
- "horizon_gws": [
-  1,
-  2,
-  3,
-  4,
-  5
- ],
- "objective_mode": "expected_points",
- "objective": 325.32069800000005,
- "n_sims": 1000,
- "solver": "ModelStats(n_variables=10757, n_binary=7493, n_integer=729, n_constraints=20074, build_seconds=0.2775309999997262)",
- "gw1": {
-  "squad": [
-   80201,
-   106760,
-   141746,
-   154561,
-   177815,
-   178301,
-   223827,
-   226597,
-   424876,
-   446008,
-   466075,
-   472769,
-   484420,
-   502500,
-   514254
+  "generated_at": "2026-08-24T02:58:52.155170+00:00",
+  "snapshot_as_of": "2026-08-28T17:30:00+00:00",
+  "season": "2026-27",
+  "horizon_gws": [
+    2,
+    3,
+    4,
+    5,
+    6
   ],
-  "starting_xi": [
-   141746,
-   154561,
-   177815,
-   178301,
-   223827,
-   226597,
-   424876,
-   446008,
-   472769,
-   484420,
-   502500
+  "objective_mode": "rank_mv",
+  "objective": 309.6063858499397,
+  "n_sims": 1000,
+  "solver": "status=Time limit reached gap=0.1273601449243497",
+  "notes": [
+    "ownership: FPL selected_by_pct at the GW2 snapshot (mean 0.0290, max 0.6920, sums to 14.67 across 506 players)",
+    "captaincy share: no external EO feed for GW2; every share is zero, which prices the armband as a pure differential. Read the RANK_MV captain with that in mind.",
+    "deficit NOT MEASURED (no top-10k pace series yet); assuming level with the pace at GW2. Pass --deficit to assert your real position."
   ],
-  "bench": [
-   80201,
-   106760,
-   514254,
-   466075
-  ],
-  "captain": 226597,
-  "vice_captain": 141746,
-  "chip": "bboost",
-  "bank_after": 0
- }
+  "gw1": {
+    "squad": [
+      80201,
+      97032,
+      106760,
+      154561,
+      177815,
+      178301,
+      221466,
+      226597,
+      424876,
+      430871,
+      446008,
+      494521,
+      494595,
+      502500,
+      503139
+    ],
+    "starting_xi": [
+      97032,
+      106760,
+      154561,
+      178301,
+      221466,
+      226597,
+      424876,
+      430871,
+      446008,
+      494521,
+      502500
+    ],
+    "bench": [
+      80201,
+      503139,
+      177815,
+      494595
+    ],
+    "captain": 446008,
+    "vice_captain": 430871,
+    "chip": "bboost",
+    "bank_after": 5
+  }
 }
