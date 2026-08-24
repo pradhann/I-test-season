@@ -341,6 +341,9 @@ class Warehouse:
         lock_timeout_s: float = 30.0,
     ) -> None:
         self.path = Path(path)
+        #: A tempdir this instance owns and must delete on close(). Set only by
+        #: read_copy(); plain opens own nothing.
+        self._owned_tmpdir: Path | None = None
         if not read_only:
             self.path.parent.mkdir(parents=True, exist_ok=True)
         self._con = self._connect(read_only, lock_timeout_s)
@@ -427,16 +430,31 @@ class Warehouse:
         """
         import shutil
         import tempfile
+        import weakref
 
         src = Path(path)
         if not src.exists():
             raise FileNotFoundError(f"no warehouse at {src}")
-        tmp = Path(tempfile.mkdtemp(prefix="fpl-read-")) / src.name
-        shutil.copy2(src, tmp)
-        wal = src.with_suffix(src.suffix + ".wal")
-        if wal.exists():
-            shutil.copy2(wal, tmp.with_suffix(tmp.suffix + ".wal"))
-        return cls(tmp, read_only=True)
+        tmpdir = Path(tempfile.mkdtemp(prefix="fpl-read-"))
+        tmp = tmpdir / src.name
+        try:
+            shutil.copy2(src, tmp)
+            wal = src.with_suffix(src.suffix + ".wal")
+            if wal.exists():
+                shutil.copy2(wal, tmp.with_suffix(tmp.suffix + ".wal"))
+            wh = cls(tmp, read_only=True)
+        except BaseException:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+            raise
+        # The copy is this instance's private property and its responsibility:
+        # close() deletes it. Before this, every caller that forgot to clean up
+        # leaked a full database copy -- 457 orphaned directories (5.1 GB) were
+        # found on one machine, one per DAG tick among others. The finalizer is
+        # the backstop for callers that never close(); it must not capture
+        # `wh` or the object could never be collected.
+        wh._owned_tmpdir = tmpdir
+        weakref.finalize(wh, shutil.rmtree, str(tmpdir), True)
+        return wh
 
     def snapshot_at(self, as_of: dt.datetime) -> Snapshot:
         """The only sanctioned entry point for reading mutable facts.
@@ -602,6 +620,11 @@ class Warehouse:
 
     def close(self) -> None:
         self._con.close()
+        if self._owned_tmpdir is not None:
+            import shutil
+
+            shutil.rmtree(self._owned_tmpdir, ignore_errors=True)
+            self._owned_tmpdir = None
 
     def __enter__(self) -> "Warehouse":
         return self

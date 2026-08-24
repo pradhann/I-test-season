@@ -441,3 +441,35 @@ def test_a_lone_null_status_is_excluded_by_default(wh: Warehouse) -> None:
     assert list(snap.selectable("2026-27")["code"]) == [1]
     with_unknowns = snap.selectable("2026-27", assume_available_when_unknown=True)
     assert sorted(with_unknowns["code"]) == [1, 3]
+
+
+def test_read_copy_cleans_up_its_private_copy(wh: Warehouse, tmp_path) -> None:
+    """close() must delete the temp copy; before this, every caller leaked one.
+
+    457 orphaned fpl-read-* directories (5.1 GB) were measured on one machine,
+    growing once per DAG tick. The copy is the instance's property, so its
+    lifetime is the instance's job -- not each caller's.
+    """
+    wh.append("fact_player_state", _state(1, 50, 5.0, T(1)))
+    wh.close()
+
+    rc = Warehouse.read_copy(wh.path)
+    copy_dir = rc.path.parent
+    assert copy_dir.exists() and copy_dir.name.startswith("fpl-read-")
+    rc.close()
+    assert not copy_dir.exists(), "close() left the private copy behind"
+    rc.close()                                    # double-close must be safe
+
+
+def test_read_copy_is_reaped_even_if_the_caller_never_closes(wh: Warehouse) -> None:
+    """A forgotten handle must not leak a database copy for the OS to keep."""
+    import gc
+
+    wh.append("fact_player_state", _state(1, 50, 5.0, T(1)))
+    wh.close()
+
+    rc = Warehouse.read_copy(wh.path)
+    copy_dir = rc.path.parent
+    del rc
+    gc.collect()
+    assert not copy_dir.exists(), "the finalizer backstop did not fire"

@@ -67,22 +67,19 @@ class QueryError(ValueError):
 
 @contextlib.contextmanager
 def read_copy(db: Path | str = DEFAULT_DB):
-    """``Warehouse.read_copy`` that also deletes the copy afterwards.
+    """``Warehouse.read_copy`` as a context manager.
 
-    ``read_copy`` mkdtemp's a private copy of the database and, by design, does
-    not own its lifetime -- a batch job exits and the OS reaps it. A server does
-    not exit. At one copy per panel refresh and ~47MB per copy, a browser tab
-    left open overnight fills the disk, so every platform read goes through
-    here instead.
+    ``Warehouse.read_copy`` now owns its private copy and deletes it in
+    ``close()`` (it once did not, and this wrapper was the only caller that
+    cleaned up -- 457 leaked copies later, ownership moved into the class
+    where it belongs). This survives purely as the ``with``-shaped surface
+    the panel scripts use.
     """
     wh = Warehouse.read_copy(db)
-    tmp_dir = Path(wh.path).parent
     try:
         yield wh
     finally:
         wh.close()
-        if tmp_dir.name.startswith("fpl-read-") or tmp_dir.parent.name.startswith("fpl-read-"):
-            shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 @dataclass(frozen=True)
