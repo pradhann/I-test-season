@@ -152,6 +152,99 @@ def test_fixtures_unpivot_to_one_row_per_side(wh: Warehouse) -> None:
     assert home["team"] == "MCI" and home["opponent"] == "ARS"
 
 
+def _pick(entry: int, element: int, *, day: int, captain: bool = False,
+          mult: int | None = None, slot: int = 1) -> dict:
+    return {"entry_id": entry, "season": "2026-27", "gw": 1,
+            "element_id": element, "slot": slot,
+            "multiplier": (2 if captain else 1) if mult is None else mult,
+            "is_captain": captain, "is_vice_captain": False, "as_of": T(day)}
+
+
+def _manager(entry: int, source: str, name: str, *, day: int = 1) -> dict:
+    return {"entry_id": entry, "player_name": name, "entry_name": f"team{entry}",
+            "region": None, "years_active": None, "favourite_team_id": None,
+            "started_event": None, "source": source, "as_of": T(day)}
+
+
+def test_a_squad_locked_after_the_instant_is_invisible(wh: Warehouse) -> None:
+    """Picks are stamped as_of = deadline; before it the squad does not exist."""
+    wh.append("dim_manager", pd.DataFrame([_manager(9, "elite_named", "Ben Crellin")]))
+    wh.append("fact_manager_pick", pd.DataFrame([_pick(9, 11, day=21, captain=True)]))
+    before = _sem(wh, "sem_manager_picks", T(20))
+    after = _sem(wh, "sem_manager_picks", T(22))
+    assert before.empty, "a locked squad was visible before its deadline"
+    row = after.iloc[0]
+    assert row["manager_name"] == "Ben Crellin"
+    assert int(row["code"]) == 1 and row["web_name"] == "Haaland"
+    assert bool(row["is_captain"]) and int(row["multiplier"]) == 2
+
+
+def test_an_unresolvable_element_keeps_a_null_code_not_a_dropped_row(
+    wh: Warehouse,
+) -> None:
+    """element_id -> code misses stay visible (and countable), never silent."""
+    wh.append("dim_manager", pd.DataFrame([_manager(9, "elite_named", "Ben Crellin")]))
+    wh.append("fact_manager_pick", pd.DataFrame([
+        _pick(9, 11, day=21, slot=1), _pick(9, 999, day=21, slot=2),
+    ]))
+    df = _sem(wh, "sem_manager_picks", T(22))
+    assert len(df) == 2, "an unresolvable element silently shrank the squad"
+    missing = df[df["element_id"] == 999]
+    assert missing["code"].isna().all() and missing["web_name"].isna().all()
+
+
+def test_a_transfer_becomes_public_at_its_deadline_with_both_names(
+    wh: Warehouse,
+) -> None:
+    wh.append("dim_manager", pd.DataFrame([_manager(9, "elite_named", "Ben Crellin")]))
+    wh.append("dim_player", pd.DataFrame([{
+        "season": "2026-27", "code": 2, "element_id": 12, "web_name": "Salah",
+        "first_name": "M", "second_name": "S", "position": 3, "team_code": 11,
+        "as_of": T(1),
+    }]))
+    wh.append("fact_manager_transfer", pd.DataFrame([{
+        "entry_id": 9, "season": "2026-27", "gw": 1,
+        "element_in": 11, "element_in_cost": 155,
+        "element_out": 12, "element_out_cost": 145,
+        "time_utc": T(20, 9), "as_of": T(21),
+    }]))
+    assert _sem(wh, "sem_manager_transfers", T(20)).empty, (
+        "a transfer was public before the deadline it applies to"
+    )
+    row = _sem(wh, "sem_manager_transfers", T(22)).iloc[0]
+    assert row["player_in"] == "Haaland" and row["player_out"] == "Salah"
+    assert float(row["price_in"]) == 15.5 and float(row["price_out"]) == 14.5
+
+
+def test_elite_ownership_keeps_the_cohorts_apart(wh: Warehouse) -> None:
+    """The standings sample and the named elite are different populations.
+
+    Mixing them would let a thousand hot-start managers drown out the handful
+    of named elites, which is exactly the question-shape ("what do THE ELITE
+    own") the cohort column exists to preserve.
+    """
+    wh.append("dim_manager", pd.DataFrame([
+        _manager(9, "elite_named", "Ben Crellin"),
+        _manager(10, "top1k:2026-27:gw1:rank5", "Hot Start"),
+        _manager(11, "top1k:2026-27:gw1:rank6", "Hot Start II"),
+    ]))
+    wh.append("fact_manager_pick", pd.DataFrame([
+        _pick(9, 11, day=21, captain=True),
+        _pick(10, 11, day=21, captain=True),
+        _pick(11, 11, day=21, captain=False),
+    ]))
+    df = _sem(wh, "sem_elite_ownership", T(22))
+    elite = df[df["cohort"] == "elite"].iloc[0]
+    top = df[df["cohort"] == "top1k"].iloc[0]
+    assert int(elite["n_managers"]) == 1 and int(top["n_managers"]) == 2
+    assert float(elite["own_pct"]) == 100.0 and float(top["own_pct"]) == 100.0
+    assert float(elite["captain_pct"]) == 100.0
+    assert float(top["captain_pct"]) == 50.0
+    # EO: elite = one captain (x2) of 1 manager = 200; top1k = 2+1 of 2 = 150.
+    assert float(elite["eo_pct"]) == 200.0
+    assert float(top["eo_pct"]) == 150.0
+
+
 CONTRACT: dict[str, set[str]] = {
     "sem_players": {"season", "code", "web_name", "position", "team_code", "team",
                     "price", "selected_by_pct", "status",
@@ -180,6 +273,18 @@ CONTRACT: dict[str, set[str]] = {
     "sem_player_match_stats": {"source", "season", "code", "match_id", "gw",
                                "minutes_played", "goals", "assists",
                                "total_shots", "xg", "xa", "chances_created"},
+    "sem_manager_picks": {"season", "gw", "entry_id", "manager_name",
+                          "team_name", "source", "overall_rank", "gw_points",
+                          "code", "web_name", "element_id", "slot",
+                          "multiplier", "is_captain", "is_vice_captain"},
+    "sem_manager_transfers": {"season", "gw", "entry_id", "manager_name",
+                              "team_name", "source", "code_in", "player_in",
+                              "code_out", "player_out", "element_in",
+                              "element_out", "price_in", "price_out",
+                              "time_utc"},
+    "sem_elite_ownership": {"season", "gw", "cohort", "code", "web_name",
+                            "n_managers", "owned_by", "own_pct", "captain_pct",
+                            "eo_pct"},
 }
 
 

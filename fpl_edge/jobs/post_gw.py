@@ -110,6 +110,18 @@ def main() -> int:
          [py, "-m", "fpl_edge.ingest.content.pipeline", "ingest", "--backfill-days", "3"])
     _run(report, "crawl_elite",
          [py, "-m", "fpl_edge.ingest.rivals.crawl", "--budget", "400"])
+    # The named elite (Crellin et al.): verified IDs, full picks + transfer
+    # history. Cheap (~4 requests per manager) and cached, so a re-run after a
+    # crash costs almost nothing.
+    _run(report, "crawl_elite_named",
+         [py, "-m", "fpl_edge.ingest.rivals.elite", "--budget", "200"])
+    # Deepen the top-of-overall sample by 500 entries a night toward the full
+    # top-10k. Resumable by construction: finished-gameweek picks are cached
+    # forever, so only the new tail costs requests, and the budget hard-stops
+    # the run rather than letting it grow silently.
+    _run(report, "crawl_top10k_sample",
+         [py, "-m", "fpl_edge.ingest.rivals.top1k", "--grow", "500",
+          "--budget", "700"])
     _run(report, "intel", [py, "-m", "fpl_edge.intel.cli", "collect"])
     _run(report, "retro_report", [py, "scripts/retro_report.py"])
     _run(report, "weekly_idea_report", [py, "scripts/weekly_idea_report.py"])

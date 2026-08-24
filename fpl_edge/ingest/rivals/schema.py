@@ -43,6 +43,12 @@ RIVAL_PIT_KEYS: dict[str, tuple[str, ...]] = {
 PIT_KEYS.update(RIVAL_PIT_KEYS)
 
 
+#: NOTE: these tables are ALSO declared in fpl_edge/store/schema.sql. DuckDB
+#: binds a table macro at CREATE time, so the sem_manager_* macros in
+#: views.sql (run on every writable open) need the tables to exist at
+#: warehouse birth -- the same arrangement the projection tables use. This
+#: module remains the documentation of record and the evolution authority:
+#: migrate() ALTER-adds any column declared here that the base is missing.
 DDL = """
 -- Who a manager is. `source` records WHY they are in the pool, because a skill
 -- score computed over a pool selected on past performance is biased, and the

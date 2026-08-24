@@ -271,3 +271,71 @@ def test_run_defaults_its_budget_to_the_declared_plan(monkeypatch):
     out = run(n_entries=300)
     assert seen["limit"] == plan(300)["requests_total"] + 10
     assert out["requests"]["spent"] <= seen["limit"]
+
+
+# -- per-gameweek facts come free from the standings page ---------------------
+
+
+def test_standings_rows_become_fact_manager_gw_without_extra_requests():
+    """points/total/rank are on the standings page; fetching histories to get
+    them would treble the crawl for data already in hand."""
+    budget = RequestBudget(limit=800)
+    fetcher = StubFetcher(budget, standings_entries=100)
+    frames, _summary = collect(fetcher, n_entries=60, now=AFTER_GW1)
+
+    gw_rows = frames["fact_manager_gw"]
+    assert len(gw_rows) == 60
+    assert (gw_rows["gw"] == 1).all()
+    assert list(gw_rows["overall_rank"][:3]) == [1, 2, 3]
+    # No entry/{id}/history/ request was made for any of this.
+    assert not any("history" in c[0] for c in fetcher.calls)
+
+
+def test_a_real_standings_page_parses_rank_points_and_totals():
+    """Against the archived GW1 payload, not a hand-built approximation."""
+    import json
+    from pathlib import Path
+
+    fixture = json.loads(
+        (Path(__file__).resolve().parents[1] / "fixtures" / "rivals"
+         / "standings_gw1.json").read_text()
+    )
+
+    class FixtureFetcher(StubFetcher):
+        def _body(self, endpoint, params):
+            if endpoint.startswith("leagues-classic/"):
+                return fixture
+            return super()._body(endpoint, params)
+
+    budget = RequestBudget(limit=50)
+    fetcher = FixtureFetcher(budget, standings_entries=3)
+    frames, summary = collect(fetcher, n_entries=3, now=AFTER_GW1)
+
+    managers = frames["dim_manager"]
+    assert len(managers) == 3
+    assert managers["source"].iloc[0] == f"{SOURCE_PREFIX}:2026-27:gw1:rank1"
+    gw_rows = frames["fact_manager_gw"]
+    first = gw_rows.iloc[0]
+    # Values from the real page: rank 1 scored 116 in GW1.
+    assert int(first["overall_rank"]) == 1
+    assert int(first["points"]) == 116
+    assert int(first["total_points"]) == 116
+
+
+# -- nightly growth -----------------------------------------------------------
+
+
+def test_grow_targets_current_sample_plus_k_capped_at_10k(monkeypatch):
+    import fpl_edge.ingest.rivals.top1k as mod
+
+    monkeypatch.setattr(mod, "_sampled_so_far", lambda db: 1500)
+    out = run(grow=500, dry_run=True)
+    assert out["plan"]["n_entries"] == 2000
+
+    monkeypatch.setattr(mod, "_sampled_so_far", lambda db: 9800)
+    out = run(grow=500, dry_run=True)
+    assert out["plan"]["n_entries"] == 10_000, "growth must stop at the top-10k"
+
+    monkeypatch.setattr(mod, "_sampled_so_far", lambda db: 0)
+    out = run(grow=750, dry_run=True)
+    assert out["plan"]["n_entries"] == 750, "growth from nothing is a first run"

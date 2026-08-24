@@ -274,3 +274,99 @@ SELECT
     p_appear,
     as_of    AS fetched_at
 FROM fact_projection;
+
+-- ---------------------------------------------------------------------------
+-- Manager (rival) tables. Historically created by the additive migration in
+-- fpl_edge/ingest/rivals/schema.py; they are ALSO here because DuckDB binds a
+-- table macro's body at CREATE time, and the sem_manager_* macros in views.sql
+-- (executed on every writable open) reference these tables -- a fresh
+-- warehouse must therefore be complete at birth, exactly as was done for the
+-- projection tables. The rivals module's migrate() remains authoritative for
+-- evolution and is idempotent over this base. Column semantics are documented
+-- in fpl_edge/ingest/rivals/schema.py.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS dim_manager (
+    entry_id            BIGINT   NOT NULL,
+    player_name         VARCHAR,
+    entry_name          VARCHAR,
+    region              VARCHAR,
+    years_active        INTEGER,
+    favourite_team_id   INTEGER,
+    started_event       INTEGER,
+    source              VARCHAR  NOT NULL,
+    as_of               TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (entry_id, as_of)
+);
+
+CREATE TABLE IF NOT EXISTS dim_manager_league (
+    entry_id     BIGINT  NOT NULL,
+    league_id    BIGINT  NOT NULL,
+    league_name  VARCHAR,
+    league_type  VARCHAR,
+    scoring      VARCHAR,
+    as_of        TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (entry_id, league_id, as_of)
+);
+
+CREATE TABLE IF NOT EXISTS fact_manager_season (
+    entry_id        BIGINT  NOT NULL,
+    season          VARCHAR NOT NULL,
+    total_points    INTEGER,
+    overall_rank    BIGINT,
+    rank_percentage      DOUBLE,
+    rank_percentage_text VARCHAR,
+    as_of           TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (entry_id, season, as_of)
+);
+
+CREATE TABLE IF NOT EXISTS fact_manager_gw (
+    entry_id              BIGINT  NOT NULL,
+    season                VARCHAR NOT NULL,
+    gw                    INTEGER NOT NULL,
+    points                INTEGER,
+    total_points          INTEGER,
+    overall_rank          BIGINT,
+    bank_tenths           INTEGER,
+    value_tenths          INTEGER,
+    event_transfers       INTEGER,
+    event_transfers_cost  INTEGER,
+    points_on_bench       INTEGER,
+    as_of                 TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (entry_id, season, gw, as_of)
+);
+
+CREATE TABLE IF NOT EXISTS fact_manager_pick (
+    entry_id       BIGINT  NOT NULL,
+    season         VARCHAR NOT NULL,
+    gw             INTEGER NOT NULL,
+    element_id     INTEGER NOT NULL,
+    slot           INTEGER,
+    multiplier     INTEGER,
+    is_captain     BOOLEAN,
+    is_vice_captain BOOLEAN,
+    as_of          TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (entry_id, season, gw, element_id, as_of)
+);
+
+CREATE TABLE IF NOT EXISTS fact_manager_transfer (
+    entry_id          BIGINT  NOT NULL,
+    season            VARCHAR NOT NULL,
+    gw                INTEGER NOT NULL,
+    element_in        INTEGER NOT NULL,
+    element_in_cost   INTEGER,
+    element_out       INTEGER NOT NULL,
+    element_out_cost  INTEGER,
+    time_utc          TIMESTAMPTZ,
+    as_of             TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (entry_id, season, gw, element_in, element_out, as_of)
+);
+
+CREATE TABLE IF NOT EXISTS fact_manager_chip (
+    entry_id  BIGINT  NOT NULL,
+    season    VARCHAR NOT NULL,
+    gw        INTEGER NOT NULL,
+    chip      VARCHAR NOT NULL,
+    as_of     TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (entry_id, season, gw, as_of)
+);

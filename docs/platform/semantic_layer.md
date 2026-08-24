@@ -11,7 +11,7 @@ database file**, so every `read_copy()` carries them; the platform's guarded
 
 ## The contract
 
-Six **table macros**, each taking one parameter `p_as_of TIMESTAMPTZ`:
+The **table macros**, each taking one parameter `p_as_of TIMESTAMPTZ`:
 
 ```sql
 SELECT * FROM sem_projections(TIMESTAMPTZ '2026-08-28 17:30:00+00')
@@ -38,6 +38,9 @@ are pinned by `test_the_column_contract_only_ever_grows`.
 | `sem_ownership(t)` | (season, code) × EO metric | FPL marginal ownership beside every external EO metric (eo_predicted, eo_top10k, eo_elite) |
 | `sem_fixtures(t)` | (season, fixture_id, side) | schedule unpivoted to one row per team-side, opponent named |
 | `sem_player_match_stats(t)` | (source, season, code, match) | a third party's per-match xG/xA/shots/defensive read, never mistaken for the official return |
+| `sem_manager_picks(t)` | (season, gw, entry, element) | every tracked manager's locked squad, named both ways (manager + player), with rank, multiplier, armband. Picks' `as_of` is the deadline, so at a deadline instant you see exactly what had just locked |
+| `sem_manager_transfers(t)` | (season, gw, entry, in, out) | every tracked manager's transfers with player names both directions, prices in £m, and the private click-time (`time_utc`) beside the public-at instant |
+| `sem_elite_ownership(t)` | (season, gw, cohort, code) | own%/captain%/EO% per player **per cohort** — `top1k` (the top-of-overall standings sample, growable toward 10k) vs `elite` (the named/curated crawl pool), matching the cohort rule in `fpl_edge/models/field/observed.py`. Percentages are of managers in that cohort with a stored squad; a pick whose element resolves to no code groups under a NULL `code` row rather than vanishing |
 
 Column-level detail: the `CONTRACT` dict in
 `tests/unit/test_semantic_layer.py` is the machine-checked source of truth.

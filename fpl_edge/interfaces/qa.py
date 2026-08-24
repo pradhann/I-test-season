@@ -64,6 +64,13 @@ class QuestionRouter:
                    re.compile(r"\b(review|show|rate|check)\b.{0,20}\b(my\s+)?(team|squad)\b|"
                               r"\bmy\s+(team|squad)\b.{0,12}\b(review|look|doing)\b", re.I),
                    self.review_team),
+            # A transfers question ABOUT someone else must outrank "suggest me
+            # transfers". The pattern is broad; the real gate (in route()) is
+            # naming a tracked manager or the elite/top-10k cohort, so plain
+            # "suggest transfers" still falls through to the next intent.
+            Intent("manager_transfers",
+                   re.compile(r"\btransfers?\b", re.I),
+                   self.manager_transfers),
             Intent("suggest_transfers",
                    re.compile(r"\b(suggest|recommend|make|any|what|which)\b.{0,24}\btransfers?\b|"
                               r"\btransfers?\b.{0,16}\b(should|make|suggest)\b", re.I),
@@ -77,6 +84,17 @@ class QuestionRouter:
                               r"\b(top|elite|best)\b.{0,20}\bmanagers?\b|"
                               r"\btop\s+managers?\b.{0,24}\b(own|different|compare)\b", re.I),
                    self.vs_elite),
+            # Cohort ownership without reference to MY team: "what do the
+            # elite own", "most selected players in the top 10k".
+            Intent("elite_owned",
+                   re.compile(r"\b(elite|top\s*10\s*k|top\s*1\s*k|top\s*10,?000|"
+                              r"top\s*1,?000)\b.{0,40}"
+                              r"\b(own|owns|owned|hold|holding|selected|selecting|"
+                              r"popular|picked|template|captain\w*)\b|"
+                              r"\bmost\s+(selected|owned|popular|picked|captained)\b"
+                              r".{0,50}\b(elite|top\s*10\s*k|top\s*1\s*k|10k|"
+                              r"managers?|sample)\b", re.I),
+                   self.elite_owned),
             Intent("fixtures_target",
                    re.compile(r"\bfixtures?\b.{0,30}\b(target|good|easy|next)\b|"
                               r"\b(target|which)\b.{0,12}\bfixtures?\b|"
@@ -125,6 +143,13 @@ class QuestionRouter:
                 from fpl_edge.interfaces.creators import match_creators
 
                 if not match_creators(stripped):
+                    continue
+            if intent.name == "manager_transfers":
+                # Same gate mechanism: the word "transfers" alone is not a
+                # question about someone else. It routes here only when the
+                # message names a tracked manager or the elite/top-10k cohort;
+                # otherwise "suggest me transfers" keeps its intent.
+                if self._transfers_subject(stripped) is None:
                     continue
             if m:
                 try:
@@ -433,14 +458,18 @@ class QuestionRouter:
         return Answer(findings.render())
 
     def vs_elite(self, text: str, m) -> Answer:
+        # sem_manager_picks resolves element_id -> stable code through
+        # dim_player; fact_manager_pick itself has no code column, and the
+        # previous direct read here selected one anyway.
         state = self._team_state()
         picks = self.wh.sql(
             """
-            SELECT p.code, count(DISTINCT p.entry_id) AS holders
-            FROM fact_manager_pick p
-            WHERE p.season = ? AND p.gw = (
+            SELECT code, any_value(web_name) AS web_name,
+                   count(DISTINCT entry_id) AS holders
+            FROM sem_manager_picks(now())
+            WHERE season = ? AND code IS NOT NULL AND gw = (
                 SELECT max(gw) FROM fact_manager_pick WHERE season = ?)
-            GROUP BY p.code ORDER BY holders DESC
+            GROUP BY code ORDER BY holders DESC
             """,
             [self.season, self.season],
         )
@@ -452,8 +481,7 @@ class QuestionRouter:
                 "shortlist's squads and this comparison lights up. Until then: "
                 "`fpl elite` shows WHO the skill-scored managers are."
             )
-        players = self._snapshot().players(self.season)
-        name = dict(zip(players["code"], players["web_name"]))
+        name = dict(zip(picks["code"].astype(int), picks["web_name"]))
         total = self.wh.sql(
             "SELECT count(DISTINCT entry_id) AS n FROM fact_manager_pick "
             "WHERE season = ?", [self.season]).iloc[0]["n"]
@@ -470,6 +498,133 @@ class QuestionRouter:
             only_mine = [name.get(c, c) for c in mine - elite_set]
             if only_mine:
                 lines.append("\nYou hold, they don't: " + ", ".join(map(str, only_mine[:8])))
+        return Answer("\n".join(lines))
+
+    # -- tracked-manager questions -------------------------------------------
+
+    def _transfers_subject(self, text: str):
+        """Who a transfers question is about, or None if it is about ME.
+
+        Three sources, cheapest first: the curated named-elite list (static,
+        works with no warehouse -- and in tests), the crawled dim_manager
+        names, and finally the bare cohort words. Names shorter than 6
+        characters are never matched from the database: a pool of thousands of
+        user-set display names WILL contain something like "Ed" that matches
+        inside an innocent sentence.
+        """
+        from fpl_edge.ingest.rivals.elite import ELITE_NAMED, _norm
+
+        low = _norm(text)
+        for e in ELITE_NAMED:
+            if _norm(e.name) in low:
+                return ("entry", e.entry_id, e.name)
+        if self.wh is not None:
+            try:
+                df = self.wh.sql(
+                    "SELECT DISTINCT entry_id, player_name FROM dim_manager "
+                    "WHERE player_name IS NOT NULL AND length(player_name) >= 6 "
+                    "AND source NOT LIKE 'top1k%' AND source NOT LIKE 'snowball%' "
+                    "AND source NOT LIKE 'mini_league%'"
+                )
+                for r in df.itertuples():
+                    if _norm(r.player_name) and _norm(r.player_name) in low:
+                        return ("entry", int(r.entry_id), str(r.player_name))
+            except Exception:  # noqa: BLE001 - no rival tables, no name gate
+                pass
+        if re.search(r"\b(elite|top\s*10\s*k|top\s*1\s*k|top\s*10,?000)\b", text, re.I):
+            return ("cohort", None, "elite")
+        return None
+
+    def manager_transfers(self, text: str, m) -> Answer:
+        subject = self._transfers_subject(text)
+        if subject is None:  # pragma: no cover - route() gates on the same call
+            return Answer("Whose transfers? Name a manager, e.g. 'what "
+                          "transfers did Ben Crellin make?'")
+        kind, entry_id, label = subject
+        if kind == "entry":
+            df = self.wh.sql(
+                """
+                SELECT gw, player_in, price_in, player_out, price_out, time_utc,
+                       manager_name
+                FROM sem_manager_transfers(now())
+                WHERE season = ? AND entry_id = ?
+                ORDER BY gw, time_utc
+                """,
+                [self.season, entry_id],
+            )
+            if df.empty:
+                return Answer(
+                    f"No transfers on record for {label} this season. Either "
+                    f"they genuinely haven't moved (common before GW2 — "
+                    f"pre-season squad changes aren't transfers), or the elite "
+                    f"crawl hasn't run since the last deadline."
+                )
+            lines = [f"{label}'s transfers this season:"]
+            for r in df.itertuples():
+                pin = r.player_in if r.player_in == r.player_in else "?"
+                pout = r.player_out if r.player_out == r.player_out else "?"
+                lines.append(f"• GW{int(r.gw)}: {pout} → {pin} "
+                             f"(£{r.price_out:.1f}m → £{r.price_in:.1f}m)")
+            return Answer("\n".join(lines))
+        # Cohort form: the named elite's moves, grouped by manager.
+        df = self.wh.sql(
+            """
+            SELECT manager_name, gw, player_in, player_out
+            FROM sem_manager_transfers(now())
+            WHERE season = ? AND source = 'elite_named'
+            ORDER BY manager_name, gw
+            """,
+            [self.season],
+        )
+        if df.empty:
+            return Answer(
+                "No elite transfers on record yet this season — transfers "
+                "become public at the deadline of the gameweek they apply to, "
+                "and the crawl stores them from GW2's deadline onwards."
+            )
+        lines = ["Transfers by the named elite this season:"]
+        for mgr, g in df.groupby("manager_name"):
+            moves = "; ".join(f"GW{int(r.gw)} {r.player_out}→{r.player_in}"
+                              for r in g.itertuples())
+            lines.append(f"• {mgr}: {moves}")
+        return Answer("\n".join(lines))
+
+    def elite_owned(self, text: str, m) -> Answer:
+        low = text.lower()
+        cohort = "top1k" if re.search(r"top\s*10\s*k|top\s*1\s*k|10,?000|1,?000",
+                                      low) else "elite"
+        want_captains = bool(re.search(r"captain", low))
+        df = self.wh.sql(
+            """
+            SELECT code, web_name, n_managers, owned_by, own_pct, captain_pct,
+                   eo_pct, gw
+            FROM sem_elite_ownership(now())
+            WHERE season = ? AND cohort = ? AND code IS NOT NULL
+              AND gw = (SELECT max(gw) FROM fact_manager_pick WHERE season = ?)
+            ORDER BY {key} DESC LIMIT 15
+            """.format(key="captain_pct" if want_captains else "own_pct"),
+            [self.season, cohort, self.season],
+        )
+        if df.empty:
+            return Answer(
+                "No crawled squads for that cohort yet — picks go public at "
+                "each deadline and the crawl runs nightly after it. "
+                "`python -m fpl_edge.ingest.rivals.top1k` (sample) or "
+                "`... .elite` (named list) fills it."
+            )
+        label = ("the top-of-overall sample" if cohort == "top1k"
+                 else "the tracked elite pool")
+        n = int(df.iloc[0]["n_managers"])
+        gw = int(df.iloc[0]["gw"])
+        metric = "captaincy" if want_captains else "ownership"
+        lines = [f"GW{gw} {metric} across {label} ({n} managers with "
+                 f"stored squads):"]
+        for r in df.itertuples():
+            lines.append(
+                f"• {r.web_name} — owned {r.own_pct:.0f}%, "
+                f"captained {r.captain_pct:.0f}%, EO {r.eo_pct:.0f}%"
+            )
+        lines.append("\nEO sums multipliers, so captaincy pushes it past 100%.")
         return Answer("\n".join(lines))
 
     def ideas_this_gw(self, text: str, m) -> Answer:

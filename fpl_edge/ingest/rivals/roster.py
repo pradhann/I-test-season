@@ -82,6 +82,18 @@ from fpl_edge.ingest.rivals.elite_list import ELITE_1000
 #: These are seeds, NOT the answer. Being a well-known FPL content creator is
 #: evidence of being well-known; the skill model decides whether it is evidence
 #: of being good, and for several of these names it concludes it is not.
+#:
+#: .. warning:: **All 20 of these IDs are stale.** FPL entry IDs are assigned
+#:    per season, and every ID below was checked against the live API on
+#:    2026-08-24: each now resolves to a different, unrelated person ("Ben
+#:    Crellin" 6586 is actually Levi Longworth). dim_manager rows with
+#:    source='expert' written from this map therefore carry the wrong names
+#:    for 2026-27, and the snowball step reads the wrong people's leagues.
+#:    The verified, per-season-maintained list lives in
+#:    :mod:`fpl_edge.ingest.rivals.elite` (ELITE_NAMED), which refuses to
+#:    crawl any ID whose live profile name does not match. This map is kept
+#:    only because the snowball pool it seeded is already recorded; refresh it
+#:    from current-season sources before trusting it again.
 EXPERT_SEEDS: dict[str, int] = {
     "FPL Focal": 200,
     "FPL Harry": 1320,

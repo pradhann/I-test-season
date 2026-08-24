@@ -25,6 +25,18 @@ Budget arithmetic, declared rather than discovered: 1 bootstrap request +
 ceil(n/50) standings pages + n picks requests. n=750 is 767 requests, ~14
 minutes at the enforced 1.1s spacing. The ``RequestBudget`` makes overrunning
 that impossible rather than impolite.
+
+Growing toward the full top-10k
+-------------------------------
+A single 10,000-entry run is ~3 hours of polite crawling; nobody wants that in
+one sitting, and nothing requires it. Picks for a finished gameweek are cached
+effectively forever and standings pages for six hours, so re-running with a
+larger ``--n`` re-serves everything already fetched from cache and spends the
+budget only on the *new* tail -- a stopped or budget-exhausted run resumes for
+free. ``--grow K`` automates the nightly deepening: it reads how many entries
+the sample already holds for the latest locked gameweek and targets that count
+plus K, capped at 10,000, so the scheduled job widens the sample every night
+without anyone editing a number.
 """
 
 from __future__ import annotations
@@ -126,6 +138,11 @@ def collect(
                 "player_name": r.get("player_name"),
                 "entry_name": r.get("entry_name"),
                 "rank": r.get("rank"),
+                # The standings row carries the gameweek score and running
+                # total for free; recording them here saves one
+                # entry/{id}/history/ request per manager.
+                "event_total": r.get("event_total"),
+                "total": r.get("total"),
             })
         if len(entry_rows) >= n_entries or not standings.get("has_next"):
             break
@@ -156,6 +173,25 @@ def collect(
         for r in entry_rows
     ])
 
+    # Per-gameweek facts straight from the standings page: points, running
+    # total and the overall rank that DEFINES this cohort. bank/value/hits are
+    # deliberately left NULL rather than spending one history request per
+    # manager to fill them -- the sample exists for ownership, and a thousand
+    # extra requests to decorate it would treble the crawl. as_of is the crawl
+    # instant: a rank is published when the gameweek is scored, and we observe
+    # it now, not at the deadline.
+    frames["fact_manager_gw"] = pd.DataFrame([
+        {
+            "entry_id": r["entry_id"], "season": season, "gw": gw,
+            "points": r["event_total"], "total_points": r["total"],
+            "overall_rank": r["rank"], "bank_tenths": None,
+            "value_tenths": None, "event_transfers": None,
+            "event_transfers_cost": None, "points_on_bench": None,
+            "as_of": as_of,
+        }
+        for r in entry_rows
+    ])
+
     # -- picks, via the existing (deadline-stamped) ingest --------------------
     entry_ids = [r["entry_id"] for r in entry_rows]
     p, c, stats = picks_mod.ingest_picks(
@@ -169,6 +205,41 @@ def collect(
     return frames, summary
 
 
+def _sampled_so_far(db_path: str | None) -> int:
+    """How many entries the sample already holds for the latest sampled GW.
+
+    Reads a throwaway copy of the database (``Warehouse.read_copy``) so the
+    single-writer lock stays free for whoever holds it; a growth decision must
+    never block, or be blocked by, an ingest in progress. Returns 0 when the
+    warehouse or the table does not exist yet -- growth from nothing is just a
+    first run.
+    """
+    from fpl_edge.store import Warehouse
+
+    try:
+        wh = Warehouse.read_copy() if db_path is None else Warehouse.read_copy(db_path)
+    except FileNotFoundError:
+        return 0
+    try:
+        gw_df = wh.sql(
+            "SELECT max(gw) AS g FROM fact_manager_gw WHERE entry_id IN "
+            "(SELECT entry_id FROM dim_manager WHERE source LIKE ?)",
+            [f"{SOURCE_PREFIX}:%"],
+        )
+        g = gw_df.iloc[0]["g"] if not gw_df.empty else None
+        gw_like = "%" if g is None or g != g else f"%:gw{int(g)}:%"
+        df = wh.sql(
+            "SELECT count(DISTINCT entry_id) AS n FROM dim_manager "
+            "WHERE source LIKE ? AND source LIKE ?",
+            [f"{SOURCE_PREFIX}:%", gw_like],
+        )
+        return int(df.iloc[0]["n"]) if not df.empty else 0
+    except Exception:  # noqa: BLE001 - absent table means an empty sample
+        return 0
+    finally:
+        wh.close()
+
+
 def run(
     *,
     n_entries: int = 750,
@@ -177,12 +248,18 @@ def run(
     db_path: str | None = None,
     offline: bool = False,
     dry_run: bool = False,
+    grow: int | None = None,
 ) -> dict[str, Any]:
     """One sampling run: declared budget, fetch, single short-lived write.
 
     ``dry_run`` performs no network I/O and no writes: it reports the request
-    arithmetic so the budget can be approved before it is spent.
+    arithmetic so the budget can be approved before it is spent. ``grow``
+    overrides ``n_entries`` with (already sampled) + grow, capped at 10,000 --
+    the shape a nightly job wants: each run deepens the sample by a declared
+    amount and the cache makes the already-held prefix free.
     """
+    if grow is not None:
+        n_entries = min(10_000, _sampled_so_far(db_path) + grow)
     if dry_run:
         return {"dry_run": True, "plan": plan(n_entries)}
     declared = plan(n_entries)
@@ -224,9 +301,13 @@ def main() -> None:
     ap.add_argument("--offline", action="store_true")
     ap.add_argument("--dry-run", action="store_true",
                     help="print the request arithmetic and exit; zero requests")
+    ap.add_argument("--grow", type=int, default=None,
+                    help="deepen the existing sample by this many entries "
+                         "(overrides --n; capped at 10000)")
     args = ap.parse_args()
     out = run(n_entries=args.n, budget_limit=args.budget, gw=args.gw,
-              db_path=args.db, offline=args.offline, dry_run=args.dry_run)
+              db_path=args.db, offline=args.offline, dry_run=args.dry_run,
+              grow=args.grow)
     print(json.dumps(out, indent=2, default=str))
 
 

@@ -56,6 +56,13 @@ CASES = [
     ("which players are essential for the next 5 GWs", "fixtures_target"),
     ("How is my team different from the top fantasy managers", "vs_elite"),
     ("compare my squad vs elite managers", "vs_elite"),
+    # Tracked-manager questions: about THEM, not me. The gate is naming a
+    # curated manager or the cohort, so "suggest me transfers" stays mine.
+    ("what transfers did Ben Crellin make?", "manager_transfers"),
+    ("show me the elite transfers", "manager_transfers"),
+    ("what do the elite own", "elite_owned"),
+    ("most selected players in the top 10k", "elite_owned"),
+    ("who do the top 10k captain", "elite_owned"),
     ("What are the ideas I have said for this GW", "ideas_this_gw"),
     ("my ideas this week", "ideas_this_gw"),
 ]

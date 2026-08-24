@@ -1,0 +1,62 @@
+{
+ "last_updated_data": "2026-08-24T17:12:59Z",
+ "league": {
+  "admin_entry": null,
+  "closed": false,
+  "code_privacy": "p",
+  "created": "2026-07-23T11:37:00.733233Z",
+  "cup_league": null,
+  "has_cup": true,
+  "id": 314,
+  "league_type": "s",
+  "max_entries": null,
+  "name": "Overall",
+  "rank": null,
+  "scoring": "c",
+  "start_event": 1
+ },
+ "new_entries": {
+  "has_next": false,
+  "page": 1,
+  "results": []
+ },
+ "standings": {
+  "has_next": true,
+  "page": 1,
+  "results": [
+   {
+    "club_badge_src": null,
+    "entry": 331434,
+    "entry_name": "ELIXIR",
+    "event_total": 116,
+    "last_rank": 0,
+    "player_name": "saif ali",
+    "rank": 1,
+    "rank_sort": 1,
+    "total": 116
+   },
+   {
+    "club_badge_src": null,
+    "entry": 324094,
+    "entry_name": "Lady Rock",
+    "event_total": 111,
+    "last_rank": 0,
+    "player_name": "the rock",
+    "rank": 2,
+    "rank_sort": 2,
+    "total": 111
+   },
+   {
+    "club_badge_src": null,
+    "entry": 6043439,
+    "entry_name": "Jurassic AFC",
+    "event_total": 108,
+    "last_rank": 0,
+    "player_name": "Kevin Timothy",
+    "rank": 3,
+    "rank_sort": 3,
+    "total": 108
+   }
+  ]
+ }
+}
