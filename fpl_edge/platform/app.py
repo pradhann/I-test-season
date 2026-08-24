@@ -36,7 +36,7 @@ from pydantic import BaseModel, Field
 
 from fpl_edge.platform import inbox as inbox_mod
 from fpl_edge.platform import panels as panels_mod
-from fpl_edge.platform.query import QueryError, guarded_query
+from fpl_edge.platform.query import QueryError, guarded_query, read_copy
 from fpl_edge.platform.registry import (
     ParamsInvalid,
     ResultInvalid,
@@ -100,6 +100,30 @@ def create_app(db: Path | str = DEFAULT_DB) -> FastAPI:
             "warehouse_present": db_path.exists(),
             "now": dt.datetime.now(UTC).isoformat(),
         }
+
+    @app.get("/api/deadline")
+    def deadline() -> dict[str, Any]:
+        """The next deadline, from dim_event -- the page's clock has no
+        business hardcoding a date that passes."""
+        try:
+            with read_copy(db_path) as wh:
+                now = dt.datetime.now(UTC)
+                row = wh.sql(
+                    "SELECT season, gw, max(deadline_utc) AS deadline_utc "
+                    "FROM dim_event WHERE deadline_utc > ? "
+                    "GROUP BY season, gw ORDER BY deadline_utc LIMIT 1",
+                    [now],
+                )
+                if row.empty:
+                    return {"deadline_utc": None,
+                            "reason": "no future deadline in dim_event"}
+                r = row.iloc[0]
+                return {
+                    "season": str(r["season"]), "gw": int(r["gw"]),
+                    "deadline_utc": r["deadline_utc"].isoformat(),
+                }
+        except Exception as exc:  # noqa: BLE001 - the clock is decoration, panels matter
+            return {"deadline_utc": None, "reason": f"{type(exc).__name__}: {exc}"}
 
     @app.get("/api/panels")
     def get_panels() -> dict[str, Any]:

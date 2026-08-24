@@ -107,15 +107,20 @@ td.n{font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;
 const $ = (s,r=document)=>r.querySelector(s);
 const el = (t,c,x)=>{const n=document.createElement(t);if(c)n.className=c;
   if(x!==undefined)n.textContent=x;return n};
-const DEADLINE = new Date("2026-08-21T17:30:00Z");
+let DEADLINE = null;   // fetched from /api/deadline; never hardcoded again
 
 function tick(){
+  if(!DEADLINE){ $("#clock").textContent = "deadline: …"; return; }
   const ms = DEADLINE - new Date();
   const past = ms < 0, a = Math.abs(ms);
   const h = Math.floor(a/3.6e6), m = Math.floor(a%3.6e6/6e4);
+  const gw = window.DEADLINE_GW ? `GW${window.DEADLINE_GW}` : "Next";
+  const when = DEADLINE.toLocaleString("en-GB",
+    {weekday:"short", day:"numeric", month:"short", hour:"2-digit",
+     minute:"2-digit", timeZone:"UTC"}) + " UTC";
   $("#clock").innerHTML = past
-    ? `GW1 deadline passed ${h}h ${m}m ago`
-    : `GW1 deadline in <b>${h}h ${m}m</b> · Fri 21 Aug 17:30 UTC`;
+    ? `${gw} deadline passed ${h}h ${m}m ago`
+    : `${gw} deadline in <b>${h}h ${m}m</b> · ${when}`;
 }
 setInterval(tick, 30000); tick();
 
@@ -144,14 +149,22 @@ function emptyBox(reason){
 function renderTable(res, host){
   const rows = res.rows||[];
   if(!rows.length) return host.appendChild(emptyBox(res.reason));
+  const wrap = buildTable(res, rows);
+  host.appendChild(wrap);
+}
+
+function buildTable(res, rows){
   const cols = Object.keys(rows[0]).filter(k=>!["code"].includes(k));
   const num = c => typeof rows[0][c] === "number";
   const wrap = el("div","wrap"), t = el("table"),
         th = el("thead"), tr = el("tr");
   cols.forEach(c=>{const h=el("th",null,c.replace(/_/g," "));
+    // Re-sort by swapping ONLY this table in place. Clearing the host also
+    // deleted the provenance footer -- the one line the panel registry
+    // exists to guarantee.
     h.onclick=()=>{const dir = t.dataset.sort===c?-1:1; t.dataset.sort=dir>0?c:"";
       rows.sort((a,b)=> (a[c]>b[c]?1:a[c]<b[c]?-1:0)*(num(c)?-dir:dir));
-      host.innerHTML=""; renderTable(res,host);};
+      wrap.replaceWith(buildTable(res, rows));};
     tr.appendChild(h)});
   th.appendChild(tr); t.appendChild(th);
   const tb = el("tbody");
@@ -169,7 +182,7 @@ function renderTable(res, host){
     });
     tb.appendChild(row);
   });
-  t.appendChild(tb); wrap.appendChild(t); host.appendChild(wrap);
+  t.appendChild(tb); wrap.appendChild(t); return wrap;
 }
 
 function renderPitch(res, host){
@@ -182,7 +195,7 @@ function renderPitch(res, host){
     byPos[pos].forEach(p=>{
       const c = el("div","card"+(p.is_captain?" cap":""));
       c.appendChild(el("div","nm",p.name+(p.is_captain?" (C)":p.is_vice?" (V)":"")));
-      c.appendChild(el("div","sub",`£${(p.price_tenths/10).toFixed(1)}`+
+      c.appendChild(el("div","sub",`£${(+p.price).toFixed(1)}`+
         (p.xpts!=null?` · ${(+p.xpts).toFixed(1)}`:"")));
       row.appendChild(c);
     });
@@ -193,7 +206,7 @@ function renderPitch(res, host){
   (res.bench||[]).forEach(p=>{
     const c = el("div","card");
     c.appendChild(el("div","nm",p.name));
-    c.appendChild(el("div","sub",`£${(p.price_tenths/10).toFixed(1)}`));
+    c.appendChild(el("div","sub",`£${(+p.price).toFixed(1)}`));
     bench.appendChild(c);
   });
   if((res.bench||[]).length) host.appendChild(bench);
@@ -230,8 +243,16 @@ function renderGrid(res, host){
     g.appendChild(row);
   });
   host.appendChild(g);
-  host.appendChild(el("div","prov",
-    "UPPER = home, lower = away. Colour is our own fitted difficulty where available; neutral where we have none."));
+  // The caption must describe what is actually on screen. Claiming a live
+  // difficulty colouring while the schema carries no difficulty field was a
+  // standing lie; say which world we are in.
+  const anyDiff = teams.some(t=>(t.fixtures||[]).some(
+    f=>(f.opponents||[]).some(o=>o.difficulty!=null)));
+  host.appendChild(el("div","prov", anyDiff
+    ? "UPPER = home, lower = away. Colour is our own fitted difficulty."
+    : "UPPER = home, lower = away. No difficulty rating is wired yet (the "
+      + "cached Dixon-Coles artefact is pending), so every cell is neutral "
+      + "rather than an invented colour."));
 }
 
 function renderList(res, host){
@@ -241,7 +262,11 @@ function renderList(res, host){
     const d = el("div","idea");
     const t = el("div","t");
     t.appendChild(document.createTextNode(r.thesis||r.raw_text));
-    const st = el("span","chip"+(r.outcome==="correct"?" ok":r.outcome==="incorrect"?" no":""));
+    // The panel's vocabulary is hit/miss (see scripts/ideas.py, which computes
+    // hit_rate from exactly those strings); the CLI's correct/incorrect is a
+    // different surface. Accept both so neither ever renders colourless.
+    const st = el("span","chip"+(["hit","correct"].includes(r.outcome)?" ok"
+      :["miss","incorrect"].includes(r.outcome)?" no":""));
     st.textContent = r.outcome || r.status || "open";
     t.appendChild(document.createTextNode(" "));
     t.appendChild(st);
@@ -252,9 +277,35 @@ function renderList(res, host){
   });
 }
 
-const RENDER = {table:renderTable, pitch:renderPitch, grid:renderGrid, list:renderList};
+function renderMovers(res, host){
+  const risers = res.risers||[], fallers = res.fallers||[];
+  if(!risers.length && !fallers.length){
+    const why = (res.notes||[]).join(" ") || res.reason;
+    return host.appendChild(emptyBox(why));
+  }
+  const w = res.window||{};
+  if(w.hours) host.appendChild(el("div","desc",
+    `Net transfer flow over the last ${(+w.hours).toFixed(0)}h.`));
+  [["Risers", risers, "ok"], ["Fallers", fallers, "no"]].forEach(([label, side, cls])=>{
+    if(!side.length) return;
+    host.appendChild(el("h3", null, label));
+    renderTable({rows: side}, host);
+  });
+}
+
+const RENDER = {table:renderTable, pitch:renderPitch, grid:renderGrid,
+                list:renderList, movers:renderMovers};
+
+async function loadDeadline(){
+  try{
+    const d = await (await fetch("/api/deadline")).json();
+    if(d.deadline_utc){ DEADLINE = new Date(d.deadline_utc);
+      window.DEADLINE_GW = d.gw; tick(); }
+  }catch(e){ /* clock shows "deadline: …" and the panels still load */ }
+}
 
 async function boot(){
+  loadDeadline();
   const main = $("#main"); main.innerHTML = "";
   let panels;
   try{ panels = (await (await fetch("/api/panels")).json()).panels; }
@@ -267,7 +318,17 @@ async function boot(){
     main.appendChild(s);
     run(p.script, p.default_params||{}).then(out=>{
       body.innerHTML="";
-      (RENDER[p.layout]||renderTable)(out.result, body);
+      const render = RENDER[p.layout];
+      if(!render){
+        // Falling back to renderTable is how the price radar spent its life
+        // rendering "No data." over real data. An unknown layout is a bug;
+        // say so.
+        body.appendChild(el("div","err",
+          `Panel declares layout "${p.layout}" but this page has no renderer `
+          + `for it. The data is fine; the frontend is behind.`));
+      } else {
+        render(out.result, body);
+      }
       const pr = out.provenance||{};
       body.appendChild(el("div","prov",
         `${pr.script} · ${(pr.repo_sha||"").slice(0,7)} · ${(pr.generated_at||"").slice(0,16).replace("T"," ")}Z`

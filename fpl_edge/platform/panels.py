@@ -77,7 +77,10 @@ PANELS: tuple[Panel, ...] = (
         title="Price radar",
         script="price_radar",
         default_params={"limit": 20},
-        layout="table",
+        # Not "table": the result is {risers, fallers, window}, and the table
+        # renderer reads `rows` -- a key this script's schema FORBIDS. Pinned
+        # to table, the panel rendered "No data." over real data forever.
+        layout="movers",
         width="half",
         description="Observed transfer velocity between the two most recent ingests.",
     ),

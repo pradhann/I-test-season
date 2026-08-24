@@ -4,8 +4,25 @@
     {
       "name": "retro-report",
       "runtimeExecutable": "python3",
-      "runtimeArgs": ["-m", "http.server", "8765", "--directory", "data/warehouse"],
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8765",
+        "--directory",
+        "data/warehouse"
+      ],
       "port": 8765
+    },
+    {
+      "name": "platform",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": [
+        "run",
+        "fpl",
+        "platform",
+        "serve"
+      ],
+      "port": 8321
     }
   ]
 }
