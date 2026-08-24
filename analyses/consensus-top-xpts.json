@@ -1,0 +1,20 @@
+{
+  "description": "Top players by consensus xPts for a given gameweek, with cross-source spread.",
+  "name": "consensus-top-xpts",
+  "params_schema": {
+    "gw": {
+      "description": "gameweek number",
+      "type": "integer"
+    },
+    "season": {
+      "default": "2026-27",
+      "type": "string"
+    },
+    "top_n": {
+      "default": 10,
+      "type": "integer"
+    }
+  },
+  "saved_utc": "2026-08-24T22:00:50.889038+00:00",
+  "sql": "SELECT web_name, team, price, n_sources, xpts_mean, xpts_spread FROM sem_projection_consensus(now()) WHERE season = $season AND gw = $gw ORDER BY xpts_mean DESC LIMIT $top_n"
+}
