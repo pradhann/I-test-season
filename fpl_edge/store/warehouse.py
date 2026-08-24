@@ -48,6 +48,21 @@ class LeakageError(RuntimeError):
     """Raised when a read would expose information from after the as-of instant."""
 
 
+class UnknownAvailabilityError(RuntimeError):
+    """The season's availability was never recorded, and the caller did not say
+    what to do about that.
+
+    The vaastav archive carries no ``status``/``news``, so every historical
+    ``fact_player_state`` row has NULL availability -- deliberately (see
+    ``ingest/vaastav.py``: filling it would fabricate the most
+    decision-relevant field in the table). Treating that NULL as "available"
+    made every injured and suspended player in four seasons selectable, which
+    silently corrupted any backtest. Callers that genuinely want the
+    optimistic reading opt in with ``assume_available_when_unknown=True`` --
+    an explicit, greppable assumption instead of a silent default.
+    """
+
+
 class WarehouseLockedError(RuntimeError):
     """Another process holds the single writer lock and did not release it."""
 
@@ -188,22 +203,44 @@ class Snapshot:
         )
         return set(rows["column_name"]) if not rows.empty else set()
 
-    def selectable(self, season: str) -> pd.DataFrame:
+    def selectable(
+        self, season: str, *, assume_available_when_unknown: bool = False
+    ) -> pd.DataFrame:
         """Players the game would actually let you pick right now.
 
         Filters on FPL's own ``can_select`` where it is known, falling back to
         ``status`` only where the flag is absent (historical rows predate it).
         Filtering on ``status`` alone is not equivalent: the fields can diverge,
         and ``can_select`` is what the game enforces.
+
+        A NULL ``status`` means availability was never recorded, NOT that the
+        player was available -- historical seasons carry no availability at
+        all. Such rows are excluded by default; when the whole season is
+        unrecorded that would return nobody, so it raises
+        :class:`UnknownAvailabilityError` instead, and a backtest that accepts
+        the optimism passes ``assume_available_when_unknown=True`` to say so
+        in its own source.
         """
         df = self.players(season)
         if df.empty:
             return df
+        status_known = df["status"].notna()
+        if not status_known.any() and not assume_available_when_unknown:
+            raise UnknownAvailabilityError(
+                f"No availability was ever recorded for {season}: every status "
+                "is NULL (the historical archive carries none). Refusing to "
+                "guess who was selectable. If assuming everyone was available "
+                "is acceptable for this analysis, say so explicitly: "
+                "selectable(season, assume_available_when_unknown=True)."
+            )
         if "can_select" in df.columns and df["can_select"].notna().any():
             keep = df["can_select"].fillna(True).astype(bool)
         else:
             keep = pd.Series(True, index=df.index)
-        keep &= df["status"].isin(["a", "d"]) | df["status"].isna()
+        status_ok = df["status"].isin(["a", "d"])
+        if assume_available_when_unknown:
+            status_ok |= ~status_known
+        keep &= status_ok
         if "removed" in df.columns:
             keep &= ~df["removed"].fillna(False).astype(bool)
         return df[keep].reset_index(drop=True)

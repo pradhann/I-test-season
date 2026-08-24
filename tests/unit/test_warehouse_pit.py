@@ -384,3 +384,60 @@ def test_leased_warehouse_frees_the_lock_between_uses(tmp_path) -> None:
     # The lease reopens transparently after a release.
     assert len(lease.snapshot_at(T(19)).table("fact_player_state")) == 2
     lease.close()
+
+
+def _players(wh: Warehouse, codes: list[int]) -> None:
+    """dim_player rows so snapshot.players() can join identity to state."""
+    wh.append("dim_player", pd.DataFrame([
+        {
+            "season": "2026-27", "code": c, "element_id": c, "web_name": f"P{c}",
+            "first_name": "A", "second_name": "B", "position": 3,
+            "team_code": 1, "as_of": T(1),
+        }
+        for c in codes
+    ]))
+
+
+def test_unrecorded_availability_is_refused_not_assumed(wh: Warehouse) -> None:
+    """A season with no availability data must not silently offer everyone.
+
+    Historical seasons carry NULL status on every row -- deliberately, because
+    the archive records none. Treating that NULL as "available" made every
+    injured and suspended player in four seasons selectable, corrupting any
+    backtest. The honest contract: refuse, unless the caller writes the
+    optimistic assumption into their own source.
+    """
+    from fpl_edge.store import UnknownAvailabilityError
+
+    frames = [_state(c, 50, 5.0, T(1)) for c in (1, 2, 3)]
+    df = pd.concat(frames, ignore_index=True)
+    df["status"] = None                        # the whole season is unrecorded
+    wh.append("fact_player_state", df)
+    _players(wh, [1, 2, 3])
+
+    snap = wh.snapshot_at(T(19))
+    with pytest.raises(UnknownAvailabilityError, match="assume_available_when_unknown"):
+        snap.selectable("2026-27")
+    opted_in = snap.selectable("2026-27", assume_available_when_unknown=True)
+    assert len(opted_in) == 3
+
+
+def test_a_lone_null_status_is_excluded_by_default(wh: Warehouse) -> None:
+    """When the season DOES record availability, a NULL row is the odd one out.
+
+    It is excluded rather than assumed available -- and no error is raised,
+    because the rest of the pool is real.
+    """
+    wh.append("fact_player_state", pd.concat([
+        _state(1, 50, 5.0, T(1), status="a"),
+        _state(2, 60, 9.0, T(1), status="i"),
+        _state(3, 70, 2.0, T(1)),
+    ], ignore_index=True))
+    # blank out only player 3's status
+    wh.sql("UPDATE fact_player_state SET status = NULL WHERE code = 3")
+    _players(wh, [1, 2, 3])
+
+    snap = wh.snapshot_at(T(19))
+    assert list(snap.selectable("2026-27")["code"]) == [1]
+    with_unknowns = snap.selectable("2026-27", assume_available_when_unknown=True)
+    assert sorted(with_unknowns["code"]) == [1, 3]

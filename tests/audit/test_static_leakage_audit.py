@@ -82,11 +82,45 @@ ACCEPTED: dict[tuple[str, str], str] = {
         "synthetic-league generator with known ground truth, not a data path.",
     ("DIRECT_DB", "fpl_edge/sim/synthetic.py"):
         "same generator: constructs the warehouse it populates.",
-    ("FILL_CONST", "fpl_edge/ingest/injuries.py"):
-        "REVIEWED, OPTIMISTIC. play_prob falls back to 1.0 when neither an "
-        "explicit chance_of_playing nor a status prior is available, i.e. an "
-        "unknown player is assumed certain to start. Recorded in "
-        "docs/known_weaknesses.md.",
+    ("FILL_CONST", "fpl_edge/ingest/content/consensus.py"):
+        "REVIEWED: weighted_share is 0/0 when every claiming creator carries "
+        "zero track-record weight; rendered as 0.0 to mean 'no weight-bearing "
+        "consensus exists'. The unweighted `share` column alongside it stays "
+        "NA-honest and is the count-based signal. The HHI squares shares with "
+        "the same zero-weight semantics.",
+    ("FILL_CONST", "fpl_edge/ingest/content/scoring.py"):
+        "REVIEWED: fillna(0) feeds only a starters FILTER (starts>0 or "
+        "minutes>=60); an unknown row is excluded from the population, never "
+        "written as an observation. Conservative, not fabricated.",
+    ("JOIN_ELEMENT_ID", "fpl_edge/ingest/projections/fplform.py"):
+        "REVIEWED: both sides of the merge come from the SAME single-season "
+        "provider export, where the provider's element_id is the only key "
+        "that exists; the module maps to the stable code downstream via "
+        "dim_player at the snapshot instant (see its module docstring).",
+    ("JOIN_ELEMENT_ID", "fpl_edge/ingest/projections/github_csv.py"):
+        "REVIEWED: both matches are inside prose (a provider-notes string "
+        "explaining that this source keys on the stable player_code and "
+        "needs NO element_id remap). No join is performed on element_id.",
+    ("JOIN_ELEMENT_ID", "fpl_edge/ingest/projections/providers.py"):
+        "REVIEWED: match is inside a provider-description string that "
+        "advertises keying on the stable code. Prose, not a join.",
+    ("JOIN_ELEMENT_ID", "fpl_edge/ingest/projections/livefpl.py"):
+        "REVIEWED: LiveFPL's EO file is keyed on element_id at the source -- "
+        "no other key exists there. Rows are single-season by construction "
+        "and are resolved to the stable code downstream via dim_player at "
+        "the snapshot instant.",
+    ("JOIN_ELEMENT_ID", "fpl_edge/ingest/rivals/picks.py"):
+        "REVIEWED: /entry/{id}/event/{gw}/picks/ publishes element_id and "
+        "nothing else. Raw picks are stored WITH their season column, so the "
+        "element_id is only ever interpreted against that season's "
+        "dim_player. Storing the provider's own key raw is more honest than "
+        "remapping at ingest and losing the original.",
+    ("NAIVE_DATETIME", "fpl_edge/ingest/projections/store.py"):
+        "REVIEWED, DELIBERATE: pd.to_datetime WITHOUT utc=True, because the "
+        "next four lines RAISE if the result is naive. Passing utc=True "
+        "would silently localise naive stamps -- the precise bug this "
+        "codebase guards against everywhere else. Parse then verify beats "
+        "parse-and-assume.",
     ("FILL_CONST", "fpl_edge/interfaces/bias.py"):
         "REVIEWED: fillna(99) is a sentinel for 'no haul on record' in a "
         "gws-since-haul column, fillna(False) on boolean flags. Bias reporting, "
@@ -131,13 +165,6 @@ ACCEPTED: dict[tuple[str, str], str] = {
         "scraping top-10k picks. Correct for a live sample; a hard leak in any "
         "backtest, because FPL does not publish a manager's picks until AFTER "
         "the deadline. See docs/known_weaknesses.md sec 11.",
-    ("SNAPSHOT_ESCAPE", "fpl_edge/models/ownership/model.py"):
-        "REVIEWED, SAFE BUT WRONG SHAPE. _prior_players() reaches "
-        "snapshot.warehouse only to mint an EARLIER snapshot, and an earlier "
-        "as-of can reveal strictly less, so it does not leak. It is baselined "
-        "rather than fixed because the right fix is on the Snapshot: it should "
-        "expose a `rewind(timedelta)` so no model ever needs .warehouse. Until "
-        "it does, this rule cannot be enforced without exceptions.",
     ("FILL_CONST", "fpl_edge/models/ownership/model.py"):
         "REVIEWED: transfer-flow counts and ownership deltas where an absent "
         "row means no transfers, not unknown transfers.",

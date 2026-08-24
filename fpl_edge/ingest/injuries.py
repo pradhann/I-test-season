@@ -114,10 +114,14 @@ def availability(
         The decoded status.
     ``play_prob``
         ``chance_of_playing_next_round / 100`` where FPL states it, else the
-        status prior. This is the number the minutes model should consume.
+        status prior, else **NaN**. NaN means availability was never recorded
+        (historical seasons carry none) -- the consumer decides what to do
+        with that; this function does not guess. Treating unrecorded as 1.0
+        once made every injured and suspended player in four seasons look
+        certain to start.
     ``play_prob_is_stated``
         Whether the above came from FPL or from our prior. The optimiser should
-        treat an assumed 1.0 very differently from a stated 100%.
+        treat an assumed number very differently from a stated 100%.
     ``news_is_fresh``
         News changed within ``fresh_news_hours`` of ``as_of``. These are the
         players where a press-conference feed would actually have added
@@ -133,15 +137,18 @@ def availability(
             news_is_fresh=pd.Series(dtype="bool"),
         )
 
-    status = df["status"].fillna("a")
+    # A NULL status stays NULL: it means "never recorded", not "available".
+    status = df["status"]
     stated = df["chance_of_playing_next_round"]
 
     df = df.assign(
-        availability=status.map(STATUS_MEANING).fillna("unknown"),
+        availability=status.map(STATUS_MEANING).where(status.notna(), "unknown")
+        .fillna("unknown"),
         play_prob_is_stated=stated.notna(),
-        play_prob=stated.astype("float") .div(100.0)
+        # No trailing fillna: a player with neither a stated chance nor a
+        # recorded status gets NaN, which is the truth.
+        play_prob=stated.astype("float").div(100.0)
         .fillna(status.map(STATUS_PRIOR).astype("float"))
-        .fillna(1.0)
         .clip(0.0, 1.0),
     )
 
@@ -165,5 +172,7 @@ def flagged(wh: Warehouse, season: str, as_of: dt.datetime) -> pd.DataFrame:
     df = availability(wh, season, as_of)
     if df.empty:
         return df
+    # NaN play_prob (unrecorded) is not a known doubt; it is absence of data,
+    # and listing all of history as "flagged" would drown the real flags.
     out = df[df["play_prob"] < 1.0]
     return out.sort_values("selected_by_pct", ascending=False).reset_index(drop=True)
