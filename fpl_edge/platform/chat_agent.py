@@ -34,6 +34,7 @@ import shutil
 import signal
 import subprocess
 import threading
+import time
 import uuid
 from pathlib import Path
 from queue import Empty, Queue
@@ -105,7 +106,14 @@ CHARTER = (
 
 #: Wall-clock budget for one turn. A stuck CLI is killed, the transcript gets
 #: an honest error, and the conversation continues.
-TURN_TIMEOUT_S = 300
+#: A turn dies only when it goes QUIET, not merely long. A real analytical
+#: turn is many minutes of steady tool calls (one suggest_transfers solve is
+#: ~200s of silence while the MILP runs, hence the generous idle window); the
+#: wall cap is the backstop against a truly runaway session. The 300s
+#: wall-clock kill this replaces cut down a healthy 20-tool-call analysis
+#: mid-thought.
+TURN_IDLE_TIMEOUT_S = 300
+TURN_HARD_CAP_S = 1500
 
 _ASSET_ID = re.compile(r"^[0-9a-fA-F][0-9a-fA-F-]{7,63}$")
 
@@ -351,7 +359,8 @@ class _Turn:
         self.started = _now()
         self.proc: subprocess.Popen | None = None
         self.finished = threading.Event()
-        self.timed_out = False
+        self.timed_out: str | bool = False
+        self.last_activity = 0.0
         self.stopped = False
 
     def alive(self) -> bool:
@@ -366,7 +375,7 @@ class ChatAgent:
         root: Path | str = CHAT_ROOT,
         *,
         claude_bin: str | None = None,
-        timeout_s: float = TURN_TIMEOUT_S,
+        timeout_s: float = TURN_IDLE_TIMEOUT_S,   # legacy name; now the IDLE window
         briefing_fn: Callable[[], str] | None = None,
         mcp_python: str = MCP_PYTHON,
         mcp_main: Path = MCP_MAIN,
@@ -720,13 +729,27 @@ class ChatAgent:
         if turn.stopped:  # stop() raced the spawn; honour it immediately
             self._kill(turn)
 
-        def _timeout() -> None:
-            turn.timed_out = True
-            self._kill(turn)
+        started = time.monotonic()
+        turn.last_activity = started
 
-        timer = threading.Timer(self.timeout_s, _timeout)
-        timer.daemon = True
-        timer.start()
+        idle_s = self.timeout_s                     # test-overridable
+        poll_s = max(0.1, min(10.0, idle_s / 3))
+
+        def _watchdog() -> None:
+            while proc.poll() is None:
+                time.sleep(poll_s)
+                now = time.monotonic()
+                if now - started > TURN_HARD_CAP_S:
+                    turn.timed_out = "hard"
+                    self._kill(turn)
+                    return
+                if now - turn.last_activity > idle_s:
+                    turn.timed_out = "idle"
+                    self._kill(turn)
+                    return
+
+        watchdog = threading.Thread(target=_watchdog, daemon=True)
+        watchdog.start()
 
         stderr_tail: list[str] = []
 
@@ -743,6 +766,7 @@ class ChatAgent:
         try:
             assert proc.stdout is not None
             for raw in proc.stdout:
+                turn.last_activity = time.monotonic()
                 for type_, payload in parse_stream_json_line(raw):
                     if type_ == "init":
                         sid = payload.get("session_id")
@@ -765,14 +789,19 @@ class ChatAgent:
                     self._emit(conv, type_, payload)
         finally:
             proc.wait()
-            timer.cancel()
             err_thread.join(timeout=5)
 
-        if turn.timed_out:
+        if turn.timed_out == "idle":
             self._emit(conv, "error", {"message": (
-                f"turn timed out after {int(self.timeout_s)}s and was killed; "
-                "the conversation is still usable -- ask again or narrow the "
-                "question."
+                f"the turn timed out after {int(idle_s)}s of silence (no "
+                "output, no tool activity) and was killed; the conversation "
+                "is still usable -- ask again or narrow the question."
+            )})
+        elif turn.timed_out == "hard":
+            self._emit(conv, "error", {"message": (
+                f"the turn timed out at the {TURN_HARD_CAP_S // 60}-minute "
+                "hard cap and was killed; the conversation is still usable "
+                "-- narrow the question or split it into steps."
             )})
         elif turn.stopped:
             self._emit(conv, "error", {"message": "stopped by user"})

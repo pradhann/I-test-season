@@ -395,3 +395,28 @@ def test_sse_route_replays_the_transcript(client):
     # replay honours after= on the SSE surface too
     tail = client.get(f"/api/conversations/{conv}/stream?after=7&once=1").text
     assert '"seq": 7' not in tail and '"seq": 8' in tail
+
+
+def test_steady_activity_outlives_the_idle_window(tmp_path):
+    """The 300s wall-clock kill this replaced cut down a healthy 20-tool-call
+    analysis mid-thought. The timeout is IDLE-based now: a turn that keeps
+    producing output must survive far past the idle window; only silence dies.
+    """
+    body = (
+        'for i in $(seq 1 14); do\n'
+        '  echo \'{"type":"assistant","message":{"content":[{"type":"text",'
+        '"text":"tick"}],"model":"m"},"session_id":"s1"}\'\n'
+        '  sleep 0.2\n'
+        'done\n'
+        'echo \'{"type":"result","subtype":"success","is_error":false,'
+        '"duration_ms":1,"num_turns":1,"session_id":"s1","total_cost_usd":0}\'\n'
+    )
+    # idle window 0.8s < total runtime ~2.8s: wall-clock logic would kill it,
+    # idle logic must not — the script never goes quiet for 0.8s.
+    agent = _agent(tmp_path, _fake_cli(tmp_path, body), timeout_s=0.8)
+    conv = agent.create_conversation()["conv_id"]
+    agent.start_turn(conv, "keep talking")
+    events = _wait_done(agent, conv)
+    types = [e["type"] for e in events]
+    assert "done" in types, f"a steadily-active turn was killed: {types[-3:]}"
+    assert not any(e["type"] == "error" for e in events)
