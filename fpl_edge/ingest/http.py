@@ -39,7 +39,7 @@ class Fetched:
 
 
 def _now() -> dt.datetime:
-    return dt.datetime.now(dt.timezone.utc)
+    return dt.datetime.now(dt.UTC)
 
 
 def _slug(endpoint: str) -> str:
@@ -49,12 +49,22 @@ def _slug(endpoint: str) -> str:
 class Fetcher:
     """Fetch JSON with retries, archiving every body."""
 
-    def __init__(self, source: str, *, base_url: str = "", timeout: float = 30.0) -> None:
+    def __init__(
+        self,
+        source: str,
+        *,
+        base_url: str = "",
+        timeout: float = 30.0,
+        headers: dict[str, str] | None = None,
+    ) -> None:
         self.source = source
         self.base_url = base_url.rstrip("/")
         self._client = httpx.Client(
             timeout=timeout,
-            headers={"User-Agent": USER_AGENT},
+            # Extra headers (e.g. the Origin/Referer some endpoints require)
+            # never override the identified User-Agent: staying identifiable
+            # is the posture, not an accident of dict order.
+            headers={**(headers or {}), "User-Agent": USER_AGENT},
             follow_redirects=True,
         )
 
@@ -96,7 +106,7 @@ class Fetcher:
     def close(self) -> None:
         self._client.close()
 
-    def __enter__(self) -> "Fetcher":
+    def __enter__(self) -> Fetcher:
         return self
 
     def __exit__(self, *exc: object) -> None:

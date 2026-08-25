@@ -55,6 +55,14 @@ PIT_KEYS: dict[str, tuple[str, ...]] = {
     # fact_odds_derived: registration-by-import breaks every process that did
     # not happen to import the ingest module.
     "fact_player_match_stats": ("source", "season", "code", "match_id"),
+    # Confirmed starting lineups copied from an official teamsheet feed.
+    # as_of is the fetch instant; lineups publish ~T-60m before kickoff, so a
+    # deadline snapshot correctly never sees them.
+    "fact_confirmed_lineup": ("source", "season", "fixture_id", "code"),
+    # Pulselive identity bridges: each player/fixture is matched once, then
+    # joined by id forever after. Registered here, never by import side effect.
+    "bridge_pl_player": ("season", "pl_player_id"),
+    "bridge_pl_fixture": ("season", "pl_fixture_id"),
 }
 
 
@@ -96,7 +104,7 @@ class ConflictingFactError(ValueError):
 def _require_utc(ts: dt.datetime, label: str) -> dt.datetime:
     if ts.tzinfo is None:
         raise ValueError(f"{label} must be timezone-aware UTC, got naive {ts!r}")
-    return ts.astimezone(dt.timezone.utc)
+    return ts.astimezone(dt.UTC)
 
 
 @dataclass(frozen=True)
@@ -113,7 +121,7 @@ class Snapshot:
     looked exactly like legitimate code in review.
     """
 
-    _wh: "Warehouse"
+    _wh: Warehouse
     as_of: dt.datetime
 
     def __post_init__(self) -> None:
@@ -122,7 +130,7 @@ class Snapshot:
         object.__setattr__(self, "as_of", _require_utc(self.as_of, "Snapshot.as_of"))
 
     @property
-    def warehouse(self) -> "Warehouse":
+    def warehouse(self) -> Warehouse:
         raise LeakageError(
             "Snapshot.warehouse is not available: reading the warehouse directly "
             "bypasses point-in-time filtering and exposes the future. Use "
@@ -131,7 +139,7 @@ class Snapshot:
             "the intent is explicit and greppable."
         )
 
-    def escape_hatch_unfiltered(self, reason: str) -> "Warehouse":
+    def escape_hatch_unfiltered(self, reason: str) -> Warehouse:
         """Unfiltered warehouse access. Every call site must justify itself.
 
         Exists so that legitimate needs (schema introspection, audits) do not
@@ -319,9 +327,9 @@ class LeasedWarehouse:
     def __init__(self, path: Path | str = DEFAULT_DB, *, lock_timeout_s: float = 60.0) -> None:
         self._path = Path(path)
         self._lock_timeout_s = lock_timeout_s
-        self._wh: "Warehouse | None" = None
+        self._wh: Warehouse | None = None
 
-    def _ensure(self) -> "Warehouse":
+    def _ensure(self) -> Warehouse:
         if self._wh is None:
             self._wh = Warehouse(self._path, lock_timeout_s=self._lock_timeout_s)
         return self._wh
@@ -337,7 +345,7 @@ class LeasedWarehouse:
     def close(self) -> None:
         self.release()
 
-    def __enter__(self) -> "LeasedWarehouse":
+    def __enter__(self) -> LeasedWarehouse:
         return self
 
     def __exit__(self, *exc: object) -> None:
@@ -435,7 +443,7 @@ class Warehouse:
         return self._con.execute(query, list(params)).df()
 
     @classmethod
-    def read_copy(cls, path: Path | str = DEFAULT_DB) -> "Warehouse":
+    def read_copy(cls, path: Path | str = DEFAULT_DB) -> Warehouse:
         """Open a read-only connection to a private copy of the database file.
 
         DuckDB allows one writer OR many readers per file, across processes. A
@@ -644,7 +652,7 @@ class Warehouse:
             shutil.rmtree(self._owned_tmpdir, ignore_errors=True)
             self._owned_tmpdir = None
 
-    def __enter__(self) -> "Warehouse":
+    def __enter__(self) -> Warehouse:
         return self
 
     def __exit__(self, *exc: object) -> None:

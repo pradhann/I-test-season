@@ -34,6 +34,7 @@ are pinned by `test_the_column_contract_only_ever_grows`.
 | `sem_players(t)` | (season, code) | identity + price, ownership %, status, news, team |
 | `sem_projections(t)` | (source, season, gw, code) | every provider's xPts/xMins/p_appear side by side, with names |
 | `sem_projection_consensus(t)` | (season, gw, code) | n_sources, mean/min/max/**spread**/sd of xPts — source disagreement IS the uncertainty |
+| `sem_projection_weights(t)` | (provider) from the latest fit at `t` | which source has been most accurate, **with the evidence beside the number**: weight, loss (pooled MSE vs settled actuals), baseline_loss (the all-provider mean it had to beat), n_obs, earned flag, the holdout description, and `track_record_gws` — how many settled gameweeks deep the record is. Empty until the calibration loop has scored a settled gameweek, by design |
 | `sem_player_form(t)` | (season, gw, code, fixture) | realised returns incl. official **xG/xA/xGC**, bps, defensive stats |
 | `sem_ownership(t)` | (season, code) × EO metric | FPL marginal ownership beside every external EO metric (eo_predicted, eo_top10k, eo_elite) |
 | `sem_fixtures(t)` | (season, fixture_id, side) | schedule unpivoted to one row per team-side, opponent named |
@@ -51,10 +52,15 @@ Column-level detail: the `CONTRACT` dict in
   own refresh cycle, not a fact. It lives in the cached artefact
   `data/warehouse/fixture_difficulty.parquet` (written by the nightly job);
   SQL consumers `read_parquet()` it, panels join it.
-- **Consensus is unweighted.** `projection_weight` is empty until GW1 actuals
-  score the sources; a weighted blend before that would be fabrication
-  (MASTER_PROMPT Phase 2.5). When weights are earned, the weighted view will
-  be a NEW macro, not a silent change to this one.
+- **Consensus is unweighted.** `projection_weight` stays empty until settled
+  actuals score the sources; a weighted blend before that would be
+  fabrication (MASTER_PROMPT Phase 2.5). The calibration loop that earns the
+  weights is `fpl_edge/eval/projection_scoring.py` (run by `post_gw` right
+  after results settle), and the earned weights are served with their
+  evidence by `sem_projection_weights(t)`. A weighted *blend* remains a
+  future NEW macro, not a silent change to the consensus — and any answer
+  built on the weights should quote `track_record_gws`: with one gameweek
+  scored, the leaderboard is one gameweek of evidence.
 
 ## Schema note
 

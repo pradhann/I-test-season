@@ -120,6 +120,9 @@ _NON_DECOMPOSING = str.maketrans({
     "ß": "ss",
     "Þ": "Th", "þ": "th",
     "Ð": "D", "ð": "d",
+    # Turkish dotless i: no NFKD decomposition, so "Kadıoğlu" lost the letter
+    # entirely ("kadoglu") and could never match an ASCII "Kadioglu".
+    "ı": "i",
 })
 
 

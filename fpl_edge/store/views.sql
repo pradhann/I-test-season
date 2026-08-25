@@ -75,9 +75,11 @@ CREATE OR REPLACE MACRO sem_projections(p_as_of) AS TABLE (
 -- sem_projection_consensus(p_as_of): where the sources agree and disagree,
 -- one row per (season, gw, code). The spread IS the uncertainty estimate --
 -- source disagreement is a better variance signal than any single vendor's.
--- NOTE: consensus is unweighted by design. projection_weight is empty until
--- GW1 actuals score the sources; weighting without a track record would be
--- fabrication (see MASTER_PROMPT Phase 2.5).
+-- NOTE: consensus is unweighted by design. projection_weight stays empty
+-- until settled actuals score the sources; weighting without a track record
+-- would be fabrication (see MASTER_PROMPT Phase 2.5). Earned weights, with
+-- the evidence that earned them, are read via sem_projection_weights below;
+-- a weighted blend will be a NEW macro, never a silent change to this one.
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE MACRO sem_projection_consensus(p_as_of) AS TABLE (
     SELECT season, gw, code, any_value(web_name) AS web_name,
@@ -94,6 +96,44 @@ CREATE OR REPLACE MACRO sem_projection_consensus(p_as_of) AS TABLE (
     FROM sem_projections(p_as_of)
     WHERE xpts IS NOT NULL
     GROUP BY season, gw, code
+);
+
+-- ---------------------------------------------------------------------------
+-- sem_projection_weights(p_as_of): the current ensemble weights WITH THE
+-- EVIDENCE THAT EARNED THEM, one row per provider from the latest fit at or
+-- before the instant. Empty until the calibration loop
+-- (fpl_edge/eval/projection_scoring.py, run by post_gw after settlement) has
+-- scored at least one settled gameweek -- by design, not by accident: a
+-- weight with no n_obs and no loss is an opinion, and this surface refuses to
+-- serve opinions as weights.
+--
+-- Provenance travels with the number: loss/baseline_loss/n_obs/holdout come
+-- straight from projection_weight, and track_record_gws counts the DISTINCT
+-- settled gameweeks scored at the instant -- so a consumer answering "which
+-- source has been most accurate" can (and must) also say how deep the track
+-- record is. With track_record_gws = 1 the leaderboard is one gameweek of
+-- evidence, and the column is there precisely so nobody has to remember that.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE MACRO sem_projection_weights(p_as_of) AS TABLE (
+    WITH latest_fit AS (
+        SELECT fit_id
+        FROM projection_weight
+        WHERE as_of <= p_as_of
+        ORDER BY as_of DESC, fit_id DESC
+        LIMIT 1
+    ), track AS (
+        SELECT count(DISTINCT season || ':' || gw) AS track_record_gws
+        FROM fact_projection_score
+        WHERE as_of <= p_as_of
+    )
+    SELECT w.provider, w.weight, w.loss, w.loss_metric, w.baseline_loss,
+           w.n_obs, w.earned, w.holdout, w.fit_id,
+           w.as_of AS fitted_at,
+           t.track_record_gws
+    FROM projection_weight w
+    JOIN latest_fit USING (fit_id)
+    CROSS JOIN track t
+    ORDER BY w.weight DESC, w.provider
 );
 
 -- ---------------------------------------------------------------------------

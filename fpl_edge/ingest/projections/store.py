@@ -38,6 +38,12 @@ PROJECTION_KEYS: dict[str, tuple[str, ...]] = {
     "fact_projection": ("provider", "season", "gw", "code"),
     "fact_external_ownership": ("provider", "season", "gw", "code", "metric"),
     "fact_predicted_lineup": ("provider", "season", "gw", "code"),
+    # One measurement per (provider, gw, scope, metric); the accumulated track
+    # record behind projection_weight (migration 004). Written only by
+    # fpl_edge/eval/projection_scoring.py, which skips already-scored
+    # (provider, gw) pairs -- as_of is the scoring instant, so re-scoring
+    # without that skip would duplicate a measurement under a new timestamp.
+    "fact_projection_score": ("provider", "season", "gw", "scope", "metric"),
 }
 
 

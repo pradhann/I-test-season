@@ -54,9 +54,9 @@ import subprocess
 import sys
 import time
 import traceback
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Iterable, Sequence
 from zoneinfo import ZoneInfo
 
 from fpl_edge.jobs import outbox
@@ -64,7 +64,7 @@ from fpl_edge.store import DEFAULT_DB, Warehouse
 
 log = logging.getLogger("fpl_edge.jobs.deadline_dag")
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 LONDON = ZoneInfo("Europe/London")
 
 SEASON = "2026-27"
@@ -840,74 +840,156 @@ def final_solve_delivery(ctx: TaskContext) -> TaskResult:
     )
 
 
-def confirmed_lineup_source(ctx: TaskContext) -> str | None:
-    """Name the table holding confirmed XIs, or None if nothing provides them.
+def _ingest_lineups_step(ctx: TaskContext) -> Step:
+    """Land the Pulselive confirmed-lineup feed, isolated like every writer.
 
-    Separated from the task so the wiring is testable today and a real source is
-    a one-line change tomorrow: land a `fact_confirmed_lineup` table and this
-    returns it, and the check below stops recording `no_source`.
+    A subprocess for the same reason presser's ingests are: it opens the
+    warehouse for writing, and a hung lock or a network stall inside it must
+    not take the scheduler with it. Tests monkeypatch THIS seam to stay
+    offline; the check below reads whatever the warehouse ends up holding, so
+    a failed refresh degrades to "whatever the last poll saw", honestly
+    labelled by the step record.
     """
-    with ctx.read() as wh:
-        df = wh.sql(
-            "SELECT table_name FROM information_schema.tables "
-            "WHERE table_name = 'fact_confirmed_lineup'"
-        )
-    return "fact_confirmed_lineup" if len(df) else None
+    module = "fpl_edge.ingest.lineups"
+    if not _module_exists(module):
+        return Step(name="ingest_lineups", ok=True, seconds=0.0,
+                    detail="skipped: no lineups module in this build yet")
+    return run_step(
+        "ingest_lineups",
+        [ctx.python, "-m", module, "--season", ctx.season, "--db", str(ctx.db_path)],
+        timeout=300,
+    )
 
 
 def lineup_captain_check(ctx: TaskContext) -> TaskResult:
-    """T-90m: is the captain actually starting?
+    """T-90m: are your XI -- above all your captain -- actually starting?
 
-    There is no confirmed-lineup feed in the warehouse yet, so this records
-    `no_source` and delivers nothing. That is deliberate: a T-90m alert that
-    guessed from predicted lineups would be worse than silence, because it would
-    train the operator to act on a source that is wrong about a third of the
-    time. The firing row still gets written every deadline, so the day a source
-    lands the gap is visible in the history rather than invented away.
+    The feed is the Pulselive confirmed-lineup ingest (fpl_edge/ingest/
+    lineups.py): official teamsheets, published ~T-60m before each kickoff.
+    The refresh runs first; the check then reads ONLY confirmed rows from the
+    warehouse. Nothing here ever falls back to predicted lineups -- an alert
+    sourced from a feed that is wrong a third of the time would train the
+    operator to ignore the one that is not.
+
+    Outcomes: no plan is `no_source` (there is nothing to check a teamsheet
+    against); a blank gameweek or unpublished teamsheets are `quiet`; published
+    teamsheets deliver -- an ACT alert when the captain is missing from the XI,
+    a report of starting/benched/absent otherwise.
     """
-    source = confirmed_lineup_source(ctx)
-    if source is None:
-        return TaskResult(
-            outcome="no_source",
-            detail="no confirmed-lineup table in the warehouse (checked "
-                   "fact_confirmed_lineup); nothing delivered",
-        )
+    step = _ingest_lineups_step(ctx)
 
     plan = _freshest_plan(PLAN_DIR)
     if plan is None:
-        return TaskResult(outcome="no_source", detail="lineups present but no plan to check")
+        return TaskResult(outcome="no_source", steps=[step],
+                          detail="no plan artefact to check lineups against")
     _, obj = plan
     block = obj.get(f"gw{ctx.gw}") or {}
     captain = block.get("captain")
     if captain is None:
-        return TaskResult(outcome="quiet", detail="plan has no captain for this gameweek")
+        return TaskResult(outcome="quiet", steps=[step],
+                          detail="plan has no captain for this gameweek")
+    xi = [int(c) for c in (block.get("starting_xi") or block.get("squad") or [])]
+    if int(captain) not in xi:
+        xi.append(int(captain))
 
     with ctx.read() as wh:
-        df = wh.sql(
-            f"SELECT code, is_starting FROM {source} WHERE season = ? AND gw = ? "  # noqa: S608
-            "AND code = ? QUALIFY row_number() OVER (PARTITION BY code "
-            "ORDER BY as_of DESC) = 1",
-            [ctx.season, ctx.gw, int(captain)],
+        fx = wh.sql(
+            "SELECT fixture_id, home_team_code, away_team_code FROM fact_fixture "
+            "WHERE season = ? AND gw = ? QUALIFY row_number() OVER "
+            "(PARTITION BY fixture_id ORDER BY as_of DESC) = 1",
+            [ctx.season, ctx.gw],
         )
-        names = wh.sql(
-            "SELECT web_name FROM dim_player WHERE season = ? AND code = ? "
-            "ORDER BY as_of DESC LIMIT 1",
-            [ctx.season, int(captain)],
+        confirmed = wh.sql(
+            "SELECT l.fixture_id, l.code, l.started FROM fact_confirmed_lineup l "
+            "JOIN (SELECT DISTINCT fixture_id FROM fact_fixture WHERE season = ? "
+            "      AND gw = ?) f USING (fixture_id) "
+            "WHERE l.season = ? QUALIFY row_number() OVER "
+            "(PARTITION BY l.source, l.fixture_id, l.code ORDER BY l.as_of DESC) = 1",
+            [ctx.season, ctx.gw, ctx.season],
         )
-    who = str(names["web_name"].iloc[0]) if len(names) else f"code {captain}"
-    if not len(df):
-        return TaskResult(outcome="quiet",
-                          detail=f"captain {who} not in the confirmed-lineup feed yet")
-    if bool(df["is_starting"].iloc[0]):
-        return TaskResult(outcome="quiet", detail=f"captain {who} confirmed starting")
+        players = wh.sql(
+            "SELECT code, web_name, team_code FROM dim_player WHERE season = ? "
+            "QUALIFY row_number() OVER (PARTITION BY code ORDER BY as_of DESC) = 1",
+            [ctx.season],
+        )
+
+    if fx.empty:
+        return TaskResult(outcome="quiet", steps=[step],
+                          detail=f"no fixtures for GW{ctx.gw} (blank); nothing to check")
+
+    ingest_note = f"ingest {'ok' if step.ok else 'FAILED'}"
+    if confirmed.empty:
+        return TaskResult(
+            outcome="quiet", steps=[step],
+            detail=f"no teamsheet published yet for GW{ctx.gw} ({ingest_note}); "
+                   "the feed polls fixtures kicking off within 2.5h",
+        )
+
+    by_code = {int(r.code): r for r in players.itertuples(index=False)}
+    fixture_by_team: dict[int, list[int]] = {}
+    for r in fx.itertuples(index=False):
+        for tc in (int(r.home_team_code), int(r.away_team_code)):
+            fixture_by_team.setdefault(tc, []).append(int(r.fixture_id))
+    published = set(int(f) for f in confirmed["fixture_id"])
+    started_by = {
+        (int(r.fixture_id), int(r.code)): bool(r.started)
+        for r in confirmed.itertuples(index=False)
+    }
+
+    def classify(code: int) -> str:
+        """starting | benched | absent | awaiting -- per published teamsheets."""
+        row = by_code.get(code)
+        fids = fixture_by_team.get(int(row.team_code), []) if row is not None else []
+        out = "awaiting"
+        for fid in fids:
+            if fid not in published:
+                continue
+            got = started_by.get((fid, code))
+            if got is True:
+                return "starting"
+            out = "benched" if got is False else "absent"
+        return out
+
+    def nm(code: int) -> str:
+        row = by_code.get(int(code))
+        return str(row.web_name) if row is not None else f"code {code}"
+
+    groups: dict[str, list[str]] = {"starting": [], "benched": [], "absent": [],
+                                    "awaiting": []}
+    for code in xi:
+        groups[classify(int(code))].append(nm(code))
+
+    cap_status = classify(int(captain))
+    who = nm(int(captain))
+    lines = [
+        f"Deadline in {_fmt_delta(ctx.deadline_utc, ctx.now)}. Confirmed teamsheets "
+        f"published for {len(published)}/{len(fx)} GW{ctx.gw} fixture(s).",
+        "",
+    ]
+    for label, names in (("Confirmed starting", groups["starting"]),
+                         ("On the BENCH", groups["benched"]),
+                         ("ABSENT from the squad", groups["absent"]),
+                         ("Teamsheet not out yet", groups["awaiting"])):
+        if names:
+            lines.append(f"{label}: " + ", ".join(names))
+    detail = (
+        f"captain {who} {cap_status}; XI: {len(groups['starting'])} starting, "
+        f"{len(groups['benched'])} benched, {len(groups['absent'])} absent, "
+        f"{len(groups['awaiting'])} awaiting ({ingest_note})"
+    )
+    if cap_status in ("benched", "absent"):
+        return TaskResult(
+            outcome="delivered", kind="alert", steps=[step], detail=detail,
+            title=f"ACT: captain {who} is not starting",
+            body=(
+                f"Confirmed lineups are out and {who} — your captain — is not in "
+                f"the XI ({cap_status}).\n\n" + "\n".join(lines)
+            ),
+        )
     return TaskResult(
-        outcome="delivered", kind="alert",
-        detail=f"captain {who} is NOT in the confirmed XI",
-        title=f"ACT: captain {who} is not starting",
-        body=(
-            f"Confirmed lineups are out and {who} — your captain — is not in the XI. "
-            f"Deadline in {_fmt_delta(ctx.deadline_utc, ctx.now)}."
-        ),
+        outcome="delivered", kind="report", steps=[step], detail=detail,
+        title=f"GW{ctx.gw} teamsheets — captain {who} {cap_status}",
+        body="\n".join(lines),
     )
 
 
@@ -1018,7 +1100,7 @@ def tick(
         )
         try:
             result = TASKS[due.task](ctx)
-        except Exception:  # noqa: BLE001 - a broken task is an outcome, not a crash
+        except Exception:
             result = TaskResult(outcome="error", detail=traceback.format_exc()[-600:])
             log.exception("task %s failed", due.task)
 

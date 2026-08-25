@@ -1,0 +1,89 @@
+{
+ "gameweek": {
+  "id": 19762,
+  "compSeason": {
+   "label": "English Premier League Season 2026/2027",
+   "competition": {
+    "abbreviation": "EN_PR",
+    "description": "Premier League",
+    "level": "SEN",
+    "source": "",
+    "id": 1
+   },
+   "id": 841
+  },
+  "gameweek": 2,
+  "competitionPhase": {
+   "id": 8163,
+   "type": "L",
+   "gameweekRange": [
+    1,
+    38
+   ]
+  }
+ },
+ "kickoff": {
+  "completeness": 3,
+  "millis": 1787943600000,
+  "label": "Fri 28 Aug 2026, 20:00 BST",
+  "gmtOffset": 1.0
+ },
+ "provisionalKickoff": {
+  "completeness": 3,
+  "millis": 1787943600000,
+  "label": "Fri 28 Aug 2026, 20:00 BST",
+  "gmtOffset": 1.0
+ },
+ "teams": [
+  {
+   "team": {
+    "name": "Crystal Palace",
+    "club": {
+     "name": "Crystal Palace",
+     "shortName": "Crystal Palace",
+     "abbr": "CRY",
+     "id": 6
+    },
+    "teamType": "FIRST",
+    "shortName": "Crystal Palace",
+    "id": 6
+   }
+  },
+  {
+   "team": {
+    "name": "Manchester City",
+    "club": {
+     "name": "Manchester City",
+     "shortName": "Man City",
+     "abbr": "MCI",
+     "id": 11
+    },
+    "teamType": "FIRST",
+    "shortName": "Man City",
+    "id": 11
+   }
+  }
+ ],
+ "replay": false,
+ "ground": {
+  "name": "Selhurst Park",
+  "city": "London",
+  "source": "OPTA",
+  "id": 9431
+ },
+ "neutralGround": false,
+ "status": "U",
+ "phase": "0",
+ "fixtureType": "REGULAR",
+ "extraTime": false,
+ "halfTimeScore": {
+  "homeScore": 0,
+  "awayScore": 0
+ },
+ "teamLists": [
+  null,
+  null
+ ],
+ "behindClosedDoors": false,
+ "id": 128937
+}

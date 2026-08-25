@@ -13,12 +13,12 @@ import json
 
 import pytest
 
+from fpl_edge.interfaces.telegram import FakeTransport, TelegramConfig
 from fpl_edge.jobs import deadline_dag as dag
 from fpl_edge.jobs import outbox
-from fpl_edge.interfaces.telegram import FakeTransport, TelegramConfig
 from fpl_edge.store import Warehouse
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 SEASON = "2026-27"
 GW1 = dt.datetime(2026, 8, 21, 17, 30, tzinfo=UTC)
 
@@ -190,40 +190,110 @@ def test_the_radar_trigger_never_calls_an_llm(db, monkeypatch):
     assert dag.price_radar(radar_ctx(db, now)).outcome == "delivered"
 
 
-# -- lineup check: the honest gap -------------------------------------------
+# -- lineup check: the Pulselive feed ---------------------------------------
 
 
-def test_lineup_check_records_no_source_and_delivers_nothing(db):
-    seed(db, players=[(1, "A")])
-    now = GW1 - dt.timedelta(minutes=90)
-    res = dag.lineup_captain_check(radar_ctx(db, now))
-    assert res.outcome == "no_source"
-    assert res.delivers is False
-    assert "fact_confirmed_lineup" in res.detail
+def _stub_ingest(monkeypatch):
+    """Keep the T-90m task off the network: the refresh subprocess is stubbed
+    and the check reads whatever the warehouse already holds."""
+    step = dag.Step(name="ingest_lineups", ok=True, seconds=0.0, detail="stubbed")
+    monkeypatch.setattr(dag, "_ingest_lineups_step", lambda ctx: step)
 
 
-def test_lineup_check_wakes_up_when_a_source_appears(db, monkeypatch, tmp_path):
-    """The wiring must be testable today so plugging a feed in is a one-liner."""
-    seed(db, players=[(7, "SKIPPER")])
+def _fixture(db, *, fixture_id=1, home=1, away=2):
     with Warehouse(db) as wh:
         wh.sql(
-            "CREATE TABLE fact_confirmed_lineup (season VARCHAR, gw INTEGER, "
-            "code INTEGER, is_starting BOOLEAN, as_of TIMESTAMPTZ)"
+            "INSERT INTO fact_fixture (season, fixture_id, gw, kickoff_utc, "
+            "home_team_code, away_team_code, finished, as_of) "
+            "VALUES (?, ?, 1, ?, ?, ?, FALSE, ?)",
+            [SEASON, fixture_id, GW1 + dt.timedelta(minutes=90), home, away,
+             dt.datetime(2026, 8, 1, tzinfo=UTC)],
         )
+
+
+def _confirm(db, code, *, started, fixture_id=1):
+    with Warehouse(db) as wh:
         wh.sql(
-            "INSERT INTO fact_confirmed_lineup VALUES (?, 1, 7, FALSE, ?)",
-            [SEASON, dt.datetime(2026, 8, 21, 16, 0, tzinfo=UTC)],
+            "INSERT INTO fact_confirmed_lineup (source, season, fixture_id, code, "
+            "started, shirt, position_label, formation, as_of) "
+            "VALUES ('pulselive', ?, ?, ?, ?, NULL, NULL, '4-4-2', ?)",
+            [SEASON, fixture_id, int(code), bool(started),
+             dt.datetime(2026, 8, 21, 16, 0, tzinfo=UTC)],
         )
+
+
+def _plan(monkeypatch, tmp_path, *, captain=7, xi=(7,)):
     (tmp_path / "gw1_plan.json").write_text(json.dumps({
         "generated_at": "2026-08-21T10:00:00+00:00",
-        "gw1": {"captain": 7, "vice_captain": 7, "squad": [7]},
+        "gw1": {"captain": captain, "vice_captain": captain,
+                "squad": list(xi), "starting_xi": list(xi)},
     }))
     monkeypatch.setattr(dag, "PLAN_DIR", tmp_path)
 
+
+def test_lineup_check_without_a_plan_is_an_honest_no_source(db, monkeypatch, tmp_path):
+    seed(db, players=[(7, "SKIPPER")])
+    _stub_ingest(monkeypatch)
+    monkeypatch.setattr(dag, "PLAN_DIR", tmp_path)  # empty: no plan artefact
+    res = dag.lineup_captain_check(radar_ctx(db, GW1 - dt.timedelta(minutes=90)))
+    assert res.outcome == "no_source"
+    assert res.delivers is False and "no plan" in res.detail
+
+
+def test_lineup_check_is_quiet_while_no_teamsheet_is_published(db, monkeypatch, tmp_path):
+    seed(db, players=[(7, "SKIPPER")])
+    _fixture(db)
+    _plan(monkeypatch, tmp_path)
+    _stub_ingest(monkeypatch)
+    res = dag.lineup_captain_check(radar_ctx(db, GW1 - dt.timedelta(minutes=90)))
+    assert res.outcome == "quiet"
+    assert res.delivers is False
+    assert "no teamsheet published yet" in res.detail
+
+
+def test_lineup_check_is_quiet_on_a_blank_gameweek(db, monkeypatch, tmp_path):
+    seed(db, players=[(7, "SKIPPER")])  # no fixtures at all for this GW
+    _plan(monkeypatch, tmp_path)
+    _stub_ingest(monkeypatch)
+    res = dag.lineup_captain_check(radar_ctx(db, GW1 - dt.timedelta(minutes=90)))
+    assert res.outcome == "quiet"
+    assert "blank" in res.detail
+
+
+def test_lineup_check_wakes_up_when_the_feed_lands(db, monkeypatch, tmp_path):
+    """The seam the feed was built for: a benched captain is an ACT alert."""
+    seed(db, players=[(7, "SKIPPER"), (8, "WINGER")])
+    _fixture(db)
+    _confirm(db, 7, started=False)   # captain on the bench
+    _confirm(db, 8, started=True)
+    _plan(monkeypatch, tmp_path, captain=7, xi=(7, 8))
+    _stub_ingest(monkeypatch)
+
     now = GW1 - dt.timedelta(minutes=90)
     res = dag.lineup_captain_check(radar_ctx(db, now))
-    assert res.outcome == "delivered"
+    assert res.outcome == "delivered" and res.kind == "alert"
     assert "SKIPPER" in res.title and "not starting" in res.title
+    assert "BENCH: SKIPPER" in res.body
+    assert "Confirmed starting: WINGER" in res.body
+
+
+def test_lineup_check_reports_the_xi_when_the_captain_is_fine(db, monkeypatch, tmp_path):
+    seed(db, players=[(7, "SKIPPER"), (8, "WINGER"), (9, "GHOST")])
+    _fixture(db)
+    _confirm(db, 7, started=True)
+    # 8 and 9 are in the XI; 8 has no row in a published teamsheet -> ABSENT,
+    # while a player whose fixture has no teamsheet yet would be 'awaiting'.
+    _plan(monkeypatch, tmp_path, captain=7, xi=(7, 8, 9))
+    with Warehouse(db) as wh:  # GHOST's team plays a different, unpublished game
+        wh.sql("UPDATE dim_player SET team_code = 3 WHERE code = 9")
+    _fixture(db, fixture_id=2, home=3, away=4)
+    _stub_ingest(monkeypatch)
+
+    res = dag.lineup_captain_check(radar_ctx(db, GW1 - dt.timedelta(minutes=90)))
+    assert res.outcome == "delivered" and res.kind == "report"
+    assert "SKIPPER starting" in res.title
+    assert "ABSENT from the squad: WINGER" in res.body
+    assert "Teamsheet not out yet: GHOST" in res.body
 
 
 # -- final solve: never solves, never lies about freshness -------------------

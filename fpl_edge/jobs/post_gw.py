@@ -95,6 +95,15 @@ def main() -> int:
     # A still-provisional gameweek is refused by its own gate and retried on
     # the next run.
     _run(report, "settle_results", [py, "-m", "fpl_edge.ingest.results"])
+    # The projection calibration loop, deliberately right behind settlement:
+    # score every provider's pre-deadline projections against the gameweek
+    # that just settled, then refit projection_weight from the accumulated
+    # track record (inverse-MSE, n_obs floor, evidence beside every weight).
+    # Idempotent -- already-scored (provider, gw) pairs are skipped -- and
+    # honest before settlement: with nothing settled it reports pending and
+    # writes nothing, so the weights table can never hold opinions.
+    _run(report, "score_projections",
+         [py, "-m", "fpl_edge.eval.projection_scoring"])
     # Refit team strength now that results have landed and cache per-fixture
     # difficulty as a parquet next to the database. The fixtures panel reads
     # the artefact instead of paying for a ~1 minute fit inside its 10s budget.

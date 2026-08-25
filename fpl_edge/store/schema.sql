@@ -198,6 +198,26 @@ CREATE TABLE IF NOT EXISTS projection_weight (
     PRIMARY KEY (fit_id, provider)
 );
 
+-- The accumulated per-(provider, gameweek) accuracy record that EARNS the
+-- rows in projection_weight. Base shape here so a fresh warehouse is complete
+-- at birth (the sem_projection_weights macro in views.sql binds against it at
+-- CREATE time); the projections package's migration 004 remains authoritative
+-- for evolution and is idempotent over this. Column semantics are documented
+-- in fpl_edge/ingest/projections/migrations/004_projection_scores.sql.
+CREATE TABLE IF NOT EXISTS fact_projection_score (
+    provider      VARCHAR NOT NULL,
+    season        VARCHAR NOT NULL,
+    gw            INTEGER NOT NULL,
+    scope         VARCHAR NOT NULL,      -- 'overall' | 'pos:GKP'..'pos:FWD' | 'p_appear'
+    metric        VARCHAR NOT NULL,      -- 'mae' | 'rmse' | 'brier'
+    value         DOUBLE NOT NULL,
+    baseline      DOUBLE,                -- same metric, all-provider mean, same obs
+    n_obs         INTEGER NOT NULL,
+    deadline_utc  TIMESTAMPTZ NOT NULL,  -- projections were read as-of this instant
+    as_of         TIMESTAMPTZ NOT NULL,  -- the scoring instant
+    PRIMARY KEY (provider, season, gw, scope, metric, as_of)
+);
+
 CREATE TABLE IF NOT EXISTS fact_predicted_lineup (
     provider        VARCHAR NOT NULL,   -- 'rotowire' | ...
     season          VARCHAR NOT NULL,
@@ -208,6 +228,50 @@ CREATE TABLE IF NOT EXISTS fact_predicted_lineup (
     certainty       VARCHAR NOT NULL,
     as_of           TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (provider, season, gw, code, as_of)
+);
+
+-- CONFIRMED starting lineups, copied from an official teamsheet feed
+-- (currently the Premier League's own Pulselive API) the moment they are
+-- published, roughly an hour before kickoff. This is a different fact from
+-- fact_predicted_lineup: a prediction is somebody's opinion before the
+-- teamsheet exists, a confirmed lineup is the club's own declaration. as_of is
+-- the FETCH instant -- lineups drop ~T-60m, so a snapshot_at(deadline) read
+-- correctly cannot see a lineup that was not yet public. Append-only; a late
+-- change (warm-up injury) arrives as new rows at a later as_of.
+CREATE TABLE IF NOT EXISTS fact_confirmed_lineup (
+    source          VARCHAR NOT NULL,   -- 'pulselive' | ...
+    season          VARCHAR NOT NULL,
+    fixture_id      INTEGER NOT NULL,   -- OUR fixture id (fact_fixture)
+    code            INTEGER NOT NULL,   -- stable FPL player code
+    started         BOOLEAN NOT NULL,   -- TRUE = in the XI, FALSE = on the bench
+    shirt           INTEGER,
+    position_label  VARCHAR,            -- publisher's label ('G','D','M','F')
+    formation       VARCHAR,            -- the side's formation label ('4-2-3-1')
+    as_of           TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (source, season, fixture_id, code, as_of)
+);
+
+-- Identity bridges for the Pulselive feed. Each player is name-matched ONCE,
+-- and the successful (pl_player_id -> code) result is persisted here so every
+-- later ingest joins by id; a name that could not be matched unambiguously is
+-- NEVER written (drop-and-count lives in the ingest). Same for fixtures:
+-- (pl_fixture_id -> our fixture_id), matched by kickoff instant + team pair.
+CREATE TABLE IF NOT EXISTS bridge_pl_player (
+    season        VARCHAR NOT NULL,
+    pl_player_id  BIGINT  NOT NULL,   -- Pulselive's nested player `id`
+    code          INTEGER NOT NULL,   -- stable FPL player code
+    opta_id       VARCHAR,            -- altIds.opta, e.g. 'p231416'
+    matched_by    VARCHAR NOT NULL,   -- 'name' | 'last_name' | 'manual'
+    as_of         TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (season, pl_player_id, as_of)
+);
+
+CREATE TABLE IF NOT EXISTS bridge_pl_fixture (
+    season         VARCHAR NOT NULL,
+    pl_fixture_id  BIGINT  NOT NULL,
+    fixture_id     INTEGER NOT NULL,   -- OUR fixture id (fact_fixture)
+    as_of          TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (season, pl_fixture_id, as_of)
 );
 
 -- Third-party per-player per-match statistics -- xG, xA, shots, defensive

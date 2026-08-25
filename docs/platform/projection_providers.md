@@ -434,7 +434,55 @@ response tests it against the shape the site actually had.
 
 ---
 
-## 7. What to add next, in order
+## 7. The calibration loop: how weights are earned
+
+`projection_weight` had 0 rows by design until the season's first gameweek
+settled — weighting sources with no track record is fabrication (MASTER_PROMPT
+Phase 2.5). The loop that earns the rows is
+`fpl_edge/eval/projection_scoring.py`, run by `fpl_edge.jobs.post_gw`
+immediately after `settle_results`:
+
+1. **Score** (`score_gameweek`): for every provider with projections for a
+   settled gameweek **fetched at or before its deadline**
+   (`dim_event.deadline_utc`, read through `ProjectionStore.as_of` — a
+   post-deadline revision is not a claim the provider staked and is never
+   scored), per-player error against the official `fact_player_fixture`
+   actuals. MAE and RMSE overall and per position; Brier on `p_appear` vs
+   played-any-minutes where a provider publishes it. A projected player whose
+   team played but who never featured counts as an actual **0** — dropping
+   him would flatter fringe-heavy projections; players at clubs with no
+   fixture that gameweek are excluded. One measurement per (provider, gw)
+   lands in `fact_projection_score` (migration `004_projection_scores.sql`)
+   with the all-provider-mean baseline on the same observations beside it,
+   and is never re-measured (idempotent skip).
+2. **Fit** (`fit_weights`): inverse-MSE weights over the *accumulated*
+   scores, observation-pooled across gameweeks. A provider earns a nonzero
+   weight only with `n_obs >= 200` player-gameweek observations — at 200 the
+   standard error of an MSE estimate is ~10% of the MSE, so smaller
+   differences are noise a weight must not encode; one fully-covered settled
+   gameweek (~590 projected players) clears the floor, a partial feed (the
+   91-player injury list; a provider that missed the deadline) must
+   accumulate. Everyone else gets an explicit `earned = FALSE, weight = 0`
+   row with the reason in `holdout` — including Premier Injuries permanently
+   (`p_appear` only, no xp to score). Weights are normalised over earning
+   providers and written via `ProjectionStore.record_weights` under a
+   deterministic `fit_id` (`{season}:invmse:thru-gw{N}`), so a refit over
+   unchanged scores replaces itself.
+3. **Read** (`sem_projection_weights(t)` in the semantic layer): the latest
+   fit at the instant, with loss / baseline_loss / n_obs / holdout beside
+   every weight and `track_record_gws` saying how deep the record is. With
+   one gameweek scored the weights are *earned but shallow*, and the surface
+   says so — any consumer quoting the leaderboard must quote the depth.
+
+The weights are **not** blended into the solver by this loop. That is a
+later, explicit step; this loop ends at weights-with-evidence.
+
+Tests: `tests/unit/test_projection_scoring.py` — the deadline filter is
+verified to be load-bearing (breaking it makes three tests fail), plus the
+n_obs floor, idempotent rescoring, weight normalisation, zero-fill, and every
+`earned = FALSE` path.
+
+## 8. What to add next, in order
 
 1. **A second predicted-lineup source.** SportsGambler is measured, permitted
    and viable at eleven requests. Worth it as soon as the ensemble can score

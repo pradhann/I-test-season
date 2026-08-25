@@ -1,0 +1,1021 @@
+{
+ "pageInfo": {
+  "page": 0,
+  "numPages": 1647,
+  "pageSize": 8,
+  "numEntries": 13176
+ },
+ "content": [
+  {
+   "gameweek": {
+    "id": 19761.0,
+    "compSeason": {
+     "label": "English Premier League Season 2026/2027",
+     "competition": {
+      "abbreviation": "EN_PR",
+      "description": "Premier League",
+      "level": "SEN",
+      "source": "",
+      "id": 1.0
+     },
+     "id": 841.0
+    },
+    "gameweek": 1.0,
+    "competitionPhase": {
+     "id": 8163.0,
+     "type": "L",
+     "gameweekRange": [
+      1.0,
+      38.0
+     ]
+    }
+   },
+   "kickoff": {
+    "completeness": 3.0,
+    "millis": 1787598000000.0,
+    "label": "Mon 24 Aug 2026, 20:00 BST",
+    "gmtOffset": 1.0
+   },
+   "provisionalKickoff": {
+    "completeness": 3.0,
+    "millis": 1787598000000.0,
+    "label": "Mon 24 Aug 2026, 20:00 BST",
+    "gmtOffset": 1.0
+   },
+   "teams": [
+    {
+     "team": {
+      "name": "Fulham",
+      "club": {
+       "name": "Fulham",
+       "shortName": "Fulham",
+       "abbr": "FUL",
+       "id": 34.0
+      },
+      "teamType": "FIRST",
+      "shortName": "Fulham",
+      "id": 34.0
+     },
+     "score": 2.0
+    },
+    {
+     "team": {
+      "name": "Chelsea",
+      "club": {
+       "name": "Chelsea",
+       "shortName": "Chelsea",
+       "abbr": "CHE",
+       "id": 4.0
+      },
+      "teamType": "FIRST",
+      "shortName": "Chelsea",
+      "id": 4.0
+     },
+     "score": 3.0
+    }
+   ],
+   "replay": false,
+   "ground": {
+    "name": "Craven Cottage",
+    "city": "London",
+    "source": "OPTA",
+    "id": 9521.0
+   },
+   "neutralGround": false,
+   "status": "C",
+   "phase": "F",
+   "outcome": "A",
+   "attendance": 27461.0,
+   "clock": {
+    "secs": 5700.0,
+    "label": "90+5'00"
+   },
+   "fixtureType": "REGULAR",
+   "extraTime": false,
+   "shootout": false,
+   "goals": [
+    {
+     "personId": 72371.0,
+     "assistId": 49293.0,
+     "clock": {
+      "secs": 60.0,
+      "label": "01'00"
+     },
+     "phase": "1",
+     "type": "G",
+     "description": "G"
+    },
+    {
+     "personId": 128976.0,
+     "assistId": 6712.0,
+     "clock": {
+      "secs": 1380.0,
+      "label": "23'00"
+     },
+     "phase": "1",
+     "type": "G",
+     "description": "G"
+    },
+    {
+     "personId": 23968.0,
+     "assistId": 76104.0,
+     "clock": {
+      "secs": 2460.0,
+      "label": "41'00"
+     },
+     "phase": "1",
+     "type": "G",
+     "description": "G"
+    },
+    {
+     "personId": 49293.0,
+     "assistId": 72371.0,
+     "clock": {
+      "secs": 2940.0,
+      "label": "49'00"
+     },
+     "phase": "2",
+     "type": "G",
+     "description": "G"
+    },
+    {
+     "personId": 119364.0,
+     "clock": {
+      "secs": 3240.0,
+      "label": "54'00"
+     },
+     "phase": "2",
+     "type": "G",
+     "description": "G"
+    }
+   ],
+   "penaltyShootouts": [],
+   "behindClosedDoors": false,
+   "id": 128932.0
+  },
+  {
+   "gameweek": {
+    "id": 19761.0,
+    "compSeason": {
+     "label": "English Premier League Season 2026/2027",
+     "competition": {
+      "abbreviation": "EN_PR",
+      "description": "Premier League",
+      "level": "SEN",
+      "source": "",
+      "id": 1.0
+     },
+     "id": 841.0
+    },
+    "gameweek": 1.0,
+    "competitionPhase": {
+     "id": 8163.0,
+     "type": "L",
+     "gameweekRange": [
+      1.0,
+      38.0
+     ]
+    }
+   },
+   "kickoff": {
+    "completeness": 3.0,
+    "millis": 1787499000000.0,
+    "label": "Sun 23 Aug 2026, 16:30 BST",
+    "gmtOffset": 1.0
+   },
+   "provisionalKickoff": {
+    "completeness": 3.0,
+    "millis": 1787499000000.0,
+    "label": "Sun 23 Aug 2026, 16:30 BST",
+    "gmtOffset": 1.0
+   },
+   "teams": [
+    {
+     "team": {
+      "name": "Newcastle United",
+      "club": {
+       "name": "Newcastle United",
+       "shortName": "Newcastle",
+       "abbr": "NEW",
+       "id": 23.0
+      },
+      "teamType": "FIRST",
+      "shortName": "Newcastle",
+      "id": 23.0
+     },
+     "score": 2.0
+    },
+    {
+     "team": {
+      "name": "Liverpool",
+      "club": {
+       "name": "Liverpool",
+       "shortName": "Liverpool",
+       "abbr": "LIV",
+       "id": 10.0
+      },
+      "teamType": "FIRST",
+      "shortName": "Liverpool",
+      "id": 10.0
+     },
+     "score": 2.0
+    }
+   ],
+   "replay": false,
+   "ground": {
+    "name": "St. James' Park",
+    "city": "Newcastle",
+    "source": "OPTA",
+    "id": 9517.0
+   },
+   "neutralGround": false,
+   "status": "C",
+   "phase": "F",
+   "outcome": "D",
+   "attendance": 52630.0,
+   "clock": {
+    "secs": 6000.0,
+    "label": "90+10'00"
+   },
+   "fixtureType": "REGULAR",
+   "extraTime": false,
+   "shootout": false,
+   "goals": [
+    {
+     "personId": 49259.0,
+     "assistId": 114590.0,
+     "clock": {
+      "secs": 300.0,
+      "label": "05'00"
+     },
+     "phase": "1",
+     "type": "G",
+     "description": "G"
+    },
+    {
+     "personId": 32894.0,
+     "assistId": 49909.0,
+     "clock": {
+      "secs": 3300.0,
+      "label": "55'00"
+     },
+     "phase": "2",
+     "type": "G",
+     "description": "G"
+    },
+    {
+     "personId": 14446.0,
+     "assistId": 117497.0,
+     "clock": {
+      "secs": 3420.0,
+      "label": "57'00"
+     },
+     "phase": "2",
+     "type": "G",
+     "description": "G"
+    },
+    {
+     "personId": 33231.0,
+     "clock": {
+      "secs": 5940.0,
+      "label": "90+9'00"
+     },
+     "phase": "2",
+     "type": "P",
+     "description": "P"
+    }
+   ],
+   "penaltyShootouts": [],
+   "behindClosedDoors": false,
+   "id": 128931.0
+  },
+  {
+   "gameweek": {
+    "id": 19761.0,
+    "compSeason": {
+     "label": "English Premier League Season 2026/2027",
+     "competition": {
+      "abbreviation": "EN_PR",
+      "description": "Premier League",
+      "level": "SEN",
+      "source": "",
+      "id": 1.0
+     },
+     "id": 841.0
+    },
+    "gameweek": 1.0,
+    "competitionPhase": {
+     "id": 8163.0,
+     "type": "L",
+     "gameweekRange": [
+      1.0,
+      38.0
+     ]
+    }
+   },
+   "kickoff": {
+    "completeness": 3.0,
+    "millis": 1787490000000.0,
+    "label": "Sun 23 Aug 2026, 14:00 BST",
+    "gmtOffset": 1.0
+   },
+   "provisionalKickoff": {
+    "completeness": 3.0,
+    "millis": 1787490000000.0,
+    "label": "Sun 23 Aug 2026, 14:00 BST",
+    "gmtOffset": 1.0
+   },
+   "teams": [
+    {
+     "team": {
+      "name": "Brighton & Hove Albion",
+      "club": {
+       "name": "Brighton and Hove Albion",
+       "shortName": "Brighton",
+       "abbr": "BHA",
+       "id": 131.0
+      },
+      "teamType": "FIRST",
+      "shortName": "Brighton",
+      "id": 131.0
+     },
+     "score": 4.0
+    },
+    {
+     "team": {
+      "name": "Aston Villa",
+      "club": {
+       "name": "Aston Villa",
+       "shortName": "Aston Villa",
+       "abbr": "AVL",
+       "id": 2.0
+      },
+      "teamType": "FIRST",
+      "shortName": "Aston Villa",
+      "id": 2.0
+     },
+     "score": 0.0
+    }
+   ],
+   "replay": false,
+   "ground": {
+    "name": "American Express Stadium",
+    "city": "Falmer",
+    "source": "OPTA",
+    "id": 9524.0
+   },
+   "neutralGround": false,
+   "status": "C",
+   "phase": "F",
+   "outcome": "H",
+   "attendance": 31746.0,
+   "clock": {
+    "secs": 5700.0,
+    "label": "90+5'00"
+   },
+   "fixtureType": "REGULAR",
+   "extraTime": false,
+   "shootout": false,
+   "goals": [
+    {
+     "personId": 5066.0,
+     "clock": {
+      "secs": 480.0,
+      "label": "08'00"
+     },
+     "phase": "1",
+     "type": "O",
+     "description": "O"
+    },
+    {
+     "personId": 67928.0,
+     "assistId": 51830.0,
+     "clock": {
+      "secs": 1080.0,
+      "label": "18'00"
+     },
+     "phase": "1",
+     "type": "G",
+     "description": "G"
+    },
+    {
+     "personId": 112739.0,
+     "assistId": 143240.0,
+     "clock": {
+      "secs": 1800.0,
+      "label": "30'00"
+     },
+     "phase": "1",
+     "type": "G",
+     "description": "G"
+    },
+    {
+     "personId": 112739.0,
+     "clock": {
+      "secs": 1860.0,
+      "label": "31'00"
+     },
+     "phase": "1",
+     "type": "G",
+     "description": "G"
+    }
+   ],
+   "penaltyShootouts": [],
+   "behindClosedDoors": false,
+   "id": 128929.0
+  },
+  {
+   "gameweek": {
+    "id": 19761.0,
+    "compSeason": {
+     "label": "English Premier League Season 2026/2027",
+     "competition": {
+      "abbreviation": "EN_PR",
+      "description": "Premier League",
+      "level": "SEN",
+      "source": "",
+      "id": 1.0
+     },
+     "id": 841.0
+    },
+    "gameweek": 1.0,
+    "competitionPhase": {
+     "id": 8163.0,
+     "type": "L",
+     "gameweekRange": [
+      1.0,
+      38.0
+     ]
+    }
+   },
+   "kickoff": {
+    "completeness": 3.0,
+    "millis": 1787490000000.0,
+    "label": "Sun 23 Aug 2026, 14:00 BST",
+    "gmtOffset": 1.0
+   },
+   "provisionalKickoff": {
+    "completeness": 3.0,
+    "millis": 1787490000000.0,
+    "label": "Sun 23 Aug 2026, 14:00 BST",
+    "gmtOffset": 1.0
+   },
+   "teams": [
+    {
+     "team": {
+      "name": "Manchester City",
+      "club": {
+       "name": "Manchester City",
+       "shortName": "Man City",
+       "abbr": "MCI",
+       "id": 11.0
+      },
+      "teamType": "FIRST",
+      "shortName": "Man City",
+      "id": 11.0
+     },
+     "score": 2.0
+    },
+    {
+     "team": {
+      "name": "Bournemouth",
+      "club": {
+       "name": "Bournemouth",
+       "shortName": "Bournemouth",
+       "abbr": "BOU",
+       "id": 127.0
+      },
+      "teamType": "FIRST",
+      "shortName": "Bournemouth",
+      "id": 127.0
+     },
+     "score": 1.0
+    }
+   ],
+   "replay": false,
+   "ground": {
+    "name": "Etihad Stadium",
+    "city": "Manchester",
+    "source": "OPTA",
+    "id": 9514.0
+   },
+   "neutralGround": false,
+   "status": "C",
+   "phase": "F",
+   "outcome": "H",
+   "attendance": 60645.0,
+   "clock": {
+    "secs": 5760.0,
+    "label": "90+6'00"
+   },
+   "fixtureType": "REGULAR",
+   "extraTime": false,
+   "shootout": false,
+   "goals": [
+    {
+     "personId": 14846.0,
+     "assistId": 33032.0,
+     "clock": {
+      "secs": 1560.0,
+      "label": "26'00"
+     },
+     "phase": "1",
+     "type": "G",
+     "description": "G"
+    },
+    {
+     "personId": 14569.0,
+     "assistId": 68150.0,
+     "clock": {
+      "secs": 5040.0,
+      "label": "84'00"
+     },
+     "phase": "2",
+     "type": "G",
+     "description": "G"
+    },
+    {
+     "personId": 67178.0,
+     "assistId": 68150.0,
+     "clock": {
+      "secs": 5460.0,
+      "label": "90+1'00"
+     },
+     "phase": "2",
+     "type": "G",
+     "description": "G"
+    }
+   ],
+   "penaltyShootouts": [],
+   "behindClosedDoors": false,
+   "id": 128930.0
+  },
+  {
+   "gameweek": {
+    "id": 19761.0,
+    "compSeason": {
+     "label": "English Premier League Season 2026/2027",
+     "competition": {
+      "abbreviation": "EN_PR",
+      "description": "Premier League",
+      "level": "SEN",
+      "source": "",
+      "id": 1.0
+     },
+     "id": 841.0
+    },
+    "gameweek": 1.0,
+    "competitionPhase": {
+     "id": 8163.0,
+     "type": "L",
+     "gameweekRange": [
+      1.0,
+      38.0
+     ]
+    }
+   },
+   "kickoff": {
+    "completeness": 3.0,
+    "millis": 1787416200000.0,
+    "label": "Sat 22 Aug 2026, 17:30 BST",
+    "gmtOffset": 1.0
+   },
+   "provisionalKickoff": {
+    "completeness": 3.0,
+    "millis": 1787416200000.0,
+    "label": "Sat 22 Aug 2026, 17:30 BST",
+    "gmtOffset": 1.0
+   },
+   "teams": [
+    {
+     "team": {
+      "name": "Brentford",
+      "club": {
+       "name": "Brentford",
+       "shortName": "Brentford",
+       "abbr": "BRE",
+       "id": 130.0
+      },
+      "teamType": "FIRST",
+      "shortName": "Brentford",
+      "id": 130.0
+     },
+     "score": 3.0
+    },
+    {
+     "team": {
+      "name": "Tottenham Hotspur",
+      "club": {
+       "name": "Tottenham Hotspur",
+       "shortName": "Spurs",
+       "abbr": "TOT",
+       "id": 21.0
+      },
+      "teamType": "FIRST",
+      "shortName": "Spurs",
+      "id": 21.0
+     },
+     "score": 0.0
+    }
+   ],
+   "replay": false,
+   "ground": {
+    "name": "Gtech Community Stadium",
+    "city": "Brentford",
+    "source": "OPTA",
+    "id": 4003.0
+   },
+   "neutralGround": false,
+   "status": "C",
+   "phase": "F",
+   "outcome": "H",
+   "attendance": 17180.0,
+   "clock": {
+    "secs": 5700.0,
+    "label": "90+5'00"
+   },
+   "fixtureType": "REGULAR",
+   "extraTime": false,
+   "shootout": false,
+   "goals": [
+    {
+     "personId": 24369.0,
+     "assistId": 108421.0,
+     "clock": {
+      "secs": 720.0,
+      "label": "12'00"
+     },
+     "phase": "1",
+     "type": "G",
+     "description": "G"
+    },
+    {
+     "personId": 23194.0,
+     "clock": {
+      "secs": 1980.0,
+      "label": "33'00"
+     },
+     "phase": "1",
+     "type": "G",
+     "description": "G"
+    },
+    {
+     "personId": 133460.0,
+     "clock": {
+      "secs": 2940.0,
+      "label": "49'00"
+     },
+     "phase": "2",
+     "type": "G",
+     "description": "G"
+    }
+   ],
+   "penaltyShootouts": [],
+   "behindClosedDoors": false,
+   "id": 128924.0
+  },
+  {
+   "gameweek": {
+    "id": 19761.0,
+    "compSeason": {
+     "label": "English Premier League Season 2026/2027",
+     "competition": {
+      "abbreviation": "EN_PR",
+      "description": "Premier League",
+      "level": "SEN",
+      "source": "",
+      "id": 1.0
+     },
+     "id": 841.0
+    },
+    "gameweek": 1.0,
+    "competitionPhase": {
+     "id": 8163.0,
+     "type": "L",
+     "gameweekRange": [
+      1.0,
+      38.0
+     ]
+    }
+   },
+   "kickoff": {
+    "completeness": 3.0,
+    "millis": 1787407200000.0,
+    "label": "Sat 22 Aug 2026, 15:00 BST",
+    "gmtOffset": 1.0
+   },
+   "provisionalKickoff": {
+    "completeness": 3.0,
+    "millis": 1787407200000.0,
+    "label": "Sat 22 Aug 2026, 15:00 BST",
+    "gmtOffset": 1.0
+   },
+   "teams": [
+    {
+     "team": {
+      "name": "Everton",
+      "club": {
+       "name": "Everton",
+       "shortName": "Everton",
+       "abbr": "EVE",
+       "id": 7.0
+      },
+      "teamType": "FIRST",
+      "shortName": "Everton",
+      "id": 7.0
+     },
+     "score": 2.0
+    },
+    {
+     "team": {
+      "name": "Crystal Palace",
+      "club": {
+       "name": "Crystal Palace",
+       "shortName": "Crystal Palace",
+       "abbr": "CRY",
+       "id": 6.0
+      },
+      "teamType": "FIRST",
+      "shortName": "Crystal Palace",
+      "id": 6.0
+     },
+     "score": 0.0
+    }
+   ],
+   "replay": false,
+   "ground": {
+    "name": "Hill Dickinson Stadium",
+    "city": "Liverpool",
+    "source": "OPTA",
+    "id": 9308.0
+   },
+   "neutralGround": false,
+   "status": "C",
+   "phase": "F",
+   "outcome": "H",
+   "attendance": 51820.0,
+   "clock": {
+    "secs": 5880.0,
+    "label": "90+8'00"
+   },
+   "fixtureType": "REGULAR",
+   "extraTime": false,
+   "shootout": false,
+   "goals": [
+    {
+     "personId": 14706.0,
+     "assistId": 134286.0,
+     "clock": {
+      "secs": 2520.0,
+      "label": "42'00"
+     },
+     "phase": "1",
+     "type": "G",
+     "description": "G"
+    },
+    {
+     "personId": 143922.0,
+     "assistId": 31936.0,
+     "clock": {
+      "secs": 3180.0,
+      "label": "53'00"
+     },
+     "phase": "2",
+     "type": "G",
+     "description": "G"
+    }
+   ],
+   "penaltyShootouts": [],
+   "behindClosedDoors": false,
+   "id": 128925.0
+  },
+  {
+   "gameweek": {
+    "id": 19761.0,
+    "compSeason": {
+     "label": "English Premier League Season 2026/2027",
+     "competition": {
+      "abbreviation": "EN_PR",
+      "description": "Premier League",
+      "level": "SEN",
+      "source": "",
+      "id": 1.0
+     },
+     "id": 841.0
+    },
+    "gameweek": 1.0,
+    "competitionPhase": {
+     "id": 8163.0,
+     "type": "L",
+     "gameweekRange": [
+      1.0,
+      38.0
+     ]
+    }
+   },
+   "kickoff": {
+    "completeness": 3.0,
+    "millis": 1787407200000.0,
+    "label": "Sat 22 Aug 2026, 15:00 BST",
+    "gmtOffset": 1.0
+   },
+   "provisionalKickoff": {
+    "completeness": 3.0,
+    "millis": 1787407200000.0,
+    "label": "Sat 22 Aug 2026, 15:00 BST",
+    "gmtOffset": 1.0
+   },
+   "teams": [
+    {
+     "team": {
+      "name": "Ipswich Town",
+      "club": {
+       "name": "Ipswich Town",
+       "shortName": "Ipswich",
+       "abbr": "IPS",
+       "id": 8.0
+      },
+      "teamType": "FIRST",
+      "shortName": "Ipswich",
+      "id": 8.0
+     },
+     "score": 2.0
+    },
+    {
+     "team": {
+      "name": "Sunderland",
+      "club": {
+       "name": "Sunderland",
+       "shortName": "Sunderland",
+       "abbr": "SUN",
+       "id": 29.0
+      },
+      "teamType": "FIRST",
+      "shortName": "Sunderland",
+      "id": 29.0
+     },
+     "score": 1.0
+    }
+   ],
+   "replay": false,
+   "ground": {
+    "name": "Portman Road",
+    "city": "Ipswich",
+    "source": "OPTA",
+    "id": 9568.0
+   },
+   "neutralGround": false,
+   "status": "C",
+   "phase": "F",
+   "outcome": "H",
+   "attendance": 29669.0,
+   "clock": {
+    "secs": 5700.0,
+    "label": "90+5'00"
+   },
+   "fixtureType": "REGULAR",
+   "extraTime": false,
+   "shootout": false,
+   "goals": [
+    {
+     "personId": 313194.0,
+     "assistId": 125827.0,
+     "clock": {
+      "secs": 1440.0,
+      "label": "24'00"
+     },
+     "phase": "1",
+     "type": "G",
+     "description": "G"
+    },
+    {
+     "personId": 115105.0,
+     "clock": {
+      "secs": 2340.0,
+      "label": "39'00"
+     },
+     "phase": "1",
+     "type": "G",
+     "description": "G"
+    },
+    {
+     "personId": 32715.0,
+     "assistId": 16044.0,
+     "clock": {
+      "secs": 5400.0,
+      "label": "90'00"
+     },
+     "phase": "2",
+     "type": "G",
+     "description": "G"
+    }
+   ],
+   "penaltyShootouts": [],
+   "behindClosedDoors": false,
+   "id": 128927.0
+  },
+  {
+   "gameweek": {
+    "id": 19761.0,
+    "compSeason": {
+     "label": "English Premier League Season 2026/2027",
+     "competition": {
+      "abbreviation": "EN_PR",
+      "description": "Premier League",
+      "level": "SEN",
+      "source": "",
+      "id": 1.0
+     },
+     "id": 841.0
+    },
+    "gameweek": 1.0,
+    "competitionPhase": {
+     "id": 8163.0,
+     "type": "L",
+     "gameweekRange": [
+      1.0,
+      38.0
+     ]
+    }
+   },
+   "kickoff": {
+    "completeness": 3.0,
+    "millis": 1787407200000.0,
+    "label": "Sat 22 Aug 2026, 15:00 BST",
+    "gmtOffset": 1.0
+   },
+   "provisionalKickoff": {
+    "completeness": 3.0,
+    "millis": 1787407200000.0,
+    "label": "Sat 22 Aug 2026, 15:00 BST",
+    "gmtOffset": 1.0
+   },
+   "teams": [
+    {
+     "team": {
+      "name": "Nottingham Forest",
+      "club": {
+       "name": "Nottingham Forest",
+       "shortName": "Nott'm Forest",
+       "abbr": "NFO",
+       "id": 15.0
+      },
+      "teamType": "FIRST",
+      "shortName": "Nott'm Forest",
+      "id": 15.0
+     },
+     "score": 0.0
+    },
+    {
+     "team": {
+      "name": "Leeds United",
+      "club": {
+       "name": "Leeds United",
+       "shortName": "Leeds",
+       "abbr": "LEE",
+       "id": 9.0
+      },
+      "teamType": "FIRST",
+      "shortName": "Leeds",
+      "id": 9.0
+     },
+     "score": 1.0
+    }
+   ],
+   "replay": false,
+   "ground": {
+    "name": "The City Ground",
+    "city": "Nottingham",
+    "source": "OPTA",
+    "id": 9520.0
+   },
+   "neutralGround": false,
+   "status": "C",
+   "phase": "F",
+   "outcome": "A",
+   "attendance": 30739.0,
+   "clock": {
+    "secs": 5640.0,
+    "label": "90+4'00"
+   },
+   "fixtureType": "REGULAR",
+   "extraTime": false,
+   "shootout": false,
+   "goals": [
+    {
+     "personId": 116888.0,
+     "clock": {
+      "secs": 5280.0,
+      "label": "88'00"
+     },
+     "phase": "2",
+     "type": "G",
+     "description": "G"
+    }
+   ],
+   "penaltyShootouts": [],
+   "behindClosedDoors": false,
+   "id": 128928.0
+  }
+ ]
+}

@@ -324,6 +324,56 @@ something the API has not caught up with.
 
 ---
 
+## 4A. Confirmed lineups — the Pulselive API (added 2026-08-24)
+
+**All measurements this section: 2026-08-24, ingested and verified live.**
+
+The Premier League's own site loads its data from
+`https://footballapi.pulselive.com/football/`, free and unauthenticated. Two
+endpoints matter:
+
+| Endpoint | Measured | Notes |
+|---|---|---|
+| `GET /football/fixtures?comps=1&pageSize=N&sort=desc&statuses=C` | HTTP 200 | Fixture listing; `statuses=C` completed, `U,L` upcoming+live both work |
+| `GET /football/fixtures/{id}` | HTTP 200 | Full fixture; `teamLists` = 2 sides × {`teamId`, `formation{label}`, `lineup[11]`, `substitutes[9]`} |
+| `GET /football/teamlists` | **HTTP 404** | No bulk endpoint exists — poll per fixture |
+
+Requests carry `Origin`/`Referer: https://www.premierleague.com` alongside the
+project's identified User-Agent. Facts measured on real payloads, encoded in
+`fpl_edge/ingest/lineups.py` and pinned by archived fixtures in
+`tests/fixtures/pulselive/`:
+
+* Before the teamsheet publishes (~T-60m before kickoff), `teamLists` is
+  `[null, null]`. That is the "not yet" signal, not an error.
+* `playerId` on each lineup entry is **0**; the real identity is the nested
+  player object's `id`, with `altIds.opta` (`"p489639"`) and a birth date
+  alongside. Kickoff truth is `kickoff.millis` (UTC); the label is BST prose.
+* Club `abbr` agrees with FPL `short_name` for all current clubs measured
+  (BHA=BHA, AVL=AVL, …), which is what the team bridge keys on.
+
+**Licence posture:** this is premierleague.com's own internal API —
+undocumented, with **no published terms found** for it specifically; the PL
+site's general terms were not observed to address programmatic access to this
+host, and `footballapi.pulselive.com/robots.txt` is not a published crawl
+policy for an API. That ambiguity is recorded rather than assumed away
+(FPL-Core-Insights precedent, §3.3). The posture it earns: **personal-scale,
+polite, identified** — one request per second, a handful of requests per
+matchday (one poll per fixture inside a 2.5h kickoff window), every body
+archived so nothing is fetched twice for analysis. If terms surface that
+forbid this, the ingest is one import away from removal and the archive keeps
+backtests reproducible.
+
+What it feeds: `fact_confirmed_lineup` (as_of = fetch instant, so a deadline
+snapshot can never see a teamsheet early), identity via `bridge_pl_player` /
+`bridge_pl_fixture` (name-matched once, id-joined forever; ambiguity dropped
+and counted, never guessed), consumed by the T-90m `lineup_captain_check` DAG
+task. Measured on GW1: **76/80 players matched (95%)**; all four misses were
+players absent from FPL's own register at the snapshot (two Villa youth
+players, one Bournemouth youth, one not-yet-registered signing) — i.e. no
+false matches, no silent losses.
+
+---
+
 ## 5. What is implemented
 
 `fpl_edge/ingest/odds.py`, landing in `fact_odds` via `scripts/ingest_odds.py`.
