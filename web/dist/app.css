@@ -203,6 +203,16 @@ table.data td.clickable:hover { box-shadow: inset 0 0 0 1.5px var(--s1); }
          flex-wrap: wrap; }
 .bench .pcard { opacity: .92; }
 
+/* pitch-select: the FPL-site pick-a-shirt interaction */
+.pitch-select .pcard.selectable { cursor: pointer;
+  transition: transform .12s, box-shadow .12s; }
+.pitch-select .pcard.selectable:hover { transform: translateY(-3px);
+  box-shadow: 0 0 0 2px var(--s1), 0 6px 14px rgb(0 0 0 / .25); }
+.pitch-select .pcard.incoming { box-shadow: 0 0 0 2px var(--good), var(--shadow); }
+.pitch-select .pcard.incoming::after { content: "IN"; position: absolute;
+  bottom: 34px; left: 3px; font: 700 9px/1.4 inherit; padding: 0 5px;
+  border-radius: 4px; color: #fff; background: var(--good); }
+
 /* small round face for table rows */
 .avatar { width: 24px; height: 24px; border-radius: 50%; object-fit: cover;
           object-position: center 20%; vertical-align: middle; margin-right: 7px;

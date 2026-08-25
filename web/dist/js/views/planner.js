@@ -8,7 +8,7 @@
    `rules` block, which the panel script reads from the verified rule
    registry — this file never hardcodes a game rule. */
 
-import { runPanel, el, emptyBox, errBox, provenance, faceImg, stat,
+import { runPanel, el, emptyBox, errBox, provenance, faceImg, stat, playerCard,
          fmtPrice, fmt1, fmt2 } from "/js/app.js";
 
 const PLANS_KEY = "itest-planner-plans-v1";
@@ -88,6 +88,7 @@ export default async function planner(host) {
   let moves = [];
   let picking = null;                  // {gw, out} while choosing a replacement
   let notice = "";
+  let pitchGw = res.gws[0];            // the GW the pitch view plans against
 
   function squadAt(gw) {               // codes in the squad entering GW `gw`'s moves applied
     const codes = new Set(res.squad.map(p => p.code));
@@ -174,11 +175,12 @@ export default async function planner(host) {
   // ---- containers ----
   const toolbar = el("div", "filters");
   const summaryBox = el("div");
+  const pitchBox = el("div");
   const pickerBox = el("div");
   const gridBox = el("div");
   const poolBox = el("div");
   const noteLine = el("p", "sub");
-  card.append(toolbar, summaryBox, pickerBox, gridBox, poolBox, noteLine);
+  card.append(toolbar, summaryBox, pitchBox, pickerBox, gridBox, poolBox, noteLine);
   card.appendChild(provenance(prov));
 
   sub.textContent =
@@ -311,6 +313,66 @@ export default async function planner(host) {
         el("span", "chip bad", "bank goes negative — plan is not affordable"));
   }
 
+  // ---- the pitch: the FPL-site select-and-remove idiom ----
+  function renderPitch() {
+    pitchBox.textContent = "";
+    const box = el("div");
+
+    // GW tabs
+    const tabs = el("div", "filters");
+    tabs.appendChild(el("label", null, "plan for"));
+    for (const g of res.gws) {
+      const chip = el("span", "chip" + (g === pitchGw ? " s1" : ""), `GW${g}`);
+      chip.style.cursor = "pointer";
+      chip.onclick = () => { pitchGw = g; picking = null; adding = null; render(); };
+      tabs.appendChild(chip);
+    }
+    tabs.appendChild(el("span", "sub",
+      "  click a player to transfer out · click an OUT card to undo"));
+    box.appendChild(tabs);
+
+    const codes = squadAt(pitchGw);
+    const outThisGw = new Map(moves.filter(m => m.gw === pitchGw)
+                                   .map(m => [m.in, m]));
+    const players = [...codes].map(c => byCode.get(c)).filter(Boolean);
+    const byPos = { GKP: [], DEF: [], MID: [], FWD: [] };
+    for (const pl of players) (byPos[pl.pos] || byPos.MID).push(pl);
+    for (const k in byPos)
+      byPos[k].sort((a, b) => (xp(b.code, pitchGw) ?? -1) - (xp(a.code, pitchGw) ?? -1));
+
+    const pitch = el("div", "pitch pitch-select");
+    for (const posRow of ["GKP", "DEF", "MID", "FWD"]) {
+      const row = el("div", "row");
+      for (const pl of byPos[posRow]) {
+        const inMove = outThisGw.get(pl.code);      // this player IS an incoming
+        const cardEl = playerCard(pl, {
+          mark: pl.is_captain ? "C" : null,
+          sub: `${fmtPrice(pl.price)} · ${fmt1(xp(pl.code, pitchGw)) ?? "–"}`,
+        });
+        cardEl.classList.add("selectable");
+        if (inMove) {
+          cardEl.classList.add("incoming");
+          cardEl.title = `in for ${byCode.get(inMove.out)?.name ?? inMove.out} — click to undo`;
+          cardEl.onclick = () => removeMoveByRef(inMove);
+        } else {
+          cardEl.title = `transfer ${pl.name} out from GW${pitchGw}`;
+          cardEl.onclick = () => {
+            picking = { gw: pitchGw, out: pl.code };
+            poolPos = pl.pos;             // the pool follows, FPL-site style
+            render();
+            pickerBox.scrollIntoView({ behavior: "smooth", block: "start" });
+          };
+        }
+        row.appendChild(cardEl);
+      }
+      if (byPos[posRow].length) pitch.appendChild(row);
+    }
+    box.appendChild(pitch);
+    pitchBox.appendChild(box);
+  }
+
+  let removeMoveByRef = () => {};       // bound inside renderGrid (shares cascade)
+
   // ---- candidate picker ----
   function renderPicker() {
     pickerBox.textContent = "";
@@ -437,6 +499,7 @@ export default async function planner(host) {
       notice = dead.size > 1 ? `Removed ${dead.size} linked move(s).` : "Move removed.";
       render();
     };
+    removeMoveByRef = removeMove;
 
     const playerRow = (p, joinedGw) => {
       const tr = el("tr");
@@ -641,6 +704,7 @@ export default async function planner(host) {
   function render() {
     renderToolbar();
     renderSummary();
+    renderPitch();
     renderPicker();
     renderGrid();
     renderPool();
