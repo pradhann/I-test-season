@@ -26,7 +26,7 @@ from fpl_edge.eval.projection_scoring import fit_weights, run, score_gameweek
 from fpl_edge.ingest.projections.store import ProjectionStore
 from fpl_edge.store import Warehouse
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 SEASON = "2026-27"
 
 
@@ -85,12 +85,14 @@ def wh(tmp_path) -> Warehouse:
 
 def _proj(wh: Warehouse, provider: str, *, offset: float | None,
           p_appear: dict[int, float] | None = None,
-          as_of: dt.datetime = T(20)) -> None:
+          as_of: dt.datetime | None = None) -> None:
     """Append one full-coverage projection set fetched at ``as_of``.
 
     ``offset`` is added to each player's true outcome, so a provider's MAE
     equals |offset| exactly; ``offset=None`` publishes no xp at all.
+    ``as_of`` defaults to a pre-deadline fetch (T(20)).
     """
+    as_of = as_of or T(20)
     rows = []
     for code, _, _, _, _, pts, _ in PLAYERS:
         rows.append({

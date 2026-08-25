@@ -61,7 +61,7 @@ from fpl_edge.eval.calibration import brier_score
 from fpl_edge.ingest.projections.store import ProjectionStore
 from fpl_edge.store import Warehouse
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 #: Minimum player-gameweek observations before a provider's weight is earned.
 #: See the module docstring for the derivation; do not lower it quietly.
@@ -143,7 +143,7 @@ def _xp_rows(
             return
         err = df["xp"] - df["actual_points"]
         base = df["consensus_xp"] - df["actual_points"]
-        n = int(len(df))
+        n = len(df)
         rows.append({"scope": scope, "metric": "mae",
                      "value": float(err.abs().mean()),
                      "baseline": float(base.abs().mean()), "n_obs": n})
@@ -237,7 +237,7 @@ def score_gameweek(
                 "scope": "p_appear", "metric": "brier",
                 "value": brier_score(p_obs["p_appear"].to_numpy(), played),
                 "baseline": brier_score(p_obs["consensus_p"].to_numpy(), played),
-                "n_obs": int(len(p_obs)),
+                "n_obs": len(p_obs),
             })
 
         if not rows:
