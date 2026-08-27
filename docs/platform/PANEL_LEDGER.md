@@ -4,18 +4,24 @@ Prompt: `docs/platform/CREATOR_ELITE_PROMPT.md`
 
 | Stage | Status | Commit | Notes for a fresh session |
 |---|---|---|---|
-| 0 repairs | IN PROGRESS | | Started 2026-08-27. Audited state re-verified before starting (see below). MCP fold done first because B4 lives in files that move. |
+| 0 repairs | IN PROGRESS | c789453, 63c9c0b, 5433f0b, 43c2837 | All 12 defects repaired and the full unit suite is green — but adversarial pass 1 REFUTED four stated guarantees, so this is NOT done. Fixes for findings 1-7 in flight; finding 8 (cohort hindsight selection) is carried into Stage B as a blocking design item. Re-run the adversarial pass before closing. |
 | A registry + identity | TODO | | |
-| B elite history + panel EO | TODO | | |
+| B elite history + panel EO | TODO | | **BLOCKING DESIGN ITEM inherited from adversarial pass 1 finding 8:** cohort membership must become per-gameweek. Today's `sem_manager_cohort` selects the top-1k from crawls that ran 3-6 days AFTER the GW1 deadline, so EO for GW1 is reported for a cohort chosen because of its GW1 result. Stage D's proxy and differential tests are invalid until this is fixed. The per-gw rank is already in `dim_manager.source`. |
 | C corpus + ideas + search | TODO | | |
-| D backtest | TODO | | |
+| D backtest | TODO | | Do not start before Stage B's cohort fix: tests 3 and 4 would measure a survivorship-selected cohort. |
 | E chat reach | TODO | | |
 | F two tabs | TODO | | |
 | G verdict | TODO | | |
 
 ## NEEDS OWNER (anything blocked on a human decision)
 
-_(nothing yet)_
+**The `elite` cohort contains 49 of the owner's own mini-league opponents.**
+Live composition of the 311-manager elite cohort: 250 `elite_list`, **49
+`mini_league`**, 12 `winner`, 8 `elite_named`. So ~16% of the "elite" EO
+denominator is people the owner happens to play against, not a selected elite.
+Nothing discloses this. Options: exclude `mini_league` from the elite cohort,
+give it its own cohort, or keep and disclose. This is a judgement about what
+"elite" should mean here, so it is the owner's call rather than mine.
 
 ## Decisions taken (append-only)
 
@@ -175,5 +181,89 @@ across `fpl_edge/theses/`, `cli/main.py` and others. Zero are in
 session does not mistake it for damage from this build. NOT fixed here.
 
 ## Adversarial passes: what was attacked, what survived (append-only)
+
+### 2026-08-27 — Pass 1, fabrication + leakage lens. STAGE 0 REFUTED.
+
+Six findings, four of them refuting stated guarantees. **Stage 0 was NOT
+marked DONE on the strength of the repairs; this pass sent it back.** Per D.2
+that is the protocol working, not a setback.
+
+**SURVIVED the attack (verified safe, with the attack described):**
+- *Post-deadline facts are invisible.* Five purpose-built probes: a
+  `fact_manager_pick`, a `fact_manager_transfer` and a `dim_manager` row each
+  stamped deadline+6h were invisible to `sem_manager_picks` /
+  `sem_manager_transfers` / `sem_manager_cohort` at the deadline and visible
+  only at the later instant. `resolve_cohorts()` agreed with the SQL at both
+  instants. Entries holding picks with no manager row land in `unclassified`
+  rather than being folded into `elite`.
+- *Cohort assignment is deterministic.* `sem_manager_cohort(now())` returns
+  exactly one row per tracked entry (1,978 elite + 3,581 top1k = 5,559 =
+  `count(distinct entry_id)`). The tie-break is an aggregate over a set with
+  no ORDER BY / DISTINCT ON / window, re-run byte-identical at threads=1, 2
+  and 8, and is monotone in `as_of` so it cannot flip-flop.
+- *The ownership panel's denominator.* It reads only `sem_elite_ownership`,
+  and its formatters return `None` rather than 0.0 for a missing value, so it
+  cannot report a percentage of a denominator it did not use.
+- *A suspected fabricated rank was investigated and cleared.* 597 entries
+  share `source='top1k:2026-27:gw1:rank2147'`; within one `as_of` those 597
+  have exactly one distinct `overall_rank` and one distinct `total_points` —
+  genuine FPL tied ranking after one gameweek, copied verbatim.
+
+**REFUTED — being fixed before Stage 0 can close:**
+1. **(severe, fabrication) 20 invented creator identities live in three MCP
+   tools.** `fpl_mcp/tools/expert_tools.py` ships an unverified `EXPERTS`
+   map; the engine's own copy at `roster.py:87-96` documents all 20 IDs as
+   stale, and B9 gated them in the crawl — but the toolbelt has no gate.
+   `get_manager_history("Holly Shand")` prints Caleb Stevens's ranks as fact.
+   The single worst violation of the no-fabrication invariant found so far.
+2. **(fabrication) The B4 "degrade honestly" fix was applied to one function
+   and not its sibling in the same file.** `get_expert_teams_summary` still
+   prints `£0.0m` for an unresolved player — verbatim the bug the neighbouring
+   docstring claims to have fixed — and still silently drops unresolvable
+   players from an ownership cross-tab. This is the follow-up already noted in
+   this ledger as "out of scope"; the audit shows out-of-scope was the wrong
+   call.
+3. **(fabrication, minor)** `team_tools.py` defaults a missing multiplier to
+   1 (started). The repo's own standard is the opposite: `observed.py`
+   refuses the squad, commenting "a missing one is a hole in the crawl, not a
+   zero".
+4. **(LEAK) Creator weights are not point-in-time.**
+   `fpl_mcp/tools/content_tools.py:_weights()` takes today's `creator_score`
+   with no `as_of` filter, while the same tools correctly filter the *claims*
+   through `claims_visible_at(moment)`. Claims from the past, weighted by the
+   future, in a payload that echoes `as_of` back and reads as PIT. Currently
+   masked because every weight is 0.0 — it fires the moment one is not.
+5. **(auditability) The settlement rewrite's own argument fails three ways.**
+   `resolved_utc` is restamped on every touched row including unchanged ones,
+   destroying the only pointer to the state that produced a verdict;
+   `dim_player.position` is an undocumented fourth input that selects the
+   benchmark bucket and is re-ingested daily; and `OutcomeWrite.revised` is
+   printed to stdout, never persisted, so two verdicts flipping in opposite
+   directions leaves the append-only aggregate byte-identical. Latent today
+   (no restatements, no reclassifications yet) but real.
+6. **(minor) `string_agg(DISTINCT source, '|')` in `sem_manager_cohort` has no
+   ORDER BY** — 379 of 5,559 rows return a different provenance string at
+   threads=8 vs threads=1. This is the exact trap `warehouse.py:173-175`
+   documents and fixed for `Snapshot.table`, reintroduced in a new macro.
+7. **(minor) A stated fact went stale within 15 minutes.** `views.sql` and
+   `cohorts.py:62` both say "17 of them in the live warehouse"; a crawl that
+   ran before the commit made it 37.
+
+**8. NOT A BUG BUT A METHODOLOGICAL PROBLEM — needs a decision in Stage B.**
+`sem_manager_cohort`'s any-row rule is PIT-clean (monotone, pure function of
+rows at or before `t`) but it *launders a hindsight selection*. Every
+`fact_manager_pick.as_of` is the GW1 deadline; the `top1k` rows in
+`dim_manager` have `as_of` 3–6 days LATER. So `sem_elite_ownership(now())`
+reports "what the top-1k owned in GW1" for a cohort selected **because of
+their GW1 result**. It also contradicts the crawl's own design note at
+`top1k.py:205-207`, which says cohort membership is itself point-in-time
+("this week's top-1k is not last week's") — the macro discards the per-gw rank
+in the source string and makes membership a cumulative union.
+**This matters most for Stage D**, whose "panel EO as a top-1k proxy" and
+"elite differential" tests would be measuring a survivorship-selected cohort.
+Carried into Stage B as a blocking design item: cohort membership should be
+per-gameweek, and the rank is already in the source string to do it with.
+
+
 
 _(pending — stage 0 not yet complete)_

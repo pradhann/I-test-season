@@ -61,10 +61,16 @@ function templateColumns(res, maxEo) {
       render: r => el("span", null, pct(r.own_pct)) },
   ];
   if ((res.rows || []).some(r => r.elite_own_pct != null)) {
+    // The payload keys are historically named elite_*, but the panel reports
+    // whichever cohort `res.cohort` names -- it can be top1k. Hardcoding
+    // "elite" here printed top1k numbers under the word elite, which is the
+    // same mislabelling the panel itself was just fixed for. Take the label
+    // from the data.
+    const co = res.cohort || "cohort";
     cols.push(
-      { key: "elite_own_pct", label: "elite own %", num: true,
+      { key: "elite_own_pct", label: `${co} own %`, num: true,
         render: r => el("span", null, pct(r.elite_own_pct)) },
-      { key: "elite_eo_pct", label: "elite EO %", num: true,
+      { key: "elite_eo_pct", label: `${co} EO %`, num: true,
         render: r => el("span", null, pct(r.elite_eo_pct)) },
     );
   }
