@@ -478,3 +478,125 @@ CREATE OR REPLACE MACRO sem_elite_ownership(p_as_of) AS TABLE (
     LEFT JOIN dp ON dp.season = b.season AND dp.element_id = b.element_id
     GROUP BY b.season, b.gw, b.cohort, dp.code, n.n_managers
 );
+
+-- ---------------------------------------------------------------------------
+-- sem_manager_segment(p_as_of): one row per (entry, segment) -- the crawl sets
+-- an entry belongs to, NOT a partition.
+--
+-- Deliberately the opposite shape to sem_manager_cohort above. That macro
+-- answers "which single denominator does this entry belong in", and it has to
+-- pick one because a manager counted in two cohorts inflates both. This macro
+-- answers a different question -- "which curated sets did we find this entry
+-- through" -- and there an entry legitimately belongs to several: a past
+-- overall winner who is also on the curated elite list is one manager who is
+-- genuinely in both sets. The consumer unions the sets it wants and counts
+-- DISTINCT entries, so the overlap costs nothing and hiding it would cost the
+-- truth. The two macros are consistent: sem_manager_cohort's 'top1k' entries
+-- are exactly those with a 'top1k' segment here.
+--
+-- The segment is the crawl's free-text dim_manager.source reduced to its
+-- prefix, the same derivation sem_manager_cohort uses and with the same
+-- fragility: it exists so that the day ingest writes a real segment column,
+-- ONE expression changes. A source matching no known prefix becomes its own
+-- segment under its raw text rather than being bucketed into an "other" that
+-- would make an unrecognised crawl invisible.
+--
+-- NOTHING here is a judgement about whether a segment is TRUSTWORTHY. The
+-- snowball pool is league-mates of stale seed IDs (docs/platform/
+-- PANEL_LEDGER.md, 2026-08-27) and must not be read as an elite cohort; that
+-- is a provenance fact this macro cannot know and the consumer must carry.
+-- Membership is "ANY source row at or before p_as_of", inclusive, matching
+-- sem_manager_cohort so the two never disagree about a boundary instant.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE MACRO sem_manager_segment(p_as_of) AS TABLE (
+    SELECT entry_id,
+           CASE WHEN source LIKE 'top1k%'       THEN 'top1k'
+                WHEN source LIKE 'winner%'      THEN 'winner'
+                WHEN source LIKE 'mini_league%' THEN 'mini_league'
+                WHEN source LIKE 'snowball%'    THEN 'snowball'
+                WHEN source LIKE 'expert%'      THEN 'expert'
+                WHEN source LIKE 'elite_list%'  THEN 'elite_list'
+                WHEN source LIKE 'elite_named%' THEN 'elite_named'
+                ELSE source END AS segment,
+           count(DISTINCT source) AS n_sources,
+           min(as_of) AS first_seen
+    FROM dim_manager WHERE as_of <= p_as_of
+    GROUP BY entry_id, segment
+);
+
+-- ---------------------------------------------------------------------------
+-- sem_segment_ownership(p_as_of, p_segments): own%/captain%/EO% over the UNION
+-- of the named segments, one row per (season, gw, code).
+--
+-- Same three formulas as sem_elite_ownership -- this is the identical
+-- definition of effective ownership over a caller-chosen population, not a
+-- second definition:
+--
+--     ownership = Σ over m holding p of 1        / n_managers
+--     eo        = Σ over m of multiplier[m, p]   / n_managers
+--     captaincy = Σ over m captaining p of 1     / n_managers
+--
+-- THE DENOMINATOR IS count(DISTINCT entry_id), NEVER A SUM OF SET SIZES. The
+-- segments overlap by construction (sem_manager_segment above), so adding
+-- their sizes double-counts every entry that two crawls found; on the live
+-- warehouse the curated union elite_list+winner+elite_named is 270 by set
+-- sizes and 262 distinct managers. Only entries WITH a stored squad for that
+-- (season, gw) reach the denominator, because n_managers is counted from the
+-- picks themselves -- a segment member the crawl never got a squad for cannot
+-- be in a share of squads.
+--
+-- Second parameter. Every other macro here takes only p_as_of; this one takes
+-- the segment list because the population IS the question being asked, and
+-- baking one selection in would make the macro answer a different question
+-- than the caller's. Pass a VARCHAR list: sem_segment_ownership(now(),
+-- ['elite_list', 'winner']). An unknown segment name is not an error -- it
+-- simply selects nobody, and the caller is expected to report which of its
+-- requested names matched (the panel does).
+--
+-- coalesce(multiplier, 0) and the NULL-code group behave exactly as in
+-- sem_elite_ownership, for the reasons documented there: a hole in the crawl
+-- is a visible zero, not a NULL that propagates silently, and a pick whose
+-- element resolves to no code is counted under a NULL code rather than
+-- dropped.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE MACRO sem_segment_ownership(p_as_of, p_segments) AS TABLE (
+    WITH sel AS (
+        SELECT DISTINCT entry_id FROM sem_manager_segment(p_as_of)
+        WHERE list_contains(p_segments, segment)
+    ), mp AS (
+        SELECT * FROM (
+            SELECT *, row_number() OVER (
+                PARTITION BY entry_id, season, gw, element_id
+                ORDER BY as_of DESC) rn
+            FROM fact_manager_pick WHERE as_of <= p_as_of) WHERE rn = 1
+    ), base AS (
+        SELECT mp.* FROM mp JOIN sel ON sel.entry_id = mp.entry_id
+    ), n AS (
+        SELECT season, gw, count(DISTINCT entry_id) AS n_managers
+        FROM base GROUP BY season, gw
+    ), dp AS (
+        SELECT * FROM (
+            SELECT *, row_number() OVER (
+                PARTITION BY season, element_id ORDER BY as_of DESC) rn
+            FROM dim_player WHERE as_of <= p_as_of) WHERE rn = 1
+    )
+    SELECT b.season, b.gw, dp.code,
+           any_value(dp.web_name) AS web_name,
+           n.n_managers,
+           count(DISTINCT b.entry_id) AS owned_by,
+           count(DISTINCT CASE WHEN coalesce(b.multiplier, 0) >= 1
+                               THEN b.entry_id END) AS started_by,
+           count(DISTINCT CASE WHEN coalesce(b.multiplier, 0) = 0
+                               THEN b.entry_id END) AS benched_by,
+           count(DISTINCT CASE WHEN b.is_captain THEN b.entry_id END)
+               AS captained_by,
+           sum(coalesce(b.multiplier, 0)) AS eo_units,
+           100.0 * count(DISTINCT b.entry_id) / n.n_managers AS own_pct,
+           100.0 * count(DISTINCT CASE WHEN b.is_captain THEN b.entry_id END)
+                 / n.n_managers AS captain_pct,
+           100.0 * sum(coalesce(b.multiplier, 0)) / n.n_managers AS eo_pct
+    FROM base b
+    JOIN n ON n.season = b.season AND n.gw = b.gw
+    LEFT JOIN dp ON dp.season = b.season AND dp.element_id = b.element_id
+    GROUP BY b.season, b.gw, dp.code, n.n_managers
+);

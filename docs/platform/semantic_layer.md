@@ -11,12 +11,17 @@ database file**, so every `read_copy()` carries them; the platform's guarded
 
 ## The contract
 
-The **table macros**, each taking one parameter `p_as_of TIMESTAMPTZ`:
+The **table macros**, each taking `p_as_of TIMESTAMPTZ` as its first (and, with one exception, only) parameter:
 
 ```sql
 SELECT * FROM sem_projections(TIMESTAMPTZ '2026-08-28 17:30:00+00')
 WHERE season = '2026-27' AND gw = 3 AND web_name = 'Haaland';
 ```
+
+The one exception is `sem_segment_ownership(t, segments)`, which takes a
+second parameter because the population it measures is the caller's question,
+not a fixed one. Every macro still takes `p_as_of` first and still answers at
+that instant.
 
 **Point in time is the whole point.** Each macro answers with the newest row
 per entity observed **at or before** `p_as_of` — the same semantics as
@@ -43,6 +48,8 @@ are pinned by `test_the_column_contract_only_ever_grows`.
 | `sem_manager_transfers(t)` | (season, gw, entry, in, out) | every tracked manager's transfers with player names both directions, prices in £m, and the private click-time (`time_utc`) beside the public-at instant |
 | `sem_manager_cohort(t)` | (entry_id) | **exactly one cohort per tracked entry**, with the sources that put it there. The single definition of cohort membership; see "Cohorts" below |
 | `sem_elite_ownership(t)` | (season, gw, cohort, code) | own%/captain%/EO% per player **per cohort**, plus the counts behind them (`owned_by`, `started_by`, `benched_by`, `captained_by`, `eo_units`). Cohort comes from `sem_manager_cohort`, plus `unclassified` for an entry holding picks with no manager row. Percentages are of managers in that cohort with a stored squad; a pick whose element resolves to no code groups under a NULL `code` row rather than vanishing |
+| `sem_manager_segment(t)` | (entry_id, segment) | the crawl SETS an entry was found through — `elite_list`, `winner`, `mini_league`, `expert`, `elite_named`, `snowball`, `top1k`, or an unrecognised source under its own raw text. Deliberately **not** a partition: an entry legitimately belongs to several, and a consumer unions the sets it wants and counts DISTINCT entries |
+| `sem_segment_ownership(t, segments)` | (season, gw, code) | the same own%/captain%/EO% definition as `sem_elite_ownership`, over the **union** of the named segments. Takes a second parameter — a VARCHAR list — because the population *is* the question. `n_managers` is `count(DISTINCT entry_id)` with a stored squad, never a sum of set sizes: the segments overlap |
 
 ## Effective ownership: one definition
 
@@ -66,6 +73,18 @@ routinely exceeds 100 for a captained premium.
 Weights are **not implemented yet**: every weight is 1, so `Σ weight[all m]`
 *is* `n_managers`. A weighted variant will be a NEW macro
 (`sem_cohort_ownership_weighted`), never a silent change to this one.
+
+`sem_segment_ownership` is the same three formulas over a caller-chosen
+population, so it is the same definition and not a fourth one. The
+`ownership_eo` panel carries an inline copy of that query for one reason:
+`Warehouse.read_copy()` opens the file **read-only**, so views.sql is not
+reapplied and a warehouse file written before the macro shipped does not
+contain it. A panel that hard-depended on the macro would go dark on exactly
+the machine that had not re-ingested yet. The macro stays the canonical
+definition for chat, `/api/query` and MCP, and
+`test_the_panels_segment_union_equals_the_semantic_layer_macro` in
+`tests/unit/test_ownership_panel.py` pins the two column by column — verified
+two-sided: breaking either side alone fails it.
 
 The three call sites — `store/views.sql`, `fpl_edge/models/field/cohorts.py`
 and the `ownership_eo` panel — are pinned equal by
@@ -102,6 +121,34 @@ costs it only sample size, which is visible in `n_managers`. Membership uses
 Cohort is still *derived* from the free-text `dim_manager.source`. That is
 fragile, and `sem_manager_cohort` exists so that the day ingest writes a real
 `dim_manager.cohort` column, exactly one expression changes.
+
+## Segments: the other shape of the same question
+
+`sem_manager_cohort` answers "which single denominator does this entry belong
+in" and *must* pick one, because a manager counted in two cohorts inflates
+both. `sem_manager_segment(t)` answers a different question — "which curated
+sets did we find this entry through" — and there an entry legitimately belongs
+to several. The two never disagree: `sem_manager_cohort`'s `top1k` entries are
+exactly the entries with a `top1k` segment.
+
+Segments exist so a reader can choose the field he is measured against rather
+than accept one aggregate. On the live warehouse the sets with a stored GW1
+squad are `top1k` 2548, `elite_list` 250, `mini_league` 49, `snowball` 28,
+`winner` 12, `elite_named` 8 and `expert` 0 (20 managers in the pool, none
+with a crawled squad).
+
+**Overlap is the whole point of the DISTINCT.** `elite_list` + `winner` +
+`elite_named` is 270 set memberships over **262 distinct managers**. Adding set
+sizes would produce a denominator nobody is in, which is the same
+double-counting defect the cohort precedence rule exists to prevent.
+
+**Trustworthiness is not a property this layer can know.** The `snowball`
+segment is league-mates of twenty stale seed IDs (`docs/platform/
+PANEL_LEDGER.md`, 2026-08-27: not salvageable, and must not be treated as an
+elite cohort in any skill, copying or EO analysis). The macro serves it like
+any other segment; the *consumer* must carry the flag and the reason. The
+`ownership_eo` panel does, in `segments[].trusted` /
+`segments[].untrusted_reason`, and keeps it out of every default.
 
 **On the compatibility promise.** This corrected `sem_elite_ownership` in place
 rather than forking a new name. The column set only grew and no column's
