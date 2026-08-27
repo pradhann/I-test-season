@@ -30,6 +30,16 @@ The raw counts are for reading; the weighted numbers are for deciding.
 invisible to a GW12 deadline query, by construction. Pass the deadline you are
 actually deciding at, not "now", if you want to know what was knowable then.
 
+That applies to the *weights* as much as to the claims. ``creator_score`` is
+append-only and keyed by ``as_of`` precisely so the weight in force at a past
+instant is recoverable, and :func:`_weights` selects the newest row per
+(creator, scope) at or before the moment being asked about. Weighting a
+correctly-filtered set of past claims by today's track record would be a leak
+with no visible symptom: the payload echoes ``as_of`` back and reads as
+point-in-time, so the only tell would be a backtest that beat live. Every
+aggregate in this module is filtered at one single moment, claims and weights
+together.
+
 The engine lives in a separate repository. This module locates it at import time
 and degrades gracefully if it is absent, exactly as ``edge_tools`` does: a
 missing engine returns an explanatory string from each tool rather than raising
@@ -138,13 +148,35 @@ def _open_store():  # type: ignore[no-untyped-def]
     return warehouse, store
 
 
-def _weights(warehouse) -> Dict[str, float]:  # type: ignore[no-untyped-def]
-    scores = warehouse.sql(
+def _scores_as_of(warehouse, moment: dt.datetime):  # type: ignore[no-untyped-def]
+    """The ``creator_score`` rows in force at ``moment``: newest per (creator, scope).
+
+    ``creator_score`` is append-only with a (creator, scope, as_of) key, so the
+    track record as it stood at any past instant is still in the table. This is
+    the only read of it that respects that: without the ``as_of <= ?`` filter,
+    the window function picks today's row and a past decision gets weighted by
+    knowledge it did not have.
+
+    ``<=`` rather than ``<``, unlike ``published_at``. A score row is not an
+    utterance that a manager had to read and act on; it is the state of a
+    derived table stamped with the instant it was computed, so the row stamped
+    exactly at ``moment`` *is* the state at ``moment``.
+
+    A creator with no score row at or before ``moment`` is simply absent, which
+    :func:`weight_lookup` reads as weight 0.0 -- correct, because a creator with
+    no measured record has earned nothing.
+    """
+    return warehouse.sql(
         "SELECT * EXCLUDE (rn) FROM (SELECT *, ROW_NUMBER() OVER "
-        "(PARTITION BY creator, scope ORDER BY as_of DESC) rn FROM creator_score) "
-        "WHERE rn = 1"
+        "(PARTITION BY creator, scope ORDER BY as_of DESC) rn FROM creator_score "
+        "WHERE as_of <= ?) WHERE rn = 1",
+        [moment],
     )
-    return _weight_lookup(scores)
+
+
+def _weights(warehouse, moment: dt.datetime) -> Dict[str, float]:  # type: ignore[no-untyped-def]
+    """creator -> weight in force at ``moment``. Pass the SAME moment the claims are."""
+    return _weight_lookup(_scores_as_of(warehouse, moment))
 
 
 _WEIGHTING_NOTE = (
@@ -204,7 +236,7 @@ def fpl_creator_consensus(
         if action:
             claims = claims[claims["action"] == action]
         deduped, dropped = _deduplicate(claims)
-        weights = _weights(warehouse)
+        weights = _weights(warehouse, moment)
         table = _consensus_map(claims, weights, season=season, gameweek=gameweek)
 
         rows: List[Dict[str, Any]] = []
@@ -242,7 +274,9 @@ def fpl_creator_consensus(
 
 
 @mcp.tool()
-def fpl_creator_track_record(min_scored: int = 1) -> Dict[str, Any]:
+def fpl_creator_track_record(
+    min_scored: int = 1, as_of: Optional[str] = None
+) -> Dict[str, Any]:
     """Each creator's measured hit rate on their own past claims.
 
     A claim becomes checkable once its gameweek finalises: did the recommended
@@ -257,6 +291,10 @@ def fpl_creator_track_record(min_scored: int = 1) -> Dict[str, Any]:
 
     Args:
         min_scored: Hide creators with fewer scored claims than this.
+        as_of: ISO-8601 instant. Returns the track record as it stood then,
+            from the ``creator_score`` row in force at that moment. Defaults to
+            now. Pass the deadline if you are reconstructing a past decision:
+            weights measured after it did not exist when it was made.
 
     Returns:
         ``creators``, sorted by earned weight then sample size, each with
@@ -267,24 +305,26 @@ def fpl_creator_track_record(min_scored: int = 1) -> Dict[str, Any]:
         than 130/200 and a far worse reason to act; the lower bound collapses
         toward zero as the sample shrinks, which is why a creator at 100% over
         one claim earns nothing and one at 59% over 138 earns a little.
+
+        The ``point_in_time`` block names, field by field, which parts of the
+        payload honour ``as_of``. ``rejected_claims`` does not and cannot: it
+        reads ``claim_outcome``, which is revised in place, so it is always
+        current state. Nothing here silently mixes the two -- a payload that
+        looks uniformly point-in-time while half of it is not is the exact
+        defect this tool's ``as_of`` was added to close.
     """
     problem = _unavailable()
     if problem:
         return {"error": problem}
 
+    moment = _parse_as_of(as_of)
     warehouse, _store = _open_store()
     try:
-        scores = warehouse.sql(
-            "SELECT * EXCLUDE (rn) FROM (SELECT *, ROW_NUMBER() OVER "
-            "(PARTITION BY creator, scope ORDER BY as_of DESC) rn FROM creator_score) "
-            "WHERE rn = 1 AND scope = 'all' AND claims_scored >= ? "
-            "ORDER BY weight DESC, claims_scored DESC",
-            [int(min_scored)],
-        )
-        totals = warehouse.sql(
-            "SELECT count(*) AS scored, sum(CASE WHEN hit THEN 1 ELSE 0 END) AS hits "
-            "FROM claim_outcome WHERE hit IS NOT NULL"
-        )
+        overall = _scores_as_of(warehouse, moment)
+        overall = overall[overall["scope"] == "all"]
+        scores = overall[
+            overall["claims_scored"] >= int(min_scored)
+        ].sort_values(["weight", "claims_scored"], ascending=False)
         rejected = warehouse.sql(
             "SELECT unscoreable, count(*) AS n FROM claim_outcome "
             "WHERE unscoreable IS NOT NULL GROUP BY 1 ORDER BY 2 DESC"
@@ -304,9 +344,25 @@ def fpl_creator_track_record(min_scored: int = 1) -> Dict[str, Any]:
                 "weight": round(float(row["weight"]), 4),
             })
 
-        scored = int(totals.iloc[0]["scored"] or 0)
-        hits = int(totals.iloc[0]["hits"] or 0)
+        # Pooled from the same point-in-time rows the per-creator numbers came
+        # from, not from a live count over claim_outcome: that table is revised
+        # in place and cannot answer "as of when", so pairing it with an as_of
+        # payload would put current-state totals under a past timestamp.
+        # Over EVERY creator scored at that moment, not just the ones
+        # min_scored left visible, so the denominator does not move with a
+        # display filter.
+        scored = int(overall["claims_scored"].sum()) if not overall.empty else 0
+        hits = int(overall["hits"].sum()) if not overall.empty else 0
         return {
+            "as_of": moment.isoformat(),
+            "point_in_time": {
+                "creators": "as of as_of (creator_score is append-only, keyed by as_of)",
+                "aggregate": "as of as_of (pooled from the same rows)",
+                "rejected_claims": (
+                    "current state; claim_outcome is revised in place, so its "
+                    "reason counts cannot be reconstructed at a past instant"
+                ),
+            },
             "creators": creators,
             "aggregate": {
                 "scored_claims": scored,
@@ -370,7 +426,7 @@ def fpl_player_claims(
     try:
         claims = store.claims_visible_at(moment, season=season)
         claims = claims[claims["player_code"] == int(player_code)]
-        weights = _weights(warehouse)
+        weights = _weights(warehouse, moment)
         claims = claims.sort_values("published_at", ascending=False).head(int(limit))
 
         return {

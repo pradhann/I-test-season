@@ -53,6 +53,15 @@ _CLAIM_COLS = (
 #: the runtime state of the last probe against it.
 _SOURCE_DEF_COLS = ("creator", "kind", "url", "policy", "note")
 
+#: The columns of ``claim_outcome`` that ARE the verdict. ``resolved_utc`` is
+#: not one of them: it is the pointer to when the verdict was reached, and a
+#: run that changes nothing else must not move it. Everything here is compared
+#: with IS DISTINCT FROM, because a NULL ``hit`` becoming a real one is the
+#: single most important revision this package can record.
+_VERDICT_COLS = (
+    "player_points", "benchmark", "benchmark_points", "hit", "unscoreable",
+)
+
 
 class SourceWrite(NamedTuple):
     """Registry rows created versus definitions brought up to date."""
@@ -72,6 +81,17 @@ class OutcomeWrite(NamedTuple):
     claims stopped being unscoreable, or changed verdict, because the world
     settled since the last run. A rescore that revises nothing and a rescore
     that never ran look identical without this count.
+
+    "Moved" means any of the verdict columns in :data:`_VERDICT_COLS` differs,
+    not just ``hit``. A row whose ``benchmark_points`` shifted while ``hit``
+    happened to stay True *did* change, and calling it unchanged would leave it
+    holding a ``resolved_utc`` from a run that computed a different number.
+
+    This count is a report, not a record: it is printed and discarded. The
+    durable trace is ``claim_outcome_revision``, written by
+    :meth:`ContentStore.insert_outcomes`. Two verdicts flipping in opposite
+    directions between runs leave every aggregate byte-identical, so a count
+    that lives only in stdout cannot be checked afterwards by anyone.
     """
 
     inserted: int
@@ -103,6 +123,41 @@ class ContentStore:
                 version VARCHAR PRIMARY KEY,
                 applied_utc TIMESTAMPTZ NOT NULL,
                 sha256 VARCHAR NOT NULL
+            )
+            """
+        )
+        # Append-only log of superseded settlements. Inline here rather than in
+        # a migrations/*.sql file for the same reason schema_migration is: it
+        # is machinery this class cannot function without, so it must exist
+        # before the migration runner has decided anything.
+        #
+        # claim_outcome holds the CURRENT verdict and is rewritten in place. On
+        # its own that makes a revision undetectable after the fact: two claims
+        # flipping in opposite directions between runs leave the append-only
+        # creator_score aggregate byte-identical, and the only report of the
+        # flips is a number printed to stdout by a process that has exited. One
+        # row per superseded verdict, keyed by the resolved_utc it carried,
+        # makes the sequence recoverable: the prior verdicts are here and the
+        # current one is in claim_outcome.
+        self.wh.sql(
+            """
+            CREATE TABLE IF NOT EXISTS claim_outcome_revision (
+                claim_id            VARCHAR NOT NULL,
+                -- The resolved_utc the superseded row carried: which run
+                -- produced the verdict being replaced.
+                prior_resolved_utc  TIMESTAMPTZ NOT NULL,
+                -- The resolved_utc of the run that replaced it.
+                superseded_utc      TIMESTAMPTZ NOT NULL,
+                prior_hit           BOOLEAN,
+                prior_unscoreable   VARCHAR,
+                prior_player_points DOUBLE,
+                prior_benchmark     VARCHAR,
+                prior_benchmark_points DOUBLE,
+                -- Denormalised so a flip is visible without a join back to a
+                -- claim_outcome row that may itself have been superseded since.
+                new_hit             BOOLEAN,
+                new_unscoreable     VARCHAR,
+                PRIMARY KEY (claim_id, prior_resolved_utc)
             )
             """
         )
@@ -241,23 +296,57 @@ class ContentStore:
         for claims it never looked at, which is a worse failure than the one
         being fixed.
 
-        On rewriting history: ``resolved_utc`` is restamped on every row this
-        run touches, so a row always names the run that produced the verdict
-        you are reading, rather than a stale timestamp attached to a fresher
-        answer. That does mean claim_outcome holds the current verdict and not
-        a log of past ones -- which is honest here only because an outcome is
-        *derived*, not observed. It is a pure function of content_claim (immutable),
-        the gameweek calendar, and fact_player_fixture (append-only and keyed
-        by as_of). Every input to a superseded verdict is still in the
-        warehouse, so any past settlement can be recomputed; nothing that was
-        actually witnessed is being overwritten. If outcomes ever stop being
-        reproducible from those inputs, this needs to become an append-only
-        table with a (claim_id, resolved_utc) key instead.
+        On rewriting history. claim_outcome holds the current verdict, not a log
+        of past ones. An earlier version of this docstring argued that was
+        harmless because an outcome is *derived* rather than observed -- a pure
+        function of content_claim (immutable), the gameweek calendar and
+        fact_player_fixture (append-only, PIT-keyed) -- so every input to a
+        superseded verdict was still in the warehouse and any past settlement
+        could be recomputed. That argument was wrong in three ways, and this
+        method now answers each of them:
+
+        1. It restamped ``resolved_utc`` on every row the run touched, including
+           rows whose verdict had not moved. That column was the only pointer
+           back to the state that produced the verdict, and restamping it
+           destroyed the pointer in the same write that superseded the row. A
+           row whose verdict is unchanged now KEEPS its original
+           ``resolved_utc``: it still names the run that reached that verdict,
+           which is the whole job of the column. Only a row that actually
+           changed is restamped, and only then because the new stamp is true.
+        2. The list of inputs was incomplete. ``dim_player.position`` is a
+           fourth input and it is not append-only: the benchmark is the
+           positional median (see
+           :meth:`fpl_edge.ingest.content.scoring.ResultIndex.benchmark`), so position
+           selects which bucket a claim is judged against. dim_player is
+           re-ingested daily and FPL reclassifies players mid-season, so a
+           reclassification silently moves the benchmark and can flip a verdict
+           with no other input having changed. ``ResultIndex`` now resolves
+           position point-in-time, at the deadline of the gameweek being
+           scored, when it is given the calendar to do so -- which restores the
+           "recomputable from stored inputs" property rather than merely
+           documenting its absence.
+        3. ``OutcomeWrite.revised`` was printed and thrown away. Two verdicts
+           flipping in opposite directions leave the append-only creator_score
+           aggregate byte-identical, so nothing in the warehouse recorded that
+           anything moved. Every superseded verdict is now appended to
+           ``claim_outcome_revision`` before it is overwritten, inside the same
+           transaction, so the flip is still there to be found after the run
+           that caused it has exited.
+
+        What is deliberately NOT done: claim_outcome is not turned into an
+        append-only (claim_id, resolved_utc) table. The current verdict is what
+        every reader wants and a two-row-per-claim table would make the
+        sanctioned read a window function that some caller eventually gets
+        wrong. The revision log carries the history instead, and it is written
+        on the same path, in the same transaction, so it cannot drift.
         """
         if frame.empty:
             return OutcomeWrite(0, 0, 0)
         frame = frame.drop_duplicates(subset=["claim_id"])
         cols = ", ".join(frame.columns)
+        differs = " OR ".join(
+            f"t.{c} IS DISTINCT FROM i.{c}" for c in _VERDICT_COLS
+        )
         self.wh._con.register("_incoming_outcomes", frame)
         try:
             matched = int(self.wh.sql(
@@ -265,20 +354,47 @@ class ContentStore:
                 "JOIN _incoming_outcomes i USING (claim_id)"
             ).iloc[0]["c"])
             revised = int(self.wh.sql(
-                "SELECT count(*) c FROM claim_outcome t "
-                "JOIN _incoming_outcomes i USING (claim_id) "
-                "WHERE t.hit IS DISTINCT FROM i.hit "
-                "   OR t.unscoreable IS DISTINCT FROM i.unscoreable"
+                f"SELECT count(*) c FROM claim_outcome t "
+                f"JOIN _incoming_outcomes i USING (claim_id) WHERE {differs}"
             ).iloc[0]["c"])
             self.wh.sql("BEGIN TRANSACTION")
             try:
+                # Log first: after the DELETE the prior verdict is gone.
+                self.wh.sql(
+                    f"INSERT INTO claim_outcome_revision "
+                    f"(claim_id, prior_resolved_utc, superseded_utc, prior_hit, "
+                    f" prior_unscoreable, prior_player_points, prior_benchmark, "
+                    f" prior_benchmark_points, new_hit, new_unscoreable) "
+                    f"SELECT t.claim_id, t.resolved_utc, i.resolved_utc, t.hit, "
+                    f"       t.unscoreable, t.player_points, t.benchmark, "
+                    f"       t.benchmark_points, i.hit, i.unscoreable "
+                    f"FROM claim_outcome t JOIN _incoming_outcomes i USING (claim_id) "
+                    f"WHERE ({differs}) AND NOT EXISTS ("
+                    f"  SELECT 1 FROM claim_outcome_revision r "
+                    f"  WHERE r.claim_id = t.claim_id "
+                    f"    AND r.prior_resolved_utc = t.resolved_utc)"
+                )
+                # An unchanged row keeps the resolved_utc it already had. The
+                # incoming frame stamps every row with this run's clock, so the
+                # old timestamp has to be carried across before the delete
+                # below destroys the row holding it. Materialised because the
+                # join partner is about to be deleted.
+                self.wh.sql(
+                    f"CREATE OR REPLACE TEMP TABLE _outcomes_to_write AS "
+                    f"SELECT i.* REPLACE ("
+                    f"  CASE WHEN t.claim_id IS NOT NULL AND NOT ({differs}) "
+                    f"       THEN t.resolved_utc ELSE i.resolved_utc END "
+                    f"  AS resolved_utc) "
+                    f"FROM _incoming_outcomes i "
+                    f"LEFT JOIN claim_outcome t ON t.claim_id = i.claim_id"
+                )
                 self.wh.sql(
                     "DELETE FROM claim_outcome WHERE claim_id IN "
-                    "(SELECT claim_id FROM _incoming_outcomes)"
+                    "(SELECT claim_id FROM _outcomes_to_write)"
                 )
                 self.wh.sql(
                     f"INSERT INTO claim_outcome ({cols}) "
-                    f"SELECT {cols} FROM _incoming_outcomes"
+                    f"SELECT {cols} FROM _outcomes_to_write"
                 )
                 self.wh.sql("COMMIT")
             except Exception:
@@ -287,6 +403,13 @@ class ContentStore:
                 self.wh.sql("ROLLBACK")
                 raise
         finally:
+            try:
+                self.wh.sql("DROP TABLE IF EXISTS _outcomes_to_write")
+            except Exception:  # noqa: BLE001, S110
+                # Scratch space. Failing to tidy it must not replace the real
+                # exception with a misleading one; CREATE OR REPLACE on the
+                # next call clears it regardless.
+                pass
             self.wh._con.unregister("_incoming_outcomes")
         return OutcomeWrite(
             inserted=len(frame) - matched,
@@ -382,9 +505,26 @@ class ContentStore:
         """
         return self.wh.sql("SELECT * FROM content_claim ORDER BY published_at, claim_id")
 
+    def outcome_revisions(self, claim_id: str | None = None) -> pd.DataFrame:
+        """Superseded settlements, oldest first. Append-only; never rewritten.
+
+        The answer to "did this verdict always say that?". A claim with rows
+        here changed its mind at least once, and the sequence of
+        ``prior_hit`` -> ``new_hit`` shows in which direction. Compensating
+        flips -- one claim True->False while another goes False->True in the
+        same run -- leave every aggregate unchanged and are visible only here.
+        """
+        where = "" if claim_id is None else "WHERE claim_id = ?"
+        params = [] if claim_id is None else [claim_id]
+        return self.wh.sql(
+            f"SELECT * FROM claim_outcome_revision {where} "
+            f"ORDER BY superseded_utc, claim_id",
+            params,
+        )
+
     def counts(self) -> dict[str, int]:
         out: dict[str, int] = {}
         for table in ("content_source", "content_item", "content_claim",
-                      "claim_outcome", "creator_score"):
+                      "claim_outcome", "claim_outcome_revision", "creator_score"):
             out[table] = int(self.wh.sql(f"SELECT count(*) c FROM {table}").iloc[0]["c"])
         return out

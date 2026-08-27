@@ -36,6 +36,12 @@ A claim names a player, an action and a gameweek. Once that gameweek finalises:
   a midfielder is another midfielder who plays, not the median of a pool
   half-full of unused substitutes, which would be about 1 point and would make
   every recommendation look like genius.
+* Which makes ``dim_player.position`` an input to the verdict, on equal footing
+  with the points themselves: it picks the bucket. dim_player is re-ingested
+  and FPL reclassifies players mid-season, so :class:`ResultIndex` resolves
+  position at the *gameweek's deadline* when it is handed the calendar, rather
+  than reading whatever the newest row happens to say. Otherwise a
+  reclassification in March silently changes a verdict about August.
 * Positive actions (buy, hold, captain, triple captain) hit when the player
   beat the benchmark. Negative actions (sell, bench, avoid) hit when the player
   failed to beat it. Scoring both with the same comparison would credit a
@@ -135,15 +141,51 @@ class ScoringStats:
 
 
 class ResultIndex:
-    """Realised gameweek points and positional benchmarks, built once."""
+    """Realised gameweek points and positional benchmarks, built once.
 
-    def __init__(self, results: pd.DataFrame, players: pd.DataFrame) -> None:
-        """``results``: fact_player_fixture. ``players``: dim_player (any season)."""
+    ``dim_player.position`` is a real input to every verdict, not incidental
+    metadata. The benchmark is the *positional* median, so position chooses
+    which bucket a claim is judged against, and a defender reclassified as a
+    midfielder is suddenly measured against a median several points higher.
+    dim_player is re-ingested and FPL does reclassify players mid-season, so
+    reading only the newest row means a reclassification retroactively rewrites
+    a verdict about a gameweek played months earlier -- with nothing else having
+    changed and no trace of why.
+
+    So when the caller supplies ``deadlines``, position is resolved
+    point-in-time: for a claim about (season, gw), the ``dim_player`` row with
+    the greatest ``as_of`` at or before that gameweek's deadline. Both the
+    player's own position and the whole field's, so the median is taken over
+    the buckets as they stood, not as they stand now.
+
+    Without ``deadlines`` -- or without an ``as_of`` column on ``players`` --
+    it falls back to a flat (season, code) lookup. In that mode a player
+    carrying two positions is genuinely ambiguous, and the benchmark is refused
+    rather than resolved by whichever row happened to sort last.
+    """
+
+    def __init__(
+        self,
+        results: pd.DataFrame,
+        players: pd.DataFrame,
+        *,
+        deadlines: dict[tuple[str, int], dt.datetime] | None = None,
+    ) -> None:
+        """``results``: fact_player_fixture. ``players``: dim_player (any season).
+
+        ``deadlines``: (season, gw) -> deadline, from
+        :class:`~fpl_edge.ingest.content.claims.GameweekCalendar`. Supply it,
+        together with a ``players`` frame carrying ``as_of``, to resolve
+        position point-in-time.
+        """
+        self._pos: dict[tuple[str, int], int] = {}
+        self._pos_by_gw: dict[tuple[str, int, int], int] = {}
+        self._ambiguous: set[tuple[str, int]] = set()
+        self._pit_positions = False
         if results.empty:
             self._points = pd.DataFrame(columns=["season", "gw", "code", "points"])
             self._bench: dict[tuple[str, int, int], float] = {}
             self._seasons: set[str] = set()
-            self._pos: dict[tuple[str, int], int] = {}
             return
 
         agg = (
@@ -159,12 +201,28 @@ class ResultIndex:
         }
         self._seasons = set(agg["season"].astype(str))
 
-        pos = players[["season", "code", "position"]].drop_duplicates()
-        self._pos = {
-            (str(r.season), int(r.code)): int(r.position)
-            for r in pos.itertuples(index=False)
-        }
-        merged = agg.merge(pos, on=["season", "code"], how="inner")
+        self._pit_positions = (
+            deadlines is not None and "as_of" in players.columns and not players.empty
+        )
+        if self._pit_positions:
+            merged = self._positions_at_deadlines(agg, players, deadlines or {})
+        else:
+            pos = players[["season", "code", "position"]].drop_duplicates()
+            counts = pos.groupby(["season", "code"])["position"].nunique()
+            self._ambiguous = {
+                (str(s), int(c)) for s, c in counts[counts > 1].index
+            }
+            pos = pos[
+                ~pd.MultiIndex.from_arrays(
+                    [pos["season"].astype(str), pos["code"].astype(int)]
+                ).isin(self._ambiguous)
+            ]
+            self._pos = {
+                (str(r.season), int(r.code)): int(r.position)
+                for r in pos.itertuples(index=False)
+            }
+            merged = agg.merge(pos, on=["season", "code"], how="inner")
+
         # Starters only. `starts` is present from 2022-23 onward in this
         # warehouse; where it is null, fall back to a 60-minute appearance,
         # which is the same population by a different route.
@@ -184,8 +242,61 @@ class ResultIndex:
             (str(s), int(g)) for s, g in agg[["season", "gw"]].drop_duplicates().itertuples(index=False)
         )
         self._season_players = {
-            (str(r.season), int(r.code)) for r in pos.itertuples(index=False)
+            (str(s), int(c))
+            for s, c in players[["season", "code"]]
+            .drop_duplicates()
+            .itertuples(index=False)
         }
+
+    def _positions_at_deadlines(
+        self,
+        agg: pd.DataFrame,
+        players: pd.DataFrame,
+        deadlines: dict[tuple[str, int], dt.datetime],
+    ) -> pd.DataFrame:
+        """Attach each (season, gw, code) the position it held at that deadline.
+
+        A player with no ``dim_player`` row at or before the deadline gets no
+        position and is dropped -- from his own verdict AND from the median he
+        would otherwise have contributed to. That is the honest outcome: he was
+        not in the squad list a manager could see at that deadline, so there is
+        no position to source and none is invented.
+        """
+        cal = pd.DataFrame(
+            [(s, g, d) for (s, g), d in deadlines.items()],
+            columns=["season", "gw", "deadline"],
+        )
+        if cal.empty:
+            return agg.assign(position=pd.Series(dtype="int64")).iloc[0:0]
+        cal["deadline"] = pd.to_datetime(cal["deadline"], utc=True)
+
+        left = agg.merge(cal, on=["season", "gw"], how="inner")
+        if left.empty:
+            return left.assign(position=pd.Series(dtype="int64"))
+        right = players[["season", "code", "position", "as_of"]].copy()
+        right["as_of"] = pd.to_datetime(right["as_of"], utc=True)
+
+        out = pd.merge_asof(
+            left.sort_values("deadline"),
+            right.sort_values("as_of"),
+            left_on="deadline",
+            right_on="as_of",
+            by=["season", "code"],
+            direction="backward",
+        )
+        out = out.dropna(subset=["position"])
+        out["position"] = out["position"].astype(int)
+        self._pos_by_gw = {
+            (str(r.season), int(r.gw), int(r.code)): int(r.position)
+            for r in out.itertuples(index=False)
+        }
+        return out
+
+    def position_at(self, season: str, gw: int, code: int) -> int | None:
+        """The position that selects this claim's benchmark bucket, or None."""
+        if self._pit_positions:
+            return self._pos_by_gw.get((season, gw, code))
+        return self._pos.get((season, code))
 
     def gw_finalised(self, season: str, gw: int) -> bool:
         return (season, gw) in getattr(self, "_played_gws", set())
@@ -202,7 +313,11 @@ class ResultIndex:
         return self._lookup.get((season, gw, code), 0.0)
 
     def benchmark(self, season: str, gw: int, code: int) -> tuple[float | None, str]:
-        position = self._pos.get((season, code))
+        if (season, code) in self._ambiguous:
+            # Two positions on record and no as_of to choose between them.
+            # Picking one would fabricate the comparator the verdict rests on.
+            return None, "position_ambiguous"
+        position = self.position_at(season, gw, code)
         if position is None:
             return None, "no_position"
         value = self._bench.get((season, gw, position))

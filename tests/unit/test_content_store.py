@@ -249,3 +249,201 @@ class TestSourceRegistryUpsert:
         source = Source("s1", "Creator", SourceKind.PODCAST, "https://example.invalid/a")
         assert store.upsert_sources((source,)) == (1, 0)
         assert store.upsert_sources((source,)) == (0, 0)
+
+
+#: A third run, later than RUN_2, over a world that has stopped moving.
+RUN_3 = dt.datetime(2026, 9, 1, 9, 0, tzinfo=UTC)
+
+
+def _flipped_index(hauler: int) -> ResultIndex:
+    """GW1 played, with ``hauler`` the one code that beat the field.
+
+    Same shape as :func:`_finalised_index`, with the 20 points moved onto a
+    different player, so two claims can be made to flip in OPPOSITE directions
+    between two runs -- which leaves every count identical.
+    """
+    results = pd.DataFrame([
+        {"season": SEASON, "gw": 1, "code": code, "fixture_id": 1,
+         "total_points": 20 if code == hauler else 2, "starts": 1, "minutes": 90}
+        for code in (111, 222, 333)
+    ])
+    players = pd.DataFrame([
+        {"season": SEASON, "code": code, "position": 4} for code in (111, 222, 333)
+    ])
+    return ResultIndex(results, players)
+
+
+class TestASupersededVerdictLeavesATrace:
+    """The settlement rewrite's auditability argument, made true.
+
+    Rewriting a verdict in place is only honest if a superseded verdict can
+    still be found afterwards. Three things stopped that being the case:
+
+    * ``resolved_utc`` -- the one pointer back to the state that produced a
+      verdict -- was restamped on every row the run touched, including rows
+      whose verdict had not moved, by the same write that superseded them;
+    * ``OutcomeWrite.revised`` was printed to stdout and never persisted, and
+      two claims flipping in opposite directions leave the append-only
+      ``creator_score`` aggregate byte-identical;
+    * so a run could change the warehouse's mind about the past and leave
+      nothing behind that says it did.
+    """
+
+    def test_an_unchanged_verdict_keeps_the_stamp_of_the_run_that_reached_it(
+        self, store: ContentStore
+    ) -> None:
+        """A rescore that changes nothing must not claim to have decided anything.
+
+        ``resolved_utc`` is the only column that says which run's view of the
+        world produced this verdict. Restamping it on an untouched row destroys
+        that pointer for no gain: the row now names a run that merely confirmed
+        it, and the state that actually decided it is unrecoverable.
+        """
+        claim = _claim("c1")
+        store.insert_claims([claim])
+        frame = _claims_frame([claim])
+
+        settled, _ = score_claims(frame, _finalised_index(), CALENDAR, now=RUN_2)
+        store.insert_outcomes(settled)
+
+        again, _ = score_claims(frame, _finalised_index(), CALENDAR, now=RUN_3)
+        written = store.insert_outcomes(again)
+
+        assert (written.inserted, written.revised, written.unchanged) == (0, 0, 1)
+        row = store.wh.sql("SELECT * FROM claim_outcome").iloc[0]
+        assert pd.Timestamp(row["resolved_utc"]).to_pydatetime().astimezone(UTC) == RUN_2, (
+            "a rescore that reached the same verdict restamped the row, "
+            "destroying the only pointer to the state that produced it"
+        )
+        assert store.outcome_revisions().empty, (
+            "an unchanged verdict was logged as a revision"
+        )
+
+    def test_a_superseded_verdict_is_still_recoverable_afterwards(
+        self, store: ContentStore
+    ) -> None:
+        """Overwrite the verdict, keep the evidence that it was overwritten."""
+        claim = _claim("c1")
+        store.insert_claims([claim])
+        frame = _claims_frame([claim])
+
+        first, _ = score_claims(frame, _empty_index(), CALENDAR, now=RUN_1)
+        store.insert_outcomes(first)
+        second, _ = score_claims(frame, _finalised_index(), CALENDAR, now=RUN_2)
+        store.insert_outcomes(second)
+
+        log = store.outcome_revisions()
+        assert len(log) == 1, (
+            "a verdict was superseded and the warehouse kept no record of it"
+        )
+        entry = log.iloc[0]
+        assert entry["claim_id"] == "c1"
+        assert entry["prior_unscoreable"] == "gameweek_not_played"
+        assert pd.isna(entry["prior_hit"])
+        assert bool(entry["new_hit"]) is True
+        assert pd.Timestamp(
+            entry["prior_resolved_utc"]).to_pydatetime().astimezone(UTC) == RUN_1, (
+            "the log does not say which run's verdict was replaced"
+        )
+        assert pd.Timestamp(
+            entry["superseded_utc"]).to_pydatetime().astimezone(UTC) == RUN_2
+
+    def test_compensating_flips_are_visible(self, store: ContentStore) -> None:
+        """The case that defeats every aggregate.
+
+        Two claims change their minds in opposite directions in one run. The
+        hit count is 1 before and 1 after; the pooled rate, the Wilson bound
+        and the earned weight are all unchanged to the byte. Nothing derived
+        from ``claim_outcome`` can show that the warehouse changed its mind
+        about two settled gameweeks. Only a record of the change can.
+        """
+        claims = [_claim("c1", code=111), _claim("c2", code=222)]
+        store.insert_claims(claims)
+        frame = _claims_frame(claims)
+
+        before, _ = score_claims(frame, _flipped_index(111), CALENDAR, now=RUN_2)
+        store.insert_outcomes(before)
+        hits_before = int(store.wh.sql(
+            "SELECT count(*) c FROM claim_outcome WHERE hit").iloc[0]["c"])
+
+        after, _ = score_claims(frame, _flipped_index(222), CALENDAR, now=RUN_3)
+        written = store.insert_outcomes(after)
+        hits_after = int(store.wh.sql(
+            "SELECT count(*) c FROM claim_outcome WHERE hit").iloc[0]["c"])
+
+        assert hits_before == hits_after == 1, "the fixture does not compensate"
+        assert written.revised == 2
+
+        log = store.outcome_revisions()
+        assert len(log) == 2, (
+            "two verdicts flipped in opposite directions and left the warehouse "
+            "byte-identical everywhere a reader would look"
+        )
+        directions = {
+            r["claim_id"]: (bool(r["prior_hit"]), bool(r["new_hit"]))
+            for _, r in log.iterrows()
+        }
+        assert directions == {"c1": (True, False), "c2": (False, True)}
+
+    def test_a_verdict_that_moves_without_the_hit_flipping_is_a_revision(
+        self, store: ContentStore
+    ) -> None:
+        """``hit`` is not the whole verdict.
+
+        A rescore where the benchmark moved but the claim stayed on the right
+        side of it still computed a different answer from different inputs. Its
+        ``resolved_utc`` must move with it, and it must leave a trace -- a
+        benchmark that drifts under a stable verdict is exactly how a
+        reclassification hides.
+        """
+        claim = _claim("c1")
+        store.insert_claims([claim])
+        frame = _claims_frame([claim])
+
+        first, _ = score_claims(frame, _finalised_index(), CALENDAR, now=RUN_2)
+        store.insert_outcomes(first)
+
+        # Same hit, different benchmark: the field's median moves, the claimed
+        # player still clears it.
+        harder = pd.DataFrame([
+            {"season": SEASON, "gw": 1, "code": 111, "fixture_id": 1,
+             "total_points": 20, "starts": 1, "minutes": 90},
+            {"season": SEASON, "gw": 1, "code": 222, "fixture_id": 1,
+             "total_points": 9, "starts": 1, "minutes": 90},
+            {"season": SEASON, "gw": 1, "code": 333, "fixture_id": 2,
+             "total_points": 9, "starts": 1, "minutes": 90},
+        ])
+        players = pd.DataFrame([
+            {"season": SEASON, "code": code, "position": 4} for code in (111, 222, 333)
+        ])
+        second, _ = score_claims(
+            frame, ResultIndex(harder, players), CALENDAR, now=RUN_3
+        )
+        written = store.insert_outcomes(second)
+
+        assert written.revised == 1, (
+            "a verdict computed from a different benchmark was reported unchanged"
+        )
+        row = store.wh.sql("SELECT * FROM claim_outcome").iloc[0]
+        assert pd.Timestamp(row["resolved_utc"]).to_pydatetime().astimezone(UTC) == RUN_3
+        entry = store.outcome_revisions("c1").iloc[0]
+        assert float(entry["prior_benchmark_points"]) == 2.0
+        assert bool(entry["prior_hit"]) is True and bool(entry["new_hit"]) is True
+
+    def test_the_revision_log_is_append_only(self, store: ContentStore) -> None:
+        """Re-running the same rescore must not duplicate or rewrite history."""
+        claim = _claim("c1")
+        store.insert_claims([claim])
+        frame = _claims_frame([claim])
+
+        first, _ = score_claims(frame, _empty_index(), CALENDAR, now=RUN_1)
+        store.insert_outcomes(first)
+        second, _ = score_claims(frame, _finalised_index(), CALENDAR, now=RUN_2)
+        store.insert_outcomes(second)
+        third, _ = score_claims(frame, _finalised_index(), CALENDAR, now=RUN_3)
+        store.insert_outcomes(third)
+
+        log = store.outcome_revisions()
+        assert len(log) == 1
+        assert log.iloc[0]["prior_unscoreable"] == "gameweek_not_played"
+        assert store.counts()["claim_outcome_revision"] == 1

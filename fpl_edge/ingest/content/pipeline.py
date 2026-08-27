@@ -213,14 +213,20 @@ def cmd_score(args: argparse.Namespace) -> int:
             "(PARTITION BY season, code, fixture_id ORDER BY as_of DESC) rn "
             "FROM fact_player_fixture) WHERE rn = 1"
         )
+        # EVERY dim_player row, not the newest per (season, code). Position
+        # selects the benchmark bucket, so it is an input to the verdict, and
+        # FPL reclassifies players mid-season; ResultIndex needs the history to
+        # read the position a claim's gameweek was actually judged under. The
+        # latest-row query that used to be here made a March reclassification
+        # rewrite an August verdict silently.
         players = warehouse.sql(
-            "SELECT * EXCLUDE (rn) FROM (SELECT *, ROW_NUMBER() OVER "
-            "(PARTITION BY season, code ORDER BY as_of DESC) rn FROM dim_player) WHERE rn = 1"
+            "SELECT season, code, position, as_of FROM dim_player"
         )
         calendar, cal_report = load_calendar(warehouse)
         print(cal_report.render())
 
-        index = ResultIndex(results, players)
+        deadlines = {(s, g): d for s, g, d in calendar._rows}
+        index = ResultIndex(results, players, deadlines=deadlines)
         outcomes, stats = score_claims(claims, index, calendar, now=now)
         written = store.insert_outcomes(outcomes)
 
@@ -231,6 +237,16 @@ def cmd_score(args: argparse.Namespace) -> int:
         print(stats.render())
         print(f"  outcomes: {written.inserted} new, {written.revised} revised, "
               f"{written.unchanged} unchanged")
+        if written.revised:
+            # The count above is a report and dies with this process. The rows
+            # are the record: without them, two verdicts flipping in opposite
+            # directions leave every aggregate identical and nothing to audit.
+            revisions = store.outcome_revisions()
+            this_run = revisions[
+                pd.to_datetime(revisions["superseded_utc"], utc=True) == pd.Timestamp(now)
+            ]
+            print(f"  revisions logged to claim_outcome_revision: {len(this_run)} this "
+                  f"run, {len(revisions)} in total")
         print()
         overall = scores[scores["scope"] == "all"].sort_values(
             ["claims_scored", "wilson_lo95"], ascending=False
@@ -263,10 +279,17 @@ def cmd_consensus(args: argparse.Namespace) -> int:
         store.wh = warehouse
         claims = store.claims_visible_at(as_of, season=args.season, gameweek=args.gw)
         deduped, dropped = deduplicate(claims)
+        # The weights are filtered at the SAME instant as the claims. Taking the
+        # newest creator_score row outright would weight correctly-filtered past
+        # claims by a track record measured after the deadline being asked about
+        # -- point-in-time on the left of the multiplication and hindsight on the
+        # right. creator_score is append-only and keyed by as_of precisely so the
+        # weight in force at a past instant is still recoverable.
         scores = warehouse.sql(
             "SELECT * EXCLUDE (rn) FROM (SELECT *, ROW_NUMBER() OVER "
-            "(PARTITION BY creator, scope ORDER BY as_of DESC) rn FROM creator_score) "
-            "WHERE rn = 1"
+            "(PARTITION BY creator, scope ORDER BY as_of DESC) rn FROM creator_score "
+            "WHERE as_of <= ?) WHERE rn = 1",
+            [as_of],
         )
         weights = weight_lookup(scores)
         print(f"as_of {as_of.isoformat()}: {len(claims)} claims visible, "

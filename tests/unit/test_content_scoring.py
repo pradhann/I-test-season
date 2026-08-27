@@ -283,3 +283,154 @@ class TestConsensus:
         ])
         assert weight_lookup(scores) == {"A": 0.3}
         assert weight_lookup(pd.DataFrame()) == {}
+
+
+class TestPositionIsAnInputToTheVerdict:
+    """``dim_player.position`` picks the benchmark bucket, so it is an input.
+
+    The settlement rewrite argued that overwriting a verdict in place is honest
+    because every input to the superseded one is still in the warehouse:
+    content_claim (immutable), the calendar, and fact_player_fixture
+    (append-only). That list was missing one. The benchmark is the *positional*
+    median, so position selects which median a claim is judged against -- and
+    dim_player is re-ingested, with FPL reclassifying players mid-season.
+
+    A defender reclassified as a midfielder in March is measured, on a rescore,
+    against a midfield median several points higher than the defender median he
+    was judged against in August. Nothing else changed. No input moved. The
+    verdict flips anyway.
+    """
+
+    #: Defenders start and score 2, 3, 4. Midfielders start and score 8, 9, 10.
+    #: The gap between the two medians is what a reclassification moves a claim
+    #: across.
+    FIELD = pd.DataFrame(
+        [
+            {"season": SEASON, "gw": 1, "code": code, "fixture_id": 1,
+             "total_points": points, "starts": 1, "minutes": 90}
+            for code, points in
+            [(10, 2), (11, 3), (12, 4), (20, 8), (21, 9), (22, 10)]
+        ]
+        # The claimed player: 6 points. Comfortably above the defender median,
+        # comfortably below the midfield one.
+        + [{"season": SEASON, "gw": 1, "code": 1, "fixture_id": 1,
+            "total_points": 6, "starts": 1, "minutes": 90}]
+    )
+
+    @staticmethod
+    def _dim_player(reclassified_at: dt.datetime | None) -> pd.DataFrame:
+        rows = [
+            {"season": SEASON, "code": code, "position": 2,
+             "as_of": DEADLINE - dt.timedelta(days=1)}
+            for code in (10, 11, 12)
+        ] + [
+            {"season": SEASON, "code": code, "position": 3,
+             "as_of": DEADLINE - dt.timedelta(days=1)}
+            for code in (20, 21, 22)
+        ] + [
+            # Code 1 was a DEFENDER when the claim was made and the gameweek
+            # played.
+            {"season": SEASON, "code": 1, "position": 2,
+             "as_of": DEADLINE - dt.timedelta(days=1)},
+        ]
+        if reclassified_at is not None:
+            rows.append(
+                {"season": SEASON, "code": 1, "position": 3,
+                 "as_of": reclassified_at}
+            )
+        return pd.DataFrame(rows)
+
+    @staticmethod
+    def _settle(index: ResultIndex) -> pd.Series:
+        outcomes, _ = score_claims(
+            _claims([{"code": 1, "action": "buy"}]), index, CALENDAR, now=NOW
+        )
+        return outcomes.iloc[0]
+
+    def test_a_reclassification_after_the_gameweek_does_not_move_the_benchmark(
+        self,
+    ) -> None:
+        """The verdict is judged against the position held AT the deadline.
+
+        Reading only the newest dim_player row judges an August defender
+        against a midfield median because of a March reclassification, and the
+        rewrite leaves no trace of why the answer changed.
+        """
+        index = ResultIndex(
+            self.FIELD,
+            self._dim_player(reclassified_at=DEADLINE + dt.timedelta(days=200)),
+            deadlines={(SEASON, 1): DEADLINE},
+        )
+
+        row = self._settle(index)
+
+        assert row["benchmark"] == "pos2_starter_median", (
+            "a reclassification recorded after the gameweek chose the benchmark "
+            "bucket; the verdict now depends on an input that is neither "
+            "append-only nor documented as an input"
+        )
+        assert bool(row["hit"]) is True
+        assert index.position_at(SEASON, 1, 1) == 2
+
+    def test_the_reclassification_does_apply_to_a_later_gameweek(self) -> None:
+        """Point-in-time, not a permanent freeze on the first value seen."""
+        field = pd.concat([
+            self.FIELD,
+            self.FIELD.assign(gw=2),
+        ], ignore_index=True)
+        reclassified = DEADLINE + dt.timedelta(days=1)
+        index = ResultIndex(
+            field,
+            self._dim_player(reclassified_at=reclassified),
+            deadlines={
+                (SEASON, 1): DEADLINE,
+                (SEASON, 2): DEADLINE + dt.timedelta(days=7),
+            },
+        )
+
+        assert index.position_at(SEASON, 1, 1) == 2
+        assert index.position_at(SEASON, 2, 1) == 3, (
+            "a reclassification that predates a gameweek's deadline was ignored "
+            "for that gameweek"
+        )
+
+    def test_a_player_absent_from_the_squad_list_at_the_deadline_is_refused(
+        self,
+    ) -> None:
+        """No position on record at that instant means no benchmark. Not a guess.
+
+        He was not in the squad list a manager could see at that deadline, so
+        there is nothing to source the bucket from, and 'unknown' is the answer.
+        """
+        players = self._dim_player(reclassified_at=None)
+        players = players[players["code"] != 1]
+        players = pd.concat([
+            players,
+            pd.DataFrame([{"season": SEASON, "code": 1, "position": 2,
+                           "as_of": DEADLINE + dt.timedelta(days=30)}]),
+        ], ignore_index=True)
+
+        index = ResultIndex(
+            self.FIELD, players, deadlines={(SEASON, 1): DEADLINE}
+        )
+        row = self._settle(index)
+
+        assert pd.isna(row["hit"])
+        assert row["unscoreable"] == "no_position"
+
+    def test_without_a_calendar_two_positions_are_refused_not_guessed(self) -> None:
+        """The fallback path must not pick a bucket by row order.
+
+        With no ``as_of`` to choose between them, a player carrying two
+        positions has no sourceable benchmark. Taking whichever row sorted last
+        would fabricate the comparator the entire verdict rests on.
+        """
+        index = ResultIndex(
+            self.FIELD,
+            self._dim_player(reclassified_at=DEADLINE + dt.timedelta(days=200))
+            .drop(columns=["as_of"]),
+        )
+        row = self._settle(index)
+
+        assert pd.isna(row["hit"])
+        assert row["unscoreable"] == "position_ambiguous"
