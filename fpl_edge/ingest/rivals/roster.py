@@ -72,6 +72,7 @@ import pandas as pd
 from fpl_edge.config import USER, MiniLeague
 from fpl_edge.ingest.rivals.client import RivalsFetcher
 from fpl_edge.ingest.rivals.elite_list import ELITE_1000
+from fpl_edge.ingest.rivals.names import name_matches
 
 #: Named experts with publicly attested entry IDs, mirrored from
 #: FPL-MCP ``tools/expert_tools.py``. Kept as a literal rather than imported
@@ -83,17 +84,30 @@ from fpl_edge.ingest.rivals.elite_list import ELITE_1000
 #: evidence of being well-known; the skill model decides whether it is evidence
 #: of being good, and for several of these names it concludes it is not.
 #:
-#: .. warning:: **All 20 of these IDs are stale.** FPL entry IDs are assigned
-#:    per season, and every ID below was checked against the live API on
-#:    2026-08-24: each now resolves to a different, unrelated person ("Ben
-#:    Crellin" 6586 is actually Levi Longworth). dim_manager rows with
-#:    source='expert' written from this map therefore carry the wrong names
-#:    for 2026-27, and the snowball step reads the wrong people's leagues.
-#:    The verified, per-season-maintained list lives in
-#:    :mod:`fpl_edge.ingest.rivals.elite` (ELITE_NAMED), which refuses to
-#:    crawl any ID whose live profile name does not match. This map is kept
-#:    only because the snowball pool it seeded is already recorded; refresh it
-#:    from current-season sources before trusting it again.
+#: .. warning:: **All 20 of these IDs are stale, and are no longer trusted on
+#:    sight.** FPL entry IDs are assigned per season, and every ID below was
+#:    checked against the live API on 2026-08-24: each now resolves to a
+#:    different, unrelated person ("Ben Crellin" 6586 is actually Levi
+#:    Longworth). Until 2026-08-27 this map seeded the pool unconditionally and
+#:    its members' leagues drove the snowball, which is how 1,682 of 3,498
+#:    tracked managers came to be the league-mates of twenty arbitrary
+#:    strangers.
+#:
+#:    The map is **kept, not deleted** -- it is the record of what the already
+#:    recorded snowball was derived from, and deleting it would make that
+#:    provenance unrecoverable. What changed is that
+#:    :func:`build_pool` now routes every one of these IDs through
+#:    :func:`verify_expert_seeds` first: an ID whose live profile name does not
+#:    match the name written beside it here is excluded from the pool AND from
+#:    the snowball, and the rejection is counted in :class:`PoolReport`. On
+#:    today's evidence that rejects all twenty and the snowball contributes
+#:    nothing, which is the correct outcome reached by measurement rather than
+#:    by assertion -- if someone refreshes an ID here, it starts working again
+#:    with no other change.
+#:
+#:    Verification is free: :func:`build_pool` already fetched each seed's
+#:    ``/entry/{id}/`` profile to read their leagues, and the name to check
+#:    against is in that same response.
 EXPERT_SEEDS: dict[str, int] = {
     "FPL Focal": 200,
     "FPL Harry": 1320,
@@ -247,6 +261,14 @@ class PoolReport:
     skipped_system: int = 0
     skipped_broadcast: int = 0
     skipped_singleton: int = 0
+    #: Expert seeds whose live profile name still matches the name recorded in
+    #: EXPERT_SEEDS. Only these enter the pool or drive the snowball.
+    seeds_verified: int = 0
+    #: Seeds rejected because the ID now belongs to someone else. Kept as a
+    #: count *and* an itemised list, because "the seed list rotted again" must
+    #: be readable off a crawl receipt without re-running the crawl.
+    seeds_rejected: int = 0
+    seed_rejections: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _league_members(
@@ -311,6 +333,13 @@ def seed_candidates(mini_leagues: tuple[MiniLeague, ...] | None = None) -> list[
     route into the elite social graph. Mini-league rivals are the field the user
     is *actually* scored against in four of their five leagues, and the optimal
     play against 39 known people is not the optimal play against six million.
+
+    .. warning:: The expert rows here are **unverified** -- this function does
+       no network I/O, so it cannot check that an ID still belongs to the
+       person named beside it, and on today's evidence none of them do. Use
+       :func:`build_pool`, which verifies, for anything that will be crawled or
+       written. This helper is kept for callers that want the declared seed set
+       itself.
     """
     out = [
         Candidate(entry_id=eid, source="expert", player_name=name)
@@ -338,6 +367,13 @@ def build_pool(
     are never displaced by the cap, because they are the one group whose value
     does not depend on the skill model finding them impressive. If the budget
     runs out mid-snowball the pool is still complete for mini-league mode.
+
+    Every expert seed is name-verified against its live profile before it may
+    enter the pool or seed the snowball (:data:`EXPERT_SEEDS`). This is the
+    single biggest lever on pool *size* as well as pool quality: the snowball
+    is the only unbounded source here, and gating it on verification means a
+    rotted seed list produces a small honest pool instead of a large arbitrary
+    one. Rejections are reported, never silently swallowed.
     """
     as_of = dt.datetime.now(dt.timezone.utc)
     report = PoolReport()
@@ -361,10 +397,55 @@ def build_pool(
                 entry_name=m.get("entry_name"),
             ))
 
-    # 2. Named experts.
-    for name, eid in EXPERT_SEEDS.items():
-        chosen.setdefault(eid, Candidate(entry_id=eid, source="expert", player_name=name))
+    # 2. Named experts -- but only the ones who are still themselves.
+    #
+    #    This is the same profile fetch the snowball needs anyway, so checking
+    #    the name costs zero extra requests. A seed whose live profile belongs
+    #    to someone else is neither added to the pool nor snowballed from: its
+    #    league memberships are a stranger's league memberships, and a pool
+    #    grown from them is not an elite pool, it is an arbitrary one wearing
+    #    an elite label. See the warning on EXPERT_SEEDS.
+    league_members_of_seed: dict[int, set[int]] = defaultdict(set)
+    league_meta: dict[int, dict[str, Any]] = {}
+    profile_rows: list[dict[str, Any]] = []
+    membership_rows: list[dict[str, Any]] = []
+
     report.seeds = len(EXPERT_SEEDS)
+    for name, eid in EXPERT_SEEDS.items():
+        prof = _profile(fetcher, eid)
+        if prof is None:
+            report.seeds_rejected += 1
+            report.seed_rejections.append(
+                {"claimed_name": name, "entry_id": eid,
+                 "status": "entry_404", "actual_name": None})
+            continue
+        report.seed_profiles_read += 1
+        actual = " ".join(
+            x for x in (prof.get("player_first_name"), prof.get("player_last_name")) if x
+        ).strip()
+        if not name_matches(name, actual):
+            report.seeds_rejected += 1
+            report.seed_rejections.append(
+                {"claimed_name": name, "entry_id": eid,
+                 "status": "name_mismatch", "actual_name": actual or None})
+            continue
+        report.seeds_verified += 1
+        chosen.setdefault(eid, Candidate(entry_id=eid, source="expert", player_name=name))
+        profile_rows.append(_profile_row(prof, eid, "expert", as_of))
+        for kind in ("classic", "h2h"):
+            for lg in (prof.get("leagues") or {}).get(kind, []):
+                lid = int(lg["id"])
+                league_meta[lid] = {
+                    "name": lg.get("name"), "type": lg.get("league_type"),
+                    "scoring": lg.get("scoring"), "kind": kind,
+                }
+                league_members_of_seed[lid].add(eid)
+                membership_rows.append({
+                    "entry_id": eid, "league_id": lid, "league_name": lg.get("name"),
+                    "league_type": lg.get("league_type"), "scoring": lg.get("scoring"),
+                    "as_of": as_of,
+                })
+    report.leagues_seen = len(league_meta)
 
     # 3. Published winners, on the same footing as anyone else. Their IDs are
     #    verified separately; an unverified one simply fails to produce a
@@ -384,33 +465,11 @@ def build_pool(
         chosen.setdefault(eid, Candidate(entry_id=eid, source="elite_list",
                                          player_name=name))
 
-    # 5. Snowball: read each expert's leagues, keep the ones several share.
-    league_members_of_seed: dict[int, set[int]] = defaultdict(set)
-    league_meta: dict[int, dict[str, Any]] = {}
-    profile_rows: list[dict[str, Any]] = []
-    membership_rows: list[dict[str, Any]] = []
-
-    for name, eid in EXPERT_SEEDS.items():
-        prof = _profile(fetcher, eid)
-        if prof is None:
-            continue
-        report.seed_profiles_read += 1
-        profile_rows.append(_profile_row(prof, eid, "expert", as_of))
-        for kind in ("classic", "h2h"):
-            for lg in (prof.get("leagues") or {}).get(kind, []):
-                lid = int(lg["id"])
-                league_meta[lid] = {
-                    "name": lg.get("name"), "type": lg.get("league_type"),
-                    "scoring": lg.get("scoring"), "kind": kind,
-                }
-                league_members_of_seed[lid].add(eid)
-                membership_rows.append({
-                    "entry_id": eid, "league_id": lid, "league_name": lg.get("name"),
-                    "league_type": lg.get("league_type"), "scoring": lg.get("scoring"),
-                    "as_of": as_of,
-                })
-    report.leagues_seen = len(league_meta)
-
+    # 5. Snowball: keep the leagues that several VERIFIED seeds share.
+    #    ``league_members_of_seed`` was populated in step 2 and contains only
+    #    verified seeds, so with an entirely rotted seed list this loop finds
+    #    nothing and the snowball contributes zero candidates -- by evidence,
+    #    not by a hard-coded switch.
     shared = Counter({lid: len(seeds) for lid, seeds in league_members_of_seed.items()})
     ranked: list[int] = []
     for lid, n in shared.most_common():

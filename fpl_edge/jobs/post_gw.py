@@ -122,20 +122,52 @@ def main() -> int:
          [py, "-m", "fpl_edge.ingest.content.pipeline", "score"])
     _run(report, "ingest_content",
          [py, "-m", "fpl_edge.ingest.content.pipeline", "ingest", "--backfill-days", "3"])
+    # Budget raised 400 -> 900 on 2026-08-27. At 400 this step spent its entire
+    # allowance on the history sweep every single night -- entry/history has a
+    # 12h TTL and the job runs daily, so each run re-fetched the same first ~370
+    # histories the previous run had already paid for, then raised
+    # BudgetExhausted before picks or transfers ran at all. fact_manager_transfer
+    # held 0 rows for the life of the job while this step reported ok. The crawl
+    # now runs picks and transfers FIRST, caps every stage's share, and exits
+    # non-zero if a stage is starved, so the same outage would turn this step
+    # red instead of green.
+    #
+    # 1,100 is sized against the cohort, not guessed: gating the snowball on
+    # seed verification (roster.py, defect B9) drops the elite pool from 2,015
+    # to ~313 real candidates, which needs ~40 pool + 313 picks + 313 transfers
+    # + 313 histories. At 1,100 every stage's reserved share covers its work
+    # with headroom, and the run is ~20 min at the polite 1.1s pace -- inside
+    # _run's 1800s timeout. Picks for a finished gameweek are cached forever,
+    # so steady-state spend is far below this.
     _run(report, "crawl_elite",
-         [py, "-m", "fpl_edge.ingest.rivals.crawl", "--budget", "400"])
+         [py, "-m", "fpl_edge.ingest.rivals.crawl", "--budget", "1100"])
     # The named elite (Crellin et al.): verified IDs, full picks + transfer
     # history. Cheap (~4 requests per manager) and cached, so a re-run after a
     # crash costs almost nothing.
     _run(report, "crawl_elite_named",
          [py, "-m", "fpl_edge.ingest.rivals.elite", "--budget", "200"])
-    # Deepen the top-of-overall sample by 500 entries a night toward the full
+    # Deepen the top-of-overall sample by 300 entries a night toward the full
     # top-10k. Resumable by construction: finished-gameweek picks are cached
     # forever, so only the new tail costs requests, and the budget hard-stops
     # the run rather than letting it grow silently.
+    #
+    # --grow lowered 500 -> 300 and --budget raised 700 -> 1200 on 2026-08-27,
+    # because this sampler now also fetches season transfers. It previously
+    # fetched none, which is why the only cohort in the warehouse with real
+    # pick coverage had no transfer data at all.
+    #
+    # The arithmetic, since it is what the stage shares have to cover: ~37
+    # standings requests, ~300 picks for the newly grown tail (the existing
+    # sample's picks are immutable and cached forever, so they are free), and
+    # 300 transfers. Transfers have a 3h TTL and so re-cost a request per
+    # manager EVERY night, which is why they are capped in rank order rather
+    # than run over the whole sample -- uncapped, growing toward 10,000 would
+    # mean 10,000 fresh requests nightly, forever. At --budget 1200 the stage
+    # caps bound the worst case to ~820 requests (~15 min), well inside _run's
+    # 1800s timeout even on a completely cold cache.
     _run(report, "crawl_top10k_sample",
-         [py, "-m", "fpl_edge.ingest.rivals.top1k", "--grow", "500",
-          "--budget", "700"])
+         [py, "-m", "fpl_edge.ingest.rivals.top1k", "--grow", "300",
+          "--budget", "1200", "--transfers-top", "300"])
     _run(report, "intel", [py, "-m", "fpl_edge.intel.cli", "collect"])
     _run(report, "retro_report", [py, "scripts/retro_report.py"])
     _run(report, "weekly_idea_report", [py, "scripts/weekly_idea_report.py"])

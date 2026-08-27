@@ -22,9 +22,11 @@ on. Picks are stamped ``as_of = deadline`` like every other pick row, so the
 point-in-time story is inherited, not re-invented.
 
 Budget arithmetic, declared rather than discovered: 1 bootstrap request +
-ceil(n/50) standings pages + n picks requests. n=750 is 767 requests, ~14
-minutes at the enforced 1.1s spacing. The ``RequestBudget`` makes overrunning
-that impossible rather than impolite.
+ceil(n/50) standings pages + n picks requests + min(n, ``--transfers-top``)
+transfer requests. n=750 with the default 500-manager transfer cap is 1,266
+requests, ~23 minutes at the enforced 1.1s spacing. The ``RequestBudget`` makes
+overrunning that impossible rather than impolite, and each stage runs under a
+reserved slice of it so picks cannot starve transfers.
 
 Growing toward the full top-10k
 -------------------------------
@@ -45,13 +47,14 @@ import argparse
 import datetime as dt
 import json
 import math
+import sys
 from typing import Any
 
 import pandas as pd
 
 from fpl_edge.ingest.rivals import picks as picks_mod
 from fpl_edge.ingest.rivals.client import BudgetExhausted, RequestBudget, RivalsFetcher
-from fpl_edge.ingest.rivals.crawl import _season_and_deadlines, _write
+from fpl_edge.ingest.rivals.crawl import STAGE_SHARE, _incomplete, _season_and_deadlines, _stage, _write
 
 #: The "Overall" classic league that every entry is auto-enrolled in.
 OVERALL_LEAGUE_ID = 314
@@ -62,20 +65,47 @@ PAGE_SIZE = 50
 #: dim_manager.source prefix; fpl_edge.models.field.observed matches on it.
 SOURCE_PREFIX = "top1k"
 
+#: Stages this sampler is expected to complete. Same contract as
+#: :data:`fpl_edge.ingest.rivals.crawl.STAGES`: declared up front so a stage
+#: that never runs is reported as ``not_reached`` rather than being invisible.
+STAGES: tuple[str, ...] = ("standings", "picks", "transfers")
 
-def plan(n_entries: int) -> dict[str, int]:
+#: How many of the sampled entries get their transfers fetched, best-ranked
+#: first.
+#:
+#: Until 2026-08-27 this module fetched no transfers at all, which meant the
+#: 1,500-manager top-1k cohort -- the *only* cohort in the warehouse with real
+#: pick coverage -- had no transfer data by construction, and
+#: ``fact_manager_transfer`` was empty warehouse-wide.
+#:
+#: It is capped rather than run over the whole sample because transfers are the
+#: one endpoint here with a short TTL: picks for a finished gameweek are
+#: immutable and cached effectively forever, so a grown sample re-serves them
+#: free, but ``entry/{id}/transfers/`` is cumulative and re-costs a request per
+#: manager on every run. Uncapped, growing the sample toward 10,000 would mean
+#: 10,000 fresh requests a night forever. The cap is applied in rank order
+#: because transfer *behaviour* is what this is for, and the marginal
+#: information in the 4,000th-ranked manager's transfers is small next to the
+#: 40th's.
+TRANSFERS_TOP_DEFAULT = 500
+
+
+def plan(n_entries: int, *, transfers_top: int = TRANSFERS_TOP_DEFAULT) -> dict[str, int]:
     """The request arithmetic for a run, so a human can approve the number."""
     if not 1 <= n_entries <= 10_000:
         raise ValueError("n_entries out of the sane range for a cohort sample")
     pages = math.ceil(n_entries / PAGE_SIZE)
+    transfers = min(n_entries, max(0, transfers_top))
+    total = 1 + pages + n_entries + transfers
     return {
         "n_entries": n_entries,
         "standings_pages": pages,
         "requests_bootstrap": 1,
         "requests_standings": pages,
         "requests_picks": n_entries,
-        "requests_total": 1 + pages + n_entries,
-        "minutes_at_polite_pace": round((1 + pages + n_entries) * 1.1 / 60, 1),
+        "requests_transfers": transfers,
+        "requests_total": total,
+        "minutes_at_polite_pace": round(total * 1.1 / 60, 1),
     }
 
 
@@ -85,6 +115,7 @@ def collect(
     n_entries: int = 750,
     gw: int | None = None,
     now: dt.datetime | None = None,
+    transfers_top: int = TRANSFERS_TOP_DEFAULT,
 ) -> tuple[dict[str, pd.DataFrame], dict[str, Any]]:
     """Fetch the sample. Network only -- no warehouse lock is held here.
 
@@ -93,27 +124,41 @@ def collect(
     requests must not hold the lock while it does.
 
     Returns ``(frames, summary)``. Frames may be empty: pre-GW1 the standings
-    are empty and that is reported as a skip, not raised as a failure.
+    are empty and that is reported as a skip, not raised as a failure. Every
+    stage's outcome is recorded in ``summary["stages"]`` whether it ran or not.
     """
     now = now or dt.datetime.now(dt.timezone.utc)
     frames: dict[str, pd.DataFrame] = {}
-    summary: dict[str, Any] = {"plan": plan(n_entries)}
+    summary: dict[str, Any] = {"plan": plan(n_entries, transfers_top=transfers_top)}
+    stages: dict[str, str] = {name: "not_reached" for name in STAGES}
+    summary["stages"] = stages
 
     season, deadlines = _season_and_deadlines(fetcher)
+
+    def _skip_all(reason: str) -> tuple[dict[str, pd.DataFrame], dict[str, Any]]:
+        """A legitimate no-op: mark every stage skipped, not not_reached.
+
+        The distinction is the difference between "there is nothing to sample
+        yet" (fine, exit 0) and "we ran out of budget before the transfer
+        stage" (an outage). Both used to look identical from outside.
+        """
+        summary["skipped"] = reason
+        for name in STAGES:
+            stages[name] = f"skipped: {reason}"
+        return frames, summary
+
     summary["season"] = season
     locked = [g for g, d in deadlines.items() if d <= now]
     if gw is None:
         if not locked:
-            summary["skipped"] = (
+            return _skip_all(
                 "no gameweek deadline has passed; the overall standings are empty "
                 "and every picks endpoint returns 404. Re-run after the first "
                 "deadline locks."
             )
-            return frames, summary
         gw = max(locked)
     elif gw not in deadlines or deadlines[gw] > now:
-        summary["skipped"] = f"GW{gw} has not locked; its picks are private"
-        return frames, summary
+        return _skip_all(f"GW{gw} has not locked; its picks are private")
     summary["gw"] = gw
 
     # -- standings pages -----------------------------------------------------
@@ -148,15 +193,14 @@ def collect(
             break
     entry_rows = entry_rows[:n_entries]
     summary["standings"] = {"pages": pages_fetched, "entries": len(entry_rows)}
+    stages["standings"] = "ok"
     if empty_standings:
-        summary["skipped"] = (
+        return _skip_all(
             "overall standings returned no results (the league is populated at "
             "first scoring, not at rollover); nothing to sample yet"
         )
-        return frames, summary
     if not entry_rows:
-        summary["skipped"] = "standings pages yielded no entries"
-        return frames, summary
+        return _skip_all("standings pages yielded no entries")
 
     # A rank-ordered identity for the cohort: the same entry sampled in a later
     # gameweek gets a fresh row with a fresh as_of, so cohort membership is
@@ -192,16 +236,36 @@ def collect(
         for r in entry_rows
     ])
 
-    # -- picks, via the existing (deadline-stamped) ingest --------------------
+    # -- picks, then transfers, via the existing (deadline-stamped) ingests ---
+    # Both run under a reserved slice of the budget, so a picks stage that
+    # overruns cannot silently consume the transfer stage -- the exact failure
+    # that left fact_manager_transfer empty in the elite crawl.
     entry_ids = [r["entry_id"] for r in entry_rows]
-    p, c, stats = picks_mod.ingest_picks(
-        fetcher, entry_ids, [gw], season=season, deadlines=deadlines, now=now
-    )
-    summary["picks"] = stats
-    if not p.empty:
-        frames["fact_manager_pick"] = p
-    if not c.empty:
-        frames["fact_manager_chip"] = c
+    with _stage(fetcher.budget, "picks", stages, STAGE_SHARE["picks"]):
+        p, c, stats = picks_mod.ingest_picks(
+            fetcher, entry_ids, [gw], season=season, deadlines=deadlines, now=now
+        )
+        summary["picks"] = stats
+        if not p.empty:
+            frames["fact_manager_pick"] = p
+        if not c.empty:
+            frames["fact_manager_chip"] = c
+
+    if transfers_top <= 0:
+        stages["transfers"] = "skipped: --transfers-top 0"
+    else:
+        # entry_rows arrive in rank order from the standings pages, so the
+        # slice is "the best-ranked N", not an arbitrary N. See
+        # TRANSFERS_TOP_DEFAULT for why this is capped at all.
+        transfer_ids = entry_ids[:transfers_top]
+        with _stage(fetcher.budget, "transfers", stages, STAGE_SHARE["transfers"]):
+            t, tstats = picks_mod.ingest_transfers(
+                fetcher, transfer_ids, season=season, deadlines=deadlines
+            )
+            tstats["cohort"] = len(transfer_ids)
+            summary["transfers"] = tstats
+            if not t.empty:
+                frames["fact_manager_transfer"] = t
     return frames, summary
 
 
@@ -249,6 +313,7 @@ def run(
     offline: bool = False,
     dry_run: bool = False,
     grow: int | None = None,
+    transfers_top: int = TRANSFERS_TOP_DEFAULT,
 ) -> dict[str, Any]:
     """One sampling run: declared budget, fetch, single short-lived write.
 
@@ -260,19 +325,22 @@ def run(
     """
     if grow is not None:
         n_entries = min(10_000, _sampled_so_far(db_path) + grow)
+    declared = plan(n_entries, transfers_top=transfers_top)
     if dry_run:
-        return {"dry_run": True, "plan": plan(n_entries)}
-    declared = plan(n_entries)
+        return {"dry_run": True, "plan": declared}
     budget = RequestBudget(
         limit=budget_limit if budget_limit is not None
         else declared["requests_total"] + 10
     )
     fetcher = RivalsFetcher(budget, offline=offline)
-    summary: dict[str, Any] = {}
+    summary: dict[str, Any] = {"stages": {name: "not_reached" for name in STAGES}}
     frames: dict[str, pd.DataFrame] = {}
     try:
-        frames, summary = collect(fetcher, n_entries=n_entries, gw=gw)
+        frames, summary = collect(
+            fetcher, n_entries=n_entries, gw=gw, transfers_top=transfers_top
+        )
     except BudgetExhausted as exc:
+        # Reachable only outside a stage (bootstrap or the standings pages).
         # Partial samples are still samples -- 400 real squads beat 0 -- but
         # the cohort share SEs scale with what was actually fetched, so the
         # truncation is reported, not smoothed over.
@@ -282,6 +350,7 @@ def run(
 
     if frames:
         summary["write"] = _write(frames, db_path, summary)
+    summary["incomplete_stages"] = _incomplete(summary.get("stages") or {})
     summary["requests"] = {
         "limit": budget.limit, "spent": budget.spent,
         "cache_hits": budget.cache_hits, "receipt": budget.receipt(),
@@ -289,7 +358,13 @@ def run(
     return summary
 
 
-def main() -> None:
+def main() -> int:
+    """Sample, write, and exit non-zero if a stage was starved.
+
+    Same contract as :func:`fpl_edge.ingest.rivals.crawl.main`, and for the
+    same reason: a sampler that fetched no transfers should not be able to
+    report success.
+    """
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--n", type=int, default=750,
                     help="entries to sample from the top of the overall league")
@@ -304,12 +379,27 @@ def main() -> None:
     ap.add_argument("--grow", type=int, default=None,
                     help="deepen the existing sample by this many entries "
                          "(overrides --n; capped at 10000)")
+    ap.add_argument("--transfers-top", type=int, default=TRANSFERS_TOP_DEFAULT,
+                    help="fetch season transfers for the best-ranked N of the "
+                         "sample (0 disables the stage)")
+    ap.add_argument("--allow-incomplete", action="store_true",
+                    help="exit 0 even if a stage was starved; for manual "
+                         "partial runs, never for the scheduled job")
     args = ap.parse_args()
     out = run(n_entries=args.n, budget_limit=args.budget, gw=args.gw,
               db_path=args.db, offline=args.offline, dry_run=args.dry_run,
-              grow=args.grow)
+              grow=args.grow, transfers_top=args.transfers_top)
     print(json.dumps(out, indent=2, default=str))
+    incomplete = out.get("incomplete_stages") or []
+    if incomplete and not args.allow_incomplete:
+        print(
+            f"FAILED: stages did not complete: {', '.join(incomplete)}. "
+            f"Raise --budget, lower --grow, or lower --transfers-top.",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

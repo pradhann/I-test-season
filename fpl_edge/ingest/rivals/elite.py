@@ -45,7 +45,6 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
-import unicodedata
 from dataclasses import dataclass
 from typing import Any
 
@@ -55,6 +54,8 @@ from fpl_edge.ingest.rivals import history as history_mod
 from fpl_edge.ingest.rivals import picks as picks_mod
 from fpl_edge.ingest.rivals.client import BudgetExhausted, RequestBudget, RivalsFetcher
 from fpl_edge.ingest.rivals.crawl import _season_and_deadlines, _write
+from fpl_edge.ingest.rivals.names import _NON_DECOMPOSABLE as _names_non_decomposable
+from fpl_edge.ingest.rivals.names import name_matches, norm
 
 #: dim_manager.source for rows written by this module. NOT prefixed "top1k",
 #: so fpl_edge.models.field.observed classifies these managers into its
@@ -95,22 +96,12 @@ ELITE_NAMED: tuple[EliteEntry, ...] = (
 )
 
 
-#: Latin letters that NFKD does NOT decompose (the stroke in Ø is part of the
-#: codepoint, not a combining mark). Norwegian names are common at the top of
-#: FPL, so this is not a corner case.
-_NON_DECOMPOSABLE = str.maketrans({
-    "ø": "o", "Ø": "o", "æ": "ae", "Æ": "ae", "å": "a", "Å": "a",
-    "ð": "d", "Ð": "d", "þ": "th", "Þ": "th", "ß": "ss", "đ": "d", "Đ": "d",
-    "ł": "l", "Ł": "l",
-})
-
-
-def _norm(s: str | None) -> str:
-    """Casefold and strip accents so 'Jesper Øiestad' matches 'jesper oiestad'."""
-    if not s:
-        return ""
-    s = unicodedata.normalize("NFKD", s.translate(_NON_DECOMPOSABLE))
-    return "".join(c for c in s if not unicodedata.combining(c)).casefold().strip()
+#: The name check now lives in :mod:`fpl_edge.ingest.rivals.names` so that
+#: roster.py can verify its expert seeds with the *same* function rather than a
+#: second, subtly different one. Re-exported under the old private name because
+#: fpl_edge.interfaces.qa imports ``elite._norm``.
+_norm = norm
+_NON_DECOMPOSABLE = _names_non_decomposable
 
 
 def verify(
@@ -141,8 +132,7 @@ def verify(
         prof = got.body
         actual = " ".join(x for x in (prof.get("player_first_name"),
                                       prof.get("player_last_name")) if x).strip()
-        a, b = _norm(e.name), _norm(actual)
-        ok = bool(a) and bool(b) and (a in b or b in a)
+        ok = name_matches(e.name, actual)
         rows.append({"name": e.name, "entry_id": e.entry_id,
                      "status": "verified" if ok else "name_mismatch",
                      "actual_name": actual})

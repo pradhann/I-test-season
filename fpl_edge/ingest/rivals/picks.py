@@ -77,6 +77,39 @@ def parse_picks(
         for p in body.get("picks") or []
     ])
 
+    # ``active_chip`` is recorded verbatim, including when the resulting
+    # distribution looks impossible.
+    #
+    # INVESTIGATED 2026-08-27, after fact_manager_chip showed `bboost` for
+    # 1,411 of ~1,500 top-1k managers at the GW1 deadline -- a 94% GW1
+    # bench-boost rate, which is not a rate any prior season would produce.
+    # It is nevertheless REAL, on four independent pieces of evidence read out
+    # of the archived bodies under data/raw/rivals/:
+    #
+    # 1. The raw payloads say so. 2,394 of 2,828 cached GW1 picks bodies carry
+    #    "active_chip": "bboost". Nothing in this function invents it.
+    # 2. A second endpoint agrees. For the 40 managers who have both a picks
+    #    body and a history body cached, entry/{id}/history/'s own `chips`
+    #    block reports the identical GW1 chip 40 times out of 40.
+    # 3. The payloads are internally consistent with a played bench boost:
+    #    every bboost body has entry_history.points_on_bench == 0 (mean 0.0
+    #    across all of them) while no-chip bodies average 7.3 -- i.e. the
+    #    bench points were scored, not benched.
+    # 4. bootstrap-static's own `chips` block for 2026-27 gives both `bboost`
+    #    and `3xc` start_event = 1. Both team chips are legal in GW1 this
+    #    season, and there are two of each (GW1-19 and GW20-38), so spending
+    #    one in GW1 costs a manager far less than the single-chip seasons this
+    #    intuition was formed in.
+    #
+    # The 94% is a SELECTION effect, not an ingest bug, and the gradient proves
+    # it: the bboost rate falls monotonically with rank -- 91% at ranks 1-100,
+    # 87% at 101-500, 86% at 501-1000, 81% at 1001-2000. The top-1k cohort is
+    # selected on GW1 score, a bench boost adds roughly a bench's worth of
+    # points, so managers who played it are mechanically over-represented at
+    # the top of the table. The population rate is much lower; this sample's
+    # rate is the correct observation of a biased sample, and
+    # fpl_edge.models.field.observed must treat it as such rather than as a
+    # field-wide chip rate.
     chip_name = body.get("active_chip")
     chips = pd.DataFrame(
         [{"entry_id": entry_id, "season": season, "gw": gw,
