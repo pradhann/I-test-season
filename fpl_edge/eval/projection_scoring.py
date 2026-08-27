@@ -115,10 +115,13 @@ def _settlement_state(
     deadline = snap.deadline(season, gw)
     dl_snap = wh.snapshot_at(_as_utc(deadline))
     players = dl_snap.table("dim_player", where="season = ?", params=[season])
+    state = dl_snap.table(
+        "fact_player_state", where="season = ?", params=[season]
+    )[["code", "selected_by_pct"]]
     teams_playing = set(fixtures["home_team_code"]) | set(fixtures["away_team_code"])
     universe = players[players["team_code"].isin(teams_playing)][
         ["code", "position"]
-    ].copy()
+    ].merge(state, on="code", how="left")
     merged = universe.merge(actual, on="code", how="left")
     merged["actual_points"] = merged["actual_points"].fillna(0).astype(int)
     merged["minutes"] = merged["minutes"].fillna(0).astype(int)
@@ -154,6 +157,13 @@ def _xp_rows(
     _one("overall", joined)
     for pos, label in POSITION_LABEL.items():
         _one(f"pos:{label}", joined[joined["position"] == pos])
+    # Ownership cohorts: the whole board stays the headline (a model must
+    # price everyone), but DECISIONS live among owned players -- a provider
+    # brilliant on 0.1%-owned fodder and poor on the template is the wrong
+    # model to follow. Ownership is as-of the deadline, point-in-time.
+    own = joined["selected_by_pct"].fillna(0)
+    _one("own_gt5", joined[own > 5])
+    _one("own_gt20", joined[own > 20])
     return rows
 
 
@@ -203,12 +213,17 @@ def score_gameweek(
         .groupby("code")["p_appear"].mean().rename("consensus_p")
     )
 
-    already = set(
-        wh.sql(
-            "SELECT DISTINCT provider FROM fact_projection_score "
-            "WHERE season = ? AND gw = ?", [season, gw],
-        )["provider"].astype(str)
+    #: the scope that marks a fully current score-set; adding a new scope
+    #: bumps this so older gameweeks backfill exactly the missing rows.
+    NEWEST_SCOPE = "own_gt5"
+    have = wh.sql(
+        "SELECT provider, scope FROM fact_projection_score "
+        "WHERE season = ? AND gw = ?", [season, gw],
     )
+    scopes_by_provider: dict[str, set[str]] = {}
+    for _, r in have.iterrows():
+        scopes_by_provider.setdefault(str(r["provider"]), set()).add(str(r["scope"]))
+    already = {p_ for p_, sc in scopes_by_provider.items() if NEWEST_SCOPE in sc}
 
     out_rows: list[dict[str, Any]] = []
     scored: list[dict[str, Any]] = []
@@ -240,6 +255,9 @@ def score_gameweek(
                 "n_obs": len(p_obs),
             })
 
+        existing = scopes_by_provider.get(provider, set())
+        if existing:
+            rows = [r for r in rows if r["scope"] not in existing]
         if not rows:
             skipped.append(provider)
             continue

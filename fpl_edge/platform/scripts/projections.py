@@ -245,11 +245,15 @@ _GW_RESULT: dict[str, Any] = {
             "items": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["provider", "mae", "n_obs", "weight", "earned"],
+                "required": ["provider", "scope", "mae", "n_obs", "weight",
+                             "earned"],
                 "properties": {
                     "provider": {"type": "string"},
+                    "scope": {"enum": ["overall", "own_gt5", "own_gt20"]},
                     "mae": {"type": ["number", "null"]},
+                    "rmse": {"type": ["number", "null"]},
                     "baseline_mae": {"type": ["number", "null"]},
+                    "baseline_rmse": {"type": ["number", "null"]},
                     "n_obs": {"type": "integer"},
                     "weight": {"type": "number"},
                     "earned": {"type": "boolean"},
@@ -925,28 +929,41 @@ def _gw_mode(
             wh,
             """
             WITH w AS (
-                SELECT provider, weight, earned, n_obs, track_record_gws
+                SELECT provider, weight, earned,
+                       n_obs AS w_n_obs, track_record_gws
                 FROM sem_projection_weights(?)
             ), m AS (
-                SELECT provider, AVG(value) mae, AVG(baseline) baseline_mae
+                SELECT provider, scope,
+                       AVG(CASE WHEN metric='mae' THEN value END) mae,
+                       AVG(CASE WHEN metric='mae' THEN baseline END) baseline_mae,
+                       AVG(CASE WHEN metric='rmse' THEN value END) rmse,
+                       AVG(CASE WHEN metric='rmse' THEN baseline END) baseline_rmse,
+                       MAX(n_obs) n_obs
                 FROM fact_projection_score
-                WHERE metric = 'mae' AND scope = 'overall' AND season = ?
-                GROUP BY provider
+                WHERE season = ? AND scope IN ('overall','own_gt5','own_gt20')
+                GROUP BY provider, scope
             )
-            SELECT w.provider, m.mae, m.baseline_mae, w.n_obs, w.weight,
+            SELECT w.provider, m.scope, m.mae, m.baseline_mae, m.rmse,
+                   m.baseline_rmse, COALESCE(m.n_obs, 0) n_obs, w.weight,
                    w.earned, w.track_record_gws
-            FROM w LEFT JOIN m USING (provider) ORDER BY w.weight DESC
+            FROM w LEFT JOIN m USING (provider)
+            ORDER BY w.weight DESC, m.scope
             """,
             (now, season),
         )
+
+        def _n(v, nd=3):
+            return None if v is None or v != v else round(float(v), nd)
+
         for _, r in acc.iterrows():
             accuracy.append({
                 "provider": str(r["provider"]),
-                "mae": None if r["mae"] is None or r["mae"] != r["mae"]
-                       else round(float(r["mae"]), 3),
-                "baseline_mae": None if r["baseline_mae"] is None
-                                or r["baseline_mae"] != r["baseline_mae"]
-                                else round(float(r["baseline_mae"]), 3),
+                "scope": str(r["scope"]) if r["scope"] == r["scope"]
+                         and r["scope"] is not None else "overall",
+                "mae": _n(r["mae"]),
+                "rmse": _n(r["rmse"]),
+                "baseline_mae": _n(r["baseline_mae"]),
+                "baseline_rmse": _n(r["baseline_rmse"]),
                 "n_obs": int(r["n_obs"] or 0),
                 "weight": round(float(r["weight"]), 3),
                 "earned": bool(r["earned"]),

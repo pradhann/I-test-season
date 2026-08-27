@@ -30,7 +30,7 @@ export default async function xpoints(host) {
   let picked = new Set();          // sources; empty = all (full consensus)
   let gwSel = new Set();           // chosen gameweeks; filled after first load
   let pos = "", team = "", search = "", maxPrice = "", minPapp = "";
-  let squadOnly = false, showAccuracy = false;
+  let squadOnly = false, showAccuracy = false, accScope = "own_gt5";
   let sortBy = { kind: "sum" };    // {kind:"gw",gw} | {kind:"col",key} | {kind:"sum"}
   let sortDir = -1;                // -1 desc
   let res = null, squadCodes = new Set();
@@ -88,7 +88,8 @@ export default async function xpoints(host) {
     allChip.onclick = () => { picked.clear(); fetchPanel(); };
     srcRow.appendChild(allChip);
     const accBy = {};
-    for (const acc of res?.accuracy || []) accBy[acc.provider] = acc;
+    for (const acc of res?.accuracy || [])
+      if (acc.scope === "own_gt5") accBy[acc.provider] = acc;
     const shown = [...gwSel];
     for (const m of metas) {
       const covers = !shown.length
@@ -106,7 +107,7 @@ export default async function xpoints(host) {
         `covers GW${m.gw_min}–${m.gw_max} · ${m.n_rows.toLocaleString()} rows` +
         (m.has_p_appear ? " · p(appear)" : "") + (m.has_xmins ? " · xMins" : "") +
         (acc && acc.mae != null
-          ? `\nmeasured MAE ${acc.mae} vs actuals · earned weight ${acc.weight}`
+          ? `\nMAE ${acc.mae} on >5%-owned players · earned weight ${acc.weight}`
           : "") +
         `\nlast fetch ${m.last_fetched}` +
         (covers ? "\nclick to include/exclude"
@@ -216,38 +217,67 @@ export default async function xpoints(host) {
     JSON.stringify(spec) === JSON.stringify(sortBy);
 
   function renderAccuracy(host) {
-    const accs = (res?.accuracy || []).filter(a => a.mae != null || a.n_obs);
-    if (!accs.length) return;
+    const all = (res?.accuracy || []);
+    const accs = all.filter(a => a.scope === accScope && (a.mae != null || a.n_obs));
+    if (!all.length) return;
     const box = el("div");
-    box.appendChild(el("h2", null, "Measured accuracy"));
-    const gwN = accs.find(a => a.track_record_gws)?.track_record_gws ?? "?";
+    const hd = el("div", "toolbar");
+    hd.appendChild(el("h2", null, "Measured accuracy"));
+    const seg = el("span", "seg");
+    for (const [k, label] of [["overall", "all players"],
+                              ["own_gt5", ">5% owned"],
+                              ["own_gt20", ">20% owned"]]) {
+      const b = el("button", k === accScope ? "on" : "", label);
+      b.onclick = () => { accScope = k; renderBody(); };
+      seg.appendChild(b);
+    }
+    hd.appendChild(seg);
+    box.appendChild(hd);
+    const gwN = all.find(a => a.track_record_gws)?.track_record_gws ?? "?";
+    const scopeNote = accScope === "overall"
+      ? "the whole board — a model must price everyone"
+      : accScope === "own_gt5"
+        ? "players over 5% owned — where transfer decisions actually live"
+        : "the template (over 20% owned) — tiny sample, read gently";
     box.appendChild(el("p", "sub",
-      `Every provider's last pre-deadline projection scored against the ` +
-      `official settled actuals — ${gwN} gameweek(s) of track record so far. ` +
-      `Lower MAE is better; the weight is what the ensemble will earn.`));
+      `Last pre-deadline projections scored against settled actuals · ` +
+      `${gwN} gameweek(s) of track record · ${scopeNote}. ` +
+      `MAE = average miss per player; RMSE punishes big misses harder. ` +
+      `Baseline = predicting the all-provider mean.`));
+    if (!accs.length) {
+      box.appendChild(el("p", "sub", "no rows for this cohort yet"));
+      host.appendChild(box); return;
+    }
+    accs.sort((a, b) => (a.mae ?? 99) - (b.mae ?? 99));
     const wrap = el("div", "scroll-x");
     const t = el("table", "data");
-    const hd = el("tr");
-    for (const [l, num] of [["provider", 0], ["MAE", 1], ["vs baseline", 1],
-                            ["players scored", 1], ["earned weight", 1], ["", 0]])
-      hd.appendChild(el("th", num ? "num" : "", l));
-    const th_ = el("thead"); th_.appendChild(hd); t.appendChild(th_);
+    const hr2 = el("tr");
+    for (const [l, num] of [["provider", 0], ["MAE", 1], ["vs base", 1],
+                            ["RMSE", 1], ["vs base", 1],
+                            ["players", 1], ["weight", 1], ["", 0]])
+      hr2.appendChild(el("th", num ? "num" : "", l));
+    const th_ = el("thead"); th_.appendChild(hr2); t.appendChild(th_);
     const tb = el("tbody");
+    const deltaTd = (v, base) => {
+      const d = (v != null && base != null) ? base - v : null;
+      const td = el("td", "num",
+        d == null ? "–" : (d >= 0 ? "+" : "") + fmt2(d));
+      if (d != null) td.style.color = d >= 0 ? "var(--good)" : "var(--bad)";
+      return td;
+    };
     for (const a of accs) {
       const tr = el("tr");
       tr.appendChild(el("td", null, a.provider.replace(/^gh_/, "")));
       tr.appendChild(el("td", "num", a.mae == null ? "–" : fmt2(a.mae)));
-      const delta = (a.mae != null && a.baseline_mae != null)
-        ? a.baseline_mae - a.mae : null;
-      const dTd = el("td", "num",
-        delta == null ? "–" : (delta >= 0 ? "+" : "") + fmt2(delta));
-      if (delta != null) dTd.style.color = delta >= 0 ? "var(--good)" : "var(--bad)";
-      tr.appendChild(dTd);
+      tr.appendChild(deltaTd(a.mae, a.baseline_mae));
+      tr.appendChild(el("td", "num", a.rmse == null ? "–" : fmt2(a.rmse)));
+      tr.appendChild(deltaTd(a.rmse, a.baseline_rmse));
       tr.appendChild(el("td", "num", String(a.n_obs)));
       tr.appendChild(el("td", "num", fmt2(a.weight)));
-      tr.appendChild(el("td", null, "").appendChild(
-        el("span", a.earned ? "chip good" : "chip",
-           a.earned ? "earned" : "unmeasured")).parentElement);
+      const st = el("td");
+      st.appendChild(el("span", a.earned ? "chip good" : "chip",
+                        a.earned ? "earned" : "unmeasured"));
+      tr.appendChild(st);
       tb.appendChild(tr);
     }
     t.appendChild(tb); wrap.appendChild(t); box.appendChild(wrap);
