@@ -96,6 +96,11 @@ PARAMS: dict[str, Any] = {
             "description": "Player code: include a per-source breakdown for "
                            "the chosen GW and the next four.",
         },
+        "span": {
+            "type": "integer", "minimum": 1, "maximum": 8, "default": 5,
+            "description": "How many gameweeks the matrix covers from the "
+                           "anchor gw.",
+        },
     },
 }
 
@@ -145,6 +150,7 @@ _GW_ROW: dict[str, Any] = {
         "name": {"type": "string"},
         "pos": {"type": "string"},
         "team": {"type": ["string", "null"]},
+        "team_code": {"type": ["integer", "null"]},
         "price": {"type": ["number", "null"]},
         "own_pct": {"type": ["number", "null"]},
         "status": {"type": ["string", "null"]},
@@ -197,6 +203,40 @@ _GW_RESULT: dict[str, Any] = {
             },
         },
         "sources": {"type": "array", "items": {"type": "string"}},
+        "source_meta": {
+            "type": "array",
+            "description": "Per provider: what it covers and how fresh it is. "
+                           "Data-driven, so a newly registered feed (e.g. a "
+                           "paid FPL Review subscription) appears with no UI "
+                           "change.",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["source", "gw_min", "gw_max", "last_fetched",
+                             "n_rows"],
+                "properties": {
+                    "source": {"type": "string"},
+                    "gw_min": {"type": "integer"},
+                    "gw_max": {"type": "integer"},
+                    "last_fetched": {"type": "string"},
+                    "n_rows": {"type": "integer"},
+                    "has_xmins": {"type": "boolean"},
+                    "has_p_appear": {"type": "boolean"},
+                },
+            },
+        },
+        "gws": {"type": "array", "items": {"type": "integer"},
+                "description": "the matrix window: anchor gw .. anchor+span-1, "
+                               "clamped to coverage"},
+        "matrix": {
+            "type": "object",
+            "description": "{code(str) -> {gw(str) -> xpts}} for the window, "
+                           "same source/consensus selection as rows",
+            "additionalProperties": {
+                "type": "object",
+                "additionalProperties": {"type": "number"},
+            },
+        },
         "by_team": {
             "type": "array",
             "items": {
@@ -300,6 +340,7 @@ def projection_table(
     team: str | None = None,
     min_p_appear: float | None = None,
     detail_code: int | None = None,
+    span: int = 5,
 ) -> dict[str, Any]:
     """Projected points per player: solved artefact by default, or per-gameweek
     provider consensus (with the cross-source spread as the uncertainty column)
@@ -314,7 +355,7 @@ def projection_table(
         return _gw_mode(
             wh, season=season, position=position, sort=sort, limit=limit,
             max_price=max_price, gw=gw, source=source, team=team,
-            min_p_appear=min_p_appear, detail_code=detail_code,
+            min_p_appear=min_p_appear, detail_code=detail_code, span=span,
         )
     return _artefact_mode(
         wh, season=season, position=position, sort=sort, limit=limit,
@@ -479,6 +520,7 @@ def _gw_mode(
     team: str | None,
     min_p_appear: float | None,
     detail_code: int | None,
+    span: int = 5,
 ) -> dict[str, Any]:
     now = dt.datetime.now(UTC)
     notes: list[str] = []
@@ -568,11 +610,11 @@ def _gw_mode(
                 WHERE season = ? AND gw = ? AND xpts IS NOT NULL
                 GROUP BY code
             ), pl AS (
-                SELECT code, selected_by_pct, status
+                SELECT code, selected_by_pct, status, team_code
                 FROM sem_players(?) WHERE season = ?
             )
             SELECT c.code, c.web_name, c.position, c.team, c.price,
-                   pl.selected_by_pct AS own_pct, pl.status,
+                   pl.selected_by_pct AS own_pct, pl.status, pl.team_code,
                    c.n_sources, c.xpts_mean AS xpts, c.xpts_min, c.xpts_max,
                    c.xpts_spread AS spread, c.xpts_sd AS sd,
                    c.xmins_mean AS xmins, ap.p_appear, ap.xp_if_appears
@@ -587,11 +629,11 @@ def _gw_mode(
             wh,
             """
             WITH pl AS (
-                SELECT code, selected_by_pct, status
+                SELECT code, selected_by_pct, status, team_code
                 FROM sem_players(?) WHERE season = ?
             )
             SELECT pr.code, pr.web_name, pr.position, pr.team, pr.price,
-                   pl.selected_by_pct AS own_pct, pl.status,
+                   pl.selected_by_pct AS own_pct, pl.status, pl.team_code,
                    1 AS n_sources, pr.xpts,
                    NULL AS xpts_min, NULL AS xpts_max,
                    NULL AS spread, NULL AS sd,
@@ -672,6 +714,9 @@ def _gw_mode(
                    if pos_v is not None and pos_v == pos_v else "?",
             "team": None if r["team"] is None or r["team"] != r["team"]
                     else str(r["team"]),
+            "team_code": None if r.get("team_code") is None
+                         or r["team_code"] != r["team_code"]
+                         else int(r["team_code"]),
             "price": _rnd(r["price"], 1),
             "own_pct": _num(r["own_pct"]),
             "status": None if r["status"] is None or r["status"] != r["status"]
@@ -702,6 +747,54 @@ def _gw_mode(
     if not fetched.empty and fetched.iloc[0]["f"] is not None:
         as_of = str(fetched.iloc[0]["f"])
 
+    # Per-source freshness: what each feed covers and when it last fetched.
+    # Data-driven so a newly registered provider (a paid FPL Review feed, say)
+    # appears here -- and therefore in the UI -- with no further change.
+    meta = q(
+        wh,
+        "SELECT source, MIN(gw) gw_min, MAX(gw) gw_max, "
+        "MAX(fetched_at) last_fetched, COUNT(*) n_rows, "
+        "COUNT(xmins) n_xmins, COUNT(p_appear) n_pappear "
+        "FROM sem_projections(?) WHERE season = ? AND xpts IS NOT NULL "
+        "GROUP BY source ORDER BY n_rows DESC",
+        (now, season),
+    )
+    source_meta = [{
+        "source": str(r["source"]),
+        "gw_min": int(r["gw_min"]), "gw_max": int(r["gw_max"]),
+        "last_fetched": str(r["last_fetched"]),
+        "n_rows": int(r["n_rows"]),
+        "has_xmins": bool(r["n_xmins"]),
+        "has_p_appear": bool(r["n_pappear"]),
+    } for _, r in meta.iterrows()]
+
+    # The matrix window: per-player per-GW values for gw..gw+span-1, in the
+    # SAME selection (consensus or one source) as the rows.
+    gws = [g for g in range(int(gw), int(gw) + int(span)) if g in covered]
+    matrix: dict[str, dict[str, float]] = {}
+    if gws:
+        if consensus:
+            mrows = q(
+                wh,
+                "SELECT code, gw, xpts_mean AS v FROM sem_projection_consensus(?) "
+                "WHERE season = ? AND gw >= ? AND gw <= ?",
+                (now, season, gws[0], gws[-1]),
+            )
+        else:
+            mrows = q(
+                wh,
+                "SELECT code, gw, xpts AS v FROM sem_projections(?) "
+                "WHERE season = ? AND source = ? AND gw >= ? AND gw <= ? "
+                "AND xpts IS NOT NULL",
+                (now, season, source, gws[0], gws[-1]),
+            )
+        for _, r in mrows.iterrows():
+            v = r["v"]
+            if v is None or v != v:
+                continue
+            matrix.setdefault(str(int(r["code"])), {})[str(int(r["gw"]))] = (
+                round(float(v), 3))
+
     return {
         "mode": "consensus" if consensus else "source",
         "season": season,
@@ -716,6 +809,9 @@ def _gw_mode(
         "by_position": by_position,
         "detail": detail,
         "as_of": as_of,
+        "source_meta": source_meta,
+        "gws": gws,
+        "matrix": matrix,
         "notes": notes,
     }
 

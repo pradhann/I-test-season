@@ -219,6 +219,22 @@ table.data td.clickable:hover { box-shadow: inset 0 0 0 1.5px var(--s1); }
           background: var(--raised); }
 .avatar.missing { visibility: hidden; }
 
+/* xPoints: source freshness + segmented position control */
+.freshdot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+            vertical-align: middle; }
+.freshdot.good { background: var(--good); }
+.freshdot.warn { background: var(--warn); }
+.freshdot.bad  { background: var(--bad); }
+.chip.src { padding: 4px 11px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px;
+       overflow: hidden; }
+.seg button { border: 0; border-radius: 0; padding: 5px 11px; font-size: 12px;
+              background: var(--surface); color: var(--muted); }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button.on { background: var(--accent); color: #fff; }
+table.data tr.mine td { box-shadow: inset 3px 0 0 var(--accent); }
+table.data tr.mine td:first-child { font-weight: 650; }
+
 /* forms */
 select, input[type="text"], input[type="number"] {
   background: var(--raised); color: var(--ink); border: 1px solid var(--line);
