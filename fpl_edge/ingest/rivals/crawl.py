@@ -24,6 +24,17 @@ both were bought with an outage:
   or a legitimate skip, and :func:`main` exits non-zero when that list is
   non-empty. The previous behaviour -- exit 0 while doing a quarter of the job
   -- is what let the outage run for days.
+* **A stage that had nothing to do does not get to say "ok".** The stage
+  statuses only mean anything if they are true, and two ways of doing nothing
+  used to read as success: a pool of zero candidates (every later stage runs
+  over an empty list, spends nothing, raises nothing, reports ``ok``), and a
+  write that never committed (``_write`` returns ``{"status": "locked"}`` after
+  six failed attempts and nobody read it). Both now land in
+  ``summary["failures"]``, which :func:`main` treats as fatal and which
+  ``--allow-incomplete`` deliberately does NOT forgive -- see
+  :func:`_write_failures`. The rule the two share: for every stage, ask "if
+  this silently did nothing, what would be different?", and if the answer is
+  "nothing", that is the assertion that is missing.
 
 The receipt printed at the end is the number to quote when someone asks how hard
 we hit the API. It is itemised by endpoint kind, and cache hits are reported
@@ -144,6 +155,49 @@ def _incomplete(stages: dict[str, str]) -> list[str]:
     )
 
 
+def _write_failures(summary: dict[str, Any], *, skipped: bool = False) -> list[str]:
+    """Reasons the commit step must not be allowed to present as success.
+
+    ``_write`` is the one stage whose failure leaves *no other trace*. It
+    returns ``{"status": "locked"}`` when the DuckDB write lock never frees,
+    and until 2026-08-27 nothing read that: all four stages reported "ok",
+    ``incomplete_stages`` was empty, the process exited 0, and post_gw recorded
+    ``crawl_elite ok=true`` -- for a run that had written zero rows. That is
+    the same outage the stage accounting was built to stop, reached through a
+    door the stage accounting does not watch.
+
+    Three distinct silent-nothings are named here, because each one asks the
+    same question -- *if this step did nothing, what would be different?* --
+    and each one used to answer "nothing":
+
+    * ``write`` absent entirely: the commit was never even attempted (top1k
+      skipped the call whenever ``frames`` was empty, so the receipt simply had
+      no ``write`` key and no reader noticed the difference).
+    * ``status != "ok"``: the lock never freed, or the write raised.
+    * ``status == "ok"`` with an empty ``rows`` map: the warehouse was opened,
+      migrated and closed without a single row being appended. A crawl that
+      built a real pool always writes at least ``dim_manager``, so zero rows
+      means the frames were empty and the "success" is vacuous.
+
+    ``skipped`` marks a run that legitimately had nothing to commit -- the
+    top-1k sampler before the first gameweek is scored -- where an empty write
+    is the correct outcome rather than an outage.
+    """
+    write = summary.get("write")
+    if write is None:
+        return ["write: the commit step never ran, so nothing was written"]
+    status = str(write.get("status") or "unknown")
+    rows = write.get("rows") or {}
+    if status == "ok" and rows:
+        return []
+    if skipped and not rows:
+        return []
+    if status != "ok":
+        detail = str(write.get("error") or "").strip()
+        return [f"write: {status}" + (f": {detail}" if detail else "")]
+    return ["write: committed zero rows; the frames were all empty"]
+
+
 def _season_and_deadlines(fetcher: RivalsFetcher) -> tuple[str, dict[int, dt.datetime]]:
     """Season label and every gameweek deadline, from one bootstrap request.
 
@@ -236,6 +290,11 @@ def run(
     frames: dict[str, Any] = {}
     entry_ids: list[int] = []
     chip_frames: list[pd.DataFrame] = []
+    #: Failures that no stage status can express -- an empty pool, a write that
+    #: never committed. Kept separate from ``incomplete_stages`` because
+    #: ``--allow-incomplete`` forgives a starved stage and must never forgive
+    #: these.
+    failures: list[str] = []
     try:
         season, deadlines = _season_and_deadlines(fetcher)
         summary["season"] = season
@@ -249,55 +308,86 @@ def run(
             frames["dim_manager_league"] = memberships
             entry_ids = [c.entry_id for c in candidates]
 
+        # A pool of zero candidates is not a cheap run, it is a run that cannot
+        # do anything -- and until 2026-08-27 it was the quietest failure in
+        # the module. ingest_picks([]), ingest_transfers([]) and
+        # ingest_histories([]) each spend nothing, raise nothing and return
+        # empty frames, so all three stages left `_stage` through its
+        # ``else: stages[name] = "ok"`` branch. The receipt read: four stages
+        # ok, no incomplete stages, one request spent, exit 0. PoolReport
+        # already counted the candidates; nothing read the count.
+        #
+        # It is not hypothetical either. Gating the snowball on seed
+        # verification (roster.py) now rejects all twenty expert seeds, so the
+        # pool is mini-league + published winners + ELITE_1000 and nothing
+        # else. One more tightening there and it is empty.
+        if stages["pool"] == "ok" and not entry_ids:
+            stages["pool"] = ("failed: build_pool returned zero candidates; "
+                              "there is nobody to crawl")
+            failures.append(
+                "pool: build_pool returned zero candidates, so every stage "
+                "after it would have been a no-op reporting success"
+            )
+
         now = dt.datetime.now(dt.timezone.utc)
         live_gws = [gw for gw, d in deadlines.items() if d <= now]
 
         # -- picks, then transfers, then history. See STAGE_SHARE. ------------
-        if not with_picks:
-            stages["picks"] = "skipped: --no-picks"
-            stages["transfers"] = "skipped: --no-picks"
-        elif not live_gws:
-            skip = ("skipped: no gameweek deadline has passed; the picks "
-                    "endpoint returns 404 for every entry")
-            stages["picks"] = skip
-            summary["picks"] = {"skipped": skip}
-            # Transfers do NOT depend on a deadline having passed -- the
-            # endpoint answers 200 with [] all pre-season -- but with no locked
-            # gameweek there is nothing datable to record, so this is a real
-            # no-op rather than an outage.
-            stages["transfers"] = "skipped: no locked gameweek to date transfers against"
+        # Everything downstream consumes ``entry_ids``, so if the pool stage did
+        # not deliver one, the honest status for those stages is "not_reached",
+        # not "ok". Running them anyway is what produced a receipt in which
+        # three of four stage statuses were actively false.
+        if stages["pool"] != "ok":
+            unreached = f"not_reached: the pool stage did not deliver a cohort ({stages['pool']})"
+            for name in ("picks", "transfers", "history"):
+                stages[name] = unreached
         else:
-            with _stage(budget, "picks", stages, STAGE_SHARE["picks"]):
-                p, c, stats = picks_mod.ingest_picks(
-                    fetcher, entry_ids, live_gws, season=season,
-                    deadlines=deadlines, now=now,
-                )
-                summary["picks"] = stats
-                frames["fact_manager_pick"] = p
-                if not c.empty:
-                    chip_frames.append(c)
-            with _stage(budget, "transfers", stages, STAGE_SHARE["transfers"]):
-                t, tstats = picks_mod.ingest_transfers(
-                    fetcher, entry_ids, season=season, deadlines=deadlines
-                )
-                summary["transfers"] = tstats
-                frames["fact_manager_transfer"] = t
+            if not with_picks:
+                stages["picks"] = "skipped: --no-picks"
+                stages["transfers"] = "skipped: --no-picks"
+            elif not live_gws:
+                skip = ("skipped: no gameweek deadline has passed; the picks "
+                        "endpoint returns 404 for every entry")
+                stages["picks"] = skip
+                summary["picks"] = {"skipped": skip}
+                # Transfers do NOT depend on a deadline having passed -- the
+                # endpoint answers 200 with [] all pre-season -- but with no
+                # locked gameweek there is nothing datable to record, so this
+                # is a real no-op rather than an outage.
+                stages["transfers"] = (
+                    "skipped: no locked gameweek to date transfers against")
+            else:
+                with _stage(budget, "picks", stages, STAGE_SHARE["picks"]):
+                    p, c, stats = picks_mod.ingest_picks(
+                        fetcher, entry_ids, live_gws, season=season,
+                        deadlines=deadlines, now=now,
+                    )
+                    summary["picks"] = stats
+                    frames["fact_manager_pick"] = p
+                    if not c.empty:
+                        chip_frames.append(c)
+                with _stage(budget, "transfers", stages, STAGE_SHARE["transfers"]):
+                    t, tstats = picks_mod.ingest_transfers(
+                        fetcher, entry_ids, season=season, deadlines=deadlines
+                    )
+                    summary["transfers"] = tstats
+                    frames["fact_manager_transfer"] = t
 
-        with _stage(budget, "history", stages, STAGE_SHARE["history"]):
-            past, current, chips, missing = history_mod.ingest_histories(
-                fetcher, entry_ids, season=season
-            )
-            summary["history"] = {
-                "entries_requested": len(entry_ids),
-                "entries_404": len(missing),
-                "past_season_rows": int(len(past)),
-                "current_gw_rows": int(len(current)),
-                "chip_rows": int(len(chips)),
-            }
-            frames["fact_manager_season"] = past
-            frames["fact_manager_gw"] = current
-            if not chips.empty:
-                chip_frames.append(chips)
+            with _stage(budget, "history", stages, STAGE_SHARE["history"]):
+                past, current, chips, missing = history_mod.ingest_histories(
+                    fetcher, entry_ids, season=season
+                )
+                summary["history"] = {
+                    "entries_requested": len(entry_ids),
+                    "entries_404": len(missing),
+                    "past_season_rows": int(len(past)),
+                    "current_gw_rows": int(len(current)),
+                    "chip_rows": int(len(chips)),
+                }
+                frames["fact_manager_season"] = past
+                frames["fact_manager_gw"] = current
+                if not chips.empty:
+                    chip_frames.append(chips)
     except BudgetExhausted as exc:
         # Reachable only outside a stage (the bootstrap request). Everything
         # fetched is still committed and the next run resumes from cache.
@@ -314,6 +404,10 @@ def run(
     # The line a scheduled job and a human both read first. An empty list is
     # the only acceptable steady state.
     summary["incomplete_stages"] = _incomplete(stages)
+    # ...and the line that catches everything a stage status cannot express.
+    # A locked write and an empty pool both used to leave `incomplete_stages`
+    # empty while the run had done nothing at all.
+    summary["failures"] = failures + _write_failures(summary)
     summary["requests"] = {
         "limit": budget.limit,
         "spent": budget.spent,
@@ -354,6 +448,19 @@ def main() -> int:
     )
     print(json.dumps(out, indent=2, default=str))
     incomplete = out.get("incomplete_stages") or []
+    # Hard failures -- an empty pool, a write that never committed -- are NOT
+    # covered by --allow-incomplete. That flag exists so a human can take a
+    # deliberate partial crawl; it was never meant to say "it is fine that we
+    # wrote nothing", and a run that wrote nothing is not a partial anything.
+    failures = out.get("failures") or []
+    if failures:
+        print(
+            f"FAILED: {'; '.join(failures)}. "
+            f"Nothing was committed; re-run to replay the archived bodies "
+            f"for zero requests.",
+            file=sys.stderr,
+        )
+        return 1
     if incomplete and not args.allow_incomplete:
         print(
             f"FAILED: stages did not complete: {', '.join(incomplete)}. "

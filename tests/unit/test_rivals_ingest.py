@@ -355,7 +355,14 @@ def _run_crawl(monkeypatch, stub_pool, *, n: int, budget: int):
 
     def fake_write(frames, db_path, summary, **kw):
         written.update(frames)
-        return {"status": "ok", "attempts": 1, "rows": {}}
+        # Row counts, not an empty dict: "the write returned ok and appended
+        # nothing" is itself a failure the crawl now reports, so a stub that
+        # fakes it would make every test here assert against a broken run.
+        return {
+            "status": "ok", "attempts": 1,
+            "rows": {t: int(len(df)) for t, df in frames.items()
+                     if df is not None and not df.empty},
+        }
 
     monkeypatch.setattr(crawl_mod, "RivalsFetcher", fake_fetcher)
     monkeypatch.setattr(crawl_mod, "_write", fake_write)
@@ -478,12 +485,15 @@ def test_crawl_main_exits_nonzero_when_a_stage_did_not_complete(monkeypatch, cap
     monkeypatch.setattr(
         crawl_mod, "run",
         lambda **kw: {"stages": {"transfers": "not_reached"},
-                      "incomplete_stages": ["transfers"]},
+                      "incomplete_stages": ["transfers"], "failures": []},
     )
     assert crawl_mod.main() == 1
     assert "transfers" in capsys.readouterr().err
 
-    monkeypatch.setattr(crawl_mod, "run", lambda **kw: {"incomplete_stages": []})
+    monkeypatch.setattr(
+        crawl_mod, "run",
+        lambda **kw: {"incomplete_stages": [], "failures": []},
+    )
     assert crawl_mod.main() == 0
 
 
@@ -494,9 +504,244 @@ def test_allow_incomplete_is_the_only_way_to_pass_with_a_starved_stage(
     has to be typed out on the command line, where a reviewer can see it."""
     monkeypatch.setattr(sys, "argv", ["crawl", "--allow-incomplete"])
     monkeypatch.setattr(
-        crawl_mod, "run", lambda **kw: {"incomplete_stages": ["transfers"]}
+        crawl_mod, "run",
+        lambda **kw: {"incomplete_stages": ["transfers"], "failures": []},
     )
     assert crawl_mod.main() == 0
+
+
+# -- the other doors into the same outage ------------------------------------
+#
+# Commit 63c9c0b claimed a starved crawl could no longer present as success. It
+# made that true of one door -- a stage that ran out of budget -- and left three
+# others open. Each of the tests below walks through one of them: a run that
+# wrote nothing, a run that had nobody to crawl, and a failure that reached
+# nobody. The shared question is the one to ask of every stage in this package:
+# if it silently did nothing, what would be different? Where the answer was
+# "nothing", these are the assertions that make it something.
+
+
+def test_a_locked_write_is_a_failure_even_though_every_stage_said_ok(
+    monkeypatch, stub_pool
+):
+    """The write is a stage too, and it was the one nobody watched.
+
+    ``_write`` gives up after six attempts and returns ``{"status": "locked"}``.
+    Nothing read that. Every fetch stage genuinely completed, so ``stages`` was
+    four times "ok" and ``incomplete_stages`` was empty -- for a run that
+    committed zero rows. This is the same outage as the starved history sweep,
+    reached by a door the stage accounting does not watch.
+    """
+    stub_pool(5)
+    monkeypatch.setattr(
+        crawl_mod, "RivalsFetcher",
+        lambda budget, offline=False: CrawlStubFetcher(budget),
+    )
+    monkeypatch.setattr(crawl_mod, "_write", lambda frames, db, summary, **kw: {
+        "status": "locked", "attempts": 6, "error": "held by pid 999",
+    })
+    summary = crawl_mod.run(budget_limit=400, max_candidates=5)
+
+    # The fetch stages really did finish -- that is exactly why they cannot be
+    # the thing that catches this.
+    assert summary["incomplete_stages"] == []
+    assert all(v == "ok" for v in summary["stages"].values())
+    assert summary["failures"], "a crawl that wrote nothing reported no failure"
+    assert any("locked" in f for f in summary["failures"])
+
+
+def test_a_write_that_appended_no_rows_is_not_a_successful_crawl(
+    monkeypatch, stub_pool
+):
+    """status ok + zero rows is the quietest version of the same nothing."""
+    stub_pool(5)
+    monkeypatch.setattr(
+        crawl_mod, "RivalsFetcher",
+        lambda budget, offline=False: CrawlStubFetcher(budget),
+    )
+    monkeypatch.setattr(
+        crawl_mod, "_write",
+        lambda frames, db, summary, **kw: {"status": "ok", "attempts": 1, "rows": {}},
+    )
+    summary = crawl_mod.run(budget_limit=400, max_candidates=5)
+    assert summary["incomplete_stages"] == []
+    assert any("zero rows" in f for f in summary["failures"]), summary["failures"]
+
+
+def test_crawl_main_exits_nonzero_when_the_write_never_committed(
+    monkeypatch, capsys
+):
+    """The half CI sees. post_gw grades this step on the return code alone."""
+    monkeypatch.setattr(sys, "argv", ["crawl", "--budget", "1100"])
+    monkeypatch.setattr(crawl_mod, "run", lambda **kw: {
+        "stages": {n: "ok" for n in crawl_mod.STAGES},
+        "incomplete_stages": [],
+        "failures": ["write: locked: held by pid 999"],
+    })
+    assert crawl_mod.main() == 1
+    assert "locked" in capsys.readouterr().err
+
+
+def test_allow_incomplete_does_not_forgive_a_run_that_wrote_nothing(
+    monkeypatch, capsys
+):
+    """--allow-incomplete buys a deliberate PARTIAL crawl, nothing else.
+
+    A run that committed no rows is not a partial anything, and the escape
+    hatch for "I only wanted picks tonight" must not double as an escape hatch
+    for "the warehouse was locked and we threw the run away".
+    """
+    monkeypatch.setattr(sys, "argv", ["crawl", "--allow-incomplete"])
+    monkeypatch.setattr(crawl_mod, "run", lambda **kw: {
+        "incomplete_stages": ["transfers"],
+        "failures": ["write: locked: held by pid 999"],
+    })
+    assert crawl_mod.main() == 1
+    capsys.readouterr()
+
+
+def test_an_empty_pool_is_a_failure_not_four_ok_stages(monkeypatch, stub_pool):
+    """Zero candidates used to buy a perfect receipt for a run that did nothing.
+
+    ``ingest_picks([])``, ``ingest_transfers([])`` and ``ingest_histories([])``
+    each spend no requests, raise nothing, and return empty frames, so all three
+    left ``_stage`` through its ``else: stages[name] = "ok"`` branch. One
+    bootstrap request, four green stages, no incomplete stages, exit 0.
+
+    Live-relevant, not hypothetical: seed verification now rejects all twenty
+    expert seeds, so the pool is mini-league + winners + ELITE_1000 and one
+    more tightening away from empty.
+    """
+    summary, _written, fetcher = _run_crawl(monkeypatch, stub_pool, n=0, budget=1100)
+
+    assert summary["failures"], (
+        "a crawl with nobody to crawl reported no failure at all"
+    )
+    assert any("zero candidates" in f for f in summary["failures"])
+    assert summary["stages"]["pool"].startswith("failed:")
+    assert summary["incomplete_stages"], "the empty pool must fail the run"
+    # And it must not have pretended to spend a crawl doing it.
+    assert fetcher.kinds() == ["bootstrap"]
+
+
+def test_stages_after_a_starved_pool_report_not_reached_not_ok(
+    monkeypatch, stub_pool
+):
+    """Three of four stage statuses used to be actively false.
+
+    When the pool stage itself is starved the run does fail overall -- but it
+    failed while claiming picks, transfers and history had all completed, which
+    is worse than a bare failure: it points the next person at the wrong stage.
+    """
+    summary, _written, _f = _run_crawl(monkeypatch, stub_pool, n=0, budget=1100)
+    for name in ("picks", "transfers", "history"):
+        status = summary["stages"][name]
+        assert status.startswith("not_reached"), (name, status)
+        assert "pool" in status, "the status must say WHY it never ran"
+
+
+def test_a_healthy_crawl_publishes_an_empty_failure_list(monkeypatch, stub_pool):
+    """The steady state, asserted so the new key cannot quietly stop existing."""
+    summary, _written, _f = _run_crawl(monkeypatch, stub_pool, n=10, budget=400)
+    assert summary["incomplete_stages"] == []
+    assert summary["failures"] == []
+    assert summary["write"]["rows"]["fact_manager_transfer"] == 10
+
+
+# -- post_gw: a failure that reaches nobody has not been reported -------------
+
+
+def test_a_failed_post_gw_step_is_delivered_to_the_owner(tmp_path):
+    """"post_gw will notice a failed crawl" was true and useless.
+
+    ``_run`` did capture the return code and ``main`` did return 1 -- into a
+    JSON file under data/warehouse/jobs/ and stdout, neither of which anything
+    in this repo reads, under a launchd plist with no KeepAlive and no failure
+    action. So ``crawl_elite`` could exit 1 every night for a week and the only
+    trace was a file nobody opened.
+
+    The fix is the DAG's own outbox, not a second alerting path: one row, one
+    flush, one dedupe key.
+    """
+    from fpl_edge.interfaces.telegram import FakeTransport, TelegramConfig
+    from fpl_edge.jobs import outbox, post_gw
+    from fpl_edge.store import Warehouse
+
+    db = tmp_path / "fpl.duckdb"
+    report = post_gw.JobReport(started_utc="2026-08-27T02:00:00+00:00")
+    report.steps.append(post_gw.StepResult("ingest_live", True, 1.0, ""))
+    report.steps.append(post_gw.StepResult(
+        "crawl_elite", False, 12.0, "FAILED: stages did not complete: transfers"))
+
+    tx = FakeTransport()
+    note = post_gw.notify_failures(
+        report, db_path=str(db), transport=tx,
+        config=TelegramConfig(token="t", allowed_chat_ids=frozenset({4242})),
+        now=dt.datetime(2026, 8, 27, 2, 30, tzinfo=UTC),
+    )
+
+    assert tx.sent, "the failure never left the process"
+    text = tx.sent[0][1]["text"]
+    assert "crawl_elite" in text, "the alert must name the step that failed"
+    assert "transfers" in text, "and carry the detail that says which stage"
+    assert "ingest_live" not in text, "a healthy step is noise in a failure alert"
+    assert "sent 1" in note
+
+    # Durable, not fire-and-forget: the row is stamped, so a re-flush is a no-op.
+    with Warehouse(str(db)) as wh:
+        assert outbox.pending(wh) == []
+
+
+def test_a_clean_post_gw_run_notifies_nobody(tmp_path):
+    """An alert that arrives every night is an alert nobody reads."""
+    from fpl_edge.jobs import post_gw
+
+    report = post_gw.JobReport(started_utc="2026-08-27T02:00:00+00:00")
+    report.steps.append(post_gw.StepResult("ingest_live", True, 1.0, ""))
+    report.steps.append(post_gw.StepResult("crawl_elite", True, 12.0, ""))
+
+    def _no_warehouse(*a, **k):  # pragma: no cover - must never be reached
+        raise AssertionError("a clean run must not even open the warehouse")
+
+    note = post_gw.notify_failures(
+        report, db_path=str(tmp_path / "never.duckdb"), transport=_no_warehouse
+    )
+    assert "not sent" in note
+    assert not (tmp_path / "never.duckdb").exists()
+
+
+def test_a_broken_alert_channel_cannot_fail_the_job_it_reports_on(tmp_path):
+    """Reporting the outage must not become the outage."""
+    from fpl_edge.jobs import post_gw
+
+    report = post_gw.JobReport(started_utc="2026-08-27T02:00:00+00:00")
+    report.steps.append(post_gw.StepResult("crawl_elite", False, 1.0, "boom"))
+
+    note = post_gw.notify_failures(
+        report, db_path="/definitely/not/a/directory/fpl.duckdb"
+    )
+    assert note.startswith("alert: enqueue failed"), note
+
+
+def test_a_repeated_failure_enqueues_one_message_per_run(tmp_path):
+    """Deterministic ids stop a retried run from doubling the message."""
+    from fpl_edge.interfaces.telegram import FakeTransport, TelegramConfig
+    from fpl_edge.jobs import post_gw
+    from fpl_edge.store import Warehouse
+
+    db = tmp_path / "fpl.duckdb"
+    cfg = TelegramConfig(token="t", allowed_chat_ids=frozenset({4242}))
+    now = dt.datetime(2026, 8, 27, 2, 30, tzinfo=UTC)
+    report = post_gw.JobReport(started_utc="2026-08-27T02:00:00+00:00")
+    report.steps.append(post_gw.StepResult("crawl_elite", False, 1.0, "boom"))
+
+    post_gw.notify_failures(report, db_path=str(db), transport=FakeTransport(),
+                            config=cfg, now=now)
+    post_gw.notify_failures(report, db_path=str(db), transport=FakeTransport(),
+                            config=cfg, now=now)
+    with Warehouse(str(db)) as wh:
+        rows = wh.sql("SELECT * FROM platform_delivery WHERE monitor = 'post_gw'")
+    assert len(rows) == 1
 
 
 # -- stale seeds (B9) -------------------------------------------------------

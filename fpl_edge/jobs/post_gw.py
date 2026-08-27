@@ -19,6 +19,14 @@ Design rules:
   resolutions key on (idea, gw)), so a crashed run is fixed by running again.
 * **Single writer.** Steps run sequentially in one process precisely because
   DuckDB allows one writer; parallelising them would deadlock the schedule.
+* **A failure reaches a human.** The report below is written to
+  ``data/warehouse/jobs/`` and printed, and until 2026-08-27 that was the end
+  of it: nothing in the repo read either, the launchd plist has no ``KeepAlive``
+  and no failure action, so "post_gw will notice a failed crawl" was true and
+  useless -- it noticed, and told nobody. A run with a failed step now enqueues
+  one message on the same durable outbox the deadline DAG uses
+  (:mod:`fpl_edge.jobs.outbox`) and flushes it. A clean run enqueues nothing,
+  because an alert that arrives nightly is an alert nobody reads.
 """
 
 from __future__ import annotations
@@ -34,6 +42,15 @@ from pathlib import Path
 
 LOG_DIR = Path("data/warehouse/jobs")
 
+#: ``platform_delivery.monitor`` for this job's failure alerts. Shares the
+#: outbox with the deadline DAG rather than growing a second delivery path:
+#: one table, one flush, one dedupe key.
+ALERT_MONITOR = "post_gw"
+
+#: How many failed step names go in the alert title before it is elided. The
+#: body always lists every one of them.
+_TITLE_STEPS = 4
+
 
 @dataclass
 class StepResult:
@@ -47,16 +64,25 @@ class StepResult:
 class JobReport:
     started_utc: str
     steps: list[StepResult] = field(default_factory=list)
+    #: What happened to the failure alert. Recorded in the report so that
+    #: "we tried to tell you and Telegram was not configured" is visible,
+    #: rather than being a second silence layered on the first.
+    alert: str = ""
 
     @property
     def ok(self) -> bool:
         return all(s.ok for s in self.steps)
+
+    @property
+    def failed(self) -> list[StepResult]:
+        return [s for s in self.steps if not s.ok]
 
     def to_json(self) -> str:
         return json.dumps(
             {
                 "started_utc": self.started_utc,
                 "ok": self.ok,
+                "alert": self.alert,
                 "steps": [vars(s) for s in self.steps],
             },
             indent=1,
@@ -81,6 +107,73 @@ def _run(report: JobReport, name: str, argv: list[str]) -> None:
             name=name, ok=False, seconds=round(time.monotonic() - t0, 1),
             detail=traceback.format_exc()[-400:],
         ))
+
+
+def alert_text(report: JobReport) -> tuple[str, str]:
+    """The (title, body) a human gets. Named steps, not a count.
+
+    The title has to be readable on a lock screen, so it names the failed steps
+    up to :data:`_TITLE_STEPS`; the body carries every failure with the tail of
+    its output, which is the part that says *which* stage was starved or that
+    the warehouse write was locked.
+    """
+    failed = report.failed
+    names = [s.name for s in failed]
+    shown = ", ".join(names[:_TITLE_STEPS])
+    if len(names) > _TITLE_STEPS:
+        shown += f" (+{len(names) - _TITLE_STEPS} more)"
+    title = f"post_gw FAILED: {shown}"
+    body = "\n".join(
+        f"- {s.name} ({s.seconds}s): {s.detail or 'no output'}" for s in failed
+    )
+    return title, f"{len(failed)}/{len(report.steps)} steps failed.\n\n{body}"
+
+
+def notify_failures(
+    report: JobReport,
+    *,
+    db_path: str | None = None,
+    transport=None,
+    config=None,
+    now: dt.datetime | None = None,
+) -> str:
+    """Put a failed run where the owner will actually see it. Returns a note.
+
+    Deliberately the DAG's mechanism and not a new one: :func:`outbox.deliver`
+    writes one row, :func:`outbox.flush_outbox` pushes it to the allowlisted
+    Telegram chats and stamps it, and a send that fails leaves the row pending
+    for the next flush -- including the DAG's, which runs every few minutes.
+    So a Telegram outage delays the alert rather than eating it.
+
+    Two things this must never do, both of which would make it worse than
+    nothing. It must not alert on success (a nightly "all fine" trains you to
+    ignore the channel, and then the one that matters is ignored too), and it
+    must not be able to fail the job it is reporting on -- a broken alert
+    channel is recorded in the returned note and in the report, never raised.
+    """
+    if report.ok:
+        return "alert: not sent (every step ok)"
+
+    title, body = alert_text(report)
+    try:
+        from fpl_edge.jobs import outbox
+        from fpl_edge.store import Warehouse
+
+        wh = (Warehouse(lock_timeout_s=180.0) if db_path is None
+              else Warehouse(db_path, lock_timeout_s=180.0))
+        try:
+            outbox.deliver(
+                wh, monitor=ALERT_MONITOR, kind="alert",
+                title=title, body=body, now=now,
+            )
+            flush = outbox.flush_outbox(
+                wh, transport=transport, config=config, now=now
+            )
+        finally:
+            wh.close()
+    except Exception:  # noqa: BLE001 - the alert must not fail the job
+        return f"alert: enqueue failed: {traceback.format_exc()[-200:]}"
+    return f"alert: enqueued {title!r}; {flush.render()}"
 
 
 def main() -> int:
@@ -172,11 +265,20 @@ def main() -> int:
     _run(report, "retro_report", [py, "scripts/retro_report.py"])
     _run(report, "weekly_idea_report", [py, "scripts/weekly_idea_report.py"])
 
+    # Every step has run and released the write lock by now, so this is the
+    # safe point to take it for the one row the alert needs.
+    report.alert = notify_failures(report)
+
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     out = LOG_DIR / f"post_gw_{stamp}.json"
     out.write_text(report.to_json())
     print(report.to_json())
+    if not report.ok:
+        print(
+            f"FAILED: {', '.join(s.name for s in report.failed)} | {report.alert}",
+            file=sys.stderr,
+        )
     return 0 if report.ok else 1
 
 

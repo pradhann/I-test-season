@@ -32,6 +32,8 @@ from fpl_edge.ingest.rivals.top1k import (
     PAGE_SIZE,
     SOURCE_PREFIX,
     STAGES,
+    SampleSizeUnavailable,
+    _sampled_so_far,
     collect,
     plan,
     run,
@@ -398,7 +400,12 @@ def test_run_reports_its_spend_even_when_the_budget_is_exhausted(monkeypatch):
     assert out["budget_exhausted"]
     assert out["requests"]["limit"] == 12
     assert out["requests"]["spent"] == 12
-    assert "write" not in out, "nothing was collected, so nothing may be written"
+    # Nothing was collected, so nothing may be written -- but the receipt must
+    # SAY so. `if frames: summary["write"] = ...` left an exhausted run with no
+    # write key at all, which is indistinguishable from a run that wrote fine.
+    assert out["write"]["status"] == "nothing-to-write"
+    assert out["write"]["rows"] == {}
+    assert out["failures"], "a run that committed nothing reported no failure"
 
 
 def test_run_defaults_its_budget_to_the_declared_plan(monkeypatch):
@@ -483,3 +490,172 @@ def test_grow_targets_current_sample_plus_k_capped_at_10k(monkeypatch):
     monkeypatch.setattr(mod, "_sampled_so_far", lambda db: 0)
     out = run(grow=750, dry_run=True)
     assert out["plan"]["n_entries"] == 750, "growth from nothing is a first run"
+
+
+# -- the write is a stage too, and nobody was watching it ---------------------
+
+
+def _after_gw1_fetcher(budget, *, entries=60):
+    """A stub whose deadlines are unambiguously in the past for ``run``."""
+    return StubFetcher(
+        budget, standings_entries=entries,
+        deadlines=("2020-08-14T17:30:00Z", "2020-08-21T17:30:00Z"),
+    )
+
+
+def test_a_locked_write_fails_the_sample_instead_of_reporting_success(monkeypatch):
+    """``_write`` returns {"status": "locked"} after six attempts.
+
+    Nothing read that. Every stage completed, ``incomplete_stages`` was empty,
+    the process exited 0 and post_gw recorded the step green -- for a sample
+    whose rows never reached the warehouse.
+    """
+    import fpl_edge.ingest.rivals.top1k as mod
+
+    monkeypatch.setattr(mod, "RivalsFetcher",
+                        lambda budget, offline=False: _after_gw1_fetcher(budget))
+    monkeypatch.setattr(mod, "_write", lambda frames, db, summary, **kw: {
+        "status": "locked", "attempts": 6, "error": "held by pid 999",
+    })
+    out = run(n_entries=50, transfers_top=10, budget_limit=400)
+
+    assert out["incomplete_stages"] == [], "the fetch stages really did finish"
+    assert out["failures"], "a sample that wrote nothing reported no failure"
+    assert any("locked" in f for f in out["failures"]), out["failures"]
+
+
+def test_a_healthy_sample_publishes_an_empty_failure_list(monkeypatch):
+    import fpl_edge.ingest.rivals.top1k as mod
+
+    monkeypatch.setattr(mod, "RivalsFetcher",
+                        lambda budget, offline=False: _after_gw1_fetcher(budget))
+    monkeypatch.setattr(mod, "_write", lambda frames, db, summary, **kw: {
+        "status": "ok", "attempts": 1,
+        "rows": {t: len(df) for t, df in frames.items()},
+    })
+    out = run(n_entries=50, transfers_top=10, budget_limit=400)
+    assert out["incomplete_stages"] == []
+    assert out["failures"] == []
+
+
+def test_a_declared_pre_gw1_skip_commits_nothing_and_that_is_correct(monkeypatch):
+    """The one run that is allowed to write nothing says why in the receipt.
+
+    Distinguishing this from the locked-write case is the whole point: both
+    commit zero rows, and only one of them is an outage.
+    """
+    import fpl_edge.ingest.rivals.top1k as mod
+
+    monkeypatch.setattr(
+        mod, "RivalsFetcher",
+        lambda budget, offline=False: StubFetcher(
+            budget, standings_entries=0,
+            deadlines=("2020-08-14T17:30:00Z", "2020-08-21T17:30:00Z"),
+        ),
+    )
+    out = run(n_entries=50, transfers_top=10, budget_limit=400)
+    assert out["skipped"]
+    assert out["write"]["status"] == "nothing-to-write"
+    assert out["failures"] == [], out["failures"]
+    assert all(v.startswith("skipped:") for v in out["stages"].values())
+
+
+def test_top1k_main_exits_nonzero_when_the_write_never_committed(
+    monkeypatch, capsys
+):
+    import sys as _sys
+
+    import fpl_edge.ingest.rivals.top1k as mod
+
+    monkeypatch.setattr(_sys, "argv", ["top1k", "--n", "50"])
+    monkeypatch.setattr(mod, "run", lambda **kw: {
+        "stages": {n: "ok" for n in STAGES}, "incomplete_stages": [],
+        "failures": ["write: locked: held by pid 999"],
+    })
+    assert mod.main() == 1
+    assert "locked" in capsys.readouterr().err
+
+
+def test_allow_incomplete_does_not_forgive_a_sample_that_wrote_nothing(
+    monkeypatch, capsys
+):
+    import sys as _sys
+
+    import fpl_edge.ingest.rivals.top1k as mod
+
+    monkeypatch.setattr(_sys, "argv", ["top1k", "--allow-incomplete"])
+    monkeypatch.setattr(mod, "run", lambda **kw: {
+        "incomplete_stages": ["transfers"],
+        "failures": ["write: locked: held by pid 999"],
+    })
+    assert mod.main() == 1
+    capsys.readouterr()
+
+
+# -- --grow must not shrink the cohort when it cannot read it ----------------
+
+
+class _BrokenWarehouse:
+    """A read copy that opens and then fails every query."""
+
+    def __init__(self):
+        self.closed = False
+
+    def sql(self, *a, **k):
+        raise RuntimeError("Catalog Error: table with name ... does not exist")
+
+    def close(self):
+        self.closed = True
+
+
+def test_a_broken_sample_read_refuses_to_grow_rather_than_shrinking(monkeypatch):
+    """``except Exception: return 0`` retargeted the cohort, permanently.
+
+    The scheduled job runs ``--grow 300``. With the swallow in place, any
+    failure of this query -- a corrupt catalog, a half-materialised read copy,
+    a renamed column -- turned the target from (existing + 300) into 300. The
+    sampler then walked the top 300, reported every stage ok, exited 0, and the
+    cohort had gone from thousands to hundreds with nothing saying so. The next
+    night it would do it again.
+    """
+    broken = _BrokenWarehouse()
+    monkeypatch.setattr("fpl_edge.store.Warehouse.read_copy",
+                        classmethod(lambda cls, *a, **k: broken))
+
+    with pytest.raises(SampleSizeUnavailable) as exc:
+        _sampled_so_far(None)
+    assert "shrink" in str(exc.value)
+    assert broken.closed, "the throwaway read copy must still be closed"
+
+
+def test_a_refused_grow_exits_nonzero_instead_of_sampling_the_top_300(
+    monkeypatch, capsys
+):
+    import sys as _sys
+
+    import fpl_edge.ingest.rivals.top1k as mod
+
+    def _boom(db_path):
+        raise SampleSizeUnavailable("could not read ... would silently shrink it")
+
+    monkeypatch.setattr(mod, "_sampled_so_far", _boom)
+    monkeypatch.setattr(mod, "RivalsFetcher",
+                        lambda *a, **k: pytest.fail("no crawl may start"))
+    monkeypatch.setattr(_sys, "argv", ["top1k", "--grow", "300", "--budget", "1200"])
+    assert mod.main() == 1
+    assert "shrink" in capsys.readouterr().err
+
+
+def test_an_empty_warehouse_is_a_first_run_not_a_broken_read(tmp_path):
+    """Absent is still allowed to mean zero -- against a real empty database.
+
+    The distinction has to be made positively (the tables are not in the
+    catalog) rather than by catching whatever the query raises, or the fix is
+    just the old swallow with more words.
+    """
+    from fpl_edge.store import Warehouse
+
+    db = tmp_path / "fpl.duckdb"
+    with Warehouse(str(db)) as wh:
+        wh.sql("SELECT 1")
+    assert _sampled_so_far(str(db)) == 0

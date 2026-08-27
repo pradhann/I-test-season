@@ -54,7 +54,14 @@ import pandas as pd
 
 from fpl_edge.ingest.rivals import picks as picks_mod
 from fpl_edge.ingest.rivals.client import BudgetExhausted, RequestBudget, RivalsFetcher
-from fpl_edge.ingest.rivals.crawl import STAGE_SHARE, _incomplete, _season_and_deadlines, _stage, _write
+from fpl_edge.ingest.rivals.crawl import (
+    STAGE_SHARE,
+    _incomplete,
+    _season_and_deadlines,
+    _stage,
+    _write,
+    _write_failures,
+)
 
 #: The "Overall" classic league that every entry is auto-enrolled in.
 OVERALL_LEAGUE_ID = 314
@@ -200,7 +207,17 @@ def collect(
             "first scoring, not at rollover); nothing to sample yet"
         )
     if not entry_rows:
-        return _skip_all("standings pages yielded no entries")
+        # Distinct from the case above: page 1 answered with results, and yet
+        # nothing survived into the cohort. That is not the "league is not
+        # populated yet" no-op, so it must not borrow its skip status -- a
+        # sampler with no entries goes on to call every later stage with an
+        # empty list, spend nothing, and report "ok" for all of them.
+        reason = ("failed: standings pages returned rows but yielded no "
+                  "entries; the cohort would be empty")
+        for name in STAGES:
+            stages[name] = reason
+        summary["failure"] = reason
+        return frames, summary
 
     # A rank-ordered identity for the cohort: the same entry sampled in a later
     # gameweek gets a fresh row with a fresh as_of, so cohort membership is
@@ -269,14 +286,39 @@ def collect(
     return frames, summary
 
 
+class SampleSizeUnavailable(RuntimeError):
+    """``--grow`` could not read how large the existing sample already is.
+
+    Raised rather than defaulted, because the default is destructive. See
+    :func:`_sampled_so_far`.
+    """
+
+
+#: The tables :func:`_sampled_so_far` needs before it can count anything. Their
+#: absence is a first run; a failure to read them is not.
+_GROWTH_TABLES = ("fact_manager_gw", "dim_manager")
+
+
 def _sampled_so_far(db_path: str | None) -> int:
     """How many entries the sample already holds for the latest sampled GW.
 
     Reads a throwaway copy of the database (``Warehouse.read_copy``) so the
     single-writer lock stays free for whoever holds it; a growth decision must
-    never block, or be blocked by, an ingest in progress. Returns 0 when the
-    warehouse or the table does not exist yet -- growth from nothing is just a
-    first run.
+    never block, or be blocked by, an ingest in progress.
+
+    **Absent is not the same as unreadable, and the difference is the cohort.**
+    This used to end in ``except Exception: return 0``. Under the scheduled
+    ``--grow 300`` that turns *any* failure of these two queries -- a corrupt
+    catalog, a renamed column, a copy that half-materialised -- into a target
+    of ``0 + 300 = 300`` instead of ``existing + 300``. The run then samples
+    the top 300, reports every stage ok, exits 0, and the cohort has been
+    silently truncated from thousands to hundreds while the receipt says the
+    growth worked. The next night it does it again.
+
+    So the genuine first-run case is detected *positively* -- the tables are
+    not in the catalog yet -- and everything else is raised as
+    :class:`SampleSizeUnavailable`. A run that cannot size the existing sample
+    must refuse to grow it, not guess it downward.
     """
     from fpl_edge.store import Warehouse
 
@@ -285,21 +327,38 @@ def _sampled_so_far(db_path: str | None) -> int:
     except FileNotFoundError:
         return 0
     try:
+        present = wh.sql(
+            "SELECT count(*) AS n FROM information_schema.tables "
+            "WHERE table_name IN (?, ?)",
+            list(_GROWTH_TABLES),
+        )
+        if int(present.iloc[0]["n"]) < len(_GROWTH_TABLES):
+            return 0  # nothing sampled yet: growth from nothing is a first run
         gw_df = wh.sql(
             "SELECT max(gw) AS g FROM fact_manager_gw WHERE entry_id IN "
             "(SELECT entry_id FROM dim_manager WHERE source LIKE ?)",
             [f"{SOURCE_PREFIX}:%"],
         )
         g = gw_df.iloc[0]["g"] if not gw_df.empty else None
-        gw_like = "%" if g is None or g != g else f"%:gw{int(g)}:%"
+        # pd.isna, not ``g != g``: DuckDB hands back pandas' NA for max() over
+        # an empty table, and NA != NA raises rather than being True. The old
+        # blanket ``except Exception: return 0`` swallowed that TypeError, so a
+        # warehouse whose tables exist but hold no top-1k rows took the
+        # "broken read" path and looked identical to a genuine first run.
+        gw_like = "%" if g is None or pd.isna(g) else f"%:gw{int(g)}:%"
         df = wh.sql(
             "SELECT count(DISTINCT entry_id) AS n FROM dim_manager "
             "WHERE source LIKE ? AND source LIKE ?",
             [f"{SOURCE_PREFIX}:%", gw_like],
         )
         return int(df.iloc[0]["n"]) if not df.empty else 0
-    except Exception:  # noqa: BLE001 - absent table means an empty sample
-        return 0
+    except Exception as exc:  # re-raised with the consequence named, never swallowed
+        raise SampleSizeUnavailable(
+            "could not read the size of the existing top-1k sample, so --grow "
+            "would retarget the cohort down to the growth increment alone and "
+            "silently shrink it. Fix the warehouse read, or pass an explicit "
+            f"--n. Underlying error: {type(exc).__name__}: {exc}"
+        ) from exc
     finally:
         wh.close()
 
@@ -348,9 +407,21 @@ def run(
     finally:
         fetcher.close()
 
+    # The write is ALWAYS accounted for. `if frames:` left an empty run with no
+    # ``write`` key at all, which reads exactly like a run that wrote fine --
+    # the receipt was silent about the one step whose failure leaves no other
+    # trace. Now an empty collection says so in the same field.
     if frames:
         summary["write"] = _write(frames, db_path, summary)
+    else:
+        summary["write"] = {"status": "nothing-to-write", "attempts": 0, "rows": {}}
     summary["incomplete_stages"] = _incomplete(summary.get("stages") or {})
+    # A declared no-op -- pre-GW1, or an explicitly unlocked --gw -- legitimately
+    # commits nothing. Anything else that commits nothing is an outage, and a
+    # locked warehouse is an outage whatever the stages say.
+    summary["failures"] = _write_failures(
+        summary, skipped=bool(summary.get("skipped"))
+    )
     summary["requests"] = {
         "limit": budget.limit, "spent": budget.spent,
         "cache_hits": budget.cache_hits, "receipt": budget.receipt(),
@@ -386,11 +457,24 @@ def main() -> int:
                     help="exit 0 even if a stage was starved; for manual "
                          "partial runs, never for the scheduled job")
     args = ap.parse_args()
-    out = run(n_entries=args.n, budget_limit=args.budget, gw=args.gw,
-              db_path=args.db, offline=args.offline, dry_run=args.dry_run,
-              grow=args.grow, transfers_top=args.transfers_top)
+    try:
+        out = run(n_entries=args.n, budget_limit=args.budget, gw=args.gw,
+                  db_path=args.db, offline=args.offline, dry_run=args.dry_run,
+                  grow=args.grow, transfers_top=args.transfers_top)
+    except SampleSizeUnavailable as exc:
+        print(f"FAILED: {exc}", file=sys.stderr)
+        return 1
     print(json.dumps(out, indent=2, default=str))
     incomplete = out.get("incomplete_stages") or []
+    # Not forgiven by --allow-incomplete: see crawl.main for why.
+    failures = out.get("failures") or []
+    if failures:
+        print(
+            f"FAILED: {'; '.join(failures)}. Nothing was committed; re-run to "
+            f"replay the archived bodies for zero requests.",
+            file=sys.stderr,
+        )
+        return 1
     if incomplete and not args.allow_incomplete:
         print(
             f"FAILED: stages did not complete: {', '.join(incomplete)}. "
