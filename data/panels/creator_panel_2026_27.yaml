@@ -4,11 +4,22 @@
 # pick recorded off an episode ties to the team of the person who said it.
 #
 # ==========================================================================
-# ENTRY IDS ARE PER-SEASON AND ROT SILENTLY.
-# FPL assigns a new entry id every August in registration order. A stale id does
-# NOT 404 -- it resolves to a DIFFERENT REAL PERSON. Re-verify every row each
-# season before the UI renders a squad under a name. See
-# fpl_edge/ingest/rivals/elite.py for the same warning and the verify() helper.
+# A WRONG ID DOES NOT 404 -- IT RESOLVES TO A DIFFERENT REAL PERSON.
+# That is the whole hazard, and this repo has already shipped it: twenty
+# unverified ids served a stranger's rank history under a creator's name.
+#
+# Note what the hazard is NOT. Entry ids are STABLE across seasons, not
+# reassigned each August: entry 53517 carries 19 seasons of history under one
+# id (2007/08 -> 2025/26), checked against /api/entry/53517/history/ on
+# 2026-08-27. So these rows do not rot on a timer, and nobody needs to
+# re-verify them every August as a matter of routine.
+#
+# The twenty that went bad were wrong WHEN WRITTEN -- copied from a source
+# nobody checked. Which is exactly the failure this file's audit trail exists
+# to prevent, and exactly what happened again during this research when a
+# plausible-looking "creator league table" page yielded twenty fabricated ids
+# (see docs/platform/creator_identity_research.md). Verify on entry, not on a
+# schedule. See fpl_edge/ingest/rivals/elite.py verify() for the helper.
 # ==========================================================================
 #
 # How these ids were established (full audit trail:
