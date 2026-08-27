@@ -611,3 +611,23 @@ top-10k crawl (sem_manager_picks / sem_elite_ownership), the calibration
 harness (fpl_edge/eval/projection_scoring.py), and the sim stack
 (fpl_edge/sim/, DecomposedPointsModel). Run before or after Deploy —
 independent of it, but the gw_sim cache table rhymes with fact_solve.
+
+---
+
+## 9. The Panel — elite managers and creators as an edge source
+
+Prompt lives in its own file: **`docs/platform/CREATOR_ELITE_PROMPT.md`**.
+Paste that file's fenced block as the opening message of a fresh session.
+Written 2026-08-27 on top of a three-way audit (content pipeline, rivals
+crawl, chat/MCP/UI surface) whose findings are embedded in the prompt's
+AUDITED CURRENT STATE section.
+
+Supersedes §3 above for creator work: §3 described what to build, this
+describes what was built, what is broken, and what remains. It opens with a
+repairs stage because the audit found the creator track record frozen at zero
+resolved outcomes, `fact_manager_transfer` empty, and elite-cohort pick
+coverage at 25 of 2,015 managers — all invisible from the UI and the chat.
+
+Designed for unattended, resumable execution: progress lives in
+`docs/platform/PANEL_LEDGER.md`, and the prompt authorises adversarial
+multi-agent fan-out.
