@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>i-test</title>
 <link rel="stylesheet" href="/app.css">
+<!-- Per-view stylesheets. Zero-build, so an extra <link> costs nothing and
+     keeps a big view's CSS out of app.css, which every view shares. -->
+<link rel="stylesheet" href="/template.css">
+<link rel="stylesheet" href="/creators.css">
 </head>
 <body>
 <div class="frame">
@@ -14,6 +18,7 @@
     <a href="#planner">Planner</a>
     <a href="#xpoints">xPoints</a>
     <a href="#template">Template &amp; EO</a>
+    <a href="#creators">Creators</a>
     <a href="#fixtures">Fixtures</a>
     <a href="#solver">Solver</a>
     <a href="#chat">Chat</a>
@@ -38,6 +43,7 @@ import template from "/js/views/template.js";
 import fixtures from "/js/views/fixtures.js";
 import solver from "/js/views/solver.js";
 import chat from "/js/views/chat.js";
+import creators from "/js/views/creators.js";
 
 register("home", "Dashboard", home);
 register("planner", "Transfer planner", planner);
@@ -45,6 +51,7 @@ register("xpoints", "Projections", xpoints);
 register("template", "Template & effective ownership", template);
 register("fixtures", "Fixtures", fixtures);
 register("solver", "Solver", solver);
+register("creators", "Content creators", creators);
 register("chat", "Chat", chat);
 start();
 </script>
