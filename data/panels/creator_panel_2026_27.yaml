@@ -1,0 +1,476 @@
+# Creator panel -- person-level FPL entry identities, season 2026/27.
+#
+# ONE ROW PER PERSON, not per show. Podcast co-hosts each get their own row so a
+# pick recorded off an episode ties to the team of the person who said it.
+#
+# ==========================================================================
+# ENTRY IDS ARE PER-SEASON AND ROT SILENTLY.
+# FPL assigns a new entry id every August in registration order. A stale id does
+# NOT 404 -- it resolves to a DIFFERENT REAL PERSON. Re-verify every row each
+# season before the UI renders a squad under a name. See
+# fpl_edge/ingest/rivals/elite.py for the same warning and the verify() helper.
+# ==========================================================================
+#
+# How these ids were established (full audit trail:
+# docs/platform/creator_identity_research.md):
+#
+#   Every id below was read back from https://fantasy.premierleague.com/api/entry/{id}/
+#   on 2026-08-27, and `entry_api_name` is the account holder's real
+#   player_first_name + player_last_name as the API returned it.
+#
+#   Name matching alone was NOT treated as sufficient -- a creator's account is
+#   under their legal name, and common names collide. The corroborating evidence
+#   is that the *public* entry endpoint also returns `leagues.classic[]`,
+#   including each invitational league's `id`, `name` and `admin_entry`. An
+#   account that ADMINISTERS a league named after the creator's own channel
+#   (e.g. entry 3054 admins league 7735 "www.youtube.com/@FPLHarry") is
+#   self-identifying: only the account holder can create and admin that league.
+#   That is the "conclusive" bar used below. Membership of an invite-only
+#   creator league (FPL BlackBox Contributors, The FPL Wire Discord, Hub
+#   Contributors) plus an independent record match is the "high" bar.
+#
+#   Caveat carried honestly: league names are user-set free text, so the league
+#   evidence is strong but not cryptographic. Where a row rests on weaker
+#   evidence, `entry_confidence` says so.
+#
+# entry_confidence: conclusive | high | medium | low
+#   Rows may only be rendered in the UI at `conclusive` or `high`.
+#
+# top10k_finishes is COUNTED from /api/entry/{id}/history/ `past[]`
+# (rank <= 10000), not copied from marketing copy. `best_ever_rank` likewise.
+#
+# A REJECTED SOURCE, recorded so nobody re-walks it:
+#   fantasyfootballpundit.com/fpl-content-creators-league-table/ appears to be
+#   exactly the page this file needs. Its table is JS-loaded; the raw HTML
+#   contains none of the numbers, and a fetch-and-summarise of it returned a
+#   clean-looking table of 20 creator "team IDs" that was entirely fabricated.
+#   All ten sampled ids resolved to unrelated strangers (e.g. it gave FPL Harry
+#   3544 = "Niklavs Grava"; FPL Salah 156 = "Mohammed Naif"). Do not use it.
+
+- person_key: pras
+  display_name: Pras
+  handles:
+    x: "@Pras_fpl"
+    site: null
+  shows: ["The FPL Wire"]
+  own_channel: null
+  entry_id: 3315
+  entry_verified: true
+  entry_confidence: conclusive
+  entry_source_url: "https://fantasy.premierleague.com/api/entry/3315/"
+  entry_api_name: "Pras United"
+  entry_team_name: "Pras's Team"
+  entry_checked_utc: "2026-08-27T23:45:00Z"
+  entry_reason: null
+  entry_evidence: >-
+    Entry 3315 is `admin_entry` of invitational league 725 "The FPL Wire
+    Discord" -- he created the show's own Discord league. Also a member of
+    league 311543 "The FPL Wire" (admin 6816 = co-host Pranil Sheth/Lateriser)
+    and of the invite-only "Solio Analytics" league 1757. Display name
+    "Pras United" matches his public handle @Pras_fpl.
+  edge_note: "The FPL Wire's template/differential framing; London-based."
+  top10k_finishes: 5
+  best_ever_rank: 4184
+  seasons_played: 16
+
+- person_key: zophar
+  display_name: Zophar
+  legal_name: Utkarsh Dalmia
+  handles:
+    x: "@Zophar666"
+    site: null
+  shows: ["The FPL Wire", "Fantasy Football Hub"]
+  own_channel: null
+  entry_id: 2177
+  entry_verified: true
+  entry_confidence: high
+  entry_source_url: "https://fantasy.premierleague.com/api/entry/2177/"
+  entry_api_name: "Utkarsh D"
+  entry_team_name: "Z"
+  entry_checked_utc: "2026-08-27T23:45:00Z"
+  entry_reason: null
+  entry_evidence: >-
+    Not conclusive-by-admin (he administers only a personal league), but four
+    independent facts converge. (1) Member of BOTH invite-only FPL Wire
+    leagues: 725 "The FPL Wire Discord" and 311543 "The FPL Wire".
+    (2) Account holder is "Utkarsh D", India -- Zophar's real name is Utkarsh
+    Dalmia. (3) Team name is literally "Z". (4) DECISIVE RECORD MATCH: his
+    published bio says seven top-10k finishes "including a 17th place finish";
+    /api/entry/2177/history/ shows best_ever_rank = 17 and 8 top-10k seasons
+    across 17 seasons. A 17th-place all-time best is not a coincidence.
+  edge_note: "Statistics-led decision making; the Wire's numbers voice."
+  top10k_finishes: 8
+  best_ever_rank: 17
+  seasons_played: 17
+
+- person_key: lateriser
+  display_name: Lateriser
+  legal_name: Pranil Sheth
+  handles:
+    x: "@Lateriser12"
+    site: null
+  shows: ["The FPL Wire"]
+  own_channel: null
+  entry_id: 6816
+  entry_verified: true
+  entry_confidence: conclusive
+  entry_source_url: "https://fantasy.premierleague.com/api/entry/6816/"
+  entry_api_name: "Pranil Sheth"
+  entry_team_name: "Pranil's Team"
+  entry_checked_utc: "2026-08-27T23:45:00Z"
+  entry_reason: null
+  entry_evidence: >-
+    Entry 6816 is `admin_entry` of league 311543 "The FPL Wire" and of 311542
+    "Thought Dump". Named as a current Wire host (real name Pranil Sheth).
+    Record matches his "Top 200 x3" billing: best_ever_rank = 30.
+  edge_note: "Long-horizon planning; three top-200 finishes."
+  top10k_finishes: 6
+  best_ever_rank: 30
+  seasons_played: 17
+  # NOTE: not on the owner's original panel list, but he is a current FPL Wire
+  # co-host and the brief asked for every host as a person. Include or drop at
+  # the UI layer -- the id itself is sound.
+
+- person_key: bigman_bakar
+  display_name: BigMan Bakar
+  legal_name: AbuBakar Siddiq
+  handles:
+    x: "@BigManBakar"
+    site: null
+  shows: ["The FPL Wire", "Fantasy Football Hub"]
+  own_channel: null
+  entry_id: 5133
+  entry_verified: true
+  entry_confidence: high
+  entry_source_url: "https://fantasy.premierleague.com/api/entry/5133/"
+  entry_api_name: "BigMan Bakar"
+  entry_team_name: "The Malouda Triangle"
+  entry_checked_utc: "2026-08-27T23:43:00Z"
+  entry_reason: null
+  entry_evidence: >-
+    Pre-existing verified id from ELITE_NAMED (fpl_edge/ingest/rivals/elite.py);
+    RE-VERIFIED live rather than trusted. Account name is the handle itself.
+    Admins leagues 614192 "Kings League", 975480 "BigMan's Battleground";
+    member of invite-only 357990 "Hub Contributors" and 1491 "Multiple Top 10k
+    Finishes". RECORD MATCH: billed as "#4 in 2014/15"; best_ever_rank = 4.
+  edge_note: "Aggressive early-season differentials; Wire co-host."
+  top10k_finishes: 4
+  best_ever_rank: 4
+  seasons_played: 16
+
+- person_key: fpl_harry
+  display_name: FPL Harry
+  legal_name: Harry Daniels
+  handles:
+    youtube: "@FPLHarry"
+    x: "@FPL_Harry"
+    instagram: "@fpl_harry"
+    site: "https://linktr.ee/FPL_Harry"
+  shows: ["FPL Harry"]
+  own_channel: "https://www.youtube.com/@FPLHarry"
+  entry_id: 3054
+  entry_verified: true
+  entry_confidence: conclusive
+  entry_source_url: "https://fantasy.premierleague.com/api/entry/3054/"
+  entry_api_name: "Harry Daniels"
+  entry_team_name: "DANIELS XI"
+  entry_checked_utc: "2026-08-27T23:46:00Z"
+  entry_reason: null
+  entry_evidence: >-
+    Entry 3054 is `admin_entry` of league 7735 named literally
+    "www.youtube.com/@FPLHarry", plus 89929 "H's MVPs 2026/27", 39586
+    "Watchlist FFScout League!" and six other personal leagues. Also a member
+    of 1426424 "FFScout Pro Pundits" (invite-only). Self-identifying.
+  edge_note: "High-volume YouTube; team reveals and early transfer calls."
+  top10k_finishes: 5
+  best_ever_rank: 510
+  seasons_played: 10
+
+- person_key: fpl_raptor
+  display_name: FPL Raptor
+  legal_name: Ross Dowsett
+  handles:
+    youtube: "@FPLRaptor"
+    x: "@FPL__Raptor"
+    instagram: "@fpl__raptor"
+    site: null
+  shows: ["FPL Raptor"]
+  own_channel: "https://www.youtube.com/@FPLRaptor"
+  entry_id: 199
+  entry_verified: true
+  entry_confidence: conclusive
+  entry_source_url: "https://fantasy.premierleague.com/api/entry/199/"
+  entry_api_name: "FPL Raptor"
+  entry_team_name: "Eggspected Goals"
+  entry_checked_utc: "2026-08-27T23:47:00Z"
+  entry_reason: null
+  entry_evidence: >-
+    Entry 199 is `admin_entry` of league 40378 named "youtube.com/FPLRaptor",
+    plus 370267 "Raptor Members League" and 40409 "Raptor x Beta Squad ft
+    Stormzy" (matching a real Raptor collaboration). Also a member of
+    invite-only 357990 "Hub Contributors". Account display name is
+    "FPL Raptor" itself. Found via the Hub Contributors standings.
+  edge_note: "Mainstream/entertainment-led YouTube; large casual audience."
+  top10k_finishes: 0
+  best_ever_rank: 10198
+  seasons_played: 6
+
+- person_key: mark_sutherns
+  display_name: Mark Sutherns
+  handles:
+    x: "@FPLMark"
+    site: null
+  shows: ["FPL BlackBox"]
+  own_channel: null
+  entry_id: 252
+  entry_verified: true
+  entry_confidence: conclusive
+  entry_source_url: "https://fantasy.premierleague.com/api/entry/252/"
+  entry_api_name: "Mark Sutherns"
+  entry_team_name: "Sutherns Comfort"
+  entry_checked_utc: "2026-08-27T23:43:00Z"
+  entry_reason: null
+  entry_evidence: >-
+    Pre-existing id from ELITE_NAMED; RE-VERIFIED live. Member of invite-only
+    league 14891 "FPL BlackBox Contributors" (admin 246 = Az Phillips), 14884
+    "youtube.com/FPLBlackBox", 8449 "FFScout Mods & Cons" and 122418 "Planet
+    #FPL Correspondents". RECORD MATCH: briefed as having 10 verified top-10k
+    finishes; counted from history = exactly 10, over 20 seasons, best 42.
+  edge_note: "Founder-level FPL media; the BlackBox process framing."
+  top10k_finishes: 10
+  best_ever_rank: 42
+  seasons_played: 20
+
+- person_key: az_phillips
+  display_name: Az Phillips
+  handles:
+    x: "@fplblackbox_az"
+    instagram: "@az_fpl"
+    site: null
+  shows: ["FPL BlackBox"]
+  own_channel: "https://www.youtube.com/@FPLBlackBox"
+  entry_id: 246
+  entry_verified: true
+  entry_confidence: conclusive
+  entry_source_url: "https://fantasy.premierleague.com/api/entry/246/"
+  entry_api_name: "Az Phillips"
+  entry_team_name: "Blackbox Redemption"
+  entry_checked_utc: "2026-08-27T23:48:00Z"
+  entry_reason: null
+  entry_evidence: >-
+    Entry 246 is `admin_entry` of league 14884 "youtube.com/FPLBlackBox",
+    14891 "FPL BlackBox Contributors" and 15389 "FPL BlackBox Patreon 2627" --
+    i.e. this account runs the show's own league estate. Team name
+    "Blackbox Redemption". Account holder name matches the public handle
+    @fplblackbox_az. Found by walking from Mark Sutherns' league list to the
+    admin of the BlackBox leagues.
+  edge_note: "BlackBox decision-process host; 19 seasons played."
+  top10k_finishes: 4
+  best_ever_rank: 817
+  seasons_played: 19
+
+- person_key: ben_crellin
+  display_name: Ben Crellin
+  handles:
+    x: "@BenCrellin"
+    site: null
+  shows: ["Fantasy Football Hub"]
+  own_channel: null
+  entry_id: 53517
+  entry_verified: true
+  entry_confidence: high
+  entry_source_url: "https://fantasy.premierleague.com/api/entry/53517/"
+  entry_api_name: "Ben Crellin"
+  entry_team_name: "ƃuᴉʞuᴉɥʇuʍopǝpᴉsdn"
+  entry_checked_utc: "2026-08-27T23:43:00Z"
+  entry_reason: null
+  entry_evidence: >-
+    Pre-existing verified id from ELITE_NAMED; RE-VERIFIED live rather than
+    trusted -- still resolves to "Ben Crellin". Corroborated further here:
+    member of invite-only 357990 "Hub Contributors" and 1291919 "Analytics
+    Elite 64"; admins league 648598 "Planning Makes Perfect", which fits the
+    fixture-planning spreadsheets he is known for.
+  edge_note: "Fixture scheduling: blanks, doubles, and the fixture ticker."
+  top10k_finishes: 8
+  best_ever_rank: 550
+  seasons_played: 19
+
+- person_key: fpl_salah
+  display_name: FPL Salah
+  legal_name: Abdul Rehman
+  handles:
+    x: "@FPLSalah"
+    site: null
+  shows: ["Fantasy Football Hub"]
+  own_channel: null
+  entry_id: 70
+  entry_verified: true
+  entry_confidence: conclusive
+  entry_source_url: "https://fantasy.premierleague.com/api/entry/70/"
+  entry_api_name: "Abdul Rehman"
+  entry_team_name: "Attock Athletic"
+  entry_checked_utc: "2026-08-27T23:46:00Z"
+  entry_reason: null
+  entry_evidence: >-
+    Entry 70 is `admin_entry` of league 1032385 named "FPL Salah's League" --
+    the account holder created a league under the brand. Also admins 501693
+    "Running it back!" and is a member of invite-only 357990 "Hub Contributors"
+    (matching his listing as an FFHub contributor) and 1338122 "Analytics Elite
+    Qualifier". Account holder name is Abdul Rehman, which the brief gives as
+    FPL Salah's real name. Candidate id was first spotted in the repo's pinned
+    LiveFPL all-time list (elite_list.py line 526).
+  edge_note: "Long-record analytics manager; 19 seasons."
+  top10k_finishes: 6
+  best_ever_rank: 604
+  seasons_played: 19
+
+- person_key: andy_ltfpl
+  display_name: Andy (Let's Talk FPL)
+  handles:
+    youtube: "@LetsTalkFPL"
+    x: "@LetsTalk_FPL"
+    site: null
+  shows: ["Let's Talk FPL"]
+  own_channel: "https://www.youtube.com/@LetsTalkFPL"
+  entry_id: 41
+  entry_verified: true
+  entry_confidence: conclusive
+  entry_source_url: "https://fantasy.premierleague.com/api/entry/41/"
+  entry_api_name: "Andy LTFPL"
+  entry_team_name: "Let's Talk FPL"
+  entry_checked_utc: "2026-08-27T23:43:00Z"
+  entry_reason: null
+  entry_evidence: >-
+    Pre-existing id from ELITE_NAMED; RE-VERIFIED live. Team name is the
+    channel name, and entry 41 is `admin_entry` of league 28071
+    "youtube.com/letstalkfpl 📽️". Self-identifying.
+  edge_note: "Daily-cadence YouTube; the highest-volume single-host channel."
+  top10k_finishes: 5
+  best_ever_rank: 588
+  seasons_played: 16
+
+# ---------------------------------------------------------------------------
+# Solio Analytics.
+#
+# The owner referred to "solioanalytics". It is NOT a person -- it is an
+# independent FPL analytics company (projections, planner, optimiser at
+# fpl.solioanalytics.com) founded by four people, which also runs a podcast.
+# There is therefore no single "Solio team", and the brand row below is
+# deliberately null. The four co-founders are listed as people; all four ids
+# were verified, and two of them administer the Solio-branded leagues.
+# ---------------------------------------------------------------------------
+
+- person_key: solio_analytics
+  display_name: Solio Analytics
+  is_brand: true
+  handles:
+    x: "@SolioAnalytics"
+    site: "https://solioanalytics.com/"
+    bluesky: "@solioanalytics.com"
+  shows: ["Solio Analytics"]
+  own_channel: "https://solioanalytics.com/"
+  entry_id: null
+  entry_verified: false
+  entry_confidence: null
+  entry_source_url: null
+  entry_api_name: null
+  entry_team_name: null
+  entry_checked_utc: "2026-08-27T23:49:00Z"
+  entry_reason: >-
+    Solio Analytics is a company with four co-founders, not an individual
+    manager, and it publishes no single house team. Deliberately left null --
+    attach picks to the named co-founder rows below instead. No brand-level
+    entry exists to find; this is not a failed search.
+  edge_note: "Stochastic-programming projections and an FPL optimiser."
+  top10k_finishes: null
+
+- person_key: sertalp_cay
+  display_name: Sertalp Bilal Cay
+  handles:
+    x: "@sertalpbilal"
+    site: "https://fpl.solioanalytics.com/"
+  shows: ["Solio Analytics"]
+  own_channel: null
+  entry_id: 3333334
+  entry_verified: true
+  entry_confidence: high
+  entry_source_url: "https://fantasy.premierleague.com/api/entry/3333334/"
+  entry_api_name: "Sertalp Cay"
+  entry_team_name: "Solio Optimized FC"
+  entry_checked_utc: "2026-08-27T23:49:00Z"
+  entry_reason: null
+  entry_evidence: >-
+    Member of invite-only league 1757 "Solio Analytics" (8 entries, admin 2843
+    = co-founder Jørgen Gjærum). Team name "Solio Optimized FC". He is
+    `admin_entry` of league 696621 "Analytics League". Named on X by
+    @SolioAnalytics as "@sertalpbilal, co-founder of Solio Analytics".
+    Region USA, consistent with the known FPL-optimisation author.
+  edge_note: "Optimisation/solver author; the public face of Solio."
+  top10k_finishes: 3
+  best_ever_rank: 3481
+  seasons_played: 6
+
+- person_key: jonny_currie
+  display_name: Jonny Currie
+  handles: {}
+  shows: ["Solio Analytics"]
+  own_channel: null
+  entry_id: 124
+  entry_verified: true
+  entry_confidence: conclusive
+  entry_source_url: "https://fantasy.premierleague.com/api/entry/124/"
+  entry_api_name: "Jonny Currie"
+  entry_team_name: "JC Milan"
+  entry_checked_utc: "2026-08-27T23:49:00Z"
+  entry_reason: null
+  entry_evidence: >-
+    Entry 124 is `admin_entry` of league 1524 named "fpl.solioanalytics.com" --
+    he runs the product's own league. Matches co-founder "Jonny".
+  edge_note: "Solio co-founder."
+  top10k_finishes: 3
+  best_ever_rank: 909
+  seasons_played: 11
+
+- person_key: jorgen_gjaerum
+  display_name: Jørgen Gjærum
+  handles: {}
+  shows: ["Solio Analytics"]
+  own_channel: null
+  entry_id: 2843
+  entry_verified: true
+  entry_confidence: conclusive
+  entry_source_url: "https://fantasy.premierleague.com/api/entry/2843/"
+  entry_api_name: "Jørgen Gjærum"
+  entry_team_name: "Guinness FC"
+  entry_checked_utc: "2026-08-27T23:49:00Z"
+  entry_reason: null
+  entry_evidence: >-
+    Entry 2843 is `admin_entry` of league 1757 "Solio Analytics". Matches
+    co-founder "Jørgen"; region Norway, consistent.
+  edge_note: "Solio co-founder."
+  top10k_finishes: 1
+  best_ever_rank: 58
+  seasons_played: 4
+
+- person_key: james_palmer
+  display_name: James Palmer
+  handles: {}
+  shows: ["Solio Analytics"]
+  own_channel: null
+  entry_id: 1000001
+  entry_verified: true
+  entry_confidence: high
+  entry_source_url: "https://fantasy.premierleague.com/api/entry/1000001/"
+  entry_api_name: "James Palmer"
+  entry_team_name: "Virgil van Pike"
+  entry_checked_utc: "2026-08-27T23:49:00Z"
+  entry_reason: null
+  entry_evidence: >-
+    Member of the 8-entry invite-only league 1757 "Solio Analytics". Matches
+    co-founder "James" (credited with the relative-risk optimisation model).
+    Weaker than the two admin rows above -- membership, not administration --
+    so `high`, not `conclusive`.
+  edge_note: "Solio co-founder; risk-aware optimisation model."
+  top10k_finishes: 1
+  best_ever_rank: 1607
+  seasons_played: 7
