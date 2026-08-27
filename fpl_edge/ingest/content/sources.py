@@ -240,6 +240,12 @@ class ProbeResult:
     items: int
     error: str | None = None
     skipped_reason: str | None = None
+    #: Feed entries dropped because their date could not be parsed or carried no
+    #: UTC offset. feeds.py refuses to guess a date, which is right -- but a
+    #: silent drop is how 777 of 777 Megaphone items once vanished with the feed
+    #: still reporting 200. A source losing items this way looks healthy on every
+    #: other number here, so the count is carried out to the receipt.
+    bad_dates: int = 0
 
     @property
     def ok(self) -> bool:
@@ -265,13 +271,24 @@ class ProbeReport:
     def skipped(self) -> list[ProbeResult]:
         return [r for r in self.results if r.skipped_reason is not None]
 
+    @property
+    def bad_dates(self) -> int:
+        return sum(r.bad_dates for r in self.results)
+
     def render(self) -> str:
-        lines = [f"{'status':>6}  {'bytes':>9}  {'items':>5}  key"]
+        lines = [f"{'status':>6}  {'bytes':>9}  {'items':>5}  {'baddate':>7}  key"]
         for r in sorted(self.results, key=lambda x: x.key):
             status = r.skipped_reason or (r.error or str(r.http_status))
-            lines.append(f"{status:>6}  {r.bytes_received:>9}  {r.items:>5}  {r.key}")
+            lines.append(
+                f"{status:>6}  {r.bytes_received:>9}  {r.items:>5}  "
+                f"{r.bad_dates:>7}  {r.key}"
+            )
         lines.append(
             f"-- reached {len(self.reached)}, failed {len(self.failed)}, "
             f"skipped-on-policy {len(self.skipped)}, of {len(self.results)}"
+        )
+        lines.append(
+            f"-- entries dropped for an unparsable or offset-less date: "
+            f"{self.bad_dates}"
         )
         return "\n".join(lines)

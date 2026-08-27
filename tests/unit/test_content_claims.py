@@ -21,8 +21,11 @@ from fpl_edge.ingest.content.claims import (
     segment,
 )
 from fpl_edge.ingest.content.feeds import UnparsableDate, parse_feed, parse_feed_date, strip_html
+from fpl_edge.ingest.content.fetch import Response
+from fpl_edge.ingest.content.loaders import load_feed_source, load_source
 from fpl_edge.ingest.content.models import Action, ContentItem
 from fpl_edge.ingest.content.resolve import PlayerResolver, ResolutionStats, SeasonResolvers
+from fpl_edge.ingest.content.sources import ProbeReport, Source, SourceKind
 
 UTC = dt.UTC
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "content"
@@ -344,3 +347,59 @@ class TestFeedParsing:
         """Without the break, two bullets fuse into a phrase nobody said."""
         text = strip_html("<li>Captaining Haaland</li><li>Salah is out</li>")
         assert "Haaland. Salah" in text.replace("\n", " ").replace("  ", " ")
+
+
+class _CannedFetcher:
+    """A ContentFetcher stand-in that answers one body and records nothing."""
+
+    def __init__(self, body: bytes) -> None:
+        self._body = body
+
+    def get(self, url: str) -> Response:
+        return Response(
+            url=url, status=200, body=self._body, fetched_at=PUBLISHED,
+            sha256="", body_path=None,
+        )
+
+
+class TestLoaderReceipt:
+    """What the ingest receipt is obliged to tell you about a fetch."""
+
+    def test_entries_dropped_for_a_bad_date_reach_the_receipt(self) -> None:
+        """A silent drop here is indistinguishable from an empty feed.
+
+        feeds.py is right to refuse to guess a missing offset -- a day of drift
+        moves a claim across a deadline. But the loader used to compute the
+        count and throw it away, so a feed that lost every item to unparsable
+        dates reported HTTP 200, no error, and zero items: exactly what a
+        healthy but quiet feed looks like. The number is the only thing that
+        distinguishes them.
+        """
+        source = Source("pod_test", "Creator", SourceKind.PODCAST,
+                        "https://example.invalid/feed")
+        items, result = load_feed_source(
+            _CannedFetcher((FIXTURES / "podcast_feed.xml").read_bytes()), source
+        )
+
+        assert len(items) == 3
+        assert result.bad_dates == 1, (
+            "the dateless entry was dropped without appearing anywhere in the receipt"
+        )
+
+        report = ProbeReport()
+        report.add(result)
+        assert report.bad_dates == 1
+        assert "1" in report.render().splitlines()[-1]
+
+    def test_load_source_refuses_a_keyword_it_cannot_honour(self) -> None:
+        """The `--no-transcripts` class of bug, closed at the signature.
+
+        load_source used to take **kwargs and forward only the names it knew,
+        so `transcripts=False` -- passed by both callers and advertised in
+        --help -- was accepted and dropped. A flag that silently does nothing
+        is worse than a missing flag, because the operator believes it worked.
+        """
+        source = Source("pod_test", "Creator", SourceKind.PODCAST,
+                        "https://example.invalid/feed")
+        with pytest.raises(TypeError):
+            load_source(_CannedFetcher(b""), source, transcripts=False)

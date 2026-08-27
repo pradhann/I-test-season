@@ -140,11 +140,10 @@ def parse_feed(body: bytes) -> tuple[list[FeedEntry], int]:
     entries: list[FeedEntry] = []
     dropped = 0
 
-    nodes = root.findall(".//item")
-    is_atom = False
-    if not nodes:
-        nodes = root.findall(".//atom:entry", namespaces=_NS)
-        is_atom = True
+    # RSS 2.0 first, Atom as the fallback. The two are handled by the same loop
+    # below -- every lookup passes both spellings to `_first_text` -- so which
+    # dialect matched is not information the parser needs to keep.
+    nodes = root.findall(".//item") or root.findall(".//atom:entry", namespaces=_NS)
 
     for node in nodes:
         title = _first_text(node, ("title", "atom:title")) or ""
@@ -178,5 +177,4 @@ def parse_feed(body: bytes) -> tuple[list[FeedEntry], int]:
                 guid=guid.strip(),
             )
         )
-    _ = is_atom
     return entries, dropped

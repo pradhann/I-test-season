@@ -66,9 +66,7 @@ def cmd_probe(args: argparse.Namespace) -> int:
     report = ProbeReport()
     with ContentFetcher("probe", delay_s=args.delay) as fetcher:
         for source in ALL_SOURCES:
-            items, result = load_source(
-                fetcher, source, max_items=3, max_videos=2, transcripts=False
-            )
+            items, result = load_source(fetcher, source, max_items=3, max_videos=2)
             _ = items
             report.add(result)
             print(
@@ -93,7 +91,9 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         applied = store.migrate()
         if applied:
             print(f"migrations applied: {', '.join(applied)}")
-        store.upsert_sources(ALL_SOURCES)
+        registry = store.upsert_sources(ALL_SOURCES)
+        print(f"registry: {registry.inserted} sources added, "
+              f"{registry.updated} definitions updated")
 
         resolver = build_resolver(warehouse)
         calendar, cal_report = load_calendar(warehouse)
@@ -112,7 +112,6 @@ def cmd_ingest(args: argparse.Namespace) -> int:
                     fetcher, source,
                     max_items=args.max_items,
                     max_videos=args.max_videos,
-                    transcripts=not args.no_transcripts,
                     since=since,
                 )
                 report.add(result)
@@ -140,6 +139,7 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         print(stats.render())
         print()
         print(f"persisted: {written_items} new items, {written_claims} new claims")
+        print(f"dropped for an unparsable or offset-less date: {report.bad_dates} entries")
         print(f"warehouse: {store.counts()}")
     return 0
 
@@ -222,13 +222,15 @@ def cmd_score(args: argparse.Namespace) -> int:
 
         index = ResultIndex(results, players)
         outcomes, stats = score_claims(claims, index, calendar, now=now)
-        store.insert_outcomes(outcomes)
+        written = store.insert_outcomes(outcomes)
 
         scores = creator_scores(outcomes, claims, as_of=now)
         store.insert_scores(scores)
 
         print()
         print(stats.render())
+        print(f"  outcomes: {written.inserted} new, {written.revised} revised, "
+              f"{written.unchanged} unchanged")
         print()
         overall = scores[scores["scope"] == "all"].sort_values(
             ["claims_scored", "wilson_lo95"], ascending=False
@@ -289,7 +291,16 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--backfill-days", type=int, default=0)
     p.add_argument("--max-items", type=int, default=None)
     p.add_argument("--max-videos", type=int, default=6)
-    p.add_argument("--no-transcripts", action="store_true")
+    # There is deliberately no --no-transcripts. It existed, was documented in
+    # --help, and did nothing: load_source swallowed the keyword. Nothing in
+    # the ingest path fetches transcripts in the first place -- youtube.py's
+    # fetch_transcript refuses unless a caller passes allow_disallowed_routes,
+    # and no caller here does, because both routes to captions go through
+    # /youtubei/, which youtube.com/robots.txt disallows. So there is no
+    # transcript fetching for a flag to suppress, and the only way to make the
+    # flag mean something would be to start doing the thing the policy forbids.
+    # A switch that advertises control it does not have is worse than no
+    # switch; removed rather than faked.
     p.add_argument("--only", default=None, help="comma-separated source keys")
     p.set_defaults(func=cmd_ingest)
 

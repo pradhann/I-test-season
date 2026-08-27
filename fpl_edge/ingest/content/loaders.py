@@ -83,9 +83,12 @@ def load_feed_source(
         )
         if max_items is not None and len(items) >= max_items:
             break
-    _ = bad_dates
     return items, ProbeResult(
-        source.key, source.url, resp.status, len(resp.body), len(entries)
+        source.key, source.url, resp.status, len(resp.body), len(entries),
+        # Carried, not discarded. A feed whose dates stop parsing returns 200
+        # and zero entries, which is indistinguishable from an empty feed on
+        # every other field of this receipt.
+        bad_dates=bad_dates,
     )
 
 
@@ -149,19 +152,29 @@ def load_youtube_source(
 
 
 def load_source(
-    fetcher: ContentFetcher, source: Source, **kwargs: object
+    fetcher: ContentFetcher,
+    source: Source,
+    *,
+    max_items: int | None = None,
+    max_videos: int = 8,
+    since: dt.datetime | None = None,
 ) -> tuple[list[ContentItem], ProbeResult]:
+    """Dispatch on source kind.
+
+    The parameters are spelled out rather than taken as ``**kwargs`` on
+    purpose. The previous signature accepted anything and forwarded only the
+    names it recognised, so ``transcripts=False`` -- passed by both callers in
+    pipeline.py and advertised as ``--no-transcripts`` in ``--help`` -- was
+    accepted, silently dropped, and did nothing for as long as it existed. A
+    keyword this function cannot honour is now a TypeError at the call site.
+    """
     if source.kind is SourceKind.YOUTUBE:
         return load_youtube_source(
-            fetcher, source,
-            max_videos=int(kwargs.get("max_videos", 8)),  # type: ignore[arg-type]
-            since=kwargs.get("since"),  # type: ignore[arg-type]
+            fetcher, source, max_videos=max_videos, since=since,
         )
     if source.kind in (SourceKind.PODCAST, SourceKind.BLOG):
         return load_feed_source(
-            fetcher, source,
-            max_items=kwargs.get("max_items"),  # type: ignore[arg-type]
-            since=kwargs.get("since"),  # type: ignore[arg-type]
+            fetcher, source, max_items=max_items, since=since,
         )
     return [], ProbeResult(
         source.key, source.url, None, 0, 0,
