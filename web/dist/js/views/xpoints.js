@@ -287,9 +287,13 @@ export default async function xpoints(host) {
     hr.appendChild(th("team", { kind: "col", key: "team" }, { num: false }));
     hr.appendChild(th("£", { kind: "col", key: "price" }));
     hr.appendChild(th("own%", { kind: "col", key: "own_pct" }));
-    for (const g of gws)
-      hr.appendChild(th(`GW${g}`, { kind: "gw", gw: g },
-        { title: `sort by GW${g}` }));
+    for (const g of gws) {
+      const settled = (res.settled_gws || []).includes(g);
+      hr.appendChild(th(settled ? `GW${g} ✓` : `GW${g}`, { kind: "gw", gw: g },
+        { title: settled
+            ? `GW${g} is settled: cells show ACTUAL points with the delta vs projection`
+            : `sort by GW${g}` }));
+    }
     hr.appendChild(th("Σ", { kind: "sum" },
       { title: "total over the shown gameweeks" }));
     hr.appendChild(th("±", { kind: "col", key: "spread" },
@@ -319,8 +323,27 @@ export default async function xpoints(host) {
       tr.appendChild(el("td", "num", r.own_pct == null ? "–" : fmt1(r.own_pct)));
       for (const g of gws) {
         const v = cell(r.code, g);
+        const settled = (res.settled_gws || []).includes(g);
+        const act = settled ? res.actuals?.[String(r.code)]?.[String(g)] : null;
         const td = el("td", "num");
-        if (v == null) td.textContent = "–";
+        if (settled) {
+          // History: the actual leads; the delta vs projection judges the call
+          if (act == null && v == null) td.textContent = "–";
+          else {
+            const a = act ?? 0;
+            td.appendChild(el("b", null, String(Math.round(a))));
+            if (v != null) {
+              const d = a - v;
+              const chip = el("span", "delta " + (d >= 0 ? "over" : "under"),
+                ` ${d >= 0 ? "+" : ""}${fmt1(d)}`);
+              chip.title = `projected ${fmt1(v)}, actual ${Math.round(a)}`;
+              td.appendChild(chip);
+            }
+            td.style.background =
+              `color-mix(in oklab, var(${v != null && a - v >= 0 ? "--good" : "--bad"}) ` +
+              `${v == null ? 0 : Math.min(22, Math.round(Math.abs(a - v) * 6))}%, var(--surface))`;
+          }
+        } else if (v == null) td.textContent = "–";
         else {
           const pct = Math.min(58, Math.round(58 * v / tintMax));
           td.textContent = fmt1(v);
@@ -343,56 +366,107 @@ export default async function xpoints(host) {
     body.appendChild(el("p", "sub",
       `${rows.length} players · showing ${Math.min(100, rows.length)} · ` +
       `ring on a photo = in your squad · click any header to sort · ` +
-      `tint = xPts magnitude · ${priceAge} (refreshed nightly and T-30h)`));
+      `tint = xPts magnitude · ✓ columns are settled: bold actual, ` +
+      `green over / red under projection · ` +
+      `${priceAge} (refreshed nightly and T-30h)`));
   }
 
   // ---- per-source breakdown ----
   async function showDetail(r) {
     drawer.textContent = "";
     drawer.classList.add("open");
-    const box = drawer;
-    box.appendChild(el("h2", null, `${r.name} — every source`));
-    box.appendChild(el("p", "sub", "loading…"));
+    drawer.appendChild(el("p", "sub", "loading…"));
     try {
       const { result } = await runPanel("projection_table",
-        { gw: res.gw, detail_code: r.code, limit: 1 });
-      box.textContent = "";
-      const head = el("div", "toolbar");
-      head.appendChild(el("h2", null, `${r.name} — every source`));
-      const close = el("button", null, "close");
+        { gw: res.gws?.[0] ?? res.gw, span: 8, detail_code: r.code, limit: 1 });
+      drawer.textContent = "";
+
+      // header: who this is
+      const head = el("div", "dhead");
+      head.appendChild(faceImg(r.code, "bigface"));
+      const id = el("div");
+      id.appendChild(el("div", "dname", r.name));
+      id.appendChild(el("div", "sub",
+        [r.pos, r.team, fmtPrice(r.price),
+         r.own_pct != null ? fmt1(r.own_pct) + "% owned" : null]
+          .filter(Boolean).join(" · ")));
+      head.appendChild(id);
+      const close = el("button", null, "✕");
       close.onclick = () => drawer.classList.remove("open");
       head.appendChild(close);
-      box.appendChild(head);
-      const d = result.detail;
-      const rowsD = d && (d.rows || d.sources);
-      if (!rowsD || !rowsD.length) {
-        box.appendChild(emptyBox("no per-source rows for this player"));
+      drawer.appendChild(head);
+
+      // settled reality first, if any
+      const acts = res.actuals?.[String(r.code)] || {};
+      const settled = Object.keys(acts).sort();
+      if (settled.length)
+        drawer.appendChild(el("p", "sub", "Settled: " + settled.map(g =>
+          `GW${g} → ${Math.round(acts[g])} pts`).join(" · ")));
+
+      // pivot: sources × gameweeks
+      const rowsD = (result.detail?.rows) || [];
+      if (!rowsD.length) {
+        drawer.appendChild(emptyBox("no per-source projections for this player"));
         return;
       }
+      const srcs = [...new Set(rowsD.map(x => x.source))];
+      const dgws = [...new Set(rowsD.map(x => x.gw))].sort((a, b) => a - b);
+      const at = (src, g) =>
+        rowsD.find(x => x.source === src && x.gw === g) || {};
+      let dmax = 0.001;
+      for (const x of rowsD) if (x.xpts > dmax) dmax = x.xpts;
+
+      drawer.appendChild(el("h2", null, "Projected points by source"));
       const wrap = el("div", "scroll-x");
-      const table = el("table", "data");
-      const thead = el("thead"); const hr2 = el("tr");
-      const cols = Object.keys(rowsD[0]);
-      for (const c of cols) hr2.appendChild(el("th", null, c));
-      thead.appendChild(hr2); table.appendChild(thead);
-      const tbody = el("tbody");
-      for (const row of rowsD) {
+      const t = el("table", "data");
+      const hd = el("tr");
+      hd.appendChild(el("th", null, "source"));
+      for (const g of dgws) hd.appendChild(el("th", "num", `GW${g}`));
+      const th_ = el("thead"); th_.appendChild(hd); t.appendChild(th_);
+      const tb = el("tbody");
+      for (const src of srcs) {
         const tr = el("tr");
-        for (const c of cols)
-          tr.appendChild(el("td", typeof row[c] === "number" ? "num" : "",
-            row[c] == null ? "–" : String(row[c])));
-        tbody.appendChild(tr);
+        tr.appendChild(el("td", null, src.replace(/^gh_/, "")));
+        for (const g of dgws) {
+          const v = at(src, g).xpts;
+          const td = el("td", "num");
+          if (v == null) td.textContent = "–";
+          else {
+            td.textContent = fmt1(v);
+            const pct = Math.min(45, Math.round(45 * v / dmax));
+            td.style.background =
+              `color-mix(in oklab, var(--s1) ${pct}%, var(--surface))`;
+          }
+          tr.appendChild(td);
+        }
+        tb.appendChild(tr);
       }
-      table.appendChild(tbody); wrap.appendChild(table);
-      box.appendChild(wrap);
-      if (d.outlier) {
-        const o = d.outlier;
-        const line = typeof o === "string" ? o
-          : `${o.source ?? o.provider ?? "?"} ` +
-            `(${o.delta != null ? (o.delta > 0 ? "+" : "") + fmt2(o.delta) : ""} vs the rest)`;
-        box.appendChild(el("p", "sub", `outlier: ${line}`));
+      // consensus row, bold
+      const cr = el("tr");
+      cr.appendChild(el("td", null, "consensus"));
+      cr.style.fontWeight = "700";
+      for (const g of dgws) {
+        const vs = srcs.map(sc => at(sc, g).xpts).filter(v => v != null);
+        cr.appendChild(el("td", "num",
+          vs.length ? fmt1(vs.reduce((a, b) => a + b, 0) / vs.length) : "–"));
       }
-    } catch (e) { box.textContent = ""; box.appendChild(errBox(e)); }
+      tb.appendChild(cr);
+      t.appendChild(tb); wrap.appendChild(t); drawer.appendChild(wrap);
+
+      // appearance odds, where any source publishes them
+      const pa = rowsD.filter(x => x.p_appear != null);
+      if (pa.length) {
+        const first = pa[0];
+        drawer.appendChild(el("p", "sub",
+          `p(appear) ${fmt2(first.p_appear)}` +
+          (first.xp_if_appears != null
+            ? ` · ${fmt1(first.xp_if_appears)} xPts if he plays` : "") +
+          ` (${pa[0].source.replace(/^gh_/, "")})`));
+      }
+      drawer.appendChild(el("p", "sub",
+        "Row tint = that source's own scale. The gap between rows IS the " +
+        "uncertainty."));
+    } catch (e) { drawer.textContent = ""; drawer.appendChild(errBox(e)); }
   }
 
   await fetchPanel();

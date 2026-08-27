@@ -252,6 +252,16 @@ button.chip { cursor: pointer; }
 /* a chip whose source has nothing for the selected gameweeks */
 .chip.off { opacity: .45; cursor: not-allowed; }
 
+/* the drawer's header + settled-delta chips */
+.dhead { display: flex; gap: 12px; align-items: center; margin-bottom: 10px; }
+.dhead .bigface { width: 56px; height: 68px; object-fit: cover;
+  object-position: top center; border-radius: 8px; background: var(--raised); }
+.dhead .dname { font-size: 17px; font-weight: 700; }
+.dhead button { margin-left: auto; }
+.delta { font-size: 10px; font-weight: 700; font-family: var(--mono); }
+.delta.over { color: var(--good); }
+.delta.under { color: var(--bad); }
+
 /* the detail drawer: underlying data without losing your place */
 .drawer { position: fixed; top: 0; right: 0; height: 100vh; width: min(460px, 92vw);
   background: var(--surface); border-left: 1px solid var(--line);

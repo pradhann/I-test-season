@@ -257,6 +257,17 @@ _GW_RESULT: dict[str, Any] = {
                 },
             },
         },
+        "actuals": {
+            "type": "object",
+            "description": "{code -> {gw -> official points}} for SETTLED "
+                           "gameweeks inside the window -- so the matrix can "
+                           "show projection vs what actually happened",
+            "additionalProperties": {
+                "type": "object",
+                "additionalProperties": {"type": "number"},
+            },
+        },
+        "settled_gws": {"type": "array", "items": {"type": "integer"}},
         "gws": {"type": "array", "items": {"type": "integer"},
                 "description": "the matrix window: anchor gw .. anchor+span-1, "
                                "clamped to coverage"},
@@ -882,6 +893,24 @@ def _gw_mode(
             matrix.setdefault(str(int(r["code"])), {})[str(int(r["gw"]))] = (
                 round(float(v), 3))
 
+    # Official actuals for any settled gameweek in the window: the matrix
+    # shows projection vs reality side by side once a week completes.
+    actuals: dict[str, dict[str, float]] = {}
+    settled_gws: list[int] = []
+    if gws:
+        arows = q(
+            wh,
+            "SELECT gw, code, SUM(total_points) AS pts FROM sem_player_form(?) "
+            "WHERE season = ? AND gw >= ? AND gw <= ? GROUP BY gw, code",
+            (now, season, gws[0], gws[-1]),
+        )
+        for _, r in arows.iterrows():
+            g = int(r["gw"])
+            if g not in settled_gws:
+                settled_gws.append(g)
+            actuals.setdefault(str(int(r["code"])), {})[str(g)] = float(r["pts"])
+        settled_gws.sort()
+
     prices_df = q(
         wh, "SELECT MAX(as_of) AS a FROM fact_player_state WHERE season = ?",
         (season,))
@@ -947,6 +976,8 @@ def _gw_mode(
         "source_meta": source_meta,
         "prices_as_of": prices_as_of,
         "accuracy": accuracy,
+        "actuals": actuals,
+        "settled_gws": settled_gws,
         "gws": gws,
         "matrix": matrix,
         "notes": notes,
