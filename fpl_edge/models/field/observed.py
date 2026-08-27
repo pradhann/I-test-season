@@ -59,13 +59,27 @@ TOP1K_SOURCE_PREFIX = "top1k"
 #: entry from it because a curator also listed them removes exactly the
 #: strongest managers and biases the estimate. The elite pool makes no sampling
 #: claim -- it is a roster -- so losing an overlapping member costs it only
-#: sample size, which is visible in ``n``. Before this rule the entries in both
-#: pools (17 of them in the live warehouse) inflated *both* denominators.
+#: sample size, which is visible in ``n``. Before this rule an entry found by
+#: both crawls inflated *both* denominators. How many entries that is on any
+#: given day is a property of the crawl, not of this rule, so no count is
+#: quoted here -- it moves every time the top1k sampler runs. The live number
+#: is ``SELECT count(*) FROM sem_manager_cohort(now()) WHERE cohort = 'top1k'
+#: AND n_sources > n_top1k_sources``.
 #:
 #: The same rule is implemented in SQL by ``sem_manager_cohort`` in
 #: ``fpl_edge/store/views.sql``; ``tests/unit/test_field_eo_agreement.py``
 #: pins the two equal.
 COHORTS = ("top1k", "elite", "unclassified")
+
+
+class CohortReadError(RuntimeError):
+    """``dim_manager`` is unreadable, so cohort membership is unknown.
+
+    Distinct from "nobody is tracked yet", which is an empty mapping. Raised
+    rather than swallowed because a broken read and an empty world produce the
+    same *shape* of answer and wildly different meanings -- see
+    :func:`resolve_cohorts`.
+    """
 
 
 @dataclass(frozen=True)
@@ -211,14 +225,31 @@ def resolve_cohorts(snapshot: Snapshot) -> dict[int, str]:
     Note the deliberate use of *any* row at or before the snapshot rather than
     the newest one: a manager the standings sampler saw once is a top1k
     manager forever, so the classification cannot flip-flop as ``as_of`` moves.
+
+    An empty ``dim_manager`` returns ``{}`` -- a world with no tracked entries
+    is a real state of the season, and every squad in it is honestly
+    ``'unclassified'``. An *unreadable* ``dim_manager`` raises. The two used to
+    be the same answer, and the empty dict was the more dangerous one of the
+    pair: :func:`load_observed_squads` reported the failure to the user as "no
+    crawled 'elite' squads for <season> GW<g>" -- a broken read dressed up as
+    an empty world, repeated verbatim by the ownership panel's ``cohort_note``
+    -- and for ``cohort='unclassified'`` the ``~isin({})`` mask is all-True, so
+    every crawled squad in the warehouse was reported as a crawl bug. The SQL
+    twin (``sem_manager_cohort``) has no such fallback and would have raised,
+    so the swallow was also drift the agreement test cannot see.
     """
     try:
         top1k = snapshot.table(
             "dim_manager", where="source LIKE ?", params=[f"{TOP1K_SOURCE_PREFIX}%"]
         )
         everyone = snapshot.table("dim_manager")
-    except Exception:
-        return {}
+    except Exception as exc:
+        raise CohortReadError(
+            "dim_manager could not be read at "
+            f"{snapshot.as_of.isoformat()} ({type(exc).__name__}: {exc}), so no "
+            "entry can be classified; refusing to report an unreadable crawl as "
+            "an empty one"
+        ) from exc
     top_ids = set() if top1k.empty else {int(e) for e in top1k["entry_id"]}
     all_ids = set() if everyone.empty else {int(e) for e in everyone["entry_id"]}
     # top1k first, so an entry sampled by both crawls lands in one cohort only.

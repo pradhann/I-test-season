@@ -353,12 +353,25 @@ CREATE OR REPLACE MACRO sem_manager_transfers(p_as_of) AS TABLE (
 -- listed them removes precisely the strongest managers and biases the
 -- estimate. The elite pool makes no sampling claim; it is a roster, so losing
 -- an overlapping member costs it only sample size, which is visible in
--- n_managers. Before this rule the entries in both pools (17 of them in the
--- live warehouse) were counted in BOTH denominators and inflated both.
+-- n_managers. Before this rule an entry found by both crawls was counted in
+-- BOTH denominators and inflated both. How many such entries exist is a
+-- property of the crawl on the day, not of this rule, so no count is quoted
+-- here: it changes every time the top1k sampler runs. To read today's::
+--
+--     SELECT count(*) FROM sem_manager_cohort(now())
+--     WHERE cohort = 'top1k' AND n_sources > n_top1k_sources;
 --
 -- Membership is "ANY source row at or before p_as_of", not just the newest, so
 -- it never flip-flops with as_of; with the precedence above it is also
 -- monotone -- once top1k, top1k at every later instant.
+--
+-- "AT OR BEFORE" IS INCLUSIVE, and the `<=` below is load-bearing: a crawl
+-- stamped at exactly the decision instant is part of that decision, and
+-- Snapshot.table reads the Python side with the same `as_of <= ?`. Turning it
+-- into `<` moves an entry between cohorts in SQL only -- which is silent SQL
+-- vs Python drift, not a rounding difference. Pinned on both sides of the
+-- boundary by test_a_manager_row_landing_exactly_on_the_instant_is_visible in
+-- tests/unit/test_field_eo_agreement.py.
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE MACRO sem_manager_cohort(p_as_of) AS TABLE (
     SELECT entry_id,
@@ -367,7 +380,13 @@ CREATE OR REPLACE MACRO sem_manager_cohort(p_as_of) AS TABLE (
            count(DISTINCT source) FILTER (WHERE source LIKE 'top1k%')
                AS n_top1k_sources,
            count(DISTINCT source) AS n_sources,
-           string_agg(DISTINCT source, '|') AS sources,
+           -- ORDER BY is not cosmetic. DuckDB parallelises the scan, so an
+           -- unordered string_agg returns a different provenance string at
+           -- threads=8 than at threads=1 for any entry with more than one
+           -- source -- the same nondeterminism Snapshot.table fixes with its
+           -- trailing ORDER BY (store/warehouse.py). A provenance field that
+           -- will not compare equal to itself is worse than none.
+           string_agg(DISTINCT source, '|' ORDER BY source) AS sources,
            min(as_of) AS first_seen
     FROM dim_manager WHERE as_of <= p_as_of
     GROUP BY entry_id
@@ -407,6 +426,16 @@ CREATE OR REPLACE MACRO sem_manager_cohort(p_as_of) AS TABLE (
 --
 -- A pick whose element_id resolves to no code groups under a NULL code row --
 -- counted, visible, and excludable by the consumer, never silently dropped.
+-- That NULL group is also the one place an entry contributes more than one row
+-- to a single (cohort, code), which is why owned_by's DISTINCT is not
+-- decoration. Likewise coalesce(multiplier, 0): a missing multiplier is a hole
+-- in the crawl, and this macro's answer to a hole is a visible zero -- sum()
+-- without it returns NULL for a group where every row is a hole, and a NULL
+-- propagates into every consumer's arithmetic as a silent absence.
+--
+-- EVERY column below is compared against the Python model, row by row, by
+-- tests/unit/test_field_eo_agreement.py; a column added here without a twin
+-- there fails that module on purpose.
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE MACRO sem_elite_ownership(p_as_of) AS TABLE (
     WITH mp AS (
