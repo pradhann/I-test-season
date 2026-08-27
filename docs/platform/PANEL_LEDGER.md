@@ -138,6 +138,23 @@ re-check this rather than assume it passed** — and if the table is still empty
 after the GW2 deadline has passed, that IS a real bug and the pipeline-level
 evidence above does not excuse it.
 
+**2026-08-27 — a concurrency scare worth recording.** One fix agent ran
+`git stash --include-untracked` followed by `git stash pop` while three other
+agents were editing the same tree. It restored cleanly — stash list empty, no
+stash reflog entries, every concurrent file still present and modified — and
+the agents that owned those files re-ran their own tests green afterwards. No
+loss found. **The rule stands and should be stated to every future agent: no
+mutating git commands, and `git stash` is a mutating git command.** A parallel
+fan-out over one working tree has no safe stash.
+
+**2026-08-27 — a claim in my own brief was imprecise.** I told an agent "zero
+players have more than one position in dim_player". True at the (season, code)
+grain, which is the grain the lookup uses — but 44 codes carry more than one
+position ACROSS seasons, which is ordinary reclassification. The agent caught
+and corrected it rather than taking it on trust; recorded because the same
+loose phrasing could mislead a future reader into thinking position is
+immutable.
+
 ## Corrections to the prompt's AUDITED CURRENT STATE (append-only)
 
 **2026-08-27 — §3.2 B1's "241 rows" becomes 256 on a rescore.** Fifteen claims
@@ -233,13 +250,13 @@ that is the protocol working, not a setback.
    1 (started). The repo's own standard is the opposite: `observed.py`
    refuses the squad, commenting "a missing one is a hole in the crawl, not a
    zero".
-4. **(LEAK) Creator weights are not point-in-time.**
+4. **[FIXED, commit `b732d8d`] (LEAK) Creator weights are not point-in-time.**
    `fpl_mcp/tools/content_tools.py:_weights()` takes today's `creator_score`
    with no `as_of` filter, while the same tools correctly filter the *claims*
    through `claims_visible_at(moment)`. Claims from the past, weighted by the
    future, in a payload that echoes `as_of` back and reads as PIT. Currently
    masked because every weight is 0.0 — it fires the moment one is not.
-5. **(auditability) The settlement rewrite's own argument fails three ways.**
+5. **[FIXED, commit `b732d8d`] (auditability) The settlement rewrite's own argument fails three ways.**
    `resolved_utc` is restamped on every touched row including unchanged ones,
    destroying the only pointer to the state that produced a verdict;
    `dim_player.position` is an undocumented fourth input that selects the
