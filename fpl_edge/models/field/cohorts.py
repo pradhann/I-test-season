@@ -45,6 +45,9 @@ class CohortRates:
     ownership: np.ndarray | None = None        # (P,) share owning
     start_share: np.ndarray | None = None      # (P,) share starting
     captain_share: np.ndarray | None = None    # (P,) share captaining
+    #: (P,) mean FPL multiplier the cohort applied -- effective ownership, read
+    #: straight off the locked squads. None when unmeasured.
+    eo_share: np.ndarray | None = None
     chip_rates: Mapping[str, float] = dc_field(default_factory=dict)
 
     @property
@@ -57,21 +60,34 @@ class CohortRates:
         p = min(max(float(share), 0.0), 1.0)
         return float(np.sqrt(p * (1.0 - p) / self.n_managers))
 
-    def eo(self, triple_captain_share: np.ndarray | None = None) -> np.ndarray:
-        """Effective ownership from the measured shares.
+    def eo(self) -> np.ndarray:
+        """Effective ownership: the mean FPL multiplier the cohort applied.
 
-        ``EO = start + captain + triple_captain`` (see
-        :mod:`fpl_edge.models.ownership.eo`). The triple-captain vector is only
-        knowable per-player from picks with ``multiplier == 3``; when not
-        supplied, the ``3xc`` chip rate spread over the captain distribution is
-        the best available stand-in and is what is used.
+        THE one definition, shared with ``sem_elite_ownership`` in
+        ``store/views.sql`` and the ``ownership_eo`` panel, and pinned equal to
+        both by ``tests/unit/test_field_eo_agreement.py``::
+
+            eo_p = sum over m of weight[m] * multiplier[m, p] / sum of weight
+
+        Every weight is 1 until the per-manager weight vector lands, so the
+        denominator is :attr:`n_managers`.
+
+        This used to be ``start + captain + captain * chip_rate('3xc')``, which
+        spread the cohort's triple-captain rate over its captain distribution
+        because the per-player TC vector "was not knowable". It is: the stored
+        multiplier is 3. The old form also silently mispriced Bench Boost,
+        whose benched picks score 1. Summing the multipliers the API resolved
+        at the deadline needs no fallback and no chip table at all.
         """
         if not self.measured:
             raise ValueError("cannot compute EO for an unmeasured cohort")
-        tc = triple_captain_share
-        if tc is None:
-            tc = self.captain_share * float(self.chip_rates.get("3xc", 0.0))
-        return self.start_share + self.captain_share + tc
+        if self.eo_share is None:
+            raise ValueError(
+                f"cohort {self.cohort!r} was measured without per-manager "
+                "multipliers, so its effective ownership is unknown; rebuild it "
+                "with rates_from_observed rather than inferring one"
+            )
+        return self.eo_share
 
 
 def rates_from_observed(observed: ObservedSquads, universe: PlayerUniverse) -> CohortRates:
@@ -86,6 +102,7 @@ def rates_from_observed(observed: ObservedSquads, universe: PlayerUniverse) -> C
         ownership=observed.ownership(n_players),
         start_share=observed.start_share(n_players),
         captain_share=observed.captain_share(n_players),
+        eo_share=observed.eo(n_players),
         chip_rates=observed.chip_rates(),
     )
 

@@ -41,6 +41,32 @@ from fpl_edge.store import Snapshot
 #: pool is the elite cohort.
 TOP1K_SOURCE_PREFIX = "top1k"
 
+#: The cohorts, in precedence order. Mutually exclusive: :func:`resolve_cohorts`
+#: assigns every tracked entry to exactly one of them.
+#:
+#: * ``top1k``        -- any ``dim_manager`` row at or before the snapshot whose
+#:   ``source`` starts with :data:`TOP1K_SOURCE_PREFIX`.
+#: * ``elite``        -- otherwise, any ``dim_manager`` row at or before the
+#:   snapshot (the curated pool: expert, elite_list, winner, mini_league,
+#:   snowball, elite_named).
+#: * ``unclassified`` -- has picks but no ``dim_manager`` row at all. Surfaced
+#:   rather than silently dropped, because a squad we hold and cannot classify
+#:   is a crawl bug worth seeing, not a row to lose.
+#:
+#: **Why top1k outranks curation.** The top1k crawl samples a *defined
+#: population* (the top N of the overall table at a stated season/gw) and its
+#: shares are read as an estimate of what that population does; dropping an
+#: entry from it because a curator also listed them removes exactly the
+#: strongest managers and biases the estimate. The elite pool makes no sampling
+#: claim -- it is a roster -- so losing an overlapping member costs it only
+#: sample size, which is visible in ``n``. Before this rule the entries in both
+#: pools (17 of them in the live warehouse) inflated *both* denominators.
+#:
+#: The same rule is implemented in SQL by ``sem_manager_cohort`` in
+#: ``fpl_edge/store/views.sql``; ``tests/unit/test_field_eo_agreement.py``
+#: pins the two equal.
+COHORTS = ("top1k", "elite", "unclassified")
+
 
 @dataclass(frozen=True)
 class ObservedSquads:
@@ -61,6 +87,11 @@ class ObservedSquads:
     gw: int
     cohort: str
     as_of: dt.datetime
+    #: (K, 15) the FPL multiplier each manager locked against each slot, as the
+    #: API returned it: 0 benched, 1 started, 2 captain, 3 triple captain -- and
+    #: 1 for a benched pick under Bench Boost. Stored rather than reconstructed
+    #: from armband + chip because only the stored value gets Bench Boost right.
+    multipliers: np.ndarray = None  # type: ignore[assignment]
     dropped: int = 0             # squads discarded for failing validation
 
     @property
@@ -78,6 +109,35 @@ class ObservedSquads:
     def start_share(self, n_players: int) -> np.ndarray:
         return np.bincount(
             self.slots[:, :XI_SIZE].ravel(), minlength=n_players
+        ) / self.n
+
+    def eo(self, n_players: int) -> np.ndarray:
+        """Effective ownership: the mean FPL multiplier the cohort applies.
+
+        THE canonical definition for this repo, matching ``sem_elite_ownership``
+        in ``fpl_edge/store/views.sql`` exactly::
+
+            eo_p = sum over m of weight[m] * multiplier[m, p] / sum of weight
+
+        Weights are not implemented yet, so every weight is 1 and the
+        denominator is ``self.n``. Summing the *stored* multipliers is what
+        makes this exact: it needs no chip-rate fallback, and it gets Bench
+        Boost (benched picks scoring 1) and Triple Captain (3) right because
+        the API already resolved them at the deadline.
+
+        Kept separate from :meth:`ownership` on purpose: a benched player counts
+        toward ownership and contributes nothing here.
+        """
+        if self.multipliers is None:
+            raise ValueError(
+                "this ObservedSquads carries no stored multipliers, so its "
+                "effective ownership is unknown; reload it with "
+                "load_observed_squads rather than inferring one"
+            )
+        return np.bincount(
+            self.slots.ravel(),
+            weights=self.multipliers.ravel().astype(float),
+            minlength=n_players,
         ) / self.n
 
     def chip_rates(self) -> dict[str, float]:
@@ -140,22 +200,29 @@ def last_locked_gw(snapshot: Snapshot, season: str) -> int | None:
     return None if past.empty else int(past["gw"].max())
 
 
-def _cohort_entry_ids(snapshot: Snapshot, cohort: str) -> set[int] | None:
-    """Entry ids belonging to a cohort, or None meaning 'no filter possible'."""
+def resolve_cohorts(snapshot: Snapshot) -> dict[int, str]:
+    """Every tracked entry -> exactly one cohort, by the rule in :data:`COHORTS`.
+
+    The single Python definition of cohort membership; the SQL twin is
+    ``sem_manager_cohort`` in ``store/views.sql``. Entries absent from
+    ``dim_manager`` are absent here too -- callers label them
+    ``'unclassified'`` when they turn up holding picks.
+
+    Note the deliberate use of *any* row at or before the snapshot rather than
+    the newest one: a manager the standings sampler saw once is a top1k
+    manager forever, so the classification cannot flip-flop as ``as_of`` moves.
+    """
     try:
-        if cohort == "top1k":
-            rows = snapshot.table(
-                "dim_manager", where="source LIKE ?", params=[f"{TOP1K_SOURCE_PREFIX}%"]
-            )
-        elif cohort == "elite":
-            rows = snapshot.table(
-                "dim_manager", where="source NOT LIKE ?", params=[f"{TOP1K_SOURCE_PREFIX}%"]
-            )
-        else:
-            return None
+        top1k = snapshot.table(
+            "dim_manager", where="source LIKE ?", params=[f"{TOP1K_SOURCE_PREFIX}%"]
+        )
+        everyone = snapshot.table("dim_manager")
     except Exception:
-        return set()
-    return set() if rows.empty else set(int(e) for e in rows["entry_id"])
+        return {}
+    top_ids = set() if top1k.empty else {int(e) for e in top1k["entry_id"]}
+    all_ids = set() if everyone.empty else {int(e) for e in everyone["entry_id"]}
+    # top1k first, so an entry sampled by both crawls lands in one cohort only.
+    return {e: ("top1k" if e in top_ids else "elite") for e in all_ids}
 
 
 def load_observed_squads(
@@ -194,9 +261,15 @@ def load_observed_squads(
             f"{snapshot.as_of.isoformat()}; the crawl has not run since that deadline"
         )
 
-    wanted = _cohort_entry_ids(snapshot, cohort)
-    if wanted is not None:
-        picks = picks[picks["entry_id"].isin(wanted)]
+    # Cohort membership: exactly one cohort per entry (see COHORTS). A cohort
+    # name outside COHORTS -- 'overall' -- deliberately applies no filter.
+    if cohort in COHORTS:
+        assignment = resolve_cohorts(snapshot)
+        if cohort == "unclassified":
+            keep = ~picks["entry_id"].astype(int).isin(assignment)
+        else:
+            keep = picks["entry_id"].astype(int).map(assignment) == cohort
+        picks = picks[keep]
         if picks.empty:
             return None, f"no crawled {cohort!r} squads for {season} GW{gw}"
 
@@ -220,17 +293,18 @@ def load_observed_squads(
         dict(zip(chips["entry_id"].astype(int), chips["chip"]))
     )
 
-    rows, caps, vices, eids, chp = [], [], [], [], []
+    rows, caps, vices, eids, chp, mults = [], [], [], [], [], []
     dropped = 0
     for eid, g in picks.groupby("entry_id", sort=True):
         squad = _one_squad(g, el_to_idx, universe)
         if squad is None:
             dropped += 1
             continue
-        slots, cap, vice = squad
+        slots, cap, vice, mult = squad
         rows.append(slots)
         caps.append(cap)
         vices.append(vice)
+        mults.append(mult)
         eids.append(int(eid))
         chp.append(chip_of.get(int(eid)))
     if not rows:
@@ -246,14 +320,15 @@ def load_observed_squads(
         entry_ids=np.array(eids, dtype=np.int64),
         chips=np.array(chp, dtype=object),
         season=season, gw=int(gw), cohort=cohort, as_of=snapshot.as_of,
+        multipliers=np.array(mults, dtype=np.int64),
         dropped=dropped,
     ), f"{len(rows)} observed {cohort} squads for {season} GW{gw} ({dropped} dropped)"
 
 
 def _one_squad(
     g: pd.DataFrame, el_to_idx: dict[int, int], universe: PlayerUniverse
-) -> tuple[np.ndarray, int, int] | None:
-    """One manager's picks frame into (slots, captain_slot, vice_slot).
+) -> tuple[np.ndarray, int, int, np.ndarray] | None:
+    """One manager's picks frame into (slots, captain_slot, vice_slot, mults).
 
     Returns None for anything malformed rather than repairing it: a squad
     invented by a repair step is exactly the fabricated data this package
@@ -276,4 +351,10 @@ def _one_squad(
     vice = np.flatnonzero(g["is_vice_captain"].to_numpy(dtype=bool))
     if len(cap) != 1 or len(vice) != 1:
         return None
-    return slots, int(cap[0]), int(vice[0])
+    # The multiplier the API resolved at the deadline, kept verbatim. A missing
+    # one is a hole in the crawl, not a zero: refuse the squad rather than
+    # quietly pretending the manager benched everyone.
+    mult = pd.to_numeric(g["multiplier"], errors="coerce")
+    if mult.isna().any():
+        return None
+    return slots, int(cap[0]), int(vice[0]), mult.to_numpy(dtype=np.int64)

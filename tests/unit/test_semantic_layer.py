@@ -245,6 +245,73 @@ def test_elite_ownership_keeps_the_cohorts_apart(wh: Warehouse) -> None:
     assert float(top["eo_pct"]) == 150.0
 
 
+def test_an_entry_in_both_crawls_belongs_to_exactly_one_cohort(wh: Warehouse) -> None:
+    """B8: two crawls found the same manager. He is ONE manager.
+
+    Before ``sem_manager_cohort`` the classification was a DISTINCT over every
+    source row, so an entry sampled by both crawls joined twice — landing in
+    both cohorts and inflating both denominators. The rule now has a stated
+    precedence: rank-sampled membership is an objective fact about the entry
+    and outranks curation, so top1k wins.
+    """
+    wh.append("dim_manager", pd.DataFrame([
+        _manager(9, "elite_named", "Ben Crellin"),
+        _manager(9, "top1k:2026-27:gw1:rank5", "Ben Crellin", day=2),
+        _manager(10, "snowball:77", "Someone Else"),
+    ]))
+    wh.append("fact_manager_pick", pd.DataFrame([
+        _pick(9, 11, day=21, captain=True), _pick(10, 11, day=21),
+    ]))
+
+    coh = _sem(wh, "sem_manager_cohort", T(22)).set_index("entry_id")
+    assert len(coh) == 2, "one entry produced more than one cohort row"
+    assert coh.loc[9, "cohort"] == "top1k" and coh.loc[10, "cohort"] == "elite"
+    assert int(coh.loc[9, "n_sources"]) == 2
+
+    df = _sem(wh, "sem_elite_ownership", T(22))
+    assert sorted(df["cohort"]) == ["elite", "top1k"], "a cohort was duplicated"
+    by_cohort = df.set_index("cohort")
+    assert int(by_cohort.loc["top1k", "n_managers"]) == 1
+    assert int(by_cohort.loc["elite", "n_managers"]) == 1
+    assert float(by_cohort.loc["top1k", "eo_pct"]) == 200.0
+    assert float(by_cohort.loc["elite", "eo_pct"]) == 100.0
+
+    # Membership is ANY source row at or before p_as_of, so it is monotone: on
+    # day 1 only the curated row is visible and the entry reads 'elite'.
+    early = _sem(wh, "sem_manager_cohort", T(1)).set_index("entry_id")
+    assert early.loc[9, "cohort"] == "elite"
+
+
+def test_a_squad_with_no_manager_row_is_labelled_not_dropped(wh: Warehouse) -> None:
+    """An entry we hold picks for but cannot classify stays visible."""
+    wh.append("dim_manager", pd.DataFrame([_manager(9, "elite_named", "Ben")]))
+    wh.append("fact_manager_pick", pd.DataFrame([
+        _pick(9, 11, day=21), _pick(4242, 11, day=21, captain=True),
+    ]))
+    df = _sem(wh, "sem_elite_ownership", T(22)).set_index("cohort")
+    assert "unclassified" in df.index, "a crawled squad vanished at the cohort join"
+    assert int(df.loc["unclassified", "n_managers"]) == 1
+    assert float(df.loc["unclassified", "eo_pct"]) == 200.0
+    assert int(df.loc["elite", "n_managers"]) == 1
+
+
+def test_eo_counts_the_bench_at_zero_while_ownership_counts_it(wh: Warehouse) -> None:
+    """Ownership and EO are tracked separately, and the bench is where they part."""
+    wh.append("dim_manager", pd.DataFrame([
+        _manager(9, "elite_named", "A"), _manager(10, "elite_named", "B"),
+    ]))
+    wh.append("fact_manager_pick", pd.DataFrame([
+        _pick(9, 11, day=21, mult=0, slot=13),   # owned, benched
+        _pick(10, 11, day=21, captain=True),     # owned, captained
+    ]))
+    row = _sem(wh, "sem_elite_ownership", T(22)).iloc[0]
+    assert float(row["own_pct"]) == 100.0, "a benched player is still owned"
+    assert int(row["benched_by"]) == 1 and int(row["started_by"]) == 1
+    assert int(row["captained_by"]) == 1
+    assert float(row["eo_units"]) == 2.0
+    assert float(row["eo_pct"]) == 100.0, "the bench must carry no scoring exposure"
+
+
 CONTRACT: dict[str, set[str]] = {
     "sem_players": {"season", "code", "web_name", "position", "team_code", "team",
                     "price", "selected_by_pct", "status",
@@ -287,7 +354,10 @@ CONTRACT: dict[str, set[str]] = {
                               "time_utc"},
     "sem_elite_ownership": {"season", "gw", "cohort", "code", "web_name",
                             "n_managers", "owned_by", "own_pct", "captain_pct",
-                            "eo_pct"},
+                            "eo_pct", "started_by", "benched_by",
+                            "captained_by", "eo_units"},
+    "sem_manager_cohort": {"entry_id", "cohort", "n_top1k_sources", "n_sources",
+                           "sources", "first_seen"},
 }
 
 

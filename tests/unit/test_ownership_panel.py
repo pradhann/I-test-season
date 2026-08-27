@@ -157,21 +157,41 @@ def test_no_elite_picks_degrades_honestly(seeded_db):
     assert "no elite picks" in res["cohort_note"].lower()
 
 
-def test_elite_picks_produce_a_real_cohort_column(seeded_db):
+def _manager(entry_id: int, source: str) -> dict:
+    return {"entry_id": entry_id, "player_name": f"M{entry_id}",
+            "entry_name": f"T{entry_id}", "region": None, "years_active": None,
+            "favourite_team_id": None, "started_event": 1, "source": source,
+            "as_of": T}
+
+
+def _plant_picks(db, managers: list[dict], picks: list[dict]) -> None:
     from fpl_edge.ingest.rivals.schema import migrate
 
-    wh = Warehouse(seeded_db)
+    wh = Warehouse(db)
     migrate(wh)
-    wh.append("fact_manager_pick", pd.DataFrame([
-        # entry 1: owns Premium as captain; entry 2: owns both, no armband
-        {"entry_id": 1, "season": SEASON, "gw": 1, "element_id": 10, "slot": 1,
-         "multiplier": 2, "is_captain": True, "is_vice_captain": False, "as_of": T},
-        {"entry_id": 2, "season": SEASON, "gw": 1, "element_id": 10, "slot": 1,
-         "multiplier": 1, "is_captain": False, "is_vice_captain": False, "as_of": T},
-        {"entry_id": 2, "season": SEASON, "gw": 1, "element_id": 20, "slot": 2,
-         "multiplier": 1, "is_captain": False, "is_vice_captain": False, "as_of": T},
-    ]))
+    if managers:
+        wh.append("dim_manager", pd.DataFrame(managers))
+    wh.append("fact_manager_pick", pd.DataFrame(picks))
     wh.close()
+
+
+# entry 1: owns Premium as captain; entry 2: owns both, no armband.
+ELITE_PICKS = [
+    {"entry_id": 1, "season": SEASON, "gw": 1, "element_id": 10, "slot": 1,
+     "multiplier": 2, "is_captain": True, "is_vice_captain": False, "as_of": T},
+    {"entry_id": 2, "season": SEASON, "gw": 1, "element_id": 10, "slot": 1,
+     "multiplier": 1, "is_captain": False, "is_vice_captain": False, "as_of": T},
+    {"entry_id": 2, "season": SEASON, "gw": 1, "element_id": 20, "slot": 2,
+     "multiplier": 1, "is_captain": False, "is_vice_captain": False, "as_of": T},
+]
+
+
+def test_elite_picks_produce_a_real_cohort_column(seeded_db):
+    _plant_picks(
+        seeded_db,
+        [_manager(1, "elite_list"), _manager(2, "snowball:1")],
+        ELITE_PICKS,
+    )
 
     res = run(seeded_db)
     by_code = {r["code"]: r for r in res["rows"]}
@@ -180,6 +200,75 @@ def test_elite_picks_produce_a_real_cohort_column(seeded_db):
     assert by_code[200]["elite_own_pct"] == 50.0
     assert "2 crawled managers" in res["cohort_note"]
     assert "GW1" in res["cohort_note"]
+    assert res["cohort"] == "elite" and res["cohort_n"] == 2
+    assert res["cohort_gw"] == 1
+
+
+def test_the_elite_denominator_excludes_the_top1k_sample(seeded_db):
+    """B7/B8: the panel used to divide by EVERY crawled entry and call it elite.
+
+    Entry 3 is a top-1k standings pick, not one of the named elite. Blending it
+    in gave a denominator of 3 and an "elite" EO of 100% for a player the two
+    elite managers actually rate at 150%. The cohort is now filtered, and the
+    other cohort is reported beside it rather than merged into it.
+    """
+    _plant_picks(
+        seeded_db,
+        [_manager(1, "elite_list"), _manager(2, "snowball:1"),
+         _manager(3, "top1k:2026-27:gw1:rank7")],
+        ELITE_PICKS + [
+            {"entry_id": 3, "season": SEASON, "gw": 1, "element_id": 20,
+             "slot": 1, "multiplier": 1, "is_captain": False,
+             "is_vice_captain": False, "as_of": T},
+        ],
+    )
+
+    res = run(seeded_db)
+    by_code = {r["code"]: r for r in res["rows"]}
+    assert res["cohort_n"] == 2, "the top1k entry leaked into the elite denominator"
+    assert by_code[100]["elite_eo_pct"] == 150.0    # (2 + 1) / 2, not / 3
+    assert by_code[200]["elite_own_pct"] == 50.0    # 1 of 2, not 2 of 3
+    assert "top1k n=1" in res["cohort_note"]
+
+    top = run(seeded_db, cohort="top1k")
+    top_by_code = {r["code"]: r for r in top["rows"]}
+    assert top["cohort_n"] == 1
+    assert top_by_code[200]["elite_own_pct"] == 100.0
+    assert top_by_code[100]["elite_own_pct"] is None
+
+
+def test_a_manager_in_both_pools_is_counted_once_as_top1k(seeded_db):
+    """B8: two crawls, one manager, ONE cohort — precedence, not duplication."""
+    _plant_picks(
+        seeded_db,
+        [_manager(1, "elite_list"), _manager(2, "snowball:1"),
+         # entry 2 was ALSO seen by the standings sampler.
+         {**_manager(2, "top1k:2026-27:gw1:rank7"),
+          "as_of": T + pd.Timedelta(hours=1)}],
+        ELITE_PICKS,
+    )
+
+    res = run(seeded_db)
+    top = run(seeded_db, cohort="top1k")
+    assert res["cohort_n"] == 1 and top["cohort_n"] == 1, (
+        "an entry in both pools was counted in both denominators"
+    )
+    by_code = {r["code"]: r for r in res["rows"]}
+    assert by_code[100]["elite_eo_pct"] == 200.0    # the one elite captains him
+    assert by_code[200]["elite_own_pct"] is None    # only the top1k entry has him
+
+
+def test_picks_without_a_manager_row_are_labelled_not_dropped(seeded_db):
+    """A squad we hold and cannot classify is a crawl bug, not a row to lose."""
+    _plant_picks(seeded_db, [], ELITE_PICKS)
+
+    res = run(seeded_db)
+    assert res["cohort_n"] is None
+    assert "no elite picks" in res["cohort_note"].lower()
+    assert "unclassified n=2" in res["cohort_note"]
+    unc = run(seeded_db, cohort="unclassified")
+    by_code = {r["code"]: r for r in unc["rows"]}
+    assert unc["cohort_n"] == 2 and by_code[100]["elite_eo_pct"] == 150.0
 
 
 def test_squad_coverage_marks_owned_and_missing(seeded_db, monkeypatch):

@@ -325,16 +325,86 @@ CREATE OR REPLACE MACRO sem_manager_transfers(p_as_of) AS TABLE (
 );
 
 -- ---------------------------------------------------------------------------
+-- sem_manager_cohort(p_as_of): EXACTLY ONE row per tracked entry, carrying the
+-- cohort it belongs to. This macro is the single definition of cohort
+-- membership in the warehouse; sem_elite_ownership consumes it, and
+-- fpl_edge/models/field/observed.py implements the identical rule in Python
+-- (pinned equal by tests/unit/test_field_eo_agreement.py).
+--
+-- Cohort is DERIVED today: the crawl records why an entry is in the pool as a
+-- free-text `dim_manager.source`, and the classification reads its prefix.
+-- That is fragile, and this macro exists so that the day ingest writes a real
+-- `dim_manager.cohort` column, ONE expression changes.
+--
+-- THE RULE, mutually exclusive by construction (one CASE over one GROUP BY):
+--   1. 'top1k' -- the entry has at least one dim_manager row at or before
+--                 p_as_of whose source begins 'top1k'. Rank-sampled
+--                 membership is an objective, reproducible fact about the
+--                 entry (it stood at overall rank r at a stated season/gw),
+--                 so it OUTRANKS curation.
+--   2. 'elite' -- otherwise: the curated crawl pool (expert, elite_list,
+--                 winner, mini_league, snowball, elite_named).
+-- An entry with picks but NO dim_manager row at p_as_of has no row here; it is
+-- labelled 'unclassified' by sem_elite_ownership rather than dropped.
+--
+-- Why top1k wins the tie. The top1k crawl samples a DEFINED population -- the
+-- top N of the overall table -- and its shares are read as an estimate of what
+-- that population does. Dropping an entry from it because a curator also
+-- listed them removes precisely the strongest managers and biases the
+-- estimate. The elite pool makes no sampling claim; it is a roster, so losing
+-- an overlapping member costs it only sample size, which is visible in
+-- n_managers. Before this rule the entries in both pools (17 of them in the
+-- live warehouse) were counted in BOTH denominators and inflated both.
+--
+-- Membership is "ANY source row at or before p_as_of", not just the newest, so
+-- it never flip-flops with as_of; with the precedence above it is also
+-- monotone -- once top1k, top1k at every later instant.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE MACRO sem_manager_cohort(p_as_of) AS TABLE (
+    SELECT entry_id,
+           CASE WHEN count(*) FILTER (WHERE source LIKE 'top1k%') > 0
+                THEN 'top1k' ELSE 'elite' END AS cohort,
+           count(DISTINCT source) FILTER (WHERE source LIKE 'top1k%')
+               AS n_top1k_sources,
+           count(DISTINCT source) AS n_sources,
+           string_agg(DISTINCT source, '|') AS sources,
+           min(as_of) AS first_seen
+    FROM dim_manager WHERE as_of <= p_as_of
+    GROUP BY entry_id
+);
+
+-- ---------------------------------------------------------------------------
 -- sem_elite_ownership(p_as_of): what the tracked cohorts hold, one row per
--- (season, gw, cohort, code). Cohorts follow the repo-wide rule
--- (fpl_edge/models/field/observed.py): 'top1k' = any dim_manager row whose
--- source starts with the standings sampler's prefix (the top-of-overall
--- sample, growable toward 10k), 'elite' = everything else in the crawl pool
--- (named elite list, experts, winners, snowball). Cohort membership is "ANY
--- source row at or before p_as_of", not just the latest, so an entry sampled
--- by both crawls counts in both cohorts instead of flip-flopping with as_of.
--- Percentages are of the managers IN THAT COHORT WITH A STORED SQUAD for that
--- (season, gw); eo_pct sums multipliers, so captaincy makes it exceed 100.
+-- (season, gw, cohort, code). Cohort comes from sem_manager_cohort above --
+-- one entry, one cohort -- plus 'unclassified' for an entry that has picks but
+-- no manager row visible at p_as_of (counted and visible, never dropped).
+--
+-- THE ONE EFFECTIVE-OWNERSHIP DEFINITION (the canonical form for this repo;
+-- fpl_edge/models/field/cohorts.py and the ownership_eo panel both adopt it,
+-- and tests/unit/test_field_eo_agreement.py pins all three equal):
+--
+--     ownership = sum over m of weight[m] holding p       / sum of weight[all]
+--     eo        = sum over m of weight[m] * multiplier[m,p] / sum of weight[all]
+--     captaincy = sum over m of weight[m] captaining p    / sum of weight[all]
+--
+-- with multiplier the FPL multiplier as the API returned it at the deadline:
+-- 0 benched, 1 started, 2 captain, 3 triple captain -- and 1 for a benched
+-- pick under Bench Boost, which is why the stored multiplier is used rather
+-- than reconstructed from armband plus chip rates. Ownership and eo are
+-- tracked SEPARATELY on purpose: a benched player counts toward ownership and
+-- carries no scoring exposure.
+--
+-- WEIGHTS: the per-manager weight vector is not implemented yet, so every
+-- weight is 1 and `sum of weight[all]` IS `n_managers`. A weighted variant is
+-- a NEW macro (sem_cohort_ownership_weighted), never a silent change here.
+--
+-- The denominator is the managers in that cohort WITH A STORED SQUAD for that
+-- (season, gw). eo_pct sums multipliers, so captaincy makes it exceed 100.
+-- NOTE the one place this can differ from the Python loader: the loader drops
+-- a squad that fails 15-slot validation (and reports how many), while this
+-- macro counts any entry with a stored pick row. They agree exactly whenever
+-- every stored squad is complete, which is the state of the live warehouse.
+--
 -- A pick whose element_id resolves to no code groups under a NULL code row --
 -- counted, visible, and excludable by the consumer, never silently dropped.
 -- ---------------------------------------------------------------------------
@@ -345,12 +415,11 @@ CREATE OR REPLACE MACRO sem_elite_ownership(p_as_of) AS TABLE (
                 PARTITION BY entry_id, season, gw, element_id
                 ORDER BY as_of DESC) rn
             FROM fact_manager_pick WHERE as_of <= p_as_of) WHERE rn = 1
-    ), cohorts AS (
-        SELECT DISTINCT entry_id,
-               CASE WHEN source LIKE 'top1k%' THEN 'top1k' ELSE 'elite' END AS cohort
-        FROM dim_manager WHERE as_of <= p_as_of
+    ), coh AS (
+        SELECT entry_id, cohort FROM sem_manager_cohort(p_as_of)
     ), base AS (
-        SELECT c.cohort, mp.* FROM mp JOIN cohorts c USING (entry_id)
+        SELECT coalesce(c.cohort, 'unclassified') AS cohort, mp.*
+        FROM mp LEFT JOIN coh c ON c.entry_id = mp.entry_id
     ), cohort_n AS (
         SELECT season, gw, cohort, count(DISTINCT entry_id) AS n_managers
         FROM base GROUP BY season, gw, cohort
@@ -364,10 +433,17 @@ CREATE OR REPLACE MACRO sem_elite_ownership(p_as_of) AS TABLE (
            any_value(dp.web_name) AS web_name,
            n.n_managers,
            count(DISTINCT b.entry_id) AS owned_by,
+           count(DISTINCT CASE WHEN coalesce(b.multiplier, 0) >= 1
+                               THEN b.entry_id END) AS started_by,
+           count(DISTINCT CASE WHEN coalesce(b.multiplier, 0) = 0
+                               THEN b.entry_id END) AS benched_by,
+           count(DISTINCT CASE WHEN b.is_captain THEN b.entry_id END)
+               AS captained_by,
+           sum(coalesce(b.multiplier, 0)) AS eo_units,
            100.0 * count(DISTINCT b.entry_id) / n.n_managers AS own_pct,
            100.0 * count(DISTINCT CASE WHEN b.is_captain THEN b.entry_id END)
                  / n.n_managers AS captain_pct,
-           100.0 * sum(b.multiplier) / n.n_managers AS eo_pct
+           100.0 * sum(coalesce(b.multiplier, 0)) / n.n_managers AS eo_pct
     FROM base b
     JOIN cohort_n n ON n.season = b.season AND n.gw = b.gw AND n.cohort = b.cohort
     LEFT JOIN dp ON dp.season = b.season AND dp.element_id = b.element_id

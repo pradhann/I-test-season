@@ -19,10 +19,19 @@ data_audit.md Q6, both fired during the audit):
    *other* season are quarantined into ``last_season`` with their real
    season/gw stamped on them, and are never merged into the current rows.
 
-Elite crawl data (``fact_manager_pick``) is used when it holds picks for the
-requested season: the panel then adds observed elite own%/EO% and states the
+Crawl data (``fact_manager_pick``) is used when it holds picks for the
+requested season: the panel then adds observed cohort own%/EO% and states the
 cohort size. When the pick tables are empty — the state at build time — the
 columns stay null and ``cohort_note`` says exactly what is on file instead.
+
+3. **The cohort denominator.** This script used to compute its own own%/EO%
+   with a raw query over ``fact_manager_pick`` that had **no cohort filter**:
+   its denominator was every crawled entry (1,508 in the live warehouse —
+   top1k and elite blended), and it labelled the answer "elite". It now reads
+   ``sem_elite_ownership``, the one place effective ownership is defined, and
+   names the cohort it is reporting in ``cohort`` / ``cohort_note``. The
+   ``elite_*`` row keys keep their names (the web view selects on them) and
+   carry whatever cohort ``cohort`` names — ``elite`` by default.
 """
 
 from __future__ import annotations
@@ -50,6 +59,11 @@ PARAMS_SCHEMA: dict[str, Any] = {
         "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50},
         # Differentials: nobody's differential is owned by a third of the game.
         "diff_max_own": {"type": "number", "minimum": 0.5, "maximum": 100, "default": 15.0},
+        # Which crawled cohort the elite_* columns report. Mutually exclusive
+        # by construction (sem_manager_cohort); 'unclassified' is the crawl-bug
+        # bucket — entries holding picks with no dim_manager row.
+        "cohort": {"type": "string", "enum": ["elite", "top1k", "unclassified"],
+                   "default": "elite"},
         # Squad coverage may touch the network (same path as squad_overview);
         # callers that must stay offline — tests — turn it off.
         "coverage": {"type": "boolean", "default": True},
@@ -113,6 +127,11 @@ RESULT_SCHEMA: dict[str, Any] = {
         },
         "metrics_note": {"type": "string"},
         "cohort_note": {"type": "string"},
+        # Which cohort the elite_own_pct / elite_eo_pct columns describe, and
+        # the denominator behind them. Null when no crawled squad was found.
+        "cohort": {"type": "string"},
+        "cohort_n": {"type": ["integer", "null"]},
+        "cohort_gw": {"type": ["integer", "null"]},
         "gws_covered": {
             "type": "array",
             "items": {
@@ -201,6 +220,7 @@ def ownership_eo(
     season: str,
     limit: int = 50,
     diff_max_own: float = 15.0,
+    cohort: str = "elite",
     coverage: bool = True,
 ) -> dict[str, Any]:
     """Template and differentials from effective ownership plus consensus xPts.
@@ -292,43 +312,50 @@ def ownership_eo(
             xp = {int(r["code"]): (r["xpts_mean"], r["xpts_spread"], r["n_sources"])
                   for _, r in cons.iterrows()}
 
-    # -- elite crawl: observed picks if any exist for this season --
+    # -- the crawled cohort: own%/EO% from the ONE definition ----------------
+    # sem_elite_ownership is the canonical effective ownership (mean FPL
+    # multiplier over the cohort's managers with a stored squad). This script
+    # does not compute its own: the previous local query had no cohort filter
+    # at all and reported a blended top1k+elite denominator as "elite".
     elite: dict[int, tuple] = {}
     elite_cohort = 0
     elite_gw = None
     rival = _tables_present(wh, ("fact_manager_pick", "dim_manager", "fact_manager_season"))
+    cohorts_present: list[dict[str, Any]] = []
     if "fact_manager_pick" in rival:
+        sizes = q(
+            wh,
+            """
+            SELECT cohort, gw, any_value(n_managers) AS n_managers
+            FROM sem_elite_ownership(now()) WHERE season = ?
+            GROUP BY cohort, gw ORDER BY gw DESC, cohort
+            """,
+            (season,),
+        )
+        if not sizes.empty:
+            cohorts_present = [
+                {"cohort": str(r["cohort"]), "gw": int(r["gw"]),
+                 "n": _i(r["n_managers"])}
+                for _, r in sizes.iterrows()
+            ]
         picks = q(
             wh,
             """
-            WITH p AS (
-                SELECT * FROM (
-                    SELECT f.*, row_number() OVER (
-                        PARTITION BY entry_id, gw, element_id ORDER BY as_of DESC) rn
-                    FROM fact_manager_pick f
-                    WHERE season = ?
-                      AND gw = (SELECT max(gw) FROM fact_manager_pick WHERE season = ?)
-                ) WHERE rn = 1
-            ), n AS (SELECT count(DISTINCT entry_id) AS c FROM p)
-            SELECT pl.code, p.gw,
-                   count(DISTINCT p.entry_id)            AS holders,
-                   sum(p.multiplier)                     AS eo_units,
-                   (SELECT c FROM n)                     AS cohort
-            FROM p
-            JOIN sem_players(now()) pl
-              ON pl.season = ? AND pl.element_id = p.element_id
-            GROUP BY pl.code, p.gw
+            WITH c AS (
+                SELECT * FROM sem_elite_ownership(now())
+                WHERE season = ? AND cohort = ?
+            )
+            SELECT code, gw, n_managers, own_pct, eo_pct
+            FROM c
+            WHERE gw = (SELECT max(gw) FROM c) AND code IS NOT NULL
             """,
-            (season, season, season),
+            (season, cohort),
         )
         if not picks.empty:
-            elite_cohort = int(picks.iloc[0]["cohort"])
+            elite_cohort = int(picks.iloc[0]["n_managers"])
             elite_gw = int(picks.iloc[0]["gw"])
             for _, r in picks.iterrows():
-                elite[int(r["code"])] = (
-                    100.0 * float(r["holders"]) / elite_cohort,
-                    100.0 * float(r["eo_units"]) / elite_cohort,
-                )
+                elite[int(r["code"])] = (_f(r["own_pct"], 6), _f(r["eo_pct"], 6))
 
     # -- squad coverage --
     squad: set[int] | None = None
@@ -439,10 +466,20 @@ def ownership_eo(
     parts.append("own_pct is FPL's marginal selected-by % — no captaincy weighting.")
     metrics_note = " ".join(parts)
 
+    others = "; ".join(
+        f"{c['cohort']} n={c['n']} (GW{c['gw']})"
+        for c in cohorts_present if c["cohort"] != cohort
+    )
     if elite_cohort:
         cohort_note = (
-            f"Elite own%/EO% observed from {elite_cohort} crawled managers' "
-            f"locked GW{elite_gw} squads (fact_manager_pick)."
+            f"{cohort} own%/EO% observed from {elite_cohort} crawled managers' "
+            f"locked GW{elite_gw} squads (fact_manager_pick, via "
+            f"sem_elite_ownership). EO is the mean FPL multiplier those "
+            f"{elite_cohort} managers applied — 0 benched, 1 started, 2 "
+            f"captain, 3 triple captain — so it is not ownership and can "
+            f"exceed 100%. Cohorts are mutually exclusive: an entry sampled by "
+            f"both crawls counts as top1k only, never in both denominators."
+            + (f" Also on file: {others}." if others else "")
         )
     else:
         n_mgr = n_seasons = 0
@@ -453,11 +490,12 @@ def ownership_eo(
             d = q(wh, "SELECT count(*) AS n FROM fact_manager_season")
             n_seasons = int(d.iloc[0]["n"]) if not d.empty else 0
         cohort_note = (
-            f"No elite picks stored for {season} yet"
+            f"No {cohort} picks stored for {season} yet"
             + (f" ({n_mgr} crawled managers with {n_seasons} past-season records "
                f"on file, but fact_manager_pick is empty" if n_mgr else "")
             + ("); " if n_mgr else "; ")
-            + "elite own%/EO% columns stay blank until the picks crawl runs."
+            + f"{cohort} own%/EO% columns stay blank until the picks crawl runs."
+            + (f" Other cohorts on file: {others}." if others else "")
         )
 
     return {
@@ -467,6 +505,9 @@ def ownership_eo(
         "last_season": last_season,
         "metrics_note": metrics_note,
         "cohort_note": cohort_note,
+        "cohort": cohort,
+        "cohort_n": elite_cohort or None,
+        "cohort_gw": elite_gw,
         "gws_covered": gws_covered,
         "xpts_gw": gw,
         "squad_note": squad_note,

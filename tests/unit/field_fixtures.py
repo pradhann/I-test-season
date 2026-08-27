@@ -128,15 +128,23 @@ def build_warehouse(
                          "years_active": None, "favourite_team_id": None,
                          "started_event": 1, "source": source, "as_of": T_POOL})
         slots, cap_slot, vice_slot = squads[i]
+        chip_played = meta["chips"].get(eid)
+        # The API resolves the chip into the multiplier it returns: Triple
+        # Captain makes the armband 3, Bench Boost lifts the bench to 1. The
+        # fixture writes what the API would write, so multiplier-derived
+        # effective ownership and the chip table cannot contradict each other.
+        cap_mult = 3 if chip_played == "3xc" else 2
+        bench_mult = 1 if chip_played == "bboost" else 0
         for s, p in enumerate(slots):
             picks.append({
                 "entry_id": eid, "season": SEASON, "gw": 1,
                 "element_id": p + 1, "slot": s + 1,
-                "multiplier": (2 if s == cap_slot else (1 if s < 11 else 0)),
+                "multiplier": (cap_mult if s == cap_slot
+                               else (1 if s < 11 else bench_mult)),
                 "is_captain": s == cap_slot, "is_vice_captain": s == vice_slot,
                 "as_of": GW1_DEADLINE,
             })
-        chip = meta["chips"].get(eid)
+        chip = chip_played
         if chip:
             chips.append({"entry_id": eid, "season": SEASON, "gw": 1,
                           "chip": chip, "as_of": GW1_DEADLINE})
