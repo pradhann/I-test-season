@@ -1,1 +1,182 @@
-/* Template & EO view styles. Owned by the template view only. */
+/* Template & EO view styles. Owned by the template view only.
+ *
+ * THEMES. Every colour below resolves to a token defined in app.css for BOTH
+ * themes, so nothing here needs its own light/dark block: app.css declares the
+ * palette dark-first on :root and redefines it under
+ * @media (prefers-color-scheme: light), [data-theme="light"] and
+ * [data-theme="dark"]. Aliasing rather than hard-coding is what keeps the
+ * "readable in one theme only" bug out of this file.
+ *
+ * THE DIVERGING PAIR. The gap (field − game) is genuinely diverging around
+ * zero, so it gets two hues and a NEUTRAL GRAY midpoint — never a hue in the
+ * middle, never two cool hues. --s2 (warm) is the crowded pole, --s1 (cool) is
+ * the lonely one; --faint is the nothing-to-see midpoint. The pair was checked
+ * with the dataviz validator in both modes (all-pairs): worst ΔE 24.7 protan /
+ * 33.6 normal on the light surface, 25.9 / 30.4 on the dark one, contrast and
+ * lightness band PASS in both.
+ */
+
+:root {
+  --tpl-heavy: var(--s2);    /* the field is HEAVIER than the game: template  */
+  --tpl-light: var(--s1);    /* the field is LIGHTER: a real differential     */
+  --tpl-mid: var(--faint);   /* neutral midpoint: the two agree               */
+}
+
+/* ---- the teaching band -------------------------------------------------- */
+
+.teach { margin-bottom: 12px; }
+.teach > .sub { color: var(--muted); font-size: 12.5px; line-height: 1.55;
+                max-width: 78ch; margin: 8px 0 0; }
+
+.identity { display: flex; flex-wrap: wrap; align-items: center; gap: 7px;
+            font-size: 14px; }
+.identity.small { font-size: 15px; margin: 6px 0 2px; }
+.eq-lead { color: var(--muted); }
+.eq-op { color: var(--faint); font-family: var(--mono); }
+.eq-sum { color: var(--muted); font-size: 18px; font-family: var(--mono); }
+.eq-term { padding: 3px 10px; border-radius: 7px; font-weight: 600;
+           color: var(--ink); border: 1px solid var(--line); }
+.eq-term.mine   { background: color-mix(in oklab, var(--accent) 22%, var(--surface)); }
+.eq-term.theirs { background: color-mix(in oklab, var(--tpl-heavy) 22%, var(--surface)); }
+.eq-res { font-family: var(--mono); font-weight: 700; padding: 3px 10px;
+          border-radius: 7px; border: 1px solid var(--line); color: var(--ink); }
+.eq-res.pos { background: color-mix(in oklab, var(--tpl-light) 20%, var(--surface)); }
+.eq-res.neg { background: color-mix(in oklab, var(--tpl-heavy) 20%, var(--surface)); }
+
+.zonekey { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 12px; }
+.zone { display: flex; align-items: center; gap: 8px; font-size: 12px;
+        color: var(--muted); }
+.zone b { color: var(--ink); font-size: 12px; }
+.zone .sw { width: 22px; height: 9px; border-radius: 3px; flex: none; }
+.zone.heavy .sw { background: var(--tpl-heavy); }
+.zone.mid   .sw { background: var(--tpl-mid); }
+.zone.light .sw { background: var(--tpl-light); }
+
+/* ---- toolbars ----------------------------------------------------------- */
+
+.chip .cnt { margin-left: 6px; font-family: var(--mono); font-size: 10.5px;
+             color: var(--faint); }
+.chip.src.on .cnt { color: inherit; opacity: .85; }
+.baseline { color: var(--muted); font-size: 12px; display: inline-flex;
+            align-items: center; gap: 5px; }
+.baseline b { color: var(--ink); font-weight: 600; }
+.chip.dim { color: var(--faint); }
+
+.toolbar.comp { align-items: center; }
+.compstrip { display: flex; gap: 2px; height: 9px; width: min(280px, 100%);
+             border-radius: 999px; overflow: hidden; }
+.cseg { background: color-mix(in oklab, var(--muted) 45%, var(--surface));
+        min-width: 2px; }
+.cseg.flag { background: var(--warn); }
+.chip.comp { font-size: 11px; }
+.cdot { display: inline-block; width: 7px; height: 7px; border-radius: 2px;
+        background: color-mix(in oklab, var(--muted) 45%, var(--surface));
+        vertical-align: middle; }
+.cdot.flag { background: var(--warn); }
+
+/* ---- the field map ------------------------------------------------------ */
+
+.chartwrap { position: relative; margin: 6px 0 4px; }
+svg.fieldmap { width: 100%; height: auto; display: block;
+               max-height: 520px; overflow: visible; }
+
+svg.fieldmap .grid { stroke: var(--line); stroke-width: 1; }
+svg.fieldmap .diag { stroke: var(--muted); stroke-width: 1; opacity: .6; }
+svg.fieldmap .tick { fill: var(--faint); font-size: 10px; text-anchor: middle;
+                     font-family: var(--mono); }
+svg.fieldmap .tick.end, svg.fieldmap .plabel.end,
+svg.fieldmap .diaglabel.end, svg.fieldmap .zonelabel.end { text-anchor: end; }
+svg.fieldmap .axis { fill: var(--muted); font-size: 11px; text-anchor: middle;
+                     letter-spacing: .02em; }
+svg.fieldmap .diaglabel { fill: var(--muted); font-size: 10.5px;
+                          letter-spacing: .04em; }
+svg.fieldmap .zonelabel { fill: var(--faint); font-size: 10.5px;
+                          letter-spacing: .12em; text-transform: uppercase; }
+/* Text wears text tokens; the mark beside it carries the identity. */
+svg.fieldmap .plabel { fill: var(--muted); font-size: 11px; }
+svg.fieldmap .plabel.mine { fill: var(--ink); font-weight: 600; }
+
+/* Owned = filled, not owned = hollow. Shape carries squad membership so the
+   hue channel is left entirely to the gap, and a 2px surface ring keeps
+   overlapping marks separable rather than drawing borders around them. */
+svg.fieldmap .mark { cursor: pointer; stroke-width: 2; }
+svg.fieldmap .mark.mine { stroke: var(--surface); }
+svg.fieldmap .mark:hover { stroke: var(--ink); }
+
+.chartip { position: absolute; pointer-events: none; opacity: 0;
+           transition: opacity .09s ease; min-width: 168px;
+           background: var(--raised); border: 1px solid var(--line);
+           border-radius: 9px; padding: 8px 10px; box-shadow: var(--shadow);
+           font-size: 12px; z-index: 5; }
+.chartip.on { opacity: 1; }
+.chartip b { color: var(--ink); font-size: 13px; }
+.chartip .sub { color: var(--faint); font-size: 11px; margin-bottom: 5px; }
+.chartip .tl { display: flex; justify-content: space-between; gap: 14px;
+               line-height: 1.6; }
+.chartip .tk { color: var(--muted); }
+.chartip .tv { color: var(--ink); font-family: var(--mono);
+               font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) { .chartip { transition: none; } }
+
+.maplegend { display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+             margin: 2px 0 6px; }
+.maplegend .sub { color: var(--faint); font-size: 11px;
+                  font-family: var(--mono); }
+.ramp { display: flex; height: 10px; border-radius: 3px; overflow: hidden; }
+.ramp span { width: 15px; }
+.legkey { width: 12px; height: 12px; border-radius: 50%; margin-left: 10px;
+          display: inline-block; flex: none; }
+.legkey.mine-key { background: var(--tpl-mid); box-shadow: 0 0 0 2px var(--surface),
+                                                          0 0 0 3px var(--line); }
+.legkey.out-key { border: 2px solid var(--tpl-mid); }
+
+/* ---- your exposure ledger ---------------------------------------------- */
+
+.ledger { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 26px; }
+@media (max-width: 900px) { .ledger { grid-template-columns: 1fr; } }
+.lcol h3 { margin: 6px 0 2px; font-size: 12px; letter-spacing: .04em;
+           color: var(--ink); }
+.lcol > .sub { color: var(--faint); font-size: 11.5px; margin: 0 0 8px; }
+.lrow { display: grid; grid-template-columns: 26px minmax(0, 1fr) 26% 52px;
+        align-items: center; gap: 9px; padding: 5px 7px; border-radius: 8px;
+        cursor: pointer; }
+.lrow:hover { background: var(--raised); }
+.lid { min-width: 0; }
+.lname { color: var(--ink); font-size: 13px; font-weight: 600;
+         white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lid .sub { color: var(--faint); font-size: 10.5px; white-space: nowrap;
+            overflow: hidden; text-overflow: ellipsis; }
+.lbar { height: 8px; background: var(--raised); border-radius: 999px;
+        display: flex; overflow: hidden; }
+.lrow.heavy .lbar { justify-content: flex-end; }   /* grows against you */
+.lbar span { display: block; border-radius: 999px; }
+.lrow.heavy .lbar span { background: var(--tpl-heavy); }
+.lrow.light .lbar span { background: var(--tpl-light); }
+.lval { font: 600 13px/1 var(--mono); font-variant-numeric: tabular-nums;
+        text-align: right; color: var(--ink); }
+
+/* ---- the table ---------------------------------------------------------- */
+
+table.eotable th.sorted::after { content: " " attr(data-dir); color: var(--s1); }
+table.eotable td { vertical-align: middle; }
+.gapbar { position: relative; display: inline-block; width: 44px; height: 9px;
+          background: var(--raised); border-radius: 3px; overflow: hidden;
+          vertical-align: middle; margin-right: 6px; }
+.gapbar::after { content: ""; position: absolute; left: 50%; top: 0; bottom: 0;
+                 width: 1px; background: var(--line); }
+.gapbar .gf { position: absolute; top: 0; bottom: 0; border-radius: 2px; }
+.gv { font-variant-numeric: tabular-nums; }
+td.held { white-space: nowrap; }
+td.held .frac { font-family: var(--mono); color: var(--muted);
+                margin-right: 6px; font-size: 11.5px; }
+td.held .chip { font-size: 10px; padding: 1px 5px; }
+td.held .frac { margin-right: 4px; }
+.expo { margin-left: 7px; font-family: var(--mono); font-size: 11px;
+        color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* ---- drawer ------------------------------------------------------------- */
+
+.drawer table.data tr.sel td { background: color-mix(in oklab, var(--s1) 10%,
+                                                     var(--surface)); }
+.drawer table.data td .freshdot { margin-left: 6px; }
+.drawer h2 { margin-top: 16px; }

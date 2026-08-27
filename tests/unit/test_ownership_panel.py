@@ -299,3 +299,192 @@ def test_unreadable_squad_means_null_coverage_not_a_crash(seeded_db, monkeypatch
     res = run(seeded_db, coverage=True)
     assert all(r["in_squad"] is None for r in res["rows"])
     assert "unreadable" in res["squad_note"]
+
+
+# ---------------------------------------------------------------------------
+# The field ladder.
+#
+# The panel used to hand the web view one ownership column and one EO column
+# and leave every interpretation to a hard-coded string in the JS. It now
+# enumerates every field it can measure, with the denominator each percentage
+# is a percentage OF, and hangs per-player measurements off `rows[].fields`.
+# These tests pin the three ways that can go wrong: a measured metric that
+# never reaches a row, a head-count share substituted for an EO, and a
+# denominator (or a re-stamped gameweek) that is claimed rather than measured.
+# ---------------------------------------------------------------------------
+
+
+def _external(db, rows):
+    """Insert (season, gw, code, metric, value) external-ownership rows."""
+    wh = Warehouse(db)
+    for season, gw, code, metric, value in rows:
+        wh.sql(
+            "INSERT INTO fact_external_ownership "
+            "(provider, season, gw, code, metric, value, as_of) VALUES "
+            "(?, ?, ?, ?, ?, ?, TIMESTAMPTZ '2026-08-01 12:00:00+00')",
+            ["livefpl", season, gw, code, metric, value],
+        )
+    wh.close()
+
+
+def _fields(res):
+    return {f["key"]: f for f in res["fields"]}
+
+
+def test_the_ladder_enumerates_a_field_per_measurable_population(seeded_db):
+    _plant_picks(seeded_db, [_manager(1, "elite_list"), _manager(2, "snowball:1")],
+                 ELITE_PICKS)
+    res = run(seeded_db)
+    f = _fields(res)
+
+    assert f["global"]["role"] == "baseline" and f["global"]["measures"] == ["own"]
+    assert f["eo_predicted"]["role"] == "baseline"
+    assert f["eo_predicted"]["measures"] == ["eo"]
+    assert f["cohort:elite"]["role"] == "field"
+    assert set(f["cohort:elite"]["measures"]) == {"own", "eo"}
+    # every field says, in words, what its percentages are percentages of
+    assert all(x["denominator"].strip() for x in res["fields"])
+    # and no field invents a manager count it cannot observe
+    assert f["global"]["n"] is None, "claimed a count of every FPL entry"
+    assert f["eo_predicted"]["n"] is None
+    assert f["cohort:elite"]["n"] == res["cohort_n"] == 2
+
+
+def test_external_metrics_past_eo_predicted_reach_the_rows(seeded_db):
+    """eo_top10k/eo_elite went live for the current season and the panel
+    computed them, then threw them away: the pivot named eo_predicted and
+    nothing downstream ever saw the other two. A field the warehouse can
+    measure must reach a row."""
+    _external(seeded_db, [(SEASON, 1, 100, "eo_top10k", 1.10),
+                          (SEASON, 1, 100, "eo_elite", 1.30)])
+    res = run(seeded_db)
+    f = _fields(res)
+    assert "eo_top10k" in f and "eo_elite" in f
+    assert f["eo_elite"]["provider"] == "livefpl"
+    row = next(r for r in res["rows"] if r["code"] == 100)
+    assert row["fields"]["eo_top10k"]["eo"] == 110.0
+    assert row["fields"]["eo_elite"]["eo"] == 130.0
+    # ...and the legacy single-metric key still means what it always meant
+    assert row["eo_pred_pct"] == 95.0
+
+
+def test_ownership_and_eo_are_never_substituted_for_each_other(seeded_db):
+    """The units guard. `own` is a head count, `eo` is a sum of multipliers;
+    a field that publishes one must leave the other absent, because the rank
+    identity subtracts a multiplier from an EO and from nothing else."""
+    _plant_picks(seeded_db, [_manager(1, "elite_list"), _manager(2, "snowball:1")],
+                 ELITE_PICKS)
+    res = run(seeded_db)
+    row = next(r for r in res["rows"] if r["code"] == 100)
+
+    assert row["fields"]["global"] == {"own": 60.0}, "an EO was invented for FPL's own %"
+    assert "own" not in row["fields"]["eo_predicted"], "a head count was invented for a modelled EO"
+    assert row["fields"]["eo_predicted"]["eo"] == 95.0
+    # the crawled cohort is the one field that genuinely measures both
+    coh = row["fields"]["cohort:elite"]
+    assert coh["own"] == 100.0 and coh["eo"] == 150.0
+    assert coh["owned_by"] == 2 and coh["captained_by"] == 1
+
+
+def test_a_restamped_feed_is_reported_as_identical_not_as_a_fresh_gameweek(seeded_db):
+    """LiveFPL republishes the settled top10k/elite series under the upcoming
+    gw with byte-identical values. Captioning that as this week's forecast is
+    a fabrication by labelling, so the duplication is MEASURED."""
+    _external(seeded_db, [
+        # identical across gw 1 and 2 -> a re-stamp
+        (SEASON, 1, 100, "eo_top10k", 1.10), (SEASON, 2, 100, "eo_top10k", 1.10),
+        (SEASON, 1, 200, "eo_top10k", 0.20), (SEASON, 2, 200, "eo_top10k", 0.20),
+        # genuinely re-forecast -> not a re-stamp
+        (SEASON, 1, 100, "eo_elite", 1.10), (SEASON, 2, 100, "eo_elite", 1.25),
+    ])
+    res = run(seeded_db)
+    f = _fields(res)
+    assert f["eo_top10k"]["gw"] == 2
+    assert f["eo_top10k"]["same_values_as_gw"] == 1, (
+        "a re-stamped gameweek was presented as a new one"
+    )
+    assert f["eo_elite"]["same_values_as_gw"] is None
+    assert f["eo_predicted"]["same_values_as_gw"] is None
+
+
+def test_cohort_composition_discloses_the_conflicted_members(seeded_db):
+    """A cohort that is partly the owner's own mini-league is still usable;
+    an undisclosed one is not. Tags overlap by construction, and the panel
+    says so rather than letting the numbers look like a partition."""
+    _plant_picks(
+        seeded_db,
+        [_manager(1, "elite_list"), {**_manager(2, "mini_league:76109"),
+                                     "as_of": T + pd.Timedelta(hours=1)},
+         _manager(2, "elite_list")],
+        ELITE_PICKS,
+    )
+    res = run(seeded_db)
+    comp = {c["tag"]: c for c in _fields(res)["cohort:elite"]["composition"]}
+    assert comp["elite_list"]["n"] == 2
+    assert comp["mini_league"]["n"] == 1
+    assert "mini-league" in comp["mini_league"]["label"]
+    # 2 + 1 tags over 2 managers: overlapping, and flagged as such
+    assert _fields(res)["cohort:elite"]["n"] == 2
+    assert _fields(res)["cohort:elite"]["overlaps"] is True
+
+
+def test_your_multiplier_is_read_from_the_squad_never_inferred(seeded_db, monkeypatch):
+    """`your_mult` is my side of the rank identity. It is reported only when
+    the squad read actually carried one — a manually entered 15 has no armband,
+    and a silent 1x there would be a fabricated number in a subtraction."""
+    class RichRouter:
+        def __init__(self, wh, *, season, entry_id):
+            pass
+
+        def _team_state(self):
+            return SimpleNamespace(
+                gw=7,
+                picks=[SimpleNamespace(code=100, multiplier=2, is_captain=True,
+                                       is_starter=True)],
+                provenance=SimpleNamespace(name="PRIVATE_API"),
+            )
+
+    monkeypatch.setattr("fpl_edge.interfaces.qa.QuestionRouter", RichRouter)
+    res = run(seeded_db, coverage=True)
+    row = next(r for r in res["rows"] if r["code"] == 100)
+    assert row["your_mult"] == 2 and row["your_role"] == "captain"
+    assert res["squad"]["has_multipliers"] is True
+    assert res["squad"]["gw"] == 7 and res["squad"]["captain"] == "Premium"
+    # a player I do not own is a measured 0x, not an unknown
+    assert next(r for r in res["rows"] if r["code"] == 200)["your_mult"] is None
+    assert next(r for r in res["rows"] if r["code"] == 200)["in_squad"] is False
+
+
+def test_a_squad_read_without_multipliers_says_so(seeded_db, monkeypatch):
+    class BareRouter:
+        def __init__(self, wh, *, season, entry_id):
+            pass
+
+        def _team_state(self):
+            return SimpleNamespace(
+                picks=[SimpleNamespace(code=100)],
+                provenance=SimpleNamespace(name="MANUAL"),
+            )
+
+    monkeypatch.setattr("fpl_edge.interfaces.qa.QuestionRouter", BareRouter)
+    res = run(seeded_db, coverage=True)
+    row = next(r for r in res["rows"] if r["code"] == 100)
+    assert row["in_squad"] is True
+    assert row["your_mult"] is None and row["your_role"] is None, (
+        "a multiplier was invented for a squad read that carries none"
+    )
+    assert res["squad"]["readable"] is True
+    assert res["squad"]["has_multipliers"] is False
+
+
+def test_an_unreadable_squad_leaves_the_whole_identity_unknown(seeded_db, monkeypatch):
+    class ExplodingRouter:
+        def __init__(self, *a, **k):
+            raise ConnectionError("FPL API down")
+
+    monkeypatch.setattr("fpl_edge.interfaces.qa.QuestionRouter", ExplodingRouter)
+    res = run(seeded_db, coverage=True)
+    assert res["squad"]["readable"] is False
+    assert res["squad"]["has_multipliers"] is False
+    assert all(r["your_mult"] is None and r["your_role"] is None
+               for r in res["rows"])
