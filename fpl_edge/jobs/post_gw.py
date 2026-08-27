@@ -95,6 +95,11 @@ def main() -> int:
     # A still-provisional gameweek is refused by its own gate and retried on
     # the next run.
     _run(report, "settle_results", [py, "-m", "fpl_edge.ingest.results"])
+    # Providers publish on their own clocks (AIrsenal twice daily, fplform
+    # hourly upstream); fetching only at T-30h left the strip amber all week.
+    # Nightly + T-30h gives every feed at most a day of staleness.
+    _run(report, "ingest_projections",
+         [py, "-m", "fpl_edge.ingest.projections.cli", "ingest"])
     # The projection calibration loop, deliberately right behind settlement:
     # score every provider's pre-deadline projections against the gameweek
     # that just settled, then refit projection_weight from the accumulated

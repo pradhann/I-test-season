@@ -17,16 +17,20 @@ export default async function xpoints(host) {
   const gwRow = el("div", "toolbar");
   const filterRow = el("div", "toolbar");
   const body = el("div");
-  const detailBox = el("div");
   const foot = el("div");
-  card.append(srcRow, gwRow, filterRow, body, detailBox, foot);
+  const drawer = el("aside", "drawer");
+  document.body.appendChild(drawer);
+  addEventListener("keydown", e => {
+    if (e.key === "Escape") drawer.classList.remove("open");
+  });
+  card.append(srcRow, gwRow, filterRow, body, foot);
   host.appendChild(card);
 
   // ---- state ----
   let picked = new Set();          // sources; empty = all (full consensus)
   let gwSel = new Set();           // chosen gameweeks; filled after first load
   let pos = "", team = "", search = "", maxPrice = "", minPapp = "";
-  let squadOnly = false;
+  let squadOnly = false, showAccuracy = false;
   let sortBy = { kind: "sum" };    // {kind:"gw",gw} | {kind:"col",key} | {kind:"sum"}
   let sortDir = -1;                // -1 desc
   let res = null, squadCodes = new Set();
@@ -83,26 +87,47 @@ export default async function xpoints(host) {
     allChip.title = "consensus across every provider";
     allChip.onclick = () => { picked.clear(); fetchPanel(); };
     srcRow.appendChild(allChip);
+    const accBy = {};
+    for (const acc of res?.accuracy || []) accBy[acc.provider] = acc;
+    const shown = [...gwSel];
     for (const m of metas) {
+      const covers = !shown.length
+        || shown.some(g => g >= m.gw_min && g <= m.gw_max);
       const on = picked.has(m.source);
       const a = ageInfo(m.last_fetched);
-      const chip = el("button", "chip src" + (on ? " on" : ""));
+      const chip = el("button",
+        "chip src" + (on ? " on" : "") + (covers ? "" : " off"));
       chip.appendChild(document.createTextNode((on ? "✓ " : "")));
       chip.appendChild(el("span", "freshdot " + a.cls));
       chip.appendChild(document.createTextNode(
         ` ${m.source.replace(/^gh_/, "")} · ${a.text}`));
-      chip.title = `GW${m.gw_min}–${m.gw_max} · ${m.n_rows.toLocaleString()} rows` +
+      const acc = accBy[m.source];
+      chip.title =
+        `covers GW${m.gw_min}–${m.gw_max} · ${m.n_rows.toLocaleString()} rows` +
         (m.has_p_appear ? " · p(appear)" : "") + (m.has_xmins ? " · xMins" : "") +
-        `\nlast fetch ${m.last_fetched}\nclick to include/exclude`;
-      chip.onclick = () => {
+        (acc && acc.mae != null
+          ? `\nmeasured MAE ${acc.mae} vs actuals · earned weight ${acc.weight}`
+          : "") +
+        `\nlast fetch ${m.last_fetched}` +
+        (covers ? "\nclick to include/exclude"
+                : "\nNO DATA for the selected gameweeks");
+      if (covers) chip.onclick = () => {
         picked.has(m.source) ? picked.delete(m.source) : picked.add(m.source);
         fetchPanel();
       };
+      else chip.disabled = true;
       srcRow.appendChild(chip);
     }
     const n = (res?.active_sources || res?.sources || []).length;
     srcRow.appendChild(el("span", "sub",
       picked.size ? `consensus of ${n} selected` : `consensus of all ${n}`));
+    if ((res?.accuracy || []).some(a => a.mae != null)) {
+      const acc = el("button", "chip" + (showAccuracy ? " s1" : ""),
+                     "measured accuracy");
+      acc.title = "each provider scored against settled gameweek actuals";
+      acc.onclick = () => { showAccuracy = !showAccuracy; renderBody(); };
+      srcRow.appendChild(acc);
+    }
   }
 
   // ---- row 2: gameweek chips (toggle any subset) ----
@@ -190,8 +215,48 @@ export default async function xpoints(host) {
   const sameSort = spec =>
     JSON.stringify(spec) === JSON.stringify(sortBy);
 
+  function renderAccuracy(host) {
+    const accs = (res?.accuracy || []).filter(a => a.mae != null || a.n_obs);
+    if (!accs.length) return;
+    const box = el("div");
+    box.appendChild(el("h2", null, "Measured accuracy"));
+    const gwN = accs.find(a => a.track_record_gws)?.track_record_gws ?? "?";
+    box.appendChild(el("p", "sub",
+      `Every provider's last pre-deadline projection scored against the ` +
+      `official settled actuals — ${gwN} gameweek(s) of track record so far. ` +
+      `Lower MAE is better; the weight is what the ensemble will earn.`));
+    const wrap = el("div", "scroll-x");
+    const t = el("table", "data");
+    const hd = el("tr");
+    for (const [l, num] of [["provider", 0], ["MAE", 1], ["vs baseline", 1],
+                            ["players scored", 1], ["earned weight", 1], ["", 0]])
+      hd.appendChild(el("th", num ? "num" : "", l));
+    const th_ = el("thead"); th_.appendChild(hd); t.appendChild(th_);
+    const tb = el("tbody");
+    for (const a of accs) {
+      const tr = el("tr");
+      tr.appendChild(el("td", null, a.provider.replace(/^gh_/, "")));
+      tr.appendChild(el("td", "num", a.mae == null ? "–" : fmt2(a.mae)));
+      const delta = (a.mae != null && a.baseline_mae != null)
+        ? a.baseline_mae - a.mae : null;
+      const dTd = el("td", "num",
+        delta == null ? "–" : (delta >= 0 ? "+" : "") + fmt2(delta));
+      if (delta != null) dTd.style.color = delta >= 0 ? "var(--good)" : "var(--bad)";
+      tr.appendChild(dTd);
+      tr.appendChild(el("td", "num", String(a.n_obs)));
+      tr.appendChild(el("td", "num", fmt2(a.weight)));
+      tr.appendChild(el("td", null, "").appendChild(
+        el("span", a.earned ? "chip good" : "chip",
+           a.earned ? "earned" : "unmeasured")).parentElement);
+      tb.appendChild(tr);
+    }
+    t.appendChild(tb); wrap.appendChild(t); box.appendChild(wrap);
+    host.appendChild(box);
+  }
+
   function renderBody() {
     body.textContent = "";
+    if (showAccuracy) renderAccuracy(body);
     const gws = [...gwSel].sort((a, b) => a - b).filter(g => (res.gws || []).includes(g));
     const mx = res.matrix || {};
     const cell = (code, g) => mx[String(code)]?.[String(g)] ?? null;
@@ -237,12 +302,10 @@ export default async function xpoints(host) {
     for (const r of rows.slice(0, 100)) {
       const tr = el("tr");
       const nameTd = el("td");
-      if (squadCodes.has(r.code)) {
-        const dot = el("span", "minedot");
-        dot.title = "in your squad";
-        nameTd.appendChild(dot);
-      }
-      nameTd.appendChild(faceImg(r.code, "avatar"));
+      const face = faceImg(r.code, "avatar" +
+        (squadCodes.has(r.code) ? " mine" : ""));
+      if (squadCodes.has(r.code)) face.title = "in your squad";
+      nameTd.appendChild(face);
       nameTd.appendChild(document.createTextNode(r.name));
       if (r.status && r.status !== "a")
         nameTd.appendChild(el("span", "chip warn", ` ${r.status}`));
@@ -273,19 +336,23 @@ export default async function xpoints(host) {
     }
     table.appendChild(tbody); wrap.appendChild(table);
     body.appendChild(wrap);
+    const priceAge = res.prices_as_of
+      ? `prices as of ${Math.round((Date.now() -
+          new Date(res.prices_as_of.replace(" ", "T"))) / 3.6e6)}h ago`
+      : "price age unknown";
     body.appendChild(el("p", "sub",
       `${rows.length} players · showing ${Math.min(100, rows.length)} · ` +
-      `● before a name = in your squad · click any header to sort · ` +
-      `tint = xPts magnitude · p(appear) is never folded into xPts`));
+      `ring on a photo = in your squad · click any header to sort · ` +
+      `tint = xPts magnitude · ${priceAge} (refreshed nightly and T-30h)`));
   }
 
   // ---- per-source breakdown ----
   async function showDetail(r) {
-    detailBox.textContent = "";
-    const box = el("div", "card");
+    drawer.textContent = "";
+    drawer.classList.add("open");
+    const box = drawer;
     box.appendChild(el("h2", null, `${r.name} — every source`));
     box.appendChild(el("p", "sub", "loading…"));
-    detailBox.appendChild(box);
     try {
       const { result } = await runPanel("projection_table",
         { gw: res.gw, detail_code: r.code, limit: 1 });
@@ -293,7 +360,7 @@ export default async function xpoints(host) {
       const head = el("div", "toolbar");
       head.appendChild(el("h2", null, `${r.name} — every source`));
       const close = el("button", null, "close");
-      close.onclick = () => { detailBox.textContent = ""; };
+      close.onclick = () => drawer.classList.remove("open");
       head.appendChild(close);
       box.appendChild(head);
       const d = result.detail;
@@ -318,7 +385,13 @@ export default async function xpoints(host) {
       }
       table.appendChild(tbody); wrap.appendChild(table);
       box.appendChild(wrap);
-      if (d.outlier) box.appendChild(el("p", "sub", `outlier: ${d.outlier}`));
+      if (d.outlier) {
+        const o = d.outlier;
+        const line = typeof o === "string" ? o
+          : `${o.source ?? o.provider ?? "?"} ` +
+            `(${o.delta != null ? (o.delta > 0 ? "+" : "") + fmt2(o.delta) : ""} vs the rest)`;
+        box.appendChild(el("p", "sub", `outlier: ${line}`));
+      }
     } catch (e) { box.textContent = ""; box.appendChild(errBox(e)); }
   }
 

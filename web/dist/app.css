@@ -246,6 +246,21 @@ button.chip { cursor: pointer; }
 .seg button + button { border-left: 1px solid var(--line); }
 .seg button.on { background: var(--accent); color: #fff; }
 
+/* squad membership rides ON the avatar so text never shifts */
+.avatar.mine { box-shadow: 0 0 0 2px var(--accent); }
+
+/* a chip whose source has nothing for the selected gameweeks */
+.chip.off { opacity: .45; cursor: not-allowed; }
+
+/* the detail drawer: underlying data without losing your place */
+.drawer { position: fixed; top: 0; right: 0; height: 100vh; width: min(460px, 92vw);
+  background: var(--surface); border-left: 1px solid var(--line);
+  box-shadow: -12px 0 32px rgb(0 0 0 / .28); z-index: 40;
+  padding: 16px 18px; overflow-y: auto;
+  transform: translateX(100%); transition: transform .18s ease-out; }
+.drawer.open { transform: none; }
+@media (prefers-reduced-motion: reduce) { .drawer { transition: none; } }
+
 /* the matrix itself */
 table.matrix th { white-space: nowrap; }
 table.matrix th.sorted::after { content: " " attr(data-dir); color: var(--s1); }

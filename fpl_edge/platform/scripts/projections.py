@@ -235,6 +235,28 @@ _GW_RESULT: dict[str, Any] = {
                 },
             },
         },
+        "prices_as_of": {"type": ["string", "null"],
+            "description": "when player prices/ownership were last ingested"},
+        "accuracy": {
+            "type": "array",
+            "description": "measured per-provider accuracy vs settled actuals "
+                           "(the calibration loop's output; empty until a "
+                           "gameweek has settled)",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["provider", "mae", "n_obs", "weight", "earned"],
+                "properties": {
+                    "provider": {"type": "string"},
+                    "mae": {"type": ["number", "null"]},
+                    "baseline_mae": {"type": ["number", "null"]},
+                    "n_obs": {"type": "integer"},
+                    "weight": {"type": "number"},
+                    "earned": {"type": "boolean"},
+                    "track_record_gws": {"type": ["integer", "null"]},
+                },
+            },
+        },
         "gws": {"type": "array", "items": {"type": "integer"},
                 "description": "the matrix window: anchor gw .. anchor+span-1, "
                                "clamped to coverage"},
@@ -860,6 +882,52 @@ def _gw_mode(
             matrix.setdefault(str(int(r["code"])), {})[str(int(r["gw"]))] = (
                 round(float(v), 3))
 
+    prices_df = q(
+        wh, "SELECT MAX(as_of) AS a FROM fact_player_state WHERE season = ?",
+        (season,))
+    prices_as_of = (None if prices_df.empty or prices_df.iloc[0]["a"] is None
+                    else str(prices_df.iloc[0]["a"]))
+
+    # Measured accuracy: the calibration loop's earned weights beside the MAE
+    # they were earned from. Empty until a gameweek settles -- never invented.
+    accuracy: list[dict[str, Any]] = []
+    try:
+        acc = q(
+            wh,
+            """
+            WITH w AS (
+                SELECT provider, weight, earned, n_obs, track_record_gws
+                FROM sem_projection_weights(?)
+            ), m AS (
+                SELECT provider, AVG(value) mae, AVG(baseline) baseline_mae
+                FROM fact_projection_score
+                WHERE metric = 'mae' AND scope = 'overall' AND season = ?
+                GROUP BY provider
+            )
+            SELECT w.provider, m.mae, m.baseline_mae, w.n_obs, w.weight,
+                   w.earned, w.track_record_gws
+            FROM w LEFT JOIN m USING (provider) ORDER BY w.weight DESC
+            """,
+            (now, season),
+        )
+        for _, r in acc.iterrows():
+            accuracy.append({
+                "provider": str(r["provider"]),
+                "mae": None if r["mae"] is None or r["mae"] != r["mae"]
+                       else round(float(r["mae"]), 3),
+                "baseline_mae": None if r["baseline_mae"] is None
+                                or r["baseline_mae"] != r["baseline_mae"]
+                                else round(float(r["baseline_mae"]), 3),
+                "n_obs": int(r["n_obs"] or 0),
+                "weight": round(float(r["weight"]), 3),
+                "earned": bool(r["earned"]),
+                "track_record_gws": None if r["track_record_gws"] is None
+                                    or r["track_record_gws"] != r["track_record_gws"]
+                                    else int(r["track_record_gws"]),
+            })
+    except Exception:  # noqa: BLE001 - no scores yet is a normal state
+        pass
+
     return {
         "mode": "consensus" if consensus else "source",
         "season": season,
@@ -877,6 +945,8 @@ def _gw_mode(
         "detail": detail,
         "as_of": as_of,
         "source_meta": source_meta,
+        "prices_as_of": prices_as_of,
+        "accuracy": accuracy,
         "gws": gws,
         "matrix": matrix,
         "notes": notes,

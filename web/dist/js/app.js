@@ -116,11 +116,24 @@ export function bar(value, max, text) {
 const PHOTO = c => `https://resources.premierleague.com/premierleague/photos/players/110x140/p${c}.png`;
 const BADGE = t => `https://resources.premierleague.com/premierleague/badges/50/t${t}.png`;
 
+/* A friendly placeholder for the players FPL's CDN has no photo for --
+   a little jersey figure in theme-agnostic greys (fplreview does the same
+   with a cartoon): the layout never collapses and no card looks broken. */
+const FACE_FALLBACK = "data:image/svg+xml," + encodeURIComponent(
+  `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 110 140">
+     <rect width="110" height="140" fill="#8a919b" opacity="0.18"/>
+     <circle cx="55" cy="52" r="24" fill="#8a919b" opacity="0.55"/>
+     <path d="M20 140 v-20 c0-22 16-34 35-34 s35 12 35 34 v20 z"
+           fill="#8a919b" opacity="0.55"/>
+     <path d="M38 92 l-12 8 v40 h12 z M72 92 l12 8 v40 h-12 z"
+           fill="#8a919b" opacity="0.35"/>
+   </svg>`);
+
 export function faceImg(code, cls) {
   const img = el("img", cls);
   img.loading = "lazy"; img.alt = "";
   img.src = PHOTO(code);
-  img.onerror = () => img.classList.add("missing");
+  img.onerror = () => { img.onerror = null; img.src = FACE_FALLBACK; };
   return img;
 }
 
