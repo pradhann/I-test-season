@@ -183,7 +183,7 @@ weak enough to be decorative.
 assertions assert the holes exist, now fails all four attacks. Verified by me
 directly, not taken from the fixer's report.
 
-**Still open from this pass:** the EO guard rail. 15 of 20 mutations survived
+**[FIXED, commit `b2f5af0`] The EO guard rail.** 15 of 20 mutations survived
 it; 8 survived the entire wider suite, including inverting the PIT sort order
 and changing `as_of <=` to `<` in the cohort macro — literal SQL-vs-Python
 drift the fixture could never catch because every fixture row sits strictly
@@ -211,6 +211,32 @@ asserts that the holes EXIST, so a correct fix makes it FAIL (it now fails all
 four). `test_settlement_audit.py` is a demonstration that passed before the fix
 too, so its passing proves nothing — the live check above is the evidence for
 that finding, not that script.
+
+**2026-08-27 — the guard-rail repair, and the lesson in it.** Tests 3 -> 18,
+and the fix was to the FIXTURE, not to the assertions. The eight surviving
+mutations were not missed through carelessness; the boundary mutation
+(`as_of <=` -> `<`) was *invisible by construction* because every fixture row
+sat strictly before the snapshot. A fixture too clean to fail is not a test
+world. Two of the new tests are structural rather than case-by-case: all 14
+macro columns are compared row-by-row against Python twins and the column SET
+is asserted, so a column added without a twin fails on purpose; and a second
+test fails if the fixture ever goes boring again.
+
+21 of 22 mutations verified caught. **I re-applied the two sharpest myself
+rather than trust the report** — `as_of <=` -> `<` and `DESC` -> `ASC` each now
+fail four tests. The one survivor is equivalent, not a gap: the squad-length
+check is redundant against the slot-sequence check that precedes it.
+
+Three details where my own brief to the agent was wrong, all corrected by it:
+the stale "17" was in `observed.py:63`, not `cohorts.py:62`; `views.sql` does
+not contain the word "inclusive" (it says "at or before"); and the
+thread-ordering bug needed NINE sources in reverse lexical order to catch
+deterministically — with two it caught the bug about 2 runs in 3, and a flaky
+catcher is not a guard rail.
+
+**2026-08-27 — both auditors' probe sets re-run after all fixes.** The leakage
+probes (6) pass, meaning PIT holds. The crawl attacks (4) all fail, meaning the
+holes are closed. Verified by me directly.
 
 ## Corrections to the prompt's AUDITED CURRENT STATE (append-only)
 
