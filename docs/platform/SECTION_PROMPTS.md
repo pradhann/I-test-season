@@ -598,3 +598,16 @@ ACCEPTANCE
 - Tables and charts render legibly on a phone.
 - The bot is restarted and verified after deployment, not assumed.
 ```
+
+---
+
+## 8. Distributions — surface the simulator, point it at rank
+
+Prompt lives in its own file (it is long and stage-structured):
+**`docs/platform/DISTRIBUTIONS_PROMPT.md`**. Paste that file's fenced block
+as the opening message of a fresh session. Written 2026-08-27, after the
+provider-accuracy cohort work landed. Prerequisites already met: the
+top-10k crawl (sem_manager_picks / sem_elite_ownership), the calibration
+harness (fpl_edge/eval/projection_scoring.py), and the sim stack
+(fpl_edge/sim/, DecomposedPointsModel). Run before or after Deploy —
+independent of it, but the gw_sim cache table rhymes with fact_solve.
