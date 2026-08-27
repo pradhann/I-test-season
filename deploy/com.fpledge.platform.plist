@@ -27,7 +27,7 @@
   <key>KeepAlive</key><true/>
   <key>RunAtLoad</key><true/>
   <key>ThrottleInterval</key><integer>15</integer>
-  <key>StandardOutPath</key><string>/Users/nripeshpradhan/Documents/Github/i-test-season/data/warehouse/jobs/platform.log</string>
-  <key>StandardErrorPath</key><string>/Users/nripeshpradhan/Documents/Github/i-test-season/data/warehouse/jobs/platform.log</string>
+  <key>StandardOutPath</key><string>/Users/nripeshpradhan/Library/Logs/fpledge/platform.log</string>
+  <key>StandardErrorPath</key><string>/Users/nripeshpradhan/Library/Logs/fpledge/platform.log</string>
 </dict>
 </plist>

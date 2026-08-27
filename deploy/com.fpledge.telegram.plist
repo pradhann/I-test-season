@@ -13,7 +13,7 @@
   <key>KeepAlive</key><true/>
   <key>RunAtLoad</key><true/>
   <key>ThrottleInterval</key><integer>15</integer>
-  <key>StandardOutPath</key><string>/Users/nripeshpradhan/Documents/Github/i-test-season/data/warehouse/jobs/telegram.log</string>
-  <key>StandardErrorPath</key><string>/Users/nripeshpradhan/Documents/Github/i-test-season/data/warehouse/jobs/telegram.log</string>
+  <key>StandardOutPath</key><string>/Users/nripeshpradhan/Library/Logs/fpledge/telegram.log</string>
+  <key>StandardErrorPath</key><string>/Users/nripeshpradhan/Library/Logs/fpledge/telegram.log</string>
 </dict>
 </plist>

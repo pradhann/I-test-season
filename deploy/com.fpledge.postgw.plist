@@ -15,7 +15,7 @@
   <key>StartCalendarInterval</key>
   <dict><key>Hour</key><integer>3</integer><key>Minute</key><integer>0</integer></dict>
   <key>RunAtLoad</key><false/>
-  <key>StandardOutPath</key><string>/Users/nripeshpradhan/Documents/Github/i-test-season/data/warehouse/jobs/postgw.log</string>
-  <key>StandardErrorPath</key><string>/Users/nripeshpradhan/Documents/Github/i-test-season/data/warehouse/jobs/postgw.log</string>
+  <key>StandardOutPath</key><string>/Users/nripeshpradhan/Library/Logs/fpledge/postgw.log</string>
+  <key>StandardErrorPath</key><string>/Users/nripeshpradhan/Library/Logs/fpledge/postgw.log</string>
 </dict>
 </plist>

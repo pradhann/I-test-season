@@ -6,9 +6,9 @@
   <key>WorkingDirectory</key><string>/Users/nripeshpradhan/Documents/Github/i-test-season</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/nripeshpradhan/Documents/Github/i-test-season/.venv/bin/python</string>
-    <string>-m</string><string>fpl_edge.jobs.deadline_dag</string>
-    <string>--once</string>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>cd "/Users/nripeshpradhan/Documents/Github/i-test-season" &amp;&amp; exec .venv/bin/python -m fpl_edge.jobs.deadline_dag --once</string>
   </array>
 
   <!-- Every 10 minutes, not a calendar schedule. The DAG's firings are
@@ -25,7 +25,7 @@
        immediate feedback that the install worked. -->
   <key>RunAtLoad</key><true/>
 
-  <key>StandardOutPath</key><string>/Users/nripeshpradhan/Documents/Github/i-test-season/data/warehouse/jobs/dag.log</string>
-  <key>StandardErrorPath</key><string>/Users/nripeshpradhan/Documents/Github/i-test-season/data/warehouse/jobs/dag.log</string>
+  <key>StandardOutPath</key><string>/Users/nripeshpradhan/Library/Logs/fpledge/dag.log</string>
+  <key>StandardErrorPath</key><string>/Users/nripeshpradhan/Library/Logs/fpledge/dag.log</string>
 </dict>
 </plist>
