@@ -5,6 +5,8 @@ Run it with::
     uv run python -m fpl_edge.ingest.content.pipeline --help
     uv run python -m fpl_edge.ingest.content.pipeline probe
     uv run python -m fpl_edge.ingest.content.pipeline ingest --backfill-days 900
+    uv run python -m fpl_edge.ingest.content.pipeline analyze --since 21 --budget-s 1800
+    uv run python -m fpl_edge.ingest.content.pipeline link-identities
     uv run python -m fpl_edge.ingest.content.pipeline score
     uv run python -m fpl_edge.ingest.content.pipeline consensus --gw 1
 
@@ -24,6 +26,8 @@ import sys
 
 import pandas as pd
 
+from fpl_edge.ingest.content.analyze import MIN_SUBSTANTIVE_CHARS
+from fpl_edge.ingest.content.analyze import MODEL as ANALYSIS_MODEL
 from fpl_edge.ingest.content.calendar import load_calendar
 from fpl_edge.ingest.content.claims import ExtractionStats, extract_from_item
 from fpl_edge.ingest.content.consensus import consensus_map, deduplicate, render_consensus
@@ -198,6 +202,409 @@ def cmd_reextract(args: argparse.Namespace) -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# analyze: the semantic read, in bulk
+# ---------------------------------------------------------------------------
+
+#: Ledger of items we looked at and deliberately did NOT store an analysis for.
+#:
+#: Without it, "store nothing when there is nothing" and "a re-run is a no-op"
+#: contradict each other: every barren item would be re-sent to the model on
+#: every run, forever, at a model call each. So the decision is recorded --
+#: item, model, reason -- which also gives the Creators tab a real
+#: ``take_reason`` instead of an empty state it has to invent words for.
+#:
+#: Keyed (item_id, model) to match content_analysis: a better model may well
+#: find something in text an earlier one could not.
+_SKIP_DDL = """
+CREATE TABLE IF NOT EXISTS content_analysis_skip (
+    item_id      VARCHAR NOT NULL,
+    model        VARCHAR NOT NULL,
+    reason       VARCHAR NOT NULL,
+    detail       VARCHAR,
+    text_source  VARCHAR,
+    at_utc       TIMESTAMP WITH TIME ZONE NOT NULL,
+    PRIMARY KEY (item_id, model)
+)
+"""
+
+#: Which text a model call is worth spending on first. A transcript is the
+#: thing itself; an article is written argument; a description is show notes.
+_DEPTH_RANK = {"transcript": 0, "article": 1, "notes": 2, "unknown": 3}
+
+
+def rank_candidates(items: pd.DataFrame) -> pd.DataFrame:
+    """Order items so a truncated run still covers the most creators.
+
+    Two rules, in this order:
+
+    1. **Round-robin by creator.** Within each creator, items are ranked best
+       first (deepest text, then freshest). The global order takes every
+       creator's #1 before anyone's #2. The Creators tab needs *a* take per
+       creator far more than it needs four takes from the one creator who
+       publishes daily, and a budget-limited run is the normal case.
+    2. **Depth, then recency, breaks ties across creators.** A creator with a
+       transcript is served before a creator with only show notes, and within
+       a rank the newest item goes first.
+
+    Returns the frame with ``depth``, ``depth_rank``, ``creator_rank`` and
+    ``substantive_chars`` added, sorted.
+    """
+    from fpl_edge.ingest.content.analyze import depth_for, substantive_text
+
+    if items.empty:
+        return items.assign(depth=[], depth_rank=[], creator_rank=[],
+                            substantive_chars=[])
+    out = items.copy()
+    out["published_at"] = pd.to_datetime(out["published_at"], utc=True)
+    out["depth"] = [depth_for(t) for t in out["text_source"]]
+    out["depth_rank"] = [_DEPTH_RANK.get(d, 3) for d in out["depth"]]
+    out["substantive_chars"] = [len(substantive_text(t)) for t in out["text"]]
+    out = out.sort_values(["creator", "depth_rank", "published_at"],
+                          ascending=[True, True, False])
+    out["creator_rank"] = out.groupby("creator").cumcount()
+    return out.sort_values(["creator_rank", "depth_rank", "published_at"],
+                           ascending=[True, True, False]).reset_index(drop=True)
+
+
+def _writer(db: str):
+    """A leased writer: holds DuckDB's single write lock only while writing.
+
+    Three other agents write this file. A run that held the lock for its whole
+    wall-clock (half an hour of model calls) would starve every one of them.
+    """
+    from fpl_edge.store.warehouse import LeasedWarehouse
+
+    return LeasedWarehouse(db, lock_timeout_s=120.0)
+
+
+def _write_with_retry(db: str, fn, *, attempts: int = 5) -> None:
+    """Run ``fn(warehouse)`` inside a short lease, retrying on contention.
+
+    Losing a race for the write lock is expected here, not exceptional, so it
+    backs off and tries again instead of throwing away a model call that has
+    already been paid for.
+    """
+    import random
+    import time
+
+    last: Exception | None = None
+    for attempt in range(attempts):
+        lease = _writer(db)
+        try:
+            fn(lease)
+            return
+        except Exception as exc:  # retried on contention, re-raised otherwise
+            last = exc
+            if "lock" not in str(exc).lower() and "conflict" not in str(exc).lower():
+                raise
+            time.sleep(min(30.0, 2.0 ** attempt) * (0.5 + random.random()))
+        finally:
+            lease.release()
+    raise RuntimeError(f"could not take the write lock after {attempts} tries") from last
+
+
+def cmd_analyze(args: argparse.Namespace) -> int:
+    """Send stored text to Claude for a structured read; store what comes back.
+
+    Resumable and time-budgeted. It never fetches anything: every byte it
+    analyses is already in ``content_item``, put there by ``ingest``. In
+    particular it does NOT transcribe audio and does not touch the robots gate
+    in ``youtube.py`` -- items that only have show notes are analysed as show
+    notes, and labelled as such.
+    """
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    from fpl_edge.ingest.content.analyze import (
+        AnalysisUnavailable,
+        analysis_is_empty,
+        analyze_transcript,
+        claims_from_analysis,
+        is_scoreable,
+        store_analysis,
+        validate_model_id,
+    )
+    from fpl_edge.ingest.content.store import ContentStore
+
+    model = validate_model_id(args.model)
+    started = time.monotonic()
+    deadline = started + args.budget_s if args.budget_s else None
+
+    # The ledger is the only thing that needs a writer before the work starts.
+    _write_with_retry(args.db, lambda wh: wh.sql(_SKIP_DDL))
+
+    since = _now() - dt.timedelta(days=args.since) if args.since else None
+    with Warehouse(args.db, read_only=True) as wh:
+        params: list[object] = [model, model]
+        where = ["i.text IS NOT NULL", "i.text <> ''"]
+        if since is not None:
+            where.append("i.published_at >= ?")
+            params.append(since)
+        if args.creator:
+            where.append("i.creator = ?")
+            params.append(args.creator)
+        skip_join = (
+            "" if args.retry_skipped else
+            "LEFT JOIN content_analysis_skip s "
+            "  ON s.item_id = i.item_id AND s.model = ? "
+        )
+        if args.retry_skipped:
+            params.pop(1)
+        where.append("a.item_id IS NULL")
+        if not args.retry_skipped:
+            where.append("s.item_id IS NULL")
+        items = wh.sql(
+            "SELECT i.item_id, i.source_key, i.creator, i.kind, i.title, i.url, "
+            "       i.published_at, i.text_source, i.text "
+            "FROM content_item i "
+            "LEFT JOIN content_analysis a "
+            "  ON a.item_id = i.item_id AND a.model = ? "
+            f"{skip_join}"
+            f"WHERE {' AND '.join(where)}",
+            params,
+        )
+        total_in_window = int(wh.sql(
+            "SELECT count(*) c FROM content_item WHERE ? IS NULL OR published_at >= ?",
+            [since, since],
+        ).iloc[0]["c"])
+        resolver = build_resolver(wh)
+        calendar, cal_report = load_calendar(wh)
+
+    ranked = rank_candidates(items)
+    if args.limit:
+        ranked = ranked.head(args.limit)
+
+    print(f"model: {model}")
+    print(f"window: {args.since or 'all'} days -> {total_in_window} stored items, "
+          f"{len(items)} not yet analysed by this model, {len(ranked)} queued")
+    print(cal_report.render())
+    by_depth = ranked["depth"].value_counts().to_dict() if not ranked.empty else {}
+    print(f"queued by depth: {by_depth}; creators queued: "
+          f"{ranked['creator'].nunique() if not ranked.empty else 0}")
+    if args.budget_s:
+        print(f"budget: {args.budget_s}s wall-clock, {args.workers} worker(s)")
+
+    if ranked.empty:
+        print("\nnothing to do: every item in this window is already analysed "
+              "or already recorded as skipped")
+        return 0
+
+    skipped: list[tuple[str, str, str, str]] = []  # item_id, ts, reason, detail
+    queue = []
+    for row in ranked.itertuples(index=False):
+        if row.substantive_chars < args.min_chars:
+            skipped.append((
+                row.item_id, row.text_source, "too_thin",
+                (f"{row.substantive_chars} substantive chars after links and "
+                 f"separators (< {args.min_chars}); the notes are promotional "
+                 f"furniture only"),
+            ))
+            continue
+        queue.append(row)
+
+    print(f"pre-filtered: {len(skipped)} items carry too little prose to analyse; "
+          f"{len(queue)} will be sent to the model")
+    if args.dry_run:
+        for row in queue[:20]:
+            print(f"  {row.creator_rank}  {row.depth:<10} {row.substantive_chars:>6}c  "
+                  f"{str(row.published_at)[:10]}  {row.creator[:22]:<22} {row.title[:52]}")
+        print(f"  ... {max(0, len(queue) - 20)} more")
+        return 0
+
+    stored = empty = failed = 0
+    claims_written = 0
+    unresolved_names: list[str] = []
+    fatal: str | None = None
+    spent: list[float] = []
+
+    def analyse(row):
+        t0 = time.monotonic()
+        return row, analyze_transcript(
+            title=row.title, creator=row.creator, text=row.text,
+            text_source=row.text_source,
+        ), time.monotonic() - t0
+
+    def persist(row, analysis) -> None:
+        nonlocal stored, claims_written
+        # gw/season are inferred from THIS item's own published_at, so a call
+        # is filed against the gameweek that was next when it was published --
+        # never one that had already happened.
+        inferred = calendar.next_after(pd.Timestamp(row.published_at).to_pydatetime())
+        default_gw = int(inferred[1]) if inferred else 1
+        season = inferred[0] if inferred else "2026-27"
+        claims = []
+        if is_scoreable(row.text_source):
+            item = ContentItem(
+                item_id=row.item_id, source_key=row.source_key, creator=row.creator,
+                kind=row.kind, title=row.title, url=row.url,
+                published_at=pd.Timestamp(row.published_at).to_pydatetime(),
+                text=row.text,
+                fetched_at=pd.Timestamp(row.published_at).to_pydatetime(),
+                text_source=row.text_source,
+            )
+            claims, dropped = claims_from_analysis(
+                analysis, item=item, resolver=resolver,
+                default_gw=default_gw, season=season, model=model,
+            )
+            unresolved_names.extend(dropped)
+
+        def _write(wh):
+            nonlocal claims_written
+            store_analysis(wh, row.item_id, analysis, model=model,
+                           text_source=row.text_source, chars=len(row.text),
+                           substantive_chars=int(row.substantive_chars))
+            if claims:
+                store = ContentStore.__new__(ContentStore)
+                store.wh = wh
+                claims_written += store.insert_claims(claims)
+
+        _write_with_retry(args.db, _write)
+        stored += 1
+
+    def note_skip(row, reason, detail) -> None:
+        skipped.append((row.item_id, row.text_source, reason, detail))
+
+    def out_of_time() -> bool:
+        return deadline is not None and time.monotonic() >= deadline
+
+    try:
+        with ThreadPoolExecutor(max_workers=max(1, args.workers)) as pool:
+            pending, cursor = [], 0
+            while (cursor < len(queue) or pending) and fatal is None:
+                while (len(pending) < max(1, args.workers) and cursor < len(queue)
+                       and not out_of_time()):
+                    pending.append(pool.submit(analyse, queue[cursor]))
+                    cursor += 1
+                if not pending:
+                    break
+                future = pending.pop(0)
+                try:
+                    row, analysis, took = future.result()
+                except AnalysisUnavailable as exc:
+                    # No backend is not a per-item failure: it is the whole
+                    # run. Stop rather than march through 400 items failing.
+                    fatal = str(exc)
+                    break
+                except Exception as exc:  # noqa: BLE001 - one bad item
+                    failed += 1
+                    print(f"  FAIL  {type(exc).__name__}: {str(exc)[:120]}", flush=True)
+                    continue
+                spent.append(took)
+                if analysis_is_empty(analysis):
+                    empty += 1
+                    note_skip(row, "no_positions",
+                              "the model read the text and found no summary and "
+                              "no calls in it")
+                    print(f"  none  {took:5.1f}s  {row.depth:<10} "
+                          f"{row.creator[:22]:<22} {row.title[:44]}", flush=True)
+                    continue
+                persist(row, analysis)
+                print(f"  ok    {took:5.1f}s  {row.depth:<10} "
+                      f"{row.creator[:22]:<22} {row.title[:44]}", flush=True)
+            for future in pending:
+                future.cancel()
+    finally:
+        if skipped:
+            now = _now()
+            rows = [(i, model, r, d, ts, now) for i, ts, r, d in skipped]
+
+            def _write_skips(wh):
+                for r in rows:
+                    wh.sql("INSERT OR REPLACE INTO content_analysis_skip "
+                           "VALUES (?, ?, ?, ?, ?, ?)", list(r))
+
+            _write_with_retry(args.db, _write_skips)
+
+    elapsed = time.monotonic() - started
+    print()
+    print(f"analysed:        {stored} items stored in content_analysis")
+    print(f"claims written:  {claims_written} (extractor llm:{model}; show-note "
+          f"sources deliberately produce none -- see analyze.is_scoreable)")
+    if unresolved_names:
+        uniq = sorted(set(unresolved_names))
+        print(f"names dropped rather than guessed: {len(unresolved_names)} calls, "
+              f"{len(uniq)} distinct, e.g. {', '.join(uniq[:6])}")
+    print(f"empty results:   {empty} items where the model found no positions "
+          f"(recorded in content_analysis_skip, NOT stored as a take)")
+    print(f"pre-skipped:     {len(skipped) - empty} items below "
+          f"{args.min_chars} substantive chars")
+    print(f"errors:          {failed} items failed mid-call and were left for a re-run")
+    print(f"not reached:     {max(0, len(queue) - stored - empty - failed)} queued "
+          f"items left (budget or limit)")
+    if spent:
+        print(f"cost:            {len(spent)} model calls, {elapsed:.0f}s wall-clock, "
+              f"{sum(spent) / len(spent):.1f}s mean per call "
+              f"(min {min(spent):.1f}s, max {max(spent):.1f}s)")
+    else:
+        print(f"cost:            0 model calls, {elapsed:.0f}s wall-clock")
+    if fatal:
+        print()
+        print(f"STOPPED: no usable analysis backend. {fatal}")
+        print("Nothing was invented in its place; the queue is untouched and a "
+              "re-run resumes from here.")
+        return 1
+    return 0
+
+
+def cmd_link_identities(args: argparse.Namespace) -> int:
+    """Link creators to FPL entries where verified evidence already exists.
+
+    Deliberately small. It writes a link ONLY where a creator's name is
+    exactly, after accent folding, a name the FPL API itself reported for an
+    entry. No nickname matching, no channel-name resemblance, no guessed IDs.
+    Everything else is written down as unresolved WITH its reason.
+    """
+    from fpl_edge.interfaces.creators import link_creator_entries
+
+    ddl = """
+    CREATE TABLE IF NOT EXISTS creator_entry (
+        creator     VARCHAR NOT NULL,
+        entry_id    BIGINT,
+        player_name VARCHAR,
+        entry_name  VARCHAR,
+        method      VARCHAR NOT NULL,
+        verified    BOOLEAN NOT NULL,
+        reason      VARCHAR,
+        as_of       TIMESTAMP WITH TIME ZONE NOT NULL,
+        PRIMARY KEY (creator)
+    )
+    """
+    with Warehouse(args.db, read_only=True) as wh:
+        links = link_creator_entries(wh)
+
+    as_of = _now()
+    resolved = [x for x in links if x.entry_id is not None]
+
+    def _write(wh):
+        wh.sql(ddl)
+        for x in links:
+            wh.sql("INSERT OR REPLACE INTO creator_entry VALUES (?,?,?,?,?,?,?,?)",
+                   [x.creator, x.entry_id, x.player_name, x.entry_name,
+                    x.method, x.verified, x.reason or None, as_of])
+
+    if not args.dry_run:
+        _write_with_retry(args.db, _write)
+
+    for x in resolved:
+        print(f"  LINK  {x.creator:<26} -> entry {x.entry_id} "
+              f"({x.player_name}) via {x.method}")
+    print(f"\nlinked:     {len(resolved)} of {len(links)} creators")
+    print(f"unresolved: {len(links) - len(resolved)}")
+    from collections import Counter
+    for reason, n in Counter(x.reason for x in links if x.entry_id is None).most_common():
+        print(f"  {n:>3}  {reason}")
+    if not resolved:
+        print("\nZero links is the honest result here, not a failure: every "
+              "creator in the roster is a CHANNEL name, and no channel name "
+              "equals a name the FPL API reported for an entry. The alternative "
+              "-- matching 'Let's Talk FPL' to 'Andy LTFPL' on resemblance -- "
+              "would be a guess written down as an identity.")
+    if args.dry_run:
+        print("\n--dry-run: nothing written")
+    return 0
+
+
 def cmd_score(args: argparse.Namespace) -> int:
     now = _now()
     with Warehouse(args.db) as warehouse:
@@ -331,6 +738,31 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--replace", action="store_true",
                    help="delete existing claims and outcomes first")
     p.set_defaults(func=cmd_reextract)
+
+    p = sub.add_parser("analyze", help="semantic read of stored text, resumable")
+    p.add_argument("--limit", type=int, default=None, help="max items to queue")
+    p.add_argument("--since", type=int, default=21,
+                   help="only items published in the last N days (0 = all)")
+    p.add_argument("--budget-s", type=float, default=0.0,
+                   help="stop starting new model calls after N seconds")
+    p.add_argument("--workers", type=int, default=3,
+                   help="concurrent model calls")
+    p.add_argument("--model", default=ANALYSIS_MODEL)
+    p.add_argument("--creator", default=None, help="restrict to one creator")
+    p.add_argument("--min-chars", type=int, default=MIN_SUBSTANTIVE_CHARS,
+                   help="skip items with less prose than this once links and "
+                        "separator furniture are discounted")
+    p.add_argument("--retry-skipped", action="store_true",
+                   help="re-attempt items previously recorded in "
+                        "content_analysis_skip")
+    p.add_argument("--dry-run", action="store_true",
+                   help="print the queue and its ordering; spend nothing")
+    p.set_defaults(func=cmd_analyze)
+
+    p = sub.add_parser("link-identities",
+                       help="link creators to verified FPL entries; never guess")
+    p.add_argument("--dry-run", action="store_true")
+    p.set_defaults(func=cmd_link_identities)
 
     p = sub.add_parser("score", help="resolve outcomes and compute earned weights")
     p.set_defaults(func=cmd_score)
