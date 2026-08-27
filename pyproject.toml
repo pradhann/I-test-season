@@ -29,6 +29,7 @@ dependencies = [
   "uvicorn>=0.30",
   "sse-starlette>=2.1",
   "jsonschema>=4.23",
+  "mcp[cli]>=1.2,<2",  # v2 renamed FastMCP->MCPServer; migration is its own change
 ]
 
 [project.optional-dependencies]

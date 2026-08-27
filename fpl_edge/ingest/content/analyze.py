@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import re
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -41,6 +42,11 @@ from pydantic import BaseModel, Field
 from fpl_edge.config import secret
 
 MODEL = "claude-opus-5"
+
+#: A bare Anthropic model id: ``claude-`` followed by hyphen-separated
+#: lowercase alphanumeric segments (``claude-opus-5``, ``claude-sonnet-4-6``,
+#: ``claude-opus-4-5-20251101``). Nothing else.
+_MODEL_ID_RE = re.compile(r"^claude-[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 #: Conviction bands written into content_claim.confidence. The scoreboard
 #: tests these as calibration targets per creator.
@@ -208,11 +214,36 @@ def analyze_transcript(
     return response.parsed_output  # type: ignore[attr-defined]
 
 
+def validate_model_id(model: str) -> str:
+    """The model id, or a loud failure. Never a silently accepted label.
+
+    ``content_analysis`` is keyed on ``(item_id, model)`` precisely so that a
+    re-read with a newer model does not overwrite what an older one said. That
+    only works if ``model`` names a MODEL. A row once landed stamped
+    ``max-plan:claude-fable-5-session`` -- a description of the plumbing, not a
+    model id -- and it took the primary key with it: the later real run keyed
+    differently and did not dedupe against it.
+
+    So the column is validated at the only door that writes it. A backend
+    label, a session id, an empty string or a plan name is a programming
+    error, and it fails here rather than becoming a permanent second row that
+    nothing can join to.
+    """
+    if not isinstance(model, str) or not _MODEL_ID_RE.match(model):
+        raise ValueError(
+            f"content_analysis.model must be a bare Anthropic model id such as "
+            f"{MODEL!r}, not {model!r}. Backends, plans and session ids do not "
+            f"belong in this column -- it is half the primary key, and a "
+            f"non-model value silently defeats deduplication."
+        )
+    return model
+
+
 def store_analysis(wh, item_id: str, analysis: TranscriptAnalysis,
                    *, model: str = MODEL) -> None:
     wh.sql(
         "INSERT OR REPLACE INTO content_analysis VALUES (?, ?, ?, ?)",
-        [item_id, model, dt.datetime.now(dt.timezone.utc),
+        [item_id, validate_model_id(model), dt.datetime.now(dt.timezone.utc),
          json.dumps(analysis.model_dump())],
     )
 

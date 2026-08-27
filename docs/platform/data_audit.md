@@ -3,8 +3,10 @@
 Audit date **2026-08-23** (GW1 matches played 21–23 Aug; GW1 points not yet final).
 Every query below was actually executed against a `Warehouse.read_copy()` of
 `data/warehouse/fpl.duckdb` and the output pasted verbatim (truncated). Code
-references are to this repo unless prefixed `FPL-MCP` (the sibling repo
-`/Users/nripeshpradhan/Documents/Github/FPL-MCP`).
+references are to this repo. Paths written `FPL-MCP/...` below are historical:
+the toolbelt was folded into this repo as `fpl_mcp/` on 2026-08-27, so read
+`FPL-MCP/tools/x.py` as `fpl_mcp/tools/x.py`. The audit's findings are
+unaffected; only the prefix moved.
 
 Row counts at audit time: `fact_player_fixture` 113,260 (all pre-2026-27) ·
 `fact_odds` 115,865 · `fact_projection` 59,813 · `fact_predicted_lineup` 1,779 ·

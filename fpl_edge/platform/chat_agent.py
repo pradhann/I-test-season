@@ -33,6 +33,7 @@ import re
 import shutil
 import signal
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -49,9 +50,24 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 #: file and nothing here takes the write lock.
 CHAT_ROOT = _REPO_ROOT / "data" / "warehouse" / "chat"
 
-#: Where the MCP toolbelt lives and the interpreter that runs it.
-MCP_PYTHON = "/Users/nripeshpradhan/.pyenv/versions/3.11.2/bin/python"
-MCP_MAIN = Path("/Users/nripeshpradhan/Documents/Github/FPL-MCP/main.py")
+#: Where the MCP toolbelt lives and the interpreter that runs it. Both are now
+#: in THIS repo: fpl_mcp/ is a sibling of fpl_edge/ and shares its environment,
+#: so the toolbelt cannot drift from the engine it serves. It is spawned as
+#: ``python -m fpl_mcp`` from the repo root -- running the module file by path
+#: would put fpl_mcp/ on sys.path instead of the root, and `import fpl_mcp`
+#: would fail.
+_VENV_PYTHON = _REPO_ROOT / ".venv" / "bin" / "python"
+MCP_PYTHON = str(_VENV_PYTHON if _VENV_PYTHON.exists() else Path(sys.executable))
+MCP_MAIN = _REPO_ROOT / "fpl_mcp" / "__main__.py"
+
+
+def mcp_command(python: str, main: Path) -> list[str]:
+    """The argv that starts the toolbelt.
+
+    ``main`` names the module file so callers can probe that it exists; what is
+    actually executed is the package, from the repo root.
+    """
+    return [python, "-m", main.parent.name]
 
 #: The tools the agent is ALLOWED to want. What it actually gets is this list
 #: intersected with what the MCP server registers at runtime -- a tool the
@@ -265,9 +281,9 @@ def list_mcp_tools(python: str, main: Path, timeout: float = 25.0) -> list[str] 
     ]
     try:
         proc = subprocess.Popen(
-            [python, str(main)],
+            mcp_command(python, main),
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL, cwd=str(main.parent),
+            stderr=subprocess.DEVNULL, cwd=str(main.parent.parent),
             start_new_session=True, text=True,
         )
     except OSError:
@@ -627,7 +643,7 @@ class ChatAgent:
             "mcpServers": {
                 "fpl-server": {
                     "command": self.mcp_python,
-                    "args": [str(self.mcp_main)],
+                    "args": mcp_command(self.mcp_python, self.mcp_main)[1:],
                     "env": {"ARGUS_CONV_ID": conv.path.name},
                 }
             }

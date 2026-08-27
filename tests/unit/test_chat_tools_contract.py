@@ -1,18 +1,19 @@
 """Contracts of the chat toolbelt's engine-side pieces.
 
-The MCP tools themselves live in the FPL-MCP repository; what is tested here
-is everything they lean on that must not silently change shape:
+The MCP toolbelt now lives in this repo at ``fpl_mcp/``; what is tested here
+is everything it leans on that must not silently change shape:
 
 * the watchlist store (``fpl_edge.interfaces.watchlist``) — append/resolve
   semantics, one open row per player, the digest section, and graceful
   behaviour on a warehouse that has never seen a watchlist;
-* the analysis helpers in ``FPL-MCP/tools/chat_core.py`` — the 10-second
+* the analysis helpers in ``fpl_mcp/tools/chat_core.py`` — the 10-second
   budget (a slow SUCCESS is also a failure, per Argus's contract), ``$param``
   substitution that binds rather than interpolates, and the capped summary
   rendering with its omitted-count marker.
 
-chat_core is imported straight from the sibling FPL-MCP checkout; the tests
-skip rather than fail when that checkout is absent (CI of the engine alone).
+chat_core is imported as an ordinary in-repo module. It used to be pulled from
+a sibling checkout behind a skip; that skip could hide a broken toolbelt, and
+with the fold there is no longer a checkout that can be absent.
 """
 
 from __future__ import annotations
@@ -31,15 +32,8 @@ from fpl_edge.store import Warehouse
 UTC = dt.timezone.utc
 T0 = dt.datetime(2026, 8, 18, 22, 50, tzinfo=UTC)
 
-_MCP_ROOT = Path(__file__).resolve().parents[2].parent / "FPL-MCP"
-
-
 def _chat_core():
-    if not _MCP_ROOT.exists():
-        pytest.skip(f"FPL-MCP checkout not found at {_MCP_ROOT}")
-    if str(_MCP_ROOT) not in sys.path:
-        sys.path.insert(0, str(_MCP_ROOT))
-    from tools import chat_core  # noqa: PLC0415
+    from fpl_mcp.tools import chat_core  # noqa: PLC0415
 
     return chat_core
 

@@ -560,8 +560,12 @@ token in `.env`.
 
 ## The MCP tools
 
-The existing `fpl-server` (in the `FPL-MCP` repository) is extended rather than
-replaced. `tools/edge_tools.py` adds six tools alongside `query_fpl_players`,
+The `fpl-server` toolbelt lives in this repo at `fpl_mcp/` (folded in from the
+former sibling `FPL-MCP` repository on 2026-08-27, at that repo's commit
+`c5054a8`; the old checkout is a dead archive). It is a sibling package of
+`fpl_edge/` and runs on the same interpreter, so the toolbelt cannot drift from
+the engine it serves. Start it with `uv run python -m fpl_mcp`.
+`fpl_mcp/tools/edge_tools.py` adds six tools alongside `query_fpl_players`,
 `get_team_picks` and the rest:
 
 | Tool | Does |

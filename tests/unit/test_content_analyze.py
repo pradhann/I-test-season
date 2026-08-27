@@ -10,6 +10,7 @@ import datetime as dt
 
 import pytest
 
+from fpl_edge.ingest.content import analyze
 from fpl_edge.ingest.content.analyze import (
     CONVICTION_CONF,
     AnalysisUnavailable,
@@ -18,6 +19,7 @@ from fpl_edge.ingest.content.analyze import (
     TranscriptAnalysis,
     analyze_transcript,
     claims_from_analysis,
+    store_analysis,
 )
 
 UTC = dt.timezone.utc
@@ -77,11 +79,96 @@ def test_analysis_carries_the_transcript_and_schema() -> None:
     assert "verbatim" in call["system"] or "actually take" in call["system"]
 
 
-def test_no_api_key_raises_unavailable_not_a_fake_answer(monkeypatch, tmp_path) -> None:
+def _no_backends(monkeypatch, tmp_path) -> None:
+    """Both backends unavailable, on any machine.
+
+    Deleting the env var and chdir-ing away from .env only closes the SDK
+    door. The CLI door is opened by ``_find_claude_cli``, which looks at the
+    OPERATOR'S filesystem -- so on a laptop with Claude Code installed the
+    "no backend" test used to shell out to a live CLI and get a real answer,
+    passing on CI and failing here. The backend probe is a seam; close it at
+    the seam so the test asserts the same thing everywhere.
+    """
     monkeypatch.chdir(tmp_path)  # no .env here
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr(analyze, "_find_claude_cli", lambda: None)
+    # Nothing may reach the network: if the code ever gets as far as building
+    # an SDK client, that is the bug this test exists to catch.
+    monkeypatch.setattr(analyze, "_analyze_via_cli", _must_not_run)
+
+
+def _must_not_run(*args, **kwargs):
+    raise AssertionError("no backend should have been invoked")
+
+
+def test_no_api_key_raises_unavailable_not_a_fake_answer(monkeypatch, tmp_path) -> None:
+    """With NO backend, the answer is an error -- never an invented analysis."""
+    _no_backends(monkeypatch, tmp_path)
     with pytest.raises(AnalysisUnavailable, match="ANTHROPIC_API_KEY"):
         analyze_transcript(title="t", creator="c", text="x")
+
+
+def test_no_backend_message_names_both_missing_doors(monkeypatch, tmp_path) -> None:
+    """The error says WHY, so the caller can say so rather than guess."""
+    _no_backends(monkeypatch, tmp_path)
+    with pytest.raises(AnalysisUnavailable) as exc:
+        analyze_transcript(title="t", creator="c", text="x")
+    assert "No Claude Code CLI found" in str(exc.value)
+    assert "ANTHROPIC_API_KEY" in str(exc.value)
+
+
+def test_broken_cli_without_key_still_refuses_rather_than_falling_through(
+    monkeypatch, tmp_path,
+) -> None:
+    """A CLI that exists but fails is not a backend: no key, no answer.
+
+    The CLI's own reason is carried forward -- a revoked login must not read
+    as "nothing installed".
+    """
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr(analyze, "_find_claude_cli", lambda: "/nowhere/claude")
+
+    def _broken(*args, **kwargs):
+        raise AnalysisUnavailable("the Claude Code CLI login is revoked")
+
+    monkeypatch.setattr(analyze, "_analyze_via_cli", _broken)
+    with pytest.raises(AnalysisUnavailable) as exc:
+        analyze_transcript(title="t", creator="c", text="x")
+    assert "revoked" in str(exc.value)
+    assert "ANTHROPIC_API_KEY" in str(exc.value)
+
+
+def test_store_analysis_refuses_a_model_string_that_is_not_a_model_id() -> None:
+    """(item_id, model) is a primary key; a backend label silently breaks it.
+
+    The live row stamped ``max-plan:claude-fable-5-session`` keyed differently
+    from the real model id, so a later genuine run did not dedupe against it.
+    """
+    class _Wh:
+        def sql(self, *a, **k):  # pragma: no cover - must never be reached
+            raise AssertionError("a bogus model id must not reach the warehouse")
+
+    for bogus in ("max-plan:claude-fable-5-session", "", "opus", "Claude-Opus-5",
+                  "claude-opus-5 (max plan)"):
+        with pytest.raises(ValueError, match="model id"):
+            store_analysis(_Wh(), "item_1", sample_analysis(), model=bogus)
+
+
+def test_store_analysis_accepts_real_model_ids() -> None:
+    """The validator must not be so tight that a real id is rejected."""
+    for good in ("claude-opus-5", "claude-sonnet-4-6", "claude-opus-4-5-20251101"):
+        assert analyze.validate_model_id(good) == good
+    assert analyze.validate_model_id(analyze.MODEL) == analyze.MODEL
+
+    written = []
+
+    class _Wh:
+        def sql(self, sql, binds):
+            written.append(binds)
+
+    store_analysis(_Wh(), "item_1", sample_analysis())
+    assert written[0][1] == analyze.MODEL
 
 
 class _Mention:
