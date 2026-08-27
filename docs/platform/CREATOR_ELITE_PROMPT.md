@@ -750,9 +750,17 @@ F. DEFINITION OF DONE
 1. `uv run pytest tests/unit -q` green, with break-watch-restore performed and
    noted for every meaningful new test.
 2. Stage 0 proven by data, not by code review: claim_outcome has settled rows
-   with non-null `hit`; fact_manager_transfer is non-empty and grows each run;
-   elite-cohort pick coverage is materially better than 25 of 2,015; the two
-   crashing MCP tools return results; one EO definition remains.
+   with non-null `hit`; **the crawl reaches and COMPLETES the transfer stage**
+   (`incomplete_stages: []`) and, once a deadline has passed since the fix,
+   fact_manager_transfer is non-empty and grows each run; elite-cohort pick
+   coverage is materially better than 25 of 2,015; the two crashing MCP tools
+   return results; one EO definition remains.
+   NOTE, corrected 2026-08-27: the original wording ("fact_manager_transfer is
+   non-empty") was unachievable when written. The season was one gameweek old —
+   GW1 admits no transfers at all, and a gameweek's transfers only become
+   public at its deadline. Stage completion is the criterion the fix can
+   actually satisfy; the row count is a follow-up check for the first run
+   after a deadline. See the ledger.
 3. Every panel member verified against the FPL API or listed as unresolved —
    zero guessed IDs anywhere in the repo.
 4. One command backfills the corpus, one the crawl, one the scoring — and

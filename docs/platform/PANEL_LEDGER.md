@@ -93,6 +93,39 @@ Second follow-up: `rivals/roster.py` keeps a copy of `expert_tools.EXPERTS` as
 a literal, justified by the two repos being separate. That justification died
 with the fold, and the two mappings can now drift.
 
+**2026-08-27 — B7/B8 EO collapsed to one definition (commit `43c2837`).**
+New `sem_manager_cohort(t)` macro is the single SQL definition of cohort
+membership, with `resolve_cohorts()` as its Python twin and a test pinning
+them identical. `tests/unit/test_field_eo_agreement.py` compares SQL, model
+and panel against *each other* on one warehouse rather than against three
+hand-written constants — they can now only agree or fail together.
+
+The agent was killed by a usage limit before reporting its break-checks, so
+**I ran them myself**: replacing the multiplier sum with a plain holder count
+failed the macro/model and macro/panel agreement tests; collapsing the cohort
+rule so every entry is 'elite' failed those two plus both cohort-assignment
+tests. Restored, green.
+
+**2026-08-27 — B2's acceptance criterion CANNOT be met before the GW2
+deadline, and this is correct behaviour, not an outstanding bug.**
+The crawl now demonstrably reaches the transfer stage: 637 transfer bodies
+fetched (against 8 before the fix) with `incomplete_stages: []`. Every one is
+empty, and `fact_manager_transfer` is still 0. That is not a second bug:
+
+- GW1 is the season's FIRST gameweek, so no transfers can exist for it.
+- A squad and its transfers become **public at the deadline** (see the
+  Observability note in `ingest/rivals/picks.py`), and the GW2 deadline is
+  2026-08-28 17:30 UTC — tomorrow.
+- Confirmed directly against the API, not inferred: `/entry/{id}/transfers/`
+  returns `[]` for crawled entries **and for the owner's own team 4490171**.
+
+So the fix is proven at the pipeline level (fetch count, stage completion,
+non-zero exit on starvation, unit tests) but cannot be proven by row count
+until the next post_gw run after Friday's deadline. **A future session must
+re-check this rather than assume it passed** — and if the table is still empty
+after the GW2 deadline has passed, that IS a real bug and the pipeline-level
+evidence above does not excuse it.
+
 ## Corrections to the prompt's AUDITED CURRENT STATE (append-only)
 
 **2026-08-27 — §3.2 B1's "241 rows" becomes 256 on a rescore.** Fifteen claims
@@ -127,6 +160,13 @@ GW1 score and a bench boost adds points. Confirmed four ways, including
 `history.chips` agreeing with the picks payload 40/40.
 **The lesson: that claim was reasoning from priors about an older season's
 rules. Read the data before calling something implausible.**
+
+**2026-08-27 — this prompt's Stage 0 acceptance criterion "fact_manager_
+transfer is non-empty" was unachievable when written.** It did not account for
+the season being one gameweek old: GW1 admits no transfers at all, and GW2's
+are not public until its deadline. The criterion should have been "the crawl
+reaches and completes the transfer stage", which is what the fix and its tests
+actually establish. Corrected in the prompt's Definition of Done.
 
 **2026-08-27 — pre-existing failure outside this work's scope:**
 `tests/audit/test_static_leakage_audit.py` fails with 211 unreviewed findings
