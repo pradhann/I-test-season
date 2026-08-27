@@ -1,1 +1,273 @@
-/* Squad-vs-field diff and what-if simulator. Owned by template-tools.js. */
+/* Squad-vs-field diff and what-if simulator. Owned by template-tools.js.
+ *
+ * THEMES. Every colour here resolves to a token app.css defines for BOTH
+ * themes — it declares the palette dark-first on bare :root and redefines it
+ * under @media (prefers-color-scheme: light) plus [data-theme="light"] and
+ * [data-theme="dark"], so all three theme states are covered. Nothing below
+ * hard-codes a hex, which is what keeps the "readable in one theme only" bug
+ * out of this file. Verified in the browser under both the attribute toggle
+ * and the bare OS preference.
+ *
+ * THE DIVERGING PAIR. The identity's term is diverging around zero, so it gets
+ * two hues and a NEUTRAL GRAY midpoint — never a hue in the middle, never two
+ * cool hues. Same pair, same meaning as the field map and the ledger above:
+ * --s2 (warm) is "the field is ahead of you", --s1 (cool) is "you are ahead of
+ * the field", --faint is the nothing-to-see midpoint. Re-checked with the
+ * dataviz validator against both surfaces (all-pairs): worst ΔE 24.7 protan /
+ * 33.6 normal on #ffffff, 25.9 / 30.4 on #16181b; lightness band, chroma
+ * floor and contrast all PASS in both.
+ *
+ * WHY THE MARKS ARE NOT COLOURED. The dumbbell carries two quantities that are
+ * the same KIND of number (your multiplier, the field's EO as a multiplier),
+ * so they sit on one axis. Their identity is carried by SHAPE — a hollow ring
+ * for the field, a filled square for you — with a legend and the value printed
+ * on every row. The hue channel is spent entirely on the term, which is the
+ * one thing the reader cannot see from position alone. Colouring the two
+ * endpoints instead would have needed an accent/warm pair whose worst CVD
+ * separation is ΔE 7.9 (deutan) on the dark surface: floor-grade, and there
+ * was no reason to spend it.
+ *
+ * These class names are deliberately prefixed `tt`. The tab's two halves are
+ * built in parallel and this file must not collide with, or depend on, a rule
+ * in template.css.
+ */
+
+.tt {
+  --ttl-heavy: var(--s2);    /* the field is AHEAD of you: a hole            */
+  --ttl-light: var(--s1);    /* you are AHEAD of the field: a differential   */
+  --ttl-mid: var(--faint);   /* neutral midpoint: the two agree              */
+}
+
+.tt h3 { margin: 16px 0 2px; font-size: 12px; letter-spacing: .04em;
+         color: var(--ink); }
+.tt > .sub, .tt .ttcol > .sub { color: var(--faint); font-size: 12px;
+                                margin: 0 0 10px; line-height: 1.55; }
+.tt p.sub { max-width: 82ch; }
+.tt button.chip { font: inherit; font-size: 11px; font-weight: 600;
+                  cursor: pointer; }
+.tt button.chip:hover { border-color: var(--muted); }
+
+/* ---- the dumbbell rows -------------------------------------------------- */
+
+.ttcols { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 26px; }
+@media (max-width: 1100px) { .ttcols { grid-template-columns: 1fr; } }
+.ttcol { min-width: 0; }
+
+.ttrow { display: grid; grid-template-columns: 26px minmax(0, 1fr) 30% 58px;
+         align-items: center; gap: 9px; padding: 5px 7px; border-radius: 8px;
+         cursor: pointer; }
+.ttrow:hover { background: var(--raised); }
+.ttrow:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.ttrow.flat { cursor: default; }
+
+.ttid { min-width: 0; }
+.ttname { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.ttname .n { color: var(--ink); font-size: 13px; font-weight: 600;
+             white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ttname .chip { flex: none; font-size: 10px; padding: 1px 6px; }
+.ttid .sub { color: var(--faint); font-size: 10.5px; line-height: 1.4;
+             white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ttid .sub.ctx { color: var(--muted); font-family: var(--mono);
+                 font-size: 10px; letter-spacing: -.01em; }
+
+/* Both marks sit on ONE axis because both are multipliers. The rule at 1× is
+   the reference every reader actually wants: "am I above or below a start?"
+   Explicit z-order: the two hairlines are chrome and must never paint over a
+   mark, and the marks stack you-over-field so a covered player still reads. */
+.tttrack { position: relative; height: 22px; min-width: 90px; isolation: isolate; }
+.ttaxis { position: absolute; left: 0; right: 0; top: 50%; height: 1px;
+          background: var(--line); z-index: 0; }
+.tttrack::after { content: ""; position: absolute; left: var(--ax1, 50%);
+                  top: 1px; bottom: 1px; width: 1px; background: var(--line);
+                  z-index: 0; }
+.ttlink { position: absolute; top: 50%; transform: translateY(-50%);
+          height: 4px; border-radius: 2px; min-width: 1px; z-index: 1; }
+.ttfield { position: absolute; top: 50%; left: 0; width: 12px; height: 12px;
+           border-radius: 50%; border: 2px solid var(--muted); z-index: 3;
+           background: var(--surface); transform: translate(-50%, -50%); }
+.ttmine { position: absolute; top: 50%; left: 0; width: 11px; height: 11px;
+          border-radius: 2px; background: var(--ink); z-index: 4;
+          box-shadow: 0 0 0 2px var(--surface); transform: translate(-50%, -50%); }
+/* "your multiplier was here" — the same SQUARE as the live mark so shape says
+   whose it is, hollow and on --muted so it reads as history without dropping
+   under the 3:1 a graphical mark owes its surface. */
+.ttghost { position: absolute; top: 50%; left: 0; width: 11px; height: 11px;
+           border-radius: 2px; border: 2px solid var(--muted);
+           background: var(--surface); z-index: 2;
+           transform: translate(-50%, -50%); }
+.ttrow:hover .ttfield { border-color: var(--ink); }
+
+.ttterm { font: 600 13px/1 var(--mono); font-variant-numeric: tabular-nums;
+          text-align: right; color: var(--ink); }
+
+/* the shared multiplier scale, drawn once above each list */
+.ttrow.ttaxrow { cursor: default; padding-bottom: 0; }
+.ttrow.ttaxrow:hover { background: none; }
+.ttscale { height: 16px; }
+.ttscale::after { content: none; }
+.tttick { position: absolute; top: 0; bottom: 0; width: 1px; }
+.tttick::after { content: ""; position: absolute; left: 0; bottom: 0;
+                 width: 1px; height: 4px; background: var(--line); }
+.tttick i { position: absolute; top: 0; left: 0; transform: translateX(-50%);
+            font: 10px/1 var(--mono); font-style: normal; color: var(--muted);
+            white-space: nowrap; }
+.tttick:first-of-type i { transform: translateX(0); }
+.tttick:last-of-type i { transform: translateX(-100%); }
+
+/* ---- legend ------------------------------------------------------------- */
+
+.ttlegend { display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
+            margin: 10px 0 4px; }
+/* --muted: the legend names the ends of the colour scale, so it is read, not
+   glanced at. (6.0:1 light / 6.9:1 dark against the card.) */
+.ttlegend .sub { color: var(--muted); font-size: 11px; font-family: var(--mono); }
+.ttkey { display: inline-block; flex: none; margin-left: 8px; }
+.ttkey.field { width: 12px; height: 12px; border-radius: 50%;
+               border: 2px solid var(--muted); background: var(--surface); }
+.ttkey.mine { width: 11px; height: 11px; border-radius: 2px;
+              background: var(--ink); }
+.ttsep { width: 1px; align-self: stretch; min-height: 14px; flex: none;
+          background: var(--line); margin: 0 6px 0 14px; }
+.ttramp { display: flex; height: 10px; border-radius: 3px; overflow: hidden; }
+.ttramp span { width: 15px; }
+
+/* ---- the concentration swarm -------------------------------------------- */
+
+.ttchart { position: relative; margin: 6px 0 4px; }
+svg.ttswarm { width: 100%; height: auto; display: block; max-height: 300px;
+              overflow: visible; }
+
+svg.ttswarm .ttgrid { stroke: var(--line); stroke-width: 1; }
+/* --muted, not --faint: these ticks are the only way to read a dot's value
+   without hovering, so they clear 4.5:1 on both surfaces (6.0 light / 6.9
+   dark) rather than sitting at the 3.2 a decorative gray would give. The grid
+   lines behind them stay recessive on --line. */
+svg.ttswarm .tttickt { fill: var(--muted); font-size: 10px; text-anchor: middle;
+                       font-family: var(--mono); }
+svg.ttswarm .ttaxist { fill: var(--muted); font-size: 11px; text-anchor: middle;
+                       letter-spacing: .02em; }
+/* the quiet context layer: a 10% wash, never a saturated block */
+svg.ttswarm .ttband { fill: var(--accent); opacity: .1; }
+svg.ttswarm .ttmed { stroke: var(--accent); stroke-width: 2; opacity: .6; }
+svg.ttswarm .ttcap { fill: var(--muted); font-size: 10.5px; text-anchor: middle;
+                     letter-spacing: .08em; text-transform: uppercase; }
+svg.ttswarm .ttcap.sm { fill: var(--faint); font-size: 10px; letter-spacing: 0;
+                        text-transform: none; font-family: var(--mono); }
+/* Text wears text tokens; the mark beside it carries the value. */
+svg.ttswarm .ttlabel { fill: var(--muted); font-size: 11px; }
+svg.ttswarm .ttlabel.mine { fill: var(--ink); font-weight: 600; }
+svg.ttswarm .ttlabel.end { text-anchor: end; }
+svg.ttswarm .ttlabel.mid { text-anchor: middle; }
+/* Owned = filled, not owned = hollow — the same shape language as the field
+   map, so the hue channel stays free for the term. The 2px surface ring keeps
+   overlapping marks separable without drawing borders around them. */
+svg.ttswarm .ttdot { stroke-width: 2; }
+svg.ttswarm .ttdot.mine { stroke: var(--surface); }
+svg.ttswarm .ttdot.on { stroke: var(--ink); }
+svg.ttswarm .tthit { fill: transparent; cursor: pointer; }
+
+.tttip { position: absolute; pointer-events: none; opacity: 0;
+         transition: opacity .09s ease; min-width: 176px;
+         background: var(--raised); border: 1px solid var(--line);
+         border-radius: 9px; padding: 8px 10px; box-shadow: var(--shadow);
+         font-size: 12px; z-index: 5; }
+.tttip.on { opacity: 1; }
+.tttip b { color: var(--ink); font-size: 13px; }
+.tttip .sub { color: var(--faint); font-size: 11px; margin-bottom: 5px; }
+.tttip .tl { display: flex; justify-content: space-between; gap: 14px;
+             line-height: 1.6; }
+.tttip .tk { color: var(--muted); }
+.tttip .tv { color: var(--ink); font-family: var(--mono);
+             font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) { .tttip { transition: none; } }
+
+/* ---- the simulator ------------------------------------------------------ */
+
+.ttcands { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+           gap: 6px; margin: 4px 0 10px; }
+.ttcand { display: flex; align-items: center; gap: 9px; text-align: left;
+          background: var(--raised); border: 1px solid var(--line);
+          border-radius: 9px; padding: 6px 9px; cursor: pointer;
+          color: var(--ink); font: inherit; min-width: 0; }
+.ttcand:hover { border-color: var(--muted); }
+.ttcand:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ttcand > div { min-width: 0; }
+.ttcand .n { font-size: 12.5px; font-weight: 600; white-space: nowrap;
+             overflow: hidden; text-overflow: ellipsis; }
+.ttcand .sub { color: var(--faint); font-size: 10.5px; white-space: nowrap;
+               overflow: hidden; text-overflow: ellipsis; }
+
+.ttpair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+          margin: 4px 0 12px; }
+@media (max-width: 760px) { .ttpair { grid-template-columns: 1fr; } }
+.ttside { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
+          background: var(--surface); min-width: 0; }
+.ttside.heavy { border-left: 3px solid var(--ttl-heavy); }
+.ttside.light { border-left: 3px solid var(--ttl-light); }
+.ttside .hd { display: flex; align-items: center; gap: 9px; margin-bottom: 8px;
+              min-width: 0; }
+.ttside .hd > div { min-width: 0; }
+.ttside .hd .n { font-size: 14px; font-weight: 700; color: var(--ink);
+                 white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ttside .hd .sub { color: var(--faint); font-size: 10.5px; white-space: nowrap;
+                   overflow: hidden; text-overflow: ellipsis; }
+.ttside .hd .chip { margin-left: auto; flex: none; }
+
+/* the identity, one player at a time — same shapes and same colour meanings
+   as the equation the page teaches at the top, restated locally so this file
+   depends on no rule it does not own */
+.tteq { display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+        font-size: 12px; margin: 3px 0; opacity: .6; }
+.tteq.lead { opacity: 1; font-size: 13.5px; }
+.tteq .l { color: var(--muted); font-size: 10.5px; letter-spacing: .08em;
+           text-transform: uppercase; width: 38px; flex: none; }
+.tteq .op { color: var(--faint); font-family: var(--mono); }
+.tteq .term { padding: 2px 8px; border-radius: 6px; font-weight: 600;
+              color: var(--ink); border: 1px solid var(--line);
+              font-family: var(--mono); }
+.tteq .term.mine { background: color-mix(in oklab, var(--accent) 22%, var(--surface)); }
+.tteq .term.theirs { background: color-mix(in oklab, var(--ttl-heavy) 22%, var(--surface)); }
+.tteq .res { font-family: var(--mono); font-weight: 700; padding: 2px 8px;
+             border-radius: 6px; border: 1px solid var(--line); color: var(--ink); }
+.tteq .res.pos { background: color-mix(in oklab, var(--ttl-light) 20%, var(--surface)); }
+.tteq .res.neg { background: color-mix(in oklab, var(--ttl-heavy) 20%, var(--surface)); }
+
+.ttmoved { margin: 2px 0 6px; }
+
+/* ---- the rail of things this tool does not model ------------------------ */
+
+.ttcaveats { border-top: 1px solid var(--line); margin-top: 14px;
+             padding-top: 10px; display: grid; gap: 6px; }
+/* The rail's heading is real prose, not a decorative label: --ink clears
+   4.5:1 on both surfaces where the app's --faint .tlabel sits at 3.2. */
+.ttcaveats .tlabel { color: var(--ink); }
+.ttcav { color: var(--muted); font-size: 11.5px; line-height: 1.5;
+         max-width: 88ch; }
+.ttcav b { color: var(--ink); font-weight: 600; }
+/* The panel's own sentences about what may be recomputed client-side. The
+   "may" list is behind a fold because it is reassurance, not a warning; the
+   "may not" list is never folded. */
+.ttsafe { margin-top: 4px; }
+.ttsafe > summary { cursor: pointer; color: var(--muted); font-size: 11.5px;
+                    list-style-position: outside; }
+.ttsafe > summary:hover { color: var(--ink); }
+.ttsafe > .ttcav { margin-top: 4px; }
+
+/* ---- narrow screens ----------------------------------------------------- */
+
+@media (max-width: 620px) {
+  /* name and term stay on one line; the track drops to a full-width second
+     row, which is the only way it keeps a readable domain at 375px. Both are
+     placed explicitly — auto-placement pushes the term below the spanning
+     track and it lands under the wrong column. */
+  .ttrow { grid-template-columns: 26px minmax(0, 1fr) 58px;
+           row-gap: 3px; padding: 6px 7px; }
+  .ttrow > .tttrack { grid-column: 1 / -1; grid-row: 2; }
+  .ttrow > .ttterm { grid-column: 3; grid-row: 1; }
+  .ttrow.ttaxrow { grid-template-columns: 1fr; }
+  .ttrow.ttaxrow > span { display: none; }
+  .ttrow.ttaxrow > .tttrack { grid-column: 1 / -1; }
+  .tt .stats .stat { flex: 1 1 132px; }
+  .ttlegend { gap: 6px; }
+  .ttkey { margin-left: 2px; }
+}
