@@ -12,20 +12,27 @@ objective actually consumes. Creator picks are weak signal; creator **reach**
 moves ownership, so creators are a leading indicator of EO, and elite squads
 are the EO itself. Neither is a source of tips.
 
-**The headline the audit found: most of this already exists and most of it is
-silently broken.** The creator track record is permanently stuck at zero
-resolved claims because outcomes can never be revised. The transfer table is
-completely empty because the crawl runs out of request budget before it reaches
-transfers. The elite cohort has squads for 25 of its 2,015 managers. Nothing
-about any of this is visible from the UI or the chat. Stage 0 exists because
-building tabs on top of that would render honest zeros and look like a design
-failure instead of a data failure.
+**The headline the audit found: most of this already exists and most of it was
+silently broken.** The creator track record was stuck at zero resolved claims
+because outcomes could never be revised. The transfer table was empty because
+the crawl could never reach the transfer stage. The elite cohort had squads for
+25 of its 2,015 managers. None of it was visible from the UI or the chat.
+Stage 0 exists because building tabs on top of that would render honest zeros
+and look like a design failure instead of a data failure.
+
+**Stage 0 was executed on 2026-08-27** — see `docs/platform/PANEL_LEDGER.md`
+for what landed, what the repairs proved, and where this document's own §3 was
+wrong. A fresh session should read the ledger first and resume from it, not
+re-derive §3 from scratch.
 
 ---
 
 ```
 You are working on the FPL edge engine at ~/Documents/Github/i-test-season
-(branch main), with the companion MCP server at ~/Documents/Github/FPL-MCP.
+(branch main). The MCP toolbelt is IN this repo at `fpl_mcp/` (folded in from
+the former sibling checkout on 2026-08-27; that old checkout is a dead archive
+— do not edit it). It is a sibling package of `fpl_edge/`, shares the same
+environment, and starts with `uv run python -m fpl_mcp`.
 
 This session builds THE PANEL: elite-manager tracking and creator-corpus
 tracking — repaired, formalised, backtested, surfaced in the UI as two tabs,
@@ -114,9 +121,8 @@ Elite side:
 Surfaces:
   fpl_edge/platform/registry.py; fpl_edge/platform/scripts/ownership.py;
   fpl_edge/interfaces/briefing.py; fpl_edge/platform/chat_agent.py (the
-  INTENT_TOOLS allowlist ~line 60); ~/Documents/Github/FPL-MCP/tools/
-  {content_tools,expert_tools,team_tools,chat_tools,semantic_tools,edge_tools}
-  .py; web/dist/js/{app.js,views/*.js}, web/dist/app.css, web/dist/index.html.
+  INTENT_TOOLS allowlist ~line 60); fpl_mcp/tools/{content_tools,expert_tools,
+  team_tools,chat_tools,semantic_tools,edge_tools}.py; web/dist/js/{app.js,views/*.js}, web/dist/app.css, web/dist/index.html.
 
 Context:
   docs/platform/rank_objectives.md §0 and §5; docs/platform/semantic_layer.md;
@@ -166,7 +172,8 @@ correct THIS FILE, note it in the ledger, and continue.
 ── 3.2 What is BROKEN (fix in stage 0; each is a live defect) ─────────────
 Each item is: the symptom, the location, and the evidence.
 
-B1. **Creator track record is permanently stuck at zero resolved claims.**
+B1. **[FIXED 2026-08-27, commit c789453 — kept for the reasoning]**
+    Creator track record was permanently stuck at zero resolved claims.
     All 241 claim_outcome rows have `hit IS NULL` (232 `gameweek_not_played`,
     9 `published_after_deadline`), even though the latest scoring run settled
     162 claims with 56 hits in memory. Cause: `ContentStore.insert_outcomes` →
@@ -177,25 +184,33 @@ B1. **Creator track record is permanently stuck at zero resolved claims.**
     permanently. This is the single most consequential defect in the repo's
     creator work — the entire deliverable is invisible.
 
-B2. **fact_manager_transfer is completely empty (0 rows).** crawl_elite's 400-
-    request budget (post_gw.py:126) is fully consumed by the history sweep
-    (crawl.py:131 — receipts show entry/history=370) so BudgetExhausted fires
-    before ingest_picks/ingest_transfers (crawl.py:154-168) ever run. Repeated
-    identically on at least 2026-08-25 and 2026-08-26. Only crawl_elite_named
-    reaches transfers, and those 8 managers genuinely have none yet.
-    Compounding it: **top1k.py never calls ingest_transfers at all**, so the
-    1,500-manager cohort — the only one with real coverage — has no transfer
-    data by construction.
+B2. **[FIXED 2026-08-27, commit 63c9c0b — kept for the reasoning]**
+    fact_manager_transfer was completely empty (0 rows). The cause was worse
+    than the budget being consumed by the history sweep: `entry/history` has a
+    12h TTL and the job runs daily, so every night re-fetched the SAME first
+    ~370 histories the previous night had paid for, then raised
+    BudgetExhausted. Picks and transfers were unreachable **by construction,
+    permanently** — which is why the 08-25 and 08-26 receipts are
+    byte-identical with zero cache hits. Reordering alone would not have fixed
+    it (picks for 2,015 candidates also exceeds 400); the fix was reserving
+    budget per stage. Compounding it, top1k.py never called ingest_transfers
+    at all. **The general lesson, which applies to every later stage: a stage
+    that cannot finish looked exactly like a stage that had nothing to do,
+    and main() returned 0 either way.**
 
-B3. **The elite cohort has squads for 25 of its 2,015 managers.** fact_manager_
+B3. **[ADDRESSED 2026-08-27, commit 63c9c0b]** The elite cohort had squads for
+    25 of its 2,015 managers. fact_manager_
     pick holds 22,620 rows for exactly one gameweek (2026-27 GW1), 1,500 of
     them top1k. Coverage is asymmetric in exactly the wrong direction for the
     package's stated purpose.
 
-B4. **Two MCP tools crash on every invocation.** `get_expert_transfers`
-    (FPL-MCP/tools/expert_tools.py:255) and `get_team_picks`
-    (tools/team_tools.py:88) both call `elements_df.loc.get(id)`; pandas
-    `_LocIndexer` has no `.get`, so both raise AttributeError every time.
+B4. **[FIXED 2026-08-27, commit 5433f0b]** `get_expert_transfers` and
+    `get_team_picks` both called `elements_df.loc.get(id)`; pandas
+    `_LocIndexer` has no `.get`, so both raised AttributeError on every
+    invocation and had never worked. The dishonest degradations behind the
+    crash mattered more: one dropped an unresolved pick so a 15-man squad
+    rendered as 14, the other priced an unknown player at 0.0, which reads as
+    a free transfer. Both now name what they could not resolve.
 
 B5. **The chat is never told creator data exists.** briefing.py builds its
     briefing from a hand-written `_MACRO_PURPOSE` dict of 11 sem_* macros.
@@ -225,30 +240,38 @@ B8. **Cohort membership double-counts.** views.sql:349 and observed.py:143
     cohorts and inflate both denominators. Cohort itself is not a column — it
     is derived from a `dim_manager.source` string prefix.
 
-B9. **20 stale EXPERT_SEEDS poison the pool.** roster.py:86-95 documents that
+B9. **[FIXED 2026-08-27, commit 63c9c0b]** 20 stale EXPERT_SEEDS poisoned the pool. roster.py:86-95 documents that
     all 20 IDs now resolve to different people (e.g. "Ben Crellin" 6586 is
     actually Levi Longworth), yet they still seed the crawl and their leagues
     still drive the snowball — from which 1,682 of the 3,498 tracked managers
     derive.
 
-B10. **`--no-transcripts` is a silent no-op** (pipeline.py:115 passes it into
+B10. **[FIXED 2026-08-27, commit c789453]** `--no-transcripts` was a silent no-op (pipeline.py:115 passes it into
     `**kwargs` that loaders.load_source never reads), and **upsert_sources
     never updates** (store.py:109 is INSERT-WHERE-NOT-EXISTS on source_key), so
     a source whose policy or URL changes keeps its original row forever —
     directly contradicting its own migration comment.
 
-B11. **test_content_analyze.py::test_no_api_key_raises_unavailable is non-
-    hermetic** and fails on this machine: it deletes ANTHROPIC_API_KEY but
+B11. **[FIXED 2026-08-27, commit 5433f0b]**
+    test_content_analyze.py::test_no_api_key_raises_unavailable was non-
+    hermetic and fails on this machine: it deletes ANTHROPIC_API_KEY but
     analyze.py tries the Claude CLI backend first and finds the real binary at
     ~/.local/bin/claude, so the "unit" test shells out to a live CLI. It passes
     on CI (no CLI) and fails locally.
 
-B12. **A data anomaly to investigate, not to assume:** fact_manager_chip
-    records `bboost` for 1,411 managers and `3xc` for 55 at the GW1 deadline —
-    a 94% GW1 bench-boost rate among the top-1k sample, which is not a
-    plausible real distribution. The value comes from `active_chip` in the
-    picks payload (picks.py:80). Establish whether this is an ingest bug or a
-    real (and astonishing) fact before any UI repeats it.
+B12. **[RESOLVED 2026-08-27 — NOT a bug; this prompt's premise was WRONG]**
+    fact_manager_chip records `bboost` for 1,411 managers and `3xc` for 55 at
+    the GW1 deadline. This prompt asserted a 94% GW1 bench-boost rate "is not
+    a plausible real distribution". That was reasoning from priors about an
+    older season's chip rules, and it was wrong. **2026/27 ships TWO of each
+    team chip, and both `bboost` and `3xc` have `start_event: 1`** (wildcard
+    and freehit start at GW2) — verified directly from the archived
+    bootstrap-static body. The 94% is a selection effect: the rate falls
+    monotonically with rank (91% in the top 100, 81% at 1001–2000) because the
+    cohort is selected on GW1 score and a bench boost adds points. Confirmed
+    four independent ways, including `history.chips` agreeing with the picks
+    payload 40/40. **Carry the lesson forward: read the data before calling
+    something implausible.**
 
 ── 3.3 What is MISSING (the build stages) ────────────────────────────────
 - **No transcripts in the bulk pipeline.** By text_source: 354 podcast items
