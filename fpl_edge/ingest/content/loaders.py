@@ -10,6 +10,7 @@ dead podcast feed on a Thursday night costs the whole corpus before a deadline.
 from __future__ import annotations
 
 import datetime as dt
+from dataclasses import replace
 import re
 
 from fpl_edge.ingest.content.feeds import parse_feed, strip_html
@@ -167,11 +168,26 @@ def load_source(
     pipeline.py and advertised as ``--no-transcripts`` in ``--help`` -- was
     accepted, silently dropped, and did nothing for as long as it existed. A
     keyword this function cannot honour is now a TypeError at the call site.
+
+    That fix was half-done, and an adversarial audit caught it: spelling the
+    parameters out stopped an *unknown* keyword being swallowed, but a known
+    one was still being dropped. ``cmd_ingest`` passes both caps to every
+    source, and ``max_items`` reached only the feed branch -- so a YouTube
+    source ignored the item cap entirely and said nothing.
+
+    The two caps are not synonyms, which is why both survive: ``max_videos``
+    is a FETCH budget (how many video pages this source may request), while
+    ``max_items`` is a RESULT cap (how many items any source may return).
+    YouTube is subject to both.
     """
     if source.kind is SourceKind.YOUTUBE:
-        return load_youtube_source(
+        items, probe = load_youtube_source(
             fetcher, source, max_videos=max_videos, since=since,
         )
+        if max_items is not None and len(items) > max_items:
+            items = items[:max_items]
+            probe = replace(probe, items=len(items))
+        return items, probe
     if source.kind in (SourceKind.PODCAST, SourceKind.BLOG):
         return load_feed_source(
             fetcher, source, max_items=max_items, since=since,
