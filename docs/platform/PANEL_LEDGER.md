@@ -5,12 +5,12 @@ Prompt: `docs/platform/CREATOR_ELITE_PROMPT.md`
 | Stage | Status | Commit | Notes for a fresh session |
 |---|---|---|---|
 | 0 repairs | **DONE** | c789453, 63c9c0b, 5433f0b, 43c2837, c507c73, 13358f0, b732d8d, 0f617a3, b2f5af0 | All 12 defects repaired; TWO adversarial passes run, both refuted the work, all refutations fixed and re-verified against the auditors' own probes. Full suite green (0 failures) on an uncontended machine. Two items deliberately carried forward, not silently closed: the transfer ROW COUNT cannot be checked until the GW2 deadline passes, and the cohort hindsight-selection problem is a blocking design item on Stage B. |
-| A registry + identity | TODO | | Ready to start. Nothing blocks it. Note Stage 0 already deleted the toolbelt's 20 fake identities, so Stage A's resolver has a clean field — reuse `elite.verify()` and `names.norm`, both now single-implementation. Four panel members already have verified ids on ELITE_NAMED (Crellin 53517, Andy LTFPL 41, Sutherns 252, Bakar 5133): reuse, do not re-derive. |
+| A registry + identity | **PARTIAL** | 46ec15c | The creator->entry half was attempted and correctly yielded ZERO links: all 29 creator names checked against 12,276 crawled managers under exact AND containment matching, no hits, because every roster name is a channel name. Reasons stored per creator in `creator_entry`. The panel-member seed file and `dim_panel_member` are still unbuilt. Ready to continue. Nothing blocks it. Note Stage 0 already deleted the toolbelt's 20 fake identities, so Stage A's resolver has a clean field — reuse `elite.verify()` and `names.norm`, both now single-implementation. Four panel members already have verified ids on ELITE_NAMED (Crellin 53517, Andy LTFPL 41, Sutherns 252, Bakar 5133): reuse, do not re-derive. |
 | B elite history + panel EO | TODO | | **BLOCKING DESIGN ITEM inherited from adversarial pass 1 finding 8:** cohort membership must become per-gameweek. Today's `sem_manager_cohort` selects the top-1k from crawls that ran 3-6 days AFTER the GW1 deadline, so EO for GW1 is reported for a cohort chosen because of its GW1 result. Stage D's proxy and differential tests are invalid until this is fixed. The per-gw rank is already in `dim_manager.source`. |
-| C corpus + ideas + search | TODO | | |
+| C corpus + ideas + search | **PARTIAL** | 46ec15c | LLM analysis wired into the pipeline and backfilled: content_analysis 2 -> 118, llm claims 40 -> 162, 22 of 23 recent creators now have a take. Still unbuilt: podcast ASR, the `content_idea` grain, and the FTS search index. |
 | D backtest | TODO | | Do not start before Stage B's cohort fix: tests 3 and 4 would measure a survivorship-selected cohort. |
 | E chat reach | TODO | | |
-| F two tabs | TODO | | |
+| F two tabs | **PARTIAL** | 9858d3b, c2a3901, 48fdbab, 46ec15c, e332148 | Both tabs BUILT and browser-verified, full suite green — but NOT done: no adversarial pass has been run over them, and the Panel tab still lacks the manager drill-down and the transfer-flow timeline (blocked on transfers, which are empty until a deadline passes). Do not mark DONE without D.2. |
 | G verdict | TODO | | |
 
 ## NEEDS OWNER (anything blocked on a human decision)
@@ -266,6 +266,47 @@ but it is real test debt and worth hardening when someone is next in that file.
    pipeline-level evidence does not excuse it.
 2. Cohort hindsight selection (pass 1, finding 8) — blocking design item on
    Stage B, and Stage D must not start before it.
+
+**2026-08-27 — UI round: both tabs built, out of stage order at the owner's
+request.** The owner asked for the Template redesign and the Creators tab
+directly, so F ran ahead of A–E. Four agents, file-disjoint, against a contract
+(`CREATOR_PANEL_CONTRACT.md`) written first so the panel and the view could be
+built simultaneously.
+
+**A misattribution bug found by one agent while building against another's
+work.** `claims_from_analysis` resolved a structured player NAME with the prose
+scanner: `find_mentions("Martin Ødegaard")` tokenises on `[a-z0-9]+`, loses the
+stroke letter, falls back to the bare token `martin`, and returns **David Raya
+Martín**. Auditing the 162 stored llm claims found zero wrong rows — the bug's
+usual effect was silently DROPPING accented names — but it was one call away
+from writing one. Fixed to exact alias, then containment, then given-name
+prefix, never an edit distance; that rule also refuses three real
+misattributions the scanner was making (Louie Barry→Thierno Barry, Mohammed
+Vuskovic→Luka Vuskovic, Trent Hume→Trai Hume, each a different footballer
+sharing a surname). Commit `e332148`.
+
+**Two live external fields were being computed and discarded.** `eo_top10k`
+and `eo_elite` are current for 2026-27 (600 players each); the old ownership
+panel pivoted them and threw the result away, so the UI could not see them.
+Now first-class in a `fields[]` ladder where every field names its denominator
+in words and carries `n=null` where the population is genuinely uncountable.
+
+**My own spec was wrong on units, and the fix is better than what I asked for.**
+I specified `eo_minus_global = cohort EO − global ownership`, which subtracts a
+head-count share from a sum of multipliers; my worked examples were
+ownership-vs-ownership. It is now two like-for-like comparisons.
+**Note for the owner: the same formula appears in the creator/elite tracker
+document, so the error is in the source spec, not only in my brief.**
+
+**Measured, not assumed:** LiveFPL's GW2 rows are byte-identical to GW1 for all
+600 codes — a republished settled week, not a forecast — and the page shows a
+warning chip rather than implying two gameweeks of evidence.
+
+**Honest limits both tabs now surface rather than hide:** no creator has a
+verified team; 100 of 118 takes derive from show notes rather than transcripts,
+and only 4 creators produce takes carrying actual player calls. The second is
+the highest-value next step for the Creators tab and podcast ASR is the fix,
+not more model calls.
 
 ## Corrections to the prompt's AUDITED CURRENT STATE (append-only)
 
