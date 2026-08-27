@@ -94,10 +94,16 @@ gated out of the crawl pool, which is why the elite candidate count drops from
 recorded: `expert_tools.get_expert_teams_summary` has a sibling of the B4 bug
 — it guards with `if pid not in elements_df.index: continue`, so it does not
 crash but silently drops an unresolvable player from an ownership summary.
-Left alone as out of scope; worth fixing when Stage E touches that file.
-Second follow-up: `rivals/roster.py` keeps a copy of `expert_tools.EXPERTS` as
-a literal, justified by the two repos being separate. That justification died
-with the fold, and the two mappings can now drift.
+Left alone as out of scope — **and that was the wrong call**: adversarial pass
+1 found the same file also shipped 20 invented identities. Both are now fixed
+(commit `13358f0`). The duplication is resolved too: the toolbelt's copy of the
+map is deleted outright, so `roster.EXPERT_SEEDS` is the single copy in the
+repo, kept deliberately as the provenance record for the already-crawled
+snowball and gated by `verify_expert_seeds`.
+
+**The lesson, since it recurs:** "out of scope" is a judgement about effort,
+not about truth. A known-dishonest output left in place because it sat outside
+a ticket boundary is still a dishonest output.
 
 **2026-08-27 — B7/B8 EO collapsed to one definition (commit `43c2837`).**
 New `sem_manager_cohort(t)` macro is the single SQL definition of cohort
@@ -210,20 +216,20 @@ that is the protocol working, not a setback.
   genuine FPL tied ranking after one gameweek, copied verbatim.
 
 **REFUTED — being fixed before Stage 0 can close:**
-1. **(severe, fabrication) 20 invented creator identities live in three MCP
-   tools.** `fpl_mcp/tools/expert_tools.py` ships an unverified `EXPERTS`
+1. **[FIXED, commit `13358f0`] (severe, fabrication) 20 invented creator
+   identities live in three MCP tools.** `fpl_mcp/tools/expert_tools.py` ships an unverified `EXPERTS`
    map; the engine's own copy at `roster.py:87-96` documents all 20 IDs as
    stale, and B9 gated them in the crawl — but the toolbelt has no gate.
    `get_manager_history("Holly Shand")` prints Caleb Stevens's ranks as fact.
    The single worst violation of the no-fabrication invariant found so far.
-2. **(fabrication) The B4 "degrade honestly" fix was applied to one function
-   and not its sibling in the same file.** `get_expert_teams_summary` still
+2. **[FIXED, commit `13358f0`] (fabrication) The B4 "degrade honestly" fix was
+   applied to one function and not its sibling in the same file.** `get_expert_teams_summary` still
    prints `£0.0m` for an unresolved player — verbatim the bug the neighbouring
    docstring claims to have fixed — and still silently drops unresolvable
    players from an ownership cross-tab. This is the follow-up already noted in
    this ledger as "out of scope"; the audit shows out-of-scope was the wrong
    call.
-3. **(fabrication, minor)** `team_tools.py` defaults a missing multiplier to
+3. **[FIXED, commit `13358f0`] (fabrication, minor)** `team_tools.py` defaults a missing multiplier to
    1 (started). The repo's own standard is the opposite: `observed.py`
    refuses the squad, commenting "a missing one is a hole in the crawl, not a
    zero".
