@@ -4,8 +4,8 @@ Prompt: `docs/platform/CREATOR_ELITE_PROMPT.md`
 
 | Stage | Status | Commit | Notes for a fresh session |
 |---|---|---|---|
-| 0 repairs | IN PROGRESS | c789453, 63c9c0b, 5433f0b, 43c2837 | All 12 defects repaired and the full unit suite is green — but adversarial pass 1 REFUTED four stated guarantees, so this is NOT done. Fixes for findings 1-7 in flight; finding 8 (cohort hindsight selection) is carried into Stage B as a blocking design item. Re-run the adversarial pass before closing. |
-| A registry + identity | TODO | | |
+| 0 repairs | **DONE** | c789453, 63c9c0b, 5433f0b, 43c2837, c507c73, 13358f0, b732d8d, 0f617a3, b2f5af0 | All 12 defects repaired; TWO adversarial passes run, both refuted the work, all refutations fixed and re-verified against the auditors' own probes. Full suite green (0 failures) on an uncontended machine. Two items deliberately carried forward, not silently closed: the transfer ROW COUNT cannot be checked until the GW2 deadline passes, and the cohort hindsight-selection problem is a blocking design item on Stage B. |
+| A registry + identity | TODO | | Ready to start. Nothing blocks it. Note Stage 0 already deleted the toolbelt's 20 fake identities, so Stage A's resolver has a clean field — reuse `elite.verify()` and `names.norm`, both now single-implementation. Four panel members already have verified ids on ELITE_NAMED (Crellin 53517, Andy LTFPL 41, Sutherns 252, Bakar 5133): reuse, do not re-derive. |
 | B elite history + panel EO | TODO | | **BLOCKING DESIGN ITEM inherited from adversarial pass 1 finding 8:** cohort membership must become per-gameweek. Today's `sem_manager_cohort` selects the top-1k from crawls that ran 3-6 days AFTER the GW1 deadline, so EO for GW1 is reported for a cohort chosen because of its GW1 result. Stage D's proxy and differential tests are invalid until this is fixed. The per-gw rank is already in `dim_manager.source`. |
 | C corpus + ideas + search | TODO | | |
 | D backtest | TODO | | Do not start before Stage B's cohort fix: tests 3 and 4 would measure a survivorship-selected cohort. |
@@ -237,6 +237,35 @@ catcher is not a guard rail.
 **2026-08-27 — both auditors' probe sets re-run after all fixes.** The leakage
 probes (6) pass, meaning PIT holds. The crawl attacks (4) all fail, meaning the
 holes are closed. Verified by me directly.
+
+**2026-08-27 — STAGE 0 CLOSED. Acceptance, item by item:**
+
+| Criterion | Evidence |
+|---|---|
+| Full unit suite green | 0 failures on an uncontended machine |
+| Settled claim outcomes non-zero | 56 hits / 106 misses / 115 unscoreable, live |
+| Crawl reaches AND completes transfers | 637 bodies fetched (was 8), `incomplete_stages: []` |
+| Elite pick coverage improved | 311 of 1,978, was 25 of 2,015 |
+| Crashing MCP tools return results | both invoked live |
+| One EO definition | 21 of 22 mutations caught; 2 re-verified by me |
+| Adversarial pass survived | 2 passes, 10 refutations, all fixed and re-checked |
+
+**One honest caveat on the suite.** An earlier full run failed
+`test_chat_agent.py::test_second_turn_resumes_with_the_stored_session_id` with
+`IndexError` on `lines[1]` — the second turn had not produced output yet. It
+passes in isolation, in-file, and in a clean full run; it failed while five
+pytest processes and four agents contended for the machine. **It is a
+load-sensitive flake, not a regression, and it is not fixed.** A future session
+that sees it under parallel load should not treat it as damage from this work —
+but it is real test debt and worth hardening when someone is next in that file.
+
+**Two items are carried forward rather than closed:**
+1. `fact_manager_transfer` row count — provably uncheckable before the GW2
+   deadline (2026-08-28 17:30 UTC). **The first post_gw run after that deadline
+   must be checked.** If it is still empty then, that IS a bug and the
+   pipeline-level evidence does not excuse it.
+2. Cohort hindsight selection (pass 1, finding 8) — blocking design item on
+   Stage B, and Stage D must not start before it.
 
 ## Corrections to the prompt's AUDITED CURRENT STATE (append-only)
 
