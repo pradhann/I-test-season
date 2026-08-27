@@ -106,3 +106,56 @@ Params: `{ "creator": str (required), "days": int = 60, "limit": int = 40 }`
 - **Track record stays honest**: with every earned weight currently 0.0, the
   UI says "no creator has beaten a coin flip yet", never an empty leaderboard
   that reads as missing data.
+
+---
+
+## Amendments (2026-08-27, after both sides shipped)
+
+The panel and the view were built in parallel against the shape above. Both
+found it insufficient in the same three places and both correctly refused to
+change it unilaterally, so it is amended here once, by its owner.
+
+**Adopted into the contract:**
+
+1. **`deep_link` on every quoted call**, not just on claims. As written, a
+   take's own quotes were unreachable without the caller guessing a URL — the
+   opposite of the "clickable" requirement.
+2. **`n_cue` / `n_llm` inside each `consensus[].buy|sell|captain` bucket.** The
+   contract's own rule says extractor is surfaced, not averaged away; without
+   a per-bucket split the landing board could not tell five considered takes
+   from five keyword hits, which is exactly the confusion the rule forbids.
+3. **`take.evidence`** — `{text_source, depth, thin, scoreable, chars,
+   substantive_chars}`, stamped inside `analysis_json`. It travels WITH the
+   take so a reader holding the summary holds the caveat without a join. Rows
+   written before the stamp return `None`, meaning "unrecorded" — never
+   defaulted to deep. This matters because 100 of 118 takes are derived from
+   show notes rather than transcripts, and the tab must not render a summary
+   of marketing copy as the equal of a summary of a transcript.
+4. **`summary_bullets`** beside the joined `summary` string, because
+   `TranscriptAnalysis.summary` is natively a list of 3–6 bullets.
+5. **Nullable `latest` + `latest_reason`**, so a registry source that probes
+   200 and has never yielded an item stays visible instead of vanishing.
+6. **Nullable `code` on a call**, so an unresolved spoken name renders as the
+   creator's own words rather than being dropped.
+
+**Two backing tables the panel may read:**
+- `content_analysis_skip(item_id, model, reason, detail, text_source, at_utc)`
+  — a ready-made `take_reason`; `reason` is `too_thin` or `no_positions`.
+- `creator_entry(creator, entry_id, player_name, entry_name, method, verified,
+  reason, as_of)` — feeds `entry` / `entry_reason`. Every row currently has
+  `entry_id NULL`, which is the correct state: all 29 creator names were
+  checked against 12,276 crawled managers under exact AND containment matching
+  with zero hits, because every roster name is a channel name.
+
+**Corrections to the original text:**
+- `provenance` is a sibling of `result` in the `ScriptRun` envelope, not a key
+  inside the result. Read `run.provenance`.
+- `sources[].discovery` has no backing column anywhere. It is currently
+  derived from registry membership and carries almost no information. Either
+  the pipeline should record discovery properly or the field should go; it is
+  left in place, honest but thin, pending that decision.
+
+**Known gap, deliberately not closed:** neither script takes an `as_of`, so
+both answer "now". Reconstructing a past deadline needs one, and the internals
+already thread a single `moment` everywhere — it is a small change when a
+caller needs it.
