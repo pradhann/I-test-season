@@ -1,1 +1,407 @@
-/* Creators view styles. Owned by the creators view only. */
+/* Creators view styles. Owned by the creators view only.
+
+   Every colour is a token from app.css, so both themes come for free and
+   nothing can be defined in one theme only. Two hues carry meaning and only
+   two: --s1 (positive / buying) and --s2 (negative / selling); both were
+   validated all-pairs against each theme's surface. Weak evidence is never a
+   colour — it is neutral grey plus a hatch, because "less certain" must read
+   as quieter, not as a different category. */
+
+.cx { --pos: var(--s1); --neg: var(--s2); }
+
+.cx-asof { display: inline-flex; align-items: center; gap: 6px; }
+.cx-body { margin-top: 6px; }
+
+/* ---------------- the wire ---------------- */
+
+.cx-list { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
+
+.cx-wire {
+  display: grid; grid-template-columns: 78px minmax(0, 1fr) 180px;
+  gap: 14px; align-items: start;
+  background: var(--raised); border: 1px solid var(--line);
+  border-radius: 10px; padding: 12px 14px;
+}
+@media (max-width: 980px) {
+  .cx-wire { grid-template-columns: 1fr; gap: 8px; }
+}
+
+.cx-rail { display: flex; align-items: center; gap: 6px; padding-top: 2px; }
+.cx-rail-t { color: var(--muted); font-size: 11px;
+             font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.cx-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.cx-name {
+  background: none; border: 0; padding: 0; cursor: pointer;
+  color: var(--ink); font: 650 15px/1.3 inherit; text-align: left;
+  border-bottom: 1px dashed transparent;
+}
+.cx-name:hover { color: var(--accent-ink); border-bottom-color: var(--accent-ink); }
+.cx-kind { color: var(--faint); font-size: 10.5px; letter-spacing: .05em;
+           text-transform: uppercase; border: 1px solid var(--line);
+           border-radius: 5px; padding: 0 5px; }
+.cx-counts { color: var(--faint); font-size: 11px; margin-left: auto;
+             font-variant-numeric: tabular-nums; }
+
+/* Inline flow, not flex: a long title should wrap around its own glyph and
+   let the badges trail the last line, instead of the glyph orphaning itself
+   on a line of its own at narrow widths. */
+.cx-latest { margin-top: 5px; }
+.cx-latest > *, .cx-itemhead > * { margin-right: 7px; }
+.cx-glyph { color: var(--muted); font-size: 12px; margin-right: 4px; }
+.cx-title { color: var(--ink); font-weight: 550; text-decoration: none;
+            max-width: 100%; overflow-wrap: anywhere; }
+a.cx-title:hover { text-decoration: underline; }
+.cx-when { color: var(--faint); font-size: 11px; white-space: nowrap; }
+
+/* item text provenance: a full transcript and 1.2KB of show notes are not
+   the same evidence, so they never look the same */
+.cx-src { font-size: 10px; font-weight: 700; letter-spacing: .05em;
+          text-transform: uppercase; padding: 1px 7px; border-radius: 999px;
+          white-space: nowrap; }
+.cx-src.strong { color: var(--ink);
+  background: color-mix(in oklab, var(--s1) 18%, var(--surface));
+  border: 1px solid color-mix(in oklab, var(--s1) 45%, var(--line)); }
+.cx-src.weak { color: var(--muted);
+  border: 1px dashed var(--line);
+  background: repeating-linear-gradient(135deg,
+    transparent 0 4px,
+    color-mix(in oklab, var(--faint) 22%, transparent) 4px 5px); }
+
+/* ---------------- a stated position ---------------- */
+
+.cx-take { margin-top: 8px; }
+.cx-summary {
+  margin: 0 0 8px; padding: 8px 12px; border-radius: 0 8px 8px 0;
+  background: var(--surface); border-left: 3px solid var(--accent);
+  color: var(--ink); font-size: 12.5px; line-height: 1.55;
+}
+/* the common case today: no take, so it stays one dense line */
+.cx-nota { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.cx-nota .cx-reason { flex: 1 1 320px; padding: 6px 10px; }
+
+.cx-take-f { display: flex; align-items: center; gap: 10px; margin-top: 6px;
+             color: var(--faint); font-size: 11px; font-family: var(--mono); }
+.cx-more { background: none; border: 0; padding: 0; cursor: pointer;
+           color: var(--accent-ink); font: 600 11.5px/1 inherit;
+           white-space: nowrap; }
+.cx-more:hover { text-decoration: underline; }
+
+.cx-calls { display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+            margin-top: 5px; }
+.cx-calls-l { color: var(--faint); font-size: 10px; letter-spacing: .09em;
+              text-transform: uppercase; font-weight: 700; min-width: 54px; }
+
+.cx-call {
+  display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
+  border-radius: 999px; padding: 2px 10px 2px 4px; font: 600 12px/1.6 inherit;
+  border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+}
+.cx-call:hover { border-color: currentColor; }
+.cx-call .g { font-size: 10px; margin-left: 4px; }
+.cx-call .nm { color: var(--ink); }
+.cx-call.pos { color: var(--pos);
+  background: color-mix(in oklab, var(--s1) 12%, var(--surface));
+  border-color: color-mix(in oklab, var(--s1) 40%, var(--line)); }
+.cx-call.neg { color: var(--neg);
+  background: color-mix(in oklab, var(--s2) 12%, var(--surface));
+  border-color: color-mix(in oklab, var(--s2) 40%, var(--line)); }
+.cx-call.cap { color: var(--ink);
+  background: var(--raised);
+  border-color: var(--muted); border-style: dashed; }
+.cx-call.flat { color: var(--muted); }
+.cx-call.diff { color: var(--ink); background: var(--raised);
+  border-color: var(--muted); border-style: dashed; }
+/* the chip and its timestamped jump travel together and never split */
+.cx-callwrap { display: inline-flex; align-items: center; gap: 4px;
+               white-space: nowrap; }
+.cx-jump { color: var(--accent-ink); font: 600 10.5px/1 var(--mono);
+           text-decoration: none; padding: 2px 4px; border-radius: 5px; }
+.cx-jump:hover { text-decoration: underline;
+                 background: color-mix(in oklab, var(--accent) 14%, transparent); }
+.cx-bullets { margin: 6px 0 0; padding-left: 18px; }
+.cx-bullets li { margin-bottom: 2px; }
+.cx-face { width: 22px; height: 22px; border-radius: 50%; object-fit: cover;
+           object-position: center 18%; background: var(--raised); }
+.cx-stance { color: var(--muted); font-weight: 500; font-size: 11px; }
+
+/* conviction / confidence pips — the band word always rides alongside */
+.cx-pips { display: inline-flex; gap: 2px; align-items: center; }
+.cx-pips i { width: 5px; height: 5px; border-radius: 50%;
+             background: currentColor; opacity: .2; }
+.cx-pips i.on { opacity: .95; }
+.cx-conv, .cx-conf { display: inline-flex; align-items: center; gap: 5px; }
+.cx-conv-t { color: var(--faint); font-size: 10.5px; letter-spacing: .04em;
+             font-family: var(--mono); }
+
+/* ---------------- a reason, not a blank ---------------- */
+
+.cx-reason {
+  display: flex; gap: 9px; align-items: flex-start;
+  border: 1px dashed var(--line); border-radius: 8px;
+  padding: 8px 11px; color: var(--muted); font-size: 12px;
+  background: color-mix(in oklab, var(--warn) 5%, var(--surface));
+}
+.cx-reason.expected { background: var(--surface); }
+.cx-reason b { color: var(--ink); }
+.cx-reason-i {
+  flex: none; width: 16px; height: 16px; border-radius: 50%;
+  font: 700 11px/16px var(--mono); text-align: center;
+  color: var(--surface); background: var(--muted);
+}
+.cx-reason.expected .cx-reason-i { background: var(--s1); }
+.cx-reason-h { color: var(--faint); font-size: 11px; margin-top: 3px; }
+
+/* ---------------- the side badges ---------------- */
+
+.cx-side { display: flex; flex-direction: column; gap: 8px; }
+.cx-badge { background: var(--surface); border: 1px solid var(--line);
+            border-radius: 8px; padding: 7px 10px; }
+.cx-badge .k { color: var(--faint); font-size: 9.5px; letter-spacing: .09em;
+               text-transform: uppercase; font-weight: 700; }
+.cx-badge .v { font: 600 13px/1.35 var(--mono);
+               font-variant-numeric: tabular-nums; margin: 2px 0 4px;
+               overflow-wrap: anywhere; }
+.cx-badge .v.muted { color: var(--muted); font-weight: 500; }
+.cx-badge .v a { color: var(--accent-ink); }
+.cx-badge-r { color: var(--faint); font-size: 10.5px; line-height: 1.4; }
+
+/* ---------------- agreement ---------------- */
+
+.cx-cons { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.cx-consrow {
+  display: grid; align-items: center; gap: 12px;
+  grid-template-columns: 216px minmax(110px, 1fr) 228px minmax(0, 1.1fr);
+  background: var(--raised); border: 1px solid var(--line);
+  border-radius: 9px; padding: 8px 12px;
+}
+@media (max-width: 1180px) {
+  .cx-consrow { grid-template-columns: 200px minmax(90px, 1fr) 180px; }
+  .cx-whowrap { grid-column: 1 / -1; }
+}
+@media (max-width: 760px) {
+  .cx-consrow { grid-template-columns: 1fr; }
+}
+.cx-consid { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.cx-consid .nm { font-weight: 650; }
+.cx-consid .sub { color: var(--faint); font-size: 11px;
+                  font-variant-numeric: tabular-nums; }
+
+/* one axis, neutral midpoint, both sides to the same scale */
+.cx-div { display: flex; align-items: center; height: 14px; }
+.cx-div .l, .cx-div .r { flex: 1; display: flex; height: 10px; }
+.cx-div .l { justify-content: flex-end; }
+.cx-div .m { width: 1px; height: 14px; background: var(--line); flex: none; }
+.cx-div i { display: block; height: 10px; min-width: 0; }
+.cx-div .l i { border-radius: 4px 0 0 4px; margin-right: 2px; }
+.cx-div .r i { border-radius: 0 4px 4px 0; margin-left: 2px; }
+.cx-div i.pos { background: var(--s1); }
+.cx-div i.neg { background: var(--s2); }
+/* weak evidence keeps the side's hue but is hatched and desaturated, so the
+   eye reads it as "less", not as a different thing */
+.cx-div i.pos.cue { background: repeating-linear-gradient(135deg,
+  color-mix(in oklab, var(--s1) 26%, var(--surface)) 0 3px,
+  color-mix(in oklab, var(--s1) 62%, var(--surface)) 3px 6px); }
+.cx-div i.neg.cue { background: repeating-linear-gradient(135deg,
+  color-mix(in oklab, var(--s2) 26%, var(--surface)) 0 3px,
+  color-mix(in oklab, var(--s2) 62%, var(--surface)) 3px 6px); }
+.cx-div .l i.cue { border-radius: 4px 0 0 4px; }
+.cx-div .l i:not(.cue) { border-radius: 0; }
+.cx-div .l i:last-child { border-radius: 0 4px 4px 0; margin-right: 0; }
+.cx-div .r i.cue { border-radius: 0 4px 4px 0; }
+.cx-div .r i:not(:first-child) { margin-left: 1px; }
+
+/* the legend swatches in the footer line */
+.cx-legend .lg { display: inline-block; width: 16px; height: 8px;
+                 border-radius: 3px; vertical-align: 0; margin: 0 1px;
+                 background: var(--s1); }
+.cx-legend .lg.cue { background: repeating-linear-gradient(135deg,
+  color-mix(in oklab, var(--s1) 26%, var(--surface)) 0 3px,
+  color-mix(in oklab, var(--s1) 62%, var(--surface)) 3px 6px); }
+
+.cx-consn { display: flex; gap: 8px; }
+.cx-cell { flex: 1; background: var(--surface); border: 1px solid var(--line);
+           border-radius: 7px; padding: 3px 8px; text-align: center;
+           min-width: 52px; }
+.cx-cell b { display: block; font: 700 14px/1.2 var(--mono); }
+.cx-cell span { color: var(--faint); font-size: 9.5px; letter-spacing: .03em;
+                text-transform: uppercase; white-space: nowrap; }
+.cx-cell em { display: block; color: var(--faint); font-size: 9px;
+              font-style: normal; letter-spacing: .02em; white-space: nowrap; }
+.cx-cell.pos b { color: var(--s1); }
+.cx-cell.neg b { color: var(--s2); }
+.cx-cell.cap b { color: var(--ink); }
+
+.cx-whowrap { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.cx-whoLine { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.cx-whoLabel { color: var(--faint); font-size: 9.5px; letter-spacing: .08em;
+               text-transform: uppercase; font-weight: 700; min-width: 46px; }
+.cx-who { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.cx-whochip {
+  cursor: pointer; border-radius: 999px; padding: 1px 8px;
+  font: 600 10.5px/1.7 inherit; border: 1px solid var(--line);
+  background: var(--surface); color: var(--muted);
+}
+.cx-whochip:hover { color: var(--ink); border-color: var(--muted); }
+.cx-whochip.pos { border-color: color-mix(in oklab, var(--s1) 40%, var(--line));
+                  color: var(--s1); }
+.cx-whochip.neg { border-color: color-mix(in oklab, var(--s2) 40%, var(--line));
+                  color: var(--s2); }
+.cx-whochip.cap { border-style: dashed; }
+
+/* ---------------- track record ---------------- */
+
+.cx-verdict {
+  border: 1px solid color-mix(in oklab, var(--warn) 35%, var(--line));
+  background: color-mix(in oklab, var(--warn) 8%, var(--surface));
+  border-radius: 10px; padding: 12px 15px; margin: 10px 0 14px;
+}
+.cx-verdict.ok {
+  border-color: color-mix(in oklab, var(--good) 35%, var(--line));
+  background: color-mix(in oklab, var(--good) 8%, var(--surface));
+}
+.cx-verdict .h { font: 650 15px/1.3 inherit; color: var(--ink);
+                 margin-bottom: 4px; }
+.cx-verdict .b { color: var(--muted); font-size: 12.5px; line-height: 1.55;
+                 max-width: 78ch; }
+
+.cx-coin { position: relative; width: 132px; height: 9px; border-radius: 5px;
+           background: var(--line); overflow: hidden; display: inline-block;
+           vertical-align: middle; }
+.cx-coin i { display: block; height: 9px; background: var(--muted); }
+.cx-coin i.over { background: var(--s1); }
+.cx-coin u { position: absolute; left: 50%; top: 0; width: 1px; height: 9px;
+             background: var(--ink); opacity: .6; }
+.cx-coin-t { color: var(--faint); font-size: 10.5px; margin-left: 8px;
+             font-family: var(--mono); }
+
+.cx-linkish { background: none; border: 0; padding: 0; cursor: pointer;
+              color: var(--ink); font: inherit; text-align: left;
+              border-bottom: 1px dashed var(--line); }
+.cx-linkish:hover { color: var(--accent-ink); border-bottom-color: var(--accent-ink); }
+
+/* ---------------- the evidence drawer ---------------- */
+
+.cx-scrim { position: fixed; inset: 0; z-index: 39; background: rgb(0 0 0 / .38);
+            opacity: 0; pointer-events: none; transition: opacity .18s ease-out; }
+.cx-scrim.on { opacity: 1; pointer-events: auto; }
+@media (prefers-reduced-motion: reduce) { .cx-scrim { transition: none; } }
+
+.drawer.cx-drawer { width: min(740px, 96vw); padding: 16px 20px 40px; }
+
+.cx-dhead { display: flex; align-items: flex-start; gap: 12px;
+            margin-bottom: 4px; }
+.cx-dhead .sub { color: var(--faint); font-size: 11.5px; }
+.cx-dhead button { margin-left: auto; }
+.cx-dname { font-size: 19px; font-weight: 700; line-height: 1.25; }
+
+.cx-drecord { margin-top: 10px; }
+.cx-drecord .cx-badge { display: flex; align-items: baseline; gap: 10px;
+                        flex-wrap: wrap; }
+.cx-drecord .cx-badge .v { margin: 0; }
+
+.cx-dsec { margin-top: 18px; }
+.cx-dsec > h3 { margin: 0 0 8px; font-size: 11px; letter-spacing: .08em;
+                text-transform: uppercase; color: var(--muted);
+                border-bottom: 1px solid var(--line); padding-bottom: 5px; }
+
+.cx-entry { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.cx-entry a { color: var(--accent-ink); }
+
+.cx-squad { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.cx-sq { display: flex; align-items: center; gap: 6px; background: var(--raised);
+         border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px 2px 3px; }
+.cx-sq.cap { border-color: var(--warn); }
+.cx-sq .nm { font-size: 12px; font-weight: 600; }
+.cx-sq .sub { color: var(--faint); font-size: 10.5px; font-family: var(--mono); }
+
+.cx-evhead { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.cx-evhead h3 { flex: 1; }
+
+/* evidence mix: one hue for the real thing, hatch-grey for search noise */
+.cx-mix { margin: 8px 0 12px; }
+.cx-mixbar { display: flex; height: 10px; border-radius: 5px; overflow: hidden;
+             background: var(--line); }
+.cx-mixbar i { display: block; height: 10px; }
+.cx-mixbar i.considered { background: var(--s1); }
+.cx-mixbar i.keyword {
+  margin-left: 2px;
+  background: repeating-linear-gradient(135deg,
+    color-mix(in oklab, var(--faint) 30%, var(--surface)) 0 4px,
+    color-mix(in oklab, var(--faint) 62%, var(--surface)) 4px 8px);
+}
+.cx-mixt { color: var(--faint); font-size: 11px; margin-top: 5px; }
+
+.cx-item { border: 1px solid var(--line); border-radius: 9px;
+           padding: 10px 12px; margin-bottom: 10px; background: var(--raised); }
+.cx-itemhead { margin-bottom: 6px; }
+.cx-noclaims { color: var(--faint); font-size: 11.5px; font-style: italic; }
+
+/* A claim. The strong case gets a solid accent edge and a real pull-quote;
+   the keyword case gets a hatched edge, muted type and a caveat line. */
+.cx-claim { border-left: 3px solid var(--line); padding: 7px 0 7px 10px;
+            margin-top: 8px; }
+.cx-claim.ev-llm { border-left-color: var(--accent); }
+.cx-claim.ev-cue {
+  border-left-color: transparent;
+  background: linear-gradient(var(--raised), var(--raised)) padding-box,
+    repeating-linear-gradient(135deg,
+      color-mix(in oklab, var(--faint) 28%, var(--raised)) 0 3px,
+      color-mix(in oklab, var(--faint) 60%, var(--raised)) 3px 6px) border-box;
+  opacity: .88;
+}
+.cx-claim.focused {
+  background: color-mix(in oklab, var(--s1) 10%, var(--raised));
+  border-radius: 0 8px 8px 0;
+}
+
+.cx-claimtop { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cx-claimtop .nm { font-weight: 650; }
+
+.cx-act { display: inline-flex; align-items: center; gap: 4px;
+          border-radius: 999px; padding: 1px 9px; font: 700 10.5px/1.7 inherit;
+          letter-spacing: .05em; text-transform: uppercase; }
+.cx-act .g { font-size: 9px; }
+.cx-act.pos { color: var(--s1);
+  background: color-mix(in oklab, var(--s1) 14%, var(--surface)); }
+.cx-act.neg { color: var(--s2);
+  background: color-mix(in oklab, var(--s2) 14%, var(--surface)); }
+.cx-act.cap { color: var(--ink); background: var(--surface);
+              border: 1px dashed var(--muted); }
+.cx-act.flat { color: var(--muted); background: var(--surface); }
+
+.cx-ev { font-size: 10px; font-weight: 700; letter-spacing: .05em;
+         text-transform: uppercase; padding: 1px 7px; border-radius: 999px;
+         white-space: nowrap; }
+.cx-ev.ev-llm { color: var(--ink);
+  background: color-mix(in oklab, var(--accent) 24%, var(--surface));
+  border: 1px solid color-mix(in oklab, var(--accent) 55%, var(--line)); }
+.cx-ev.ev-cue { color: var(--muted); border: 1px dashed var(--line);
+  background: repeating-linear-gradient(135deg,
+    transparent 0 4px,
+    color-mix(in oklab, var(--faint) 22%, transparent) 4px 5px); }
+
+.cx-quote { margin: 6px 0 0; padding: 7px 11px; border-radius: 7px;
+            background: var(--surface); font-size: 12.5px; line-height: 1.55;
+            color: var(--ink); }
+.cx-quote.ev-llm::before { content: "“"; color: var(--accent-ink);
+  font: 700 18px/0 var(--mono); vertical-align: -2px; margin-right: 2px; }
+.cx-quote.ev-cue { color: var(--muted); font-size: 12px;
+                   background: color-mix(in oklab, var(--faint) 7%, var(--surface)); }
+.cx-noquote { color: var(--faint); font-size: 11.5px; font-style: italic;
+              margin-top: 5px; }
+
+.cx-claimfoot { display: flex; align-items: center; gap: 12px; margin-top: 6px;
+                flex-wrap: wrap; }
+.cx-deep { color: var(--accent-ink); font-size: 11.5px; font-weight: 600;
+           text-decoration: none; font-family: var(--mono); }
+.cx-deep:hover { text-decoration: underline; }
+.cx-nodeep { color: var(--faint); font-size: 11px; font-family: var(--mono); }
+.cx-warnline { color: var(--warn); font-size: 11px; }
+
+/* mobile: the wire's side column stops being a column */
+@media (max-width: 980px) {
+  .cx-side { flex-direction: row; flex-wrap: wrap; }
+  .cx-side .cx-badge { flex: 1 1 180px; }
+  .cx-counts { margin-left: 0; }
+}
