@@ -12,7 +12,9 @@ subject to rate limits. These tools make best-effort queries and
 format the results in a human-readable manner.
 
 An element id that the bootstrap table does not know is reported as unknown,
-with the raw id, rather than being skipped or given an invented name.
+with the raw id, rather than being skipped or given an invented name. The same
+rule governs the multiplier: a pick that arrives without one is shown as '?',
+never as the 1 that would read as "started".
 """
 
 from __future__ import annotations
@@ -53,6 +55,29 @@ def _lookup_element(elements_df: pd.DataFrame, elem_id: Any) -> Optional[pd.Seri
     return row
 
 
+def _multiplier(pick: Dict[str, Any]) -> tuple[str, int]:
+    """The multiplier the API resolved for a pick, or "?" when it sent none.
+
+    Returns ``(rendered, sort_rank)``. A missing or non-numeric multiplier is a
+    hole in the payload, not a 1: defaulting it to 1 silently promotes a pick
+    we know nothing about into the starting XI, and defaulting it to 0 benches
+    a player who may well have started. The engine refuses a whole squad over
+    this (``fpl_edge.models.field.observed._one_squad``: "A missing one is a
+    hole in the crawl, not a zero"); a read-only listing can be gentler and
+    show the pick with the multiplier marked unknown, so long as it never
+    prints a number the API did not send. ``sort_rank`` is -1 for an unknown
+    so it cannot outrank a real multiplier.
+    """
+    raw = pick.get("multiplier")
+    if raw is None or isinstance(raw, bool):
+        return "?", -1
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return "?", -1
+    return str(value), value
+
+
 def _fetch_team_event_picks(team_id: int, gw: int) -> Dict[str, Any]:
     """Fetch the picks for a team in a given gameweek.
 
@@ -84,7 +109,9 @@ def get_team_picks(gw: int, team_id: Optional[int] = None) -> str:
         includes each player's position, team, price and total
         points to aid in analysis. A pick whose element id is absent
         from the bootstrap table is listed as unknown with its raw id,
-        never dropped and never given a made-up name.
+        never dropped and never given a made-up name. A pick that arrives
+        with no multiplier shows '?' in the Mult column and is flagged in a
+        note, rather than being rendered as though it had started.
 
     Example:
 
@@ -111,10 +138,13 @@ def get_team_picks(gw: int, team_id: Optional[int] = None) -> str:
     # Build table rows
     rows = []
     unresolved = []
+    no_multiplier = []
     for pick in picks:
         elem_id = pick.get("element")
         player = _lookup_element(elements_df, elem_id)
-        mult = pick.get("multiplier", 1)
+        mult, mult_rank = _multiplier(pick)
+        if mult == "?":
+            no_multiplier.append(elem_id)
         is_cap = "C" if pick.get("is_captain", False) else ("V" if pick.get("is_vice_captain", False) else "")
         if player is None:
             # The id is not in the bootstrap table. Report the pick with what
@@ -129,6 +159,7 @@ def get_team_picks(gw: int, team_id: Optional[int] = None) -> str:
                 "Price": "?",
                 "Pts": "?",
                 "Mult": mult,
+                "_mult_rank": mult_rank,
                 "C/V": is_cap,
             })
             continue
@@ -139,14 +170,17 @@ def get_team_picks(gw: int, team_id: Optional[int] = None) -> str:
             "Price": f"{player['now_cost'] / 10.0:.1f}",
             "Pts": str(player["total_points"]),
             "Mult": mult,
+            "_mult_rank": mult_rank,
             "C/V": is_cap,
         })
     if not rows:
         return f"No picks found for team {entry_id} in gameweek {gw}."
     # Sort by position order: GK, DEF, MID, FWD then by multiplier descending.
     # Unknown positions sort last rather than being silently interleaved.
+    # A pick with no multiplier has no place in that ordering either, so it
+    # sorts last within its position rather than being ranked as if it started.
     order = {"GKP": 0, "DEF": 1, "MID": 2, "FWD": 3}
-    rows.sort(key=lambda r: (order.get(r["Position"], 99), -r["Mult"]))
+    rows.sort(key=lambda r: (order.get(r["Position"], 99), -r["_mult_rank"]))
     # Build header and table string
     header = f"Team picks for GW{gw} (team {entry_id}):\n"
     header += "Position  Player                        Team               Price  Pts  Mult  C/V\n"
@@ -164,5 +198,13 @@ def get_team_picks(gw: int, team_id: Optional[int] = None) -> str:
             f"bootstrap data, so their name, club, price and points are unknown. "
             f"Element ids are reassigned every season -- a stale cache or a "
             f"different season's picks is the usual cause."
+        )
+    if no_multiplier:
+        out += (
+            f"\n\nNote: {len(no_multiplier)} pick(s) "
+            f"({', '.join(str(u) for u in no_multiplier)}) arrived with no "
+            f"multiplier, shown as '?'. Whether they started, were captained "
+            f"or were benched is unknown -- a missing multiplier is a hole in "
+            f"the payload, not a 1, so it is not filled in."
         )
     return out
