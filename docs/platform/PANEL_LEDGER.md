@@ -155,6 +155,49 @@ and corrected it rather than taking it on trust; recorded because the same
 loose phrasing could mislead a future reader into thinking position is
 immutable.
 
+### 2026-08-27 — Pass 2, silent-failure lens. STAGE 0 REFUTED AGAIN.
+
+The harsher of the two passes. It refuted the crawl repair through **two doors
+neither the fix nor its tests had closed**, and showed the EO guard rail was
+weak enough to be decorative.
+
+**REFUTED and now fixed (commit `0f617a3`):**
+- *A crawl that wrote nothing exited 0.* `_write` returned
+  `{"status": "locked"}` when the write lock never freed, and nothing read it:
+  all stages `ok`, `incomplete_stages` empty, zero rows, exit 0, post_gw green.
+  The original outage, reached through a different door.
+- *An empty pool reported every stage ok.* Live-relevant, not theoretical —
+  B9 now rejects all twenty stale seeds, so the pool is thinner than it was.
+- *Stages after a starved pool reported `ok` while doing nothing*, so three of
+  four statuses in the receipt were actively false.
+- *`except Exception: return 0` in `top1k._sampled_so_far`* silently retargeted
+  `--grow 300` from existing+300 down to 300. **That blanket except was hiding
+  a live bug the audit did not name:** `g != g` on a pandas NA raises
+  TypeError, so on any warehouse whose tables exist but hold no top-1k rows,
+  the broken-read path was taken every time.
+- *"post_gw will notice a failed crawl" was false.* It wrote to a JSON file
+  nothing in the repo reads, and launchd discards the exit code. Failures now
+  enqueue one alert on the existing outbox — the deadline DAG's own mechanism.
+
+**The independent check that matters:** the auditor's `attack_crawl.py`, whose
+assertions assert the holes exist, now fails all four attacks. Verified by me
+directly, not taken from the fixer's report.
+
+**Still open from this pass:** the EO guard rail. 15 of 20 mutations survived
+it; 8 survived the entire wider suite, including inverting the PIT sort order
+and changing `as_of <=` to `<` in the cohort macro — literal SQL-vs-Python
+drift the fixture could never catch because every fixture row sits strictly
+before the snapshot. The structural cause matters more than the eight cases:
+the fixture is 8 managers with no NULL multipliers, no unresolvable element
+ids, no duplicate picks and no Bench Boost, and the five columns commit
+`43c2837` ADDED were never compared against Python at all.
+
+**Recurring lesson across both passes:** every refutation was the same shape —
+success and doing-nothing being indistinguishable. Four of the repairs' own
+claims were wrong in exactly the way this codebase specialises in. The
+silent-failure lens is not one lens among five; for this repo it is the one
+that finds things.
+
 ## Corrections to the prompt's AUDITED CURRENT STATE (append-only)
 
 **2026-08-27 — §3.2 B1's "241 rows" becomes 256 on a rescore.** Fifteen claims
