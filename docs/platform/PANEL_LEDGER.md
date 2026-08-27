@@ -198,6 +198,20 @@ claims were wrong in exactly the way this codebase specialises in. The
 silent-failure lens is not one lens among five; for this repo it is the one
 that finds things.
 
+**2026-08-27 — the auditability fix proven on the LIVE warehouse.** A second
+`score` run against the real database: the 256 pre-existing rows kept their
+original `resolved_utc` of 03:00:55 (not restamped), only the 21 genuinely new
+claims took a fresh stamp, `claim_outcome_revision` exists and correctly logged
+zero revisions. Live settled state is now 56 hits / 106 misses / 115
+unscoreable — the unscoreable count rose from 94 because 21 further claims have
+been ingested for gameweeks that have not been played.
+
+Note for whoever reads the auditor's scratchpad reproductions: `attack_crawl.py`
+asserts that the holes EXIST, so a correct fix makes it FAIL (it now fails all
+four). `test_settlement_audit.py` is a demonstration that passed before the fix
+too, so its passing proves nothing — the live check above is the evidence for
+that finding, not that script.
+
 ## Corrections to the prompt's AUDITED CURRENT STATE (append-only)
 
 **2026-08-27 — §3.2 B1's "241 rows" becomes 256 on a rescore.** Fifteen claims
