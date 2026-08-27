@@ -219,21 +219,40 @@ table.data td.clickable:hover { box-shadow: inset 0 0 0 1.5px var(--s1); }
           background: var(--raised); }
 .avatar.missing { visibility: hidden; }
 
-/* xPoints: source freshness + segmented position control */
-.freshdot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
-            vertical-align: middle; }
+/* xPoints: the operated toolbar — three labelled rows, one visual system */
+.toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+           padding: 8px 0; }
+.toolbar + .toolbar { border-top: 1px solid var(--line); }
+.tlabel { color: var(--faint); font-size: 10.5px; letter-spacing: .09em;
+          text-transform: uppercase; min-width: 76px; font-weight: 650; }
+.freshdot { display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+            vertical-align: 1px; }
 .freshdot.good { background: var(--good); }
 .freshdot.warn { background: var(--warn); }
 .freshdot.bad  { background: var(--bad); }
-.chip.src { padding: 4px 11px; }
+button.chip { cursor: pointer; }
+.chip.src, .chip.gw { padding: 5px 12px; font-size: 12px;
+  border: 1px solid var(--line); background: var(--surface); }
+.chip.src:hover, .chip.gw:hover { border-color: var(--muted); }
+.chip.src.on, .chip.gw.on {
+  background: color-mix(in oklab, var(--s1) 14%, var(--surface));
+  border-color: var(--s1); color: var(--ink); }
+.chk { color: var(--muted); font-size: 12px; display: inline-flex;
+       align-items: center; gap: 5px; }
 .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px;
        overflow: hidden; }
-.seg button { border: 0; border-radius: 0; padding: 5px 11px; font-size: 12px;
+.seg button { border: 0; border-radius: 0; padding: 5px 12px; font-size: 12px;
               background: var(--surface); color: var(--muted); }
 .seg button + button { border-left: 1px solid var(--line); }
 .seg button.on { background: var(--accent); color: #fff; }
-table.data tr.mine td { box-shadow: inset 3px 0 0 var(--accent); }
-table.data tr.mine td:first-child { font-weight: 650; }
+
+/* the matrix itself */
+table.matrix th { white-space: nowrap; }
+table.matrix th.sorted::after { content: " " attr(data-dir); color: var(--s1); }
+table.matrix td.sum { font-weight: 700;
+  background: color-mix(in oklab, var(--ink) 5%, var(--surface)); }
+.minedot { display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+           background: var(--accent); margin-right: 6px; vertical-align: 2px; }
 
 /* forms */
 select, input[type="text"], input[type="number"] {

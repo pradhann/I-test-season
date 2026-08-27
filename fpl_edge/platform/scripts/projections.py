@@ -96,6 +96,13 @@ PARAMS: dict[str, Any] = {
             "description": "Player code: include a per-source breakdown for "
                            "the chosen GW and the next four.",
         },
+        "sources": {
+            "type": ["array", "null"], "items": {"type": "string"},
+            "default": None,
+            "description": "Restrict the consensus to this subset of "
+                           "providers (2+ names). One name behaves like "
+                           "`source`; omitted/null means every provider.",
+        },
         "span": {
             "type": "integer", "minimum": 1, "maximum": 8, "default": 5,
             "description": "How many gameweeks the matrix covers from the "
@@ -183,6 +190,9 @@ _GW_RESULT: dict[str, Any] = {
         "gw": {"type": "integer"},
         "source": {"type": ["string", "null"],
                    "description": "null in consensus mode"},
+        "active_sources": {
+            "type": "array", "items": {"type": "string"},
+            "description": "exactly which providers drive rows and matrix"},
         "sort": {"type": "string"},
         "row_count": {"type": "integer"},
         "as_of": {"type": ["string", "null"],
@@ -341,6 +351,7 @@ def projection_table(
     min_p_appear: float | None = None,
     detail_code: int | None = None,
     span: int = 5,
+    sources: list[str] | None = None,
 ) -> dict[str, Any]:
     """Projected points per player: solved artefact by default, or per-gameweek
     provider consensus (with the cross-source spread as the uncertainty column)
@@ -350,12 +361,14 @@ def projection_table(
     exist: the artefact branch says to run the solve, the gameweek branch
     lists which gameweeks the ingested sources actually cover.
     """
-    gw_mode = any(p is not None for p in (gw, source, team, min_p_appear, detail_code))
+    gw_mode = any(p is not None for p in (gw, source, team, min_p_appear,
+                                          detail_code, sources))
     if gw_mode:
         return _gw_mode(
             wh, season=season, position=position, sort=sort, limit=limit,
             max_price=max_price, gw=gw, source=source, team=team,
             min_p_appear=min_p_appear, detail_code=detail_code, span=span,
+            subset=sources,
         )
     return _artefact_mode(
         wh, season=season, position=position, sort=sort, limit=limit,
@@ -521,9 +534,16 @@ def _gw_mode(
     min_p_appear: float | None,
     detail_code: int | None,
     span: int = 5,
+    subset: list[str] | None = None,
 ) -> dict[str, Any]:
     now = dt.datetime.now(UTC)
     notes: list[str] = []
+    # A one-name subset is just `source`; 2+ names is a subset consensus.
+    if subset:
+        subset = [str(x) for x in subset]
+        if len(subset) == 1 and source is None:
+            source = subset[0]
+            subset = None
 
     # Coverage first: it powers the GW picker, and it IS the honest-empty
     # message when the asked-for gameweek has nothing.
@@ -595,8 +615,44 @@ def _gw_mode(
             f"No source named {source!r} projects GW{gw}. Sources at GW{gw}: "
             f"{', '.join(sources)}."
         )
+    if subset:
+        unknown = [x for x in subset if x not in sources]
+        if unknown:
+            return empty(
+                f"Unknown source(s) {', '.join(unknown)} at GW{gw}. "
+                f"Sources: {', '.join(sources)}."
+            )
+        notes.append(f"Consensus restricted to: {', '.join(sorted(subset))}.")
 
-    if consensus:
+    if consensus and subset:
+        ph = ", ".join("?" for _ in subset)
+        frame = q(
+            wh,
+            f"""
+            WITH pr AS (
+                SELECT * FROM sem_projections(?)
+                WHERE season = ? AND gw = ? AND xpts IS NOT NULL
+                  AND source IN ({ph})
+            ), c AS (
+                SELECT code, any_value(web_name) web_name,
+                       any_value(position) "position",
+                       any_value(team) team, any_value(price) price,
+                       COUNT(DISTINCT source) n_sources,
+                       AVG(xpts) xpts, MIN(xpts) xpts_min, MAX(xpts) xpts_max,
+                       MAX(xpts) - MIN(xpts) spread, stddev_samp(xpts) sd,
+                       AVG(xmins) xmins, AVG(p_appear) p_appear,
+                       AVG(xp_if_appears) xp_if_appears
+                FROM pr GROUP BY code
+            ), pl AS (
+                SELECT code, selected_by_pct, status, team_code
+                FROM sem_players(?) WHERE season = ?
+            )
+            SELECT c.*, pl.selected_by_pct AS own_pct, pl.status, pl.team_code
+            FROM c LEFT JOIN pl USING (code)
+            """,
+            (now, season, gw, *subset, now, season),
+        )
+    elif consensus:
         frame = q(
             wh,
             """
@@ -773,7 +829,16 @@ def _gw_mode(
     gws = [g for g in range(int(gw), int(gw) + int(span)) if g in covered]
     matrix: dict[str, dict[str, float]] = {}
     if gws:
-        if consensus:
+        if consensus and subset:
+            ph = ", ".join("?" for _ in subset)
+            mrows = q(
+                wh,
+                f"SELECT code, gw, AVG(xpts) AS v FROM sem_projections(?) "
+                f"WHERE season = ? AND gw >= ? AND gw <= ? "
+                f"AND xpts IS NOT NULL AND source IN ({ph}) GROUP BY code, gw",
+                (now, season, gws[0], gws[-1], *subset),
+            )
+        elif consensus:
             mrows = q(
                 wh,
                 "SELECT code, gw, xpts_mean AS v FROM sem_projection_consensus(?) "
@@ -800,6 +865,8 @@ def _gw_mode(
         "season": season,
         "gw": gw,
         "source": None if consensus else source,
+        "active_sources": (sorted(subset) if subset
+                           else ([source] if not consensus else sources)),
         "sort": sort,
         "row_count": len(rows),
         "rows": rows,

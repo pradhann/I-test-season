@@ -1,48 +1,36 @@
-/* xPoints — the projection matrix (fplreview idiom).
-   Rows = players, columns = gameweeks, cells = xPts tinted by magnitude with
-   the number always printed. One selection drives everything: consensus
-   across every ingested source, or any single source. The sources strip
-   states exactly where numbers come from and how fresh each feed is — a
-   newly ingested provider (a paid FPL Review feed, say) appears there with
-   no UI change, because the strip renders whatever source_meta declares. */
+/* xPoints — the projection matrix (fplreview idiom, designed to be operated).
+   One mental model: pick WHOSE numbers (source chips, multi-select), pick
+   WHICH gameweeks (toggleable GW chips), then read a matrix where every
+   column header sorts. Squad membership is a quiet dot, not a shout. */
 
 import { runPanel, el, emptyBox, errBox, provenance, faceImg,
          fmtPrice, fmt1, fmt2 } from "/js/app.js";
-
-const POS_NAMES = { 1: "GKP", 2: "DEF", 3: "MID", 4: "FWD" };
-const SORTS = {
-  window: { label: "Σ window",   val: r => r._sum },
-  xpts:   { label: "anchor xPts", val: r => r.xpts },
-  spread: { label: "disagreement", val: r => r.spread ?? -1 },
-  value:  { label: "value (Σ/£)", val: r => r._sum / (r.price || 1) },
-  p_appear: { label: "p(appear)", val: r => r.p_appear ?? -1 },
-  own:    { label: "owned %",     val: r => r.own_pct ?? -1 },
-  price:  { label: "price",       val: r => r.price ?? -1 },
-};
 
 export default async function xpoints(host) {
   const card = el("section", "card");
   card.appendChild(el("h2", null, "Projections"));
   card.appendChild(el("p", "sub",
-    "Every number below is COPIED from an ingested provider, never modelled " +
-    "here. Feeds refresh automatically: T-30h before each deadline and " +
-    "nightly after matches; a newly ingested provider appears in the strip " +
-    "with no UI change."));
-  const srcStrip = el("div");
-  const controls = el("div");
+    "Numbers are copied from ingested providers, never modelled here. Feeds " +
+    "refresh T-30h before each deadline and nightly; a newly ingested " +
+    "provider appears below automatically."));
+  const srcRow = el("div", "toolbar");
+  const gwRow = el("div", "toolbar");
+  const filterRow = el("div", "toolbar");
   const body = el("div");
   const detailBox = el("div");
   const foot = el("div");
-  card.append(srcStrip, controls, body, detailBox, foot);
+  card.append(srcRow, gwRow, filterRow, body, detailBox, foot);
   host.appendChild(card);
 
   // ---- state ----
-  let anchor = "next", span = 5, source = "";   // "" = consensus
+  let picked = new Set();          // sources; empty = all (full consensus)
+  let gwSel = new Set();           // chosen gameweeks; filled after first load
   let pos = "", team = "", search = "", maxPrice = "", minPapp = "";
-  let squadOnly = false, sortKey = "window", sortDir = -1;
+  let squadOnly = false;
+  let sortBy = { kind: "sum" };    // {kind:"gw",gw} | {kind:"col",key} | {kind:"sum"}
+  let sortDir = -1;                // -1 desc
   let res = null, squadCodes = new Set();
 
-  // my squad, for row highlighting — parallel, non-blocking, optional
   runPanel("squad_overview", {}).then(({ result }) => {
     if (result && !result.empty) {
       squadCodes = new Set(
@@ -54,9 +42,11 @@ export default async function xpoints(host) {
   async function fetchPanel() {
     body.textContent = "";
     body.appendChild(el("p", "sub", "loading…"));
-    const params = { gw: anchor === "next" ? "next" : Number(anchor),
-                     span: Number(span), limit: 200 };
-    if (source) params.source = source;
+    const gws = [...gwSel].sort((a, b) => a - b);
+    const anchor = gws.length ? gws[0] : "next";
+    const span = gws.length ? Math.min(8, gws[gws.length - 1] - gws[0] + 1) : 8;
+    const params = { gw: anchor, span, limit: 200 };
+    if (picked.size) params.sources = [...picked];
     if (pos) params.position = { GKP: 1, DEF: 2, MID: 3, FWD: 4 }[pos];
     if (team) params.team = team;
     if (maxPrice) params.max_price = Number(maxPrice);
@@ -66,76 +56,85 @@ export default async function xpoints(host) {
       res = result;
       foot.textContent = "";
       foot.appendChild(provenance(prov));
-      renderSources();
-      renderControls();
-      if (res.empty) { body.textContent = ""; body.appendChild(emptyBox(res.reason)); return; }
-      renderBody();
+      if (res.empty) {
+        renderSources(); body.textContent = "";
+        body.appendChild(emptyBox(res.reason)); return;
+      }
+      if (!gwSel.size)
+        gwSel = new Set((res.gws || []).slice(0, 5));
+      renderSources(); renderGws(); renderFilters(); renderBody();
     } catch (e) { body.textContent = ""; body.appendChild(errBox(e)); }
   }
 
-  // ---- the sources strip: what and how fresh ----
+  // ---- row 1: sources (multi-select chips with freshness) ----
   function ageInfo(iso) {
     const h = (Date.now() - new Date(iso.replace(" ", "T"))) / 3.6e6;
-    if (!isFinite(h)) return { cls: "bad", text: "unknown age" };
-    if (h < 36) return { cls: "good", text: h < 1.5 ? "fresh" : `${Math.round(h)}h ago` };
-    if (h < 72) return { cls: "warn", text: `${Math.round(h)}h ago` };
-    return { cls: "bad", text: `${Math.round(h / 24)}d ago` };
+    if (!isFinite(h)) return { cls: "bad", text: "?" };
+    if (h < 36) return { cls: "good", text: h < 1.5 ? "fresh" : `${Math.round(h)}h` };
+    if (h < 72) return { cls: "warn", text: `${Math.round(h)}h` };
+    return { cls: "bad", text: `${Math.round(h / 24)}d` };
   }
   function renderSources() {
-    srcStrip.textContent = "";
+    srcRow.textContent = "";
     const metas = res?.source_meta || [];
-    if (!metas.length) return;
-    const row = el("div", "filters");
-    row.appendChild(el("label", null, "sources:"));
+    srcRow.appendChild(el("span", "tlabel", "Sources"));
+    const allChip = el("button", "chip src" + (picked.size === 0 ? " on" : ""));
+    allChip.textContent = (picked.size === 0 ? "✓ " : "") + "All";
+    allChip.title = "consensus across every provider";
+    allChip.onclick = () => { picked.clear(); fetchPanel(); };
+    srcRow.appendChild(allChip);
     for (const m of metas) {
+      const on = picked.has(m.source);
       const a = ageInfo(m.last_fetched);
-      const chip = el("span", "chip src" + (source === m.source ? " s1" : ""));
+      const chip = el("button", "chip src" + (on ? " on" : ""));
+      chip.appendChild(document.createTextNode((on ? "✓ " : "")));
       chip.appendChild(el("span", "freshdot " + a.cls));
       chip.appendChild(document.createTextNode(
-        ` ${m.source} · GW${m.gw_min}–${m.gw_max} · ${a.text}`));
-      chip.title = `${m.n_rows.toLocaleString()} projection rows` +
-        (m.has_p_appear ? " · publishes p(appear)" : "") +
-        (m.has_xmins ? " · publishes xMins" : "") +
-        `\nlast fetch ${m.last_fetched}\nclick to view only this source`;
-      chip.style.cursor = "pointer";
-      chip.onclick = () => { source = source === m.source ? "" : m.source; fetchPanel(); };
-      row.appendChild(chip);
+        ` ${m.source.replace(/^gh_/, "")} · ${a.text}`));
+      chip.title = `GW${m.gw_min}–${m.gw_max} · ${m.n_rows.toLocaleString()} rows` +
+        (m.has_p_appear ? " · p(appear)" : "") + (m.has_xmins ? " · xMins" : "") +
+        `\nlast fetch ${m.last_fetched}\nclick to include/exclude`;
+      chip.onclick = () => {
+        picked.has(m.source) ? picked.delete(m.source) : picked.add(m.source);
+        fetchPanel();
+      };
+      srcRow.appendChild(chip);
     }
-    const cons = el("span", "chip src" + (source === "" ? " s1" : ""),
-                    `consensus (${metas.length} sources)`);
-    cons.title = "the mean across every source; the spread column is how much they disagree";
-    cons.style.cursor = "pointer";
-    cons.onclick = () => { source = ""; fetchPanel(); };
-    row.insertBefore(cons, row.children[1]);
-    srcStrip.appendChild(row);
+    const n = (res?.active_sources || res?.sources || []).length;
+    srcRow.appendChild(el("span", "sub",
+      picked.size ? `consensus of ${n} selected` : `consensus of all ${n}`));
   }
 
-  // ---- controls ----
-  function renderControls() {
-    controls.textContent = "";
-    const f1 = el("div", "filters");
+  // ---- row 2: gameweek chips (toggle any subset) ----
+  function renderGws() {
+    gwRow.textContent = "";
+    gwRow.appendChild(el("span", "tlabel", "Gameweeks"));
+    for (const c of res?.gw_coverage || []) {
+      const on = gwSel.has(c.gw);
+      const chip = el("button", "chip gw" + (on ? " on" : ""), `GW${c.gw}`);
+      chip.title = `${c.n_sources} source${c.n_sources !== 1 ? "s" : ""}, ` +
+                   `${c.n_players} players — click to show/hide this column`;
+      chip.onclick = () => {
+        on ? gwSel.delete(c.gw) : gwSel.add(c.gw);
+        if (!gwSel.size) gwSel.add(c.gw);      // never zero columns
+        fetchPanel();
+      };
+      gwRow.appendChild(chip);
+    }
+  }
 
-    const gwSel = el("select");
-    gwSel.appendChild(Object.assign(el("option", null, "next GW"), { value: "next" }));
-    for (const c of res?.gw_coverage || [])
-      gwSel.appendChild(Object.assign(
-        el("option", null, `GW${c.gw} (${c.n_sources} src)`), { value: c.gw }));
-    gwSel.value = String(anchor);
-    gwSel.onchange = () => { anchor = gwSel.value; fetchPanel(); };
-
-    const spanSel = el("select");
-    for (const n of [1, 3, 5, 8])
-      spanSel.appendChild(Object.assign(
-        el("option", null, `${n} GW${n > 1 ? "s" : ""}`), { value: n }));
-    spanSel.value = String(span);
-    spanSel.onchange = () => { span = Number(spanSel.value); fetchPanel(); };
+  // ---- row 3: filters ----
+  function renderFilters() {
+    filterRow.textContent = "";
+    filterRow.appendChild(el("span", "tlabel", "Filter"));
 
     const seg = el("span", "seg");
     for (const v of ["", "GKP", "DEF", "MID", "FWD"]) {
-      const b = el("button", v === pos ? "on" : "", v || "ALL");
+      const b = el("button", v === pos ? "on" : "", v || "All");
       b.onclick = () => { pos = v; fetchPanel(); };
       seg.appendChild(b);
     }
+    filterRow.appendChild(seg);
 
     const teams = [...new Set((res?.rows || []).map(r => r.team).filter(Boolean))].sort();
     const teamSel = el("select");
@@ -145,57 +144,70 @@ export default async function xpoints(host) {
     teamSel.value = team;
     teamSel.onchange = () => { team = teamSel.value; fetchPanel(); };
 
-    f1.append(el("label", null, "from"), gwSel, spanSel, seg, teamSel);
-    controls.appendChild(f1);
-
-    const f2 = el("div", "filters");
     const searchIn = el("input");
-    searchIn.type = "text"; searchIn.placeholder = "search player"; searchIn.size = 14;
+    searchIn.type = "search"; searchIn.placeholder = "player…"; searchIn.size = 12;
     searchIn.value = search;
     searchIn.oninput = () => { search = searchIn.value; renderBody(); };
 
     const priceIn = el("input");
     priceIn.type = "number"; priceIn.step = "0.5"; priceIn.placeholder = "max £";
-    priceIn.style.width = "70px"; priceIn.value = maxPrice;
+    priceIn.style.width = "72px"; priceIn.value = maxPrice;
     priceIn.onchange = () => { maxPrice = priceIn.value; fetchPanel(); };
 
     const pappIn = el("input");
     pappIn.type = "number"; pappIn.step = "0.1"; pappIn.min = "0"; pappIn.max = "1";
-    pappIn.placeholder = "min p(app)"; pappIn.style.width = "84px"; pappIn.value = minPapp;
+    pappIn.placeholder = "min p(app)"; pappIn.style.width = "88px"; pappIn.value = minPapp;
     pappIn.onchange = () => { minPapp = pappIn.value; fetchPanel(); };
 
-    const sortSel = el("select");
-    for (const [k, sdef] of Object.entries(SORTS))
-      sortSel.appendChild(Object.assign(
-        el("option", null, `sort: ${sdef.label}`), { value: k }));
-    sortSel.value = sortKey;
-    sortSel.onchange = () => { sortKey = sortSel.value; sortDir = -1; renderBody(); };
-
-    const mine = el("label");
+    const mine = el("label", "chk");
     const cb = el("input"); cb.type = "checkbox"; cb.checked = squadOnly;
     cb.onchange = () => { squadOnly = cb.checked; renderBody(); };
     mine.append(cb, " my squad");
 
-    f2.append(searchIn, priceIn, pappIn, sortSel, mine);
-    controls.appendChild(f2);
+    filterRow.append(teamSel, searchIn, priceIn, pappIn, mine);
   }
 
   // ---- the matrix ----
+  function sortVal(r, cell) {
+    if (sortBy.kind === "gw") return cell(r.code, sortBy.gw) ?? -1e9;
+    if (sortBy.kind === "sum") return r._sum;
+    const v = r[sortBy.key];
+    return v == null ? -1e9 : (typeof v === "string" ? v : v);
+  }
+  function th(label, sortSpec, opts = {}) {
+    const cls = (opts.num !== false ? "num" : "") +
+      (sameSort(sortSpec) ? " sorted" : "");
+    const h = el("th", cls, label);
+    if (sameSort(sortSpec)) h.dataset.dir = sortDir === -1 ? "▼" : "▲";
+    if (opts.title) h.title = opts.title;
+    h.onclick = () => {
+      sortDir = sameSort(sortSpec) ? -sortDir : -1;
+      sortBy = sortSpec;
+      renderBody();
+    };
+    return h;
+  }
+  const sameSort = spec =>
+    JSON.stringify(spec) === JSON.stringify(sortBy);
+
   function renderBody() {
     body.textContent = "";
-    const gws = res.gws || [res.gw];
+    const gws = [...gwSel].sort((a, b) => a - b).filter(g => (res.gws || []).includes(g));
     const mx = res.matrix || {};
     const cell = (code, g) => mx[String(code)]?.[String(g)] ?? null;
 
     let rows = (res.rows || []).map(r => ({
-      ...r,
-      _sum: gws.reduce((a, g) => a + (cell(r.code, g) ?? 0), 0),
+      ...r, _sum: gws.reduce((a, g) => a + (cell(r.code, g) ?? 0), 0),
     }));
     const term = search.trim().toLowerCase();
     if (term) rows = rows.filter(r => r.name.toLowerCase().includes(term));
     if (squadOnly) rows = rows.filter(r => squadCodes.has(r.code));
-    const S = SORTS[sortKey];
-    rows.sort((a, b) => (S.val(b) - S.val(a)) * -sortDir);
+    rows.sort((a, b) => {
+      const x = sortVal(a, cell), y = sortVal(b, cell);
+      if (typeof x === "string" || typeof y === "string")
+        return String(x).localeCompare(String(y)) * sortDir;
+      return (y - x) * -sortDir;
+    });
 
     let tintMax = 0.001;
     for (const r of rows) for (const g of gws) {
@@ -203,40 +215,33 @@ export default async function xpoints(host) {
     }
 
     const wrap = el("div", "scroll-x");
-    const table = el("table", "data sticky-first");
+    const table = el("table", "data sticky-first matrix");
     const thead = el("thead"); const hr = el("tr");
-    const headers = [["player", null], ["pos", null], ["team", null],
-                     ["£", "price"], ["own%", "own"]];
-    for (const [lbl, key] of headers) {
-      const th = el("th", key ? "num" : "", lbl);
-      if (key) th.onclick = () => {
-        sortDir = sortKey === key ? -sortDir : -1; sortKey = key; renderBody();
-      };
-      hr.appendChild(th);
-    }
-    for (const g of gws) {
-      const th = el("th", "num", `GW${g}`);
-      th.title = "click to sort this gameweek";
-      th.onclick = () => { sortKey = "xpts"; renderBody(); };
-      hr.appendChild(th);
-    }
-    for (const [lbl, key] of [["Σ", "window"], ["±", "spread"], ["p(app)", "p_appear"]]) {
-      const th = el("th", "num", lbl);
-      th.title = key === "spread"
-        ? "cross-source disagreement at the anchor GW (max − min)"
-        : key === "window" ? "total over the window" : "probability of appearing";
-      th.onclick = () => {
-        sortDir = sortKey === key ? -sortDir : -1; sortKey = key; renderBody();
-      };
-      hr.appendChild(th);
-    }
+    hr.appendChild(th("player", { kind: "col", key: "name" }, { num: false }));
+    hr.appendChild(th("pos", { kind: "col", key: "pos" }, { num: false }));
+    hr.appendChild(th("team", { kind: "col", key: "team" }, { num: false }));
+    hr.appendChild(th("£", { kind: "col", key: "price" }));
+    hr.appendChild(th("own%", { kind: "col", key: "own_pct" }));
+    for (const g of gws)
+      hr.appendChild(th(`GW${g}`, { kind: "gw", gw: g },
+        { title: `sort by GW${g}` }));
+    hr.appendChild(th("Σ", { kind: "sum" },
+      { title: "total over the shown gameweeks" }));
+    hr.appendChild(th("±", { kind: "col", key: "spread" },
+      { title: `cross-source disagreement at GW${res.gw}` }));
+    hr.appendChild(th("p(app)", { kind: "col", key: "p_appear" },
+      { title: "probability of appearing — its own column, never multiplied into xPts" }));
     thead.appendChild(hr); table.appendChild(thead);
     const tbody = el("tbody");
 
     for (const r of rows.slice(0, 100)) {
       const tr = el("tr");
-      if (squadCodes.has(r.code)) tr.classList.add("mine");
       const nameTd = el("td");
+      if (squadCodes.has(r.code)) {
+        const dot = el("span", "minedot");
+        dot.title = "in your squad";
+        nameTd.appendChild(dot);
+      }
       nameTd.appendChild(faceImg(r.code, "avatar"));
       nameTd.appendChild(document.createTextNode(r.name));
       if (r.status && r.status !== "a")
@@ -254,70 +259,61 @@ export default async function xpoints(host) {
         const td = el("td", "num");
         if (v == null) td.textContent = "–";
         else {
-          const pct = Math.min(62, Math.round(62 * v / tintMax));
+          const pct = Math.min(58, Math.round(58 * v / tintMax));
           td.textContent = fmt1(v);
           td.style.background = `color-mix(in oklab, var(--s1) ${pct}%, var(--surface))`;
-          if (pct > 52) td.style.color = "#fff";
+          if (pct > 48) td.style.color = "#fff";
         }
         tr.appendChild(td);
       }
-      const sumTd = el("td", "num", fmt1(r._sum));
-      sumTd.style.fontWeight = "700";
-      tr.appendChild(sumTd);
-      tr.appendChild(el("td", "num",
-        r.spread == null ? "–" : `${fmt1(r.spread)}`));
-      tr.appendChild(el("td", "num",
-        r.p_appear == null ? "–" : fmt2(r.p_appear)));
+      tr.appendChild(el("td", "num sum", fmt1(r._sum)));
+      tr.appendChild(el("td", "num", r.spread == null ? "–" : fmt1(r.spread)));
+      tr.appendChild(el("td", "num", r.p_appear == null ? "–" : fmt2(r.p_appear)));
       tbody.appendChild(tr);
     }
     table.appendChild(tbody); wrap.appendChild(table);
     body.appendChild(wrap);
     body.appendChild(el("p", "sub",
       `${rows.length} players · showing ${Math.min(100, rows.length)} · ` +
-      `cells: ${source || "consensus"} xPts, tint = magnitude · ` +
-      `± = cross-source disagreement at GW${res.gw} · ` +
-      `p(appear) is its own column, never multiplied into xPts`));
+      `● before a name = in your squad · click any header to sort · ` +
+      `tint = xPts magnitude · p(appear) is never folded into xPts`));
   }
 
   // ---- per-source breakdown ----
   async function showDetail(r) {
     detailBox.textContent = "";
     const box = el("div", "card");
-    box.appendChild(el("h2", null, `${r.name} — every source, GW${res.gw}+`));
+    box.appendChild(el("h2", null, `${r.name} — every source`));
     box.appendChild(el("p", "sub", "loading…"));
     detailBox.appendChild(box);
     try {
-      const params = { gw: res.gw, detail_code: r.code, limit: 1 };
-      if (source) params.source = source;
-      const { result } = await runPanel("projection_table", params);
+      const { result } = await runPanel("projection_table",
+        { gw: res.gw, detail_code: r.code, limit: 1 });
       box.textContent = "";
-      const head = el("div", "filters");
+      const head = el("div", "toolbar");
       head.appendChild(el("h2", null, `${r.name} — every source`));
       const close = el("button", null, "close");
       close.onclick = () => { detailBox.textContent = ""; };
       head.appendChild(close);
       box.appendChild(head);
       const d = result.detail;
-      if (!d || !(d.rows || d.sources || []).length) {
+      const rowsD = d && (d.rows || d.sources);
+      if (!rowsD || !rowsD.length) {
         box.appendChild(emptyBox("no per-source rows for this player"));
         return;
       }
-      const rowsD = d.rows || d.sources;
       const wrap = el("div", "scroll-x");
       const table = el("table", "data");
-      const thead = el("thead"); const hr = el("tr");
+      const thead = el("thead"); const hr2 = el("tr");
       const cols = Object.keys(rowsD[0]);
-      for (const c of cols) hr.appendChild(el("th", null, c));
-      thead.appendChild(hr); table.appendChild(thead);
+      for (const c of cols) hr2.appendChild(el("th", null, c));
+      thead.appendChild(hr2); table.appendChild(thead);
       const tbody = el("tbody");
       for (const row of rowsD) {
         const tr = el("tr");
-        for (const c of cols) {
-          const v = row[c];
-          tr.appendChild(el("td",
-            typeof v === "number" ? "num" : "",
-            v == null ? "–" : String(v)));
-        }
+        for (const c of cols)
+          tr.appendChild(el("td", typeof row[c] === "number" ? "num" : "",
+            row[c] == null ? "–" : String(row[c])));
         tbody.appendChild(tr);
       }
       table.appendChild(tbody); wrap.appendChild(table);
