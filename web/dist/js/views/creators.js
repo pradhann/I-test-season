@@ -603,9 +603,17 @@ export default async function creators(host) {
   function classifyError(msg) {
     const m = String(msg).toLowerCase();
     if (/\b(403|429)\b|forbidden|rate.?limit|too many requests/.test(m)) return "declined";
-    if (/duplicate|already (held|ingested|have)|exists/.test(m)) return "duplicate";
+    // `exists` alone matched the not-an-episode refusal, whose own sentence
+    // ends "that is what this refusal exists to prevent" -- so pasting an FPL
+    // league invite reported "Already held. Its take is on the board already",
+    // asserting a stored item that does not exist and swallowing the real
+    // reason. Order matters too: the specific refusal is tested first.
+    if (/too.?thin|not an? (episode|article|video)|no text|3 characters|league/
+        .test(m)) return "notepisode";
+    if (/duplicate|already (held|ingested|have)|already exists/.test(m)) {
+      return "duplicate";
+    }
     if (/no captions|no audio|no_media|no enclosure|nothing to transcribe/.test(m)) return "nomedia";
-    if (/too.?thin|not an? (episode|article|video)|no text|3 characters|league/.test(m)) return "notepisode";
     return "failed";
   }
 
@@ -1493,7 +1501,13 @@ export default async function creators(host) {
       const people = (c && ((c.entry && c.entry.people) || c.people)) || [];
       if (people.length === 1) {
         const p = people[0];
-        const nm = p.display_name || p.name || who;
+        // `person` is the curated display name and is the SAME namespace
+        // panel_owned.people uses. `display_name` does not exist on this
+        // object, so this fell through to `name` -- the FPL API's account
+        // name -- and only 3 of 7 people matched: the cards said "Andy owns
+        // him" while the grid said Andy's squad was never crawled, on one
+        // page. Join on the key both sides actually share.
+        const nm = p.person || p.display_name || p.name || who;
         /* the show under the person's name, EXCEPT where they are the same
            string — "FPL Raptor / FPL Raptor" says nothing twice */
         solo.push({ key: who, label: nm, sub: nm === who ? null : who, kind: "person",
@@ -1503,7 +1517,7 @@ export default async function creators(host) {
                         kind: "show", ownKey: null,
                         note: "said by the show — this payload does not attribute its claims to a host" });
         for (const p of people) {
-          const nm = p.display_name || p.name;
+          const nm = p.person || p.display_name || p.name;
           showBand.push({ key: `__own__${nm}`, label: nm, sub: who, kind: "own-only",
                           ownKey: nm, note: "his squad, on a show whose claims are not attributed to a host" });
         }
