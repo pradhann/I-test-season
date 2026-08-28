@@ -29,7 +29,13 @@ dependencies = [
   "uvicorn>=0.30",
   "sse-starlette>=2.1",
   "jsonschema>=4.23",
-  "mcp[cli]>=1.2,<2",  # v2 renamed FastMCP->MCPServer; migration is its own change
+  "mcp[cli]>=1.2,<2",
+  # Local speech-to-text for the creator corpus. mlx-whisper runs on the Metal
+  # GPU; `av` decodes podcast audio in-process so no system ffmpeg is needed.
+  # Both were installed by hand during the build and would be removed by the
+  # next `uv sync` if they were not declared here.
+  "mlx-whisper>=0.4; sys_platform == 'darwin'",
+  "av>=12",  # v2 renamed FastMCP->MCPServer; migration is its own change
 ]
 
 [project.optional-dependencies]

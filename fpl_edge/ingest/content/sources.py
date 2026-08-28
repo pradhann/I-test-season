@@ -131,6 +131,13 @@ YOUTUBE_SOURCES: tuple[Source, ...] = (
     _yt("yt_ffscout", "Fantasy Football Scout", "UCVEKeBG9nbkufZxHWVtDHzQ",
         "FantasyFootballScout"),
     _yt("yt_fpltom", "FPL Tom", "UC14BPCP-fxIDuG0I_dC2Kpg", "FPLTom"),
+    # Added 2026-08-27: the owner supplied the handle directly. channel_id
+    # resolved from the @handle page's own externalId, like every other row
+    # here, not guessed. Solio is a four-founder analytics company rather than
+    # one person -- the panel carries its co-founders individually, each with a
+    # verified entry id, and the brand itself deliberately has none.
+    _yt("yt_solioanalytics", "Solio Analytics", "UC0LJwjL2pK4VVPnhN28FeMw",
+        "SolioAnalytics"),
 )
 
 #: Podcast RSS. Feed URLs came from the iTunes Search API (a documented public

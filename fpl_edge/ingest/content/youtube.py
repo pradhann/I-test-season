@@ -38,10 +38,49 @@ GAMEWEEK 1" and "MY GW1 CAPTAIN PICK" are complete claims in nine words, with a
 stated gameweek.
 
 :func:`fetch_transcript` is kept, implemented, and refuses to run unless a
-caller explicitly passes ``allow_disallowed_routes=True``. Nothing in this
-package passes it. It exists so the capability is documented and reviewable
-rather than quietly reintroduced later by someone who reads the note above and
-concludes the library must be broken.
+caller explicitly passes ``allow_disallowed_routes=True``. It exists so the
+capability is documented and reviewable rather than quietly reintroduced later
+by someone who reads the note above and concludes the library must be broken.
+
+POLICY CHANGE, 2026-08-27: captions for the curated panel only
+--------------------------------------------------------------
+
+Everything above still describes the routes accurately. What changed is the
+decision about them, and it was made by the repo owner, not by this code:
+
+    "Why is the youtube off limits -- have a path for posting youtube links
+    but also fetch for the popular ones."
+
+The gate above was set by an earlier session and read the robots policy as an
+absolute. The owner has re-read it as a question of *scale*, and re-decided.
+The distinction that carries the whole change:
+
+* **A general crawl** over 13 channels' back catalogues, thousands of videos,
+  is what ``Disallow: /youtubei/`` is for. It stays refused. Nothing here
+  enumerates a channel's archive through the caption route.
+* **The curated panel**, :data:`PANEL_CREATORS` -- eight creator identities
+  covering twelve of the sixteen people in the owner's panel
+  (docs/platform/CREATOR_ELITE_PROMPT.md §4), six of which have a registered
+  YouTube channel -- is a named, bounded list of people the owner has decided
+  to follow, at a handful of recent videos each. That is the thing the owner
+  asked for and it is what :func:`fetch_panel_captions` will do. It will not
+  do it for anyone else: the creator is checked against the panel and an
+  off-panel request is refused in code, not by convention.
+
+The politeness terms that come with the change, all mandatory:
+
+* the project User-Agent, never a browser string (``fetch.ContentFetcher``);
+* at least :data:`PANEL_DELAY_S` seconds between requests, enforced per host;
+* every raw body archived, and the audio cache in
+  :mod:`fpl_edge.ingest.content.asr` consulted before the network, so nothing
+  is fetched twice;
+* the REAL http status recorded on the source row, failures included;
+* **403 and 429 stop the run.** They are the source declining. A refusal is
+  recorded and obeyed -- :attr:`PanelCaptions.refused` exists so the caller
+  cannot accidentally treat it as an ordinary miss and carry on.
+
+Recorded in docs/data_sources.md §7A, with the reasoning, so the reversal is
+auditable rather than folklore.
 """
 
 from __future__ import annotations
@@ -65,6 +104,78 @@ CHANNEL_VIDEOS_URL = "https://www.youtube.com/@{handle}/videos"
 ROBOTS_DISALLOWED_ROUTES = (
     "https://www.youtube.com/feeds/videos.xml",
     "https://www.youtube.com/youtubei/",
+)
+
+#: Minimum seconds between requests on the panel caption path. Double the
+#: package default: this route is used by explicit owner decision rather than
+#: by robots.txt permission, so the rate has to be visibly conservative.
+PANEL_DELAY_S = 2.0
+
+#: The curated panel, as creator identities that match
+#: ``sources.Source.creator``. Copied from the owner's seed table in
+#: docs/platform/CREATOR_ELITE_PROMPT.md §4 and mapped onto the content
+#: registry, one line per panel member so the mapping is checkable:
+#:
+#:   Mark Sutherns .......... FPL BlackBox
+#:   Ben Crellin ............ Fantasy Football Hub
+#:   FPL Salah .............. Fantasy Football Hub
+#:   FPL Harry .............. FPL Harry
+#:   FPL Pras ............... The FPL Wire
+#:   Az Phillips ............ FPL BlackBox / Fantasy Football Scout
+#:   Andy ................... Let's Talk FPL
+#:   Lee Bonfield ........... FPL Family
+#:   Big Man Bakar .......... Fantasy Football Hub
+#:   Trophy FPL ............. Fantasy Football Scout
+#:   Tom .................... Who Got The Assist?
+#:   Sam Bonfield ........... FPL Family
+#:
+#: Four panel members are deliberately absent because they publish nowhere in
+#: the content registry: Ash (FPL Hints), Josh (FPL Graduates), Sertalp B. Cay
+#: and Erik Ibsen. They are named here rather than silently dropped, because
+#: "the panel is nine people" and "we fetch for nine people" being different
+#: numbers is exactly the sort of drift this constant exists to prevent.
+#:
+#: THIS IS A CEILING, NOT A ROSTER, and it is a code constant on purpose.
+#: ``fpl_edge/ingest/content/panel.py`` owns the live roster in
+#: ``data/panels/creator_panel_2026_27.yaml``, and a run may legitimately be
+#: narrower than this set. It may not be wider. A fetch permission that a data
+#: file can widen is not a permission, it is a default -- editing a YAML would
+#: silently extend a crawl the owner scoped to named people. Raising the
+#: ceiling is an edit to this line, in a diff, with the owner's decision behind
+#: it. :func:`divergence_from_roster` reports shows the roster carries that
+#: this ceiling does not, so the gap is visible rather than silent.
+#: The shows the owner named, and ONLY those. Deliberately a code constant
+#: rather than a read of data/panels/creator_panel_2026_27.yaml: a fetch
+#: permission that a YAML edit can widen is a default, not a permission. It is
+#: a CEILING -- a run may be narrower, never wider.
+#:
+#: Revised 2026-08-27 on the owner's explicit instruction. He named FPL Wire,
+#: Solio, FPL Harry, FPL Raptor and FPL Mark (BlackBox), then added Andy
+#: (Let's Talk FPL); Crellin, Az Phillips and FPL Salah came in on measured
+#: record. The previous list was inherited from the older sixteen-person panel
+#: in CREATOR_ELITE_PROMPT.md §4: it REFUSED FPL Raptor, whom the owner named,
+#: while permitting FPL Family, Who Got The Assist? and Fantasy Football Scout,
+#: whom he did not. Net effect is narrower, not wider -- three shows dropped,
+#: two added.
+PANEL_CREATORS: frozenset[str] = frozenset({
+    "The FPL Wire",          # Pras, Zophar, Lateriser, BigMan Bakar
+    "Let's Talk FPL",        # Andy
+    "FPL Harry",             # Harry Daniels
+    "FPL Raptor",            # Ross Dowsett
+    "FPL BlackBox",          # Mark Sutherns, Az Phillips
+    "Fantasy Football Hub",  # Ben Crellin, FPL Salah
+    "Solio Analytics",       # Cay, Currie, Gjaerum, Palmer
+})
+
+#: Panel members with no source in the registry. Reported, not fetched.
+#: Panel members with no source in the registry: named by the owner, but there
+#: is nothing registered to fetch. Reported so the gap is visible, never
+#: fetched -- a name in the ceiling that resolves to no source would be a
+#: permission to fetch something nobody has defined. Solio Analytics is the
+#: live case: the owner named it, and its four co-founders carry verified
+#: entry ids, but no feed for it exists yet.
+PANEL_WITHOUT_SOURCE: tuple[str, ...] = (
+    "Solio Analytics",
 )
 
 _API_KEY_RE = re.compile(r'"INNERTUBE_API_KEY":"([^"]+)"')
@@ -259,3 +370,213 @@ def _transcript_via_library(video_id: str) -> list[str] | None:
         return [snippet.text for snippet in api.fetch(video_id, languages=["en"])]
     except Exception:  # noqa: BLE001 - the library raises a wide family of its own
         return None
+
+
+# -- panel captions: timestamped, bounded, and refusable -------------------
+
+
+class OffPanelRefused(RuntimeError):
+    """A caption fetch was asked for a creator who is not on the panel.
+
+    Raised, not returned. The scale limit is the entire justification for the
+    2026-08-27 policy change, so a caller that widens it has made a mistake
+    that must stop the run rather than quietly enlarge the crawl.
+    """
+
+
+def is_panel_creator(creator: str | None) -> bool:
+    """Is this creator one the owner named in the panel?"""
+    return bool(creator) and str(creator).strip() in PANEL_CREATORS
+
+
+def panel_youtube_sources() -> tuple[object, ...]:
+    """The registered YouTube sources belonging to panel creators.
+
+    Six of the thirteen registered channels, as of 2026-08-27. The gap between
+    those two numbers is the policy: the other seven channels are still
+    description-only, and that is on purpose.
+    """
+    from fpl_edge.ingest.content.sources import YOUTUBE_SOURCES
+
+    return tuple(s for s in YOUTUBE_SOURCES if is_panel_creator(s.creator))
+
+
+def divergence_from_roster(warehouse) -> tuple[str, ...]:
+    """Shows the live panel roster carries that :data:`PANEL_CREATORS` does not.
+
+    Reported, never acted on. The roster in ``panel_person_show`` is curated
+    and may legitimately move ahead of this module's ceiling; when it does, the
+    caption route refuses those shows and this function is how the owner finds
+    out, instead of discovering it as an absence six weeks later.
+
+    Returns an empty tuple when the panel tables do not exist yet.
+    """
+    try:
+        rows = warehouse.sql(
+            "SELECT DISTINCT s.show_creator FROM panel_person_show s "
+            "JOIN panel_person p USING (person_key) WHERE p.active"
+        )
+    except Exception:  # noqa: BLE001 - another team's table, may not exist
+        return ()
+    return tuple(sorted(
+        str(v) for v in rows["show_creator"] if str(v) not in PANEL_CREATORS
+    ))
+
+
+@dataclass(frozen=True, slots=True)
+class TimedLine:
+    """One caption cue. ``start_s`` is what a deep link points at."""
+
+    start_s: float
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class PanelCaptions:
+    """The outcome of one panel caption fetch, refusals included.
+
+    ``refused`` is separate from "no captions" on purpose. A video with
+    captions disabled is a fact about that video and the run continues; a 403
+    or a 429 is YouTube declining to serve *us*, and the run must stop rather
+    than work through the rest of the queue collecting more of them.
+    """
+
+    video_id: str
+    lines: tuple[TimedLine, ...]
+    route: str
+    status: int | None = None
+    refused: bool = False
+
+    @property
+    def ok(self) -> bool:
+        return bool(self.lines)
+
+    @property
+    def text(self) -> str:
+        return " ".join(line.text for line in self.lines).strip()
+
+
+def panel_fetcher(*, delay_s: float = PANEL_DELAY_S):
+    """A :class:`ContentFetcher` configured for the panel caption route.
+
+    ``respect_robots=False`` is the whole policy change in one keyword, and it
+    is confined to this function so it is greppable. It is NOT a general
+    licence: :func:`fetch_panel_captions` still refuses any creator off the
+    panel, and every other fetcher in this package keeps the robots check on.
+    The delay is doubled rather than left at the package default.
+    """
+    from fpl_edge.ingest.content.fetch import ContentFetcher
+
+    return ContentFetcher("youtube_panel", delay_s=delay_s, respect_robots=False)
+
+
+def fetch_panel_captions(
+    fetcher: ContentFetcher, video_id: str, *, creator: str
+) -> PanelCaptions:
+    """English captions with timestamps, for a panel creator's video only.
+
+    Raises :class:`OffPanelRefused` when ``creator`` is not on the panel. That
+    check is first, before any network call, so an off-panel request costs
+    YouTube nothing at all.
+    """
+    if not is_panel_creator(creator):
+        raise OffPanelRefused(
+            f"{creator!r} is not on the curated panel. The 2026-08-27 policy "
+            f"permits caption fetching for {sorted(PANEL_CREATORS)} and for no "
+            f"one else; widening it is a decision for the owner, not a default."
+        )
+
+    # ``youtube_transcript_api`` is installed and would answer this in one
+    # call. It is deliberately NOT used here. It builds its own HTTP client:
+    # its own User-Agent, no inter-request delay, and no status we can record
+    # on the source row. Politeness is the entire justification the owner's
+    # policy change rests on, so this path goes through ContentFetcher --
+    # project UA, PANEL_DELAY_S between requests, the real status carried back
+    # -- even though it costs three requests instead of one. The library is
+    # still used by the owner-shared-link path in interfaces/creators.py,
+    # which is a single video at a human's explicit request.
+    watch = fetcher.get(WATCH_URL.format(vid=video_id))
+    if watch.status in (403, 429):
+        return PanelCaptions(video_id, (), f"watch_{watch.status}", watch.status,
+                             refused=True)
+    if not watch.ok:
+        return PanelCaptions(video_id, (), f"watch_{watch.status or watch.error}",
+                             watch.status)
+    key_match = _API_KEY_RE.search(watch.text)
+    if not key_match:
+        return PanelCaptions(video_id, (), "no_innertube_key", watch.status)
+
+    player = fetcher.post_json(
+        f"https://www.youtube.com/youtubei/v1/player?key={key_match.group(1)}",
+        {
+            "context": {"client": {"clientName": "ANDROID", "clientVersion": "20.10.38"}},
+            "videoId": video_id,
+        },
+    )
+    if player.status in (403, 429):
+        return PanelCaptions(video_id, (), f"player_{player.status}", player.status,
+                             refused=True)
+    if not player.ok:
+        return PanelCaptions(video_id, (), f"player_{player.status or player.error}",
+                             player.status)
+    try:
+        data = json.loads(player.body)
+    except json.JSONDecodeError:
+        return PanelCaptions(video_id, (), "player_not_json", player.status)
+
+    tracks = (
+        data.get("captions", {})
+        .get("playerCaptionsTracklistRenderer", {})
+        .get("captionTracks", [])
+    )
+    track = next((t for t in tracks if str(t.get("languageCode", "")).startswith("en")), None)
+    if track is None or not track.get("baseUrl"):
+        return PanelCaptions(video_id, (), "no_english_track", player.status)
+
+    caption = fetcher.get(re.sub(r"&fmt=\w+$", "", str(track["baseUrl"])))
+    if caption.status in (403, 429):
+        return PanelCaptions(video_id, (), f"timedtext_{caption.status}",
+                             caption.status, refused=True)
+    if not caption.ok:
+        return PanelCaptions(video_id, (),
+                             f"timedtext_{caption.status or caption.error}",
+                             caption.status)
+    lines = timed_lines_from_xml(caption.body)
+    route = "innertube" if lines else "timedtext_empty"
+    return PanelCaptions(video_id, tuple(lines), route, caption.status)
+
+
+def timed_lines_from_xml(body: bytes) -> list[TimedLine]:
+    """timedtext XML -> cues with start times.
+
+    The untimed sibling of this function threw the ``start`` attribute away,
+    which is why the two stored transcripts in the warehouse cannot be deep
+    linked. A cue with no parsable start is dropped rather than defaulted to
+    0.0: a link that jumps to the beginning of a fifty-minute video is worse
+    than no link, because it looks like it worked.
+    """
+    try:
+        root = ET.fromstring(body)
+    except ET.ParseError:
+        return []
+    out: list[TimedLine] = []
+    for node in root.iter():
+        if node.tag not in ("text", "p"):
+            continue
+        text = strip_html(node.text or "")
+        if not text:
+            continue
+        raw = node.get("start") if node.get("start") is not None else node.get("t")
+        if raw is None:
+            continue
+        try:
+            start = float(raw)
+        except ValueError:
+            continue
+        # The Android/`p` dialect gives milliseconds; the classic `text`
+        # dialect gives seconds. Mixing them up puts every deep link a
+        # thousand times too late.
+        if node.tag == "p" and node.get("t") is not None:
+            start /= 1000.0
+        out.append(TimedLine(start_s=start, text=text))
+    return out

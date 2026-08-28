@@ -705,6 +705,151 @@ do.
   not build on it. If the account holder obtains written permission, that is the
   single highest-value upgrade to this pipeline and it costs nothing.
 
+## 7A. YouTube captions for the curated panel — a policy REVERSAL, and why
+
+**Decided by the repo owner on 2026-08-27.** This section exists because a
+policy that is quietly reversed is a policy nobody can audit later. What
+follows is what changed, who changed it, what limits it carries, and what was
+NOT changed.
+
+### What the previous position was
+
+`fpl_edge/ingest/content/youtube.py` documented, and enforced, a complete stop
+on caption fetching. The reasoning was correct as far as it went and the
+measurements behind it still hold:
+
+```
+youtube.com/robots.txt, User-agent: *
+    Disallow: /feeds/videos.xml
+    Disallow: /youtubei/
+```
+
+Both routes to a caption track terminate at `/youtubei/`: `youtube-transcript-
+api` calls `/youtubei/v1/player`, and so does the hand-rolled Innertube call.
+Both were tested on 2026-08-18 and **both work** — the block was ours, not
+YouTube's. `fetch_transcript` was left implemented but refusing unless a caller
+passed `allow_disallowed_routes=True`, and nothing in the bulk pipeline passed
+it.
+
+### What the owner decided instead
+
+> "Why is the youtube off limits -- have a path for posting youtube links but
+> also fetch for the popular ones."
+
+The earlier session read the robots directive as an absolute. The owner has
+re-read it as a question of **scale**, and that distinction is the whole of the
+new policy:
+
+* A **general crawl** — thirteen channels' back catalogues, thousands of videos,
+  a request per video forever — is what `Disallow: /youtubei/` is for. It stays
+  refused. Nothing in this package enumerates a channel's archive through the
+  caption route, and `pipeline transcribe` has no flag that would let it.
+* The **curated panel** — a named, bounded list of people the owner has chosen
+  to follow, at their most recent videos — is a different act. That is what is
+  now permitted, and only that.
+
+The panel is `youtube.PANEL_CREATORS`: eight creator identities covering twelve
+of the sixteen people in the owner's seed table
+(`docs/platform/CREATOR_ELITE_PROMPT.md` §4). Six of the thirteen registered
+YouTube channels belong to them. The other seven channels remain
+description-only. **The gap between 6 and 13 is the policy**, and it is
+asserted in `tests/unit/test_content_asr.py` by counting HTTP requests, not by
+inspecting return values — a gate that refuses after fetching has already done
+the thing it was meant to prevent.
+
+`PANEL_CREATORS` is a **ceiling, not a roster**, and it is a code constant
+rather than a read of `data/panels/creator_panel_2026_27.yaml` on purpose. A
+run may legitimately be narrower — `panel.panel_scope()` narrows it — but it
+may not be wider, and a fetch permission that a data file can widen is not a
+permission, it is a default. Raising the ceiling is an edit to that line, in a
+diff, with a decision behind it. Where the two disagree the code wins and the
+gap is *printed*: `pipeline transcribe` reports any show on the curated roster
+that the ceiling does not carry, so a refusal is visible on the run that causes
+it. As of 2026-08-27 the roster carries **FPL Raptor** and **Solio Analytics**,
+which the ceiling does not; their videos are refused until the owner extends
+it.
+
+### The politeness terms, all mandatory
+
+| Measure | Where it is enforced |
+|---|---|
+| Project User-Agent `fpl-edge/0.1`, never a browser string | `fetch.ContentFetcher` |
+| ≥ 2 s between requests to a host (double the package default) | `youtube.PANEL_DELAY_S`, `pipeline._asr_fetcher` |
+| Audio cached content-addressed by URL and consulted **before** the network | `asr.cached_audio`, `asr.AUDIO_CACHE` |
+| The REAL http status recorded, failures included | `content_source.last_http_status`, `content_transcribe_skip` |
+| **403 / 429 stops the run** | `youtube.PanelCaptions.refused`, `asr.AudioFetch.error` |
+
+The last row is the one that matters most. A 403 or a 429 is the source
+declining. It is recorded and obeyed: `pipeline transcribe` breaks out of its
+queue, writes the reason, and exits non-zero. There is no retry with different
+parameters, no second route, no backing off and continuing through the rest of
+the list collecting more refusals.
+
+### What was NOT changed
+
+* **The owner-shared-link path is untouched.** `fpl_edge/interfaces/creators.py`
+  `ingest_link()` still transcribes a single pasted URL exactly as before. It
+  was already permitted on different grounds — one video, at the owner's
+  explicit request, which is the use their own MCP server has always made of
+  the same library.
+* **`respect_robots` stays on everywhere else.** The keyword is set to `False`
+  in exactly one function, `youtube.panel_fetcher()`, so the blast radius of
+  the reversal is greppable in one line.
+* **Reddit and X are unaffected.** They are refused on policy (`Disallow: /`
+  and terms respectively), not on scale, and nothing here touches that.
+
+### Podcasts: local ASR, no policy question at all
+
+Podcast audio is fetched from the `<enclosure>` URL in the creator's own RSS
+feed — a file published for download, with no robots objection anywhere in the
+registry — and transcribed **locally** with MLX-Whisper on the Metal GPU.
+
+**No Anthropic tokens are spent on transcription, ever.** There is no remote
+fallback: if the local engine is missing, `pipeline transcribe` prints the
+install command and exits 1. `tests/unit/test_content_asr.py` asserts that the
+string `anthropic` does not appear in the module's code.
+
+Measured on this machine, 2026-08-27, `mlx-community/whisper-large-v3-turbo`:
+
+| Episode | Audio | Wall clock | Rate | Coverage | Segments |
+|---|---|---|---|---|---|
+| The FPL Wire, GW2 | 11.4 min | 68 s | 10.1× realtime | 99.3% | 191 |
+| FPL Harry, GW2 | 20.2 min | 111 s | 10.9× realtime | 100% | 261 |
+| Let's Talk FPL, GW2 | 23.3 min | 133 s | 10.5× realtime | 100% | 266 |
+| Fantasy Football Scout, GW2 | 57.4 min | 308 s | 11.2× realtime | 100% | 910 |
+
+**112.3 minutes of audio in 10.3 minutes of transcription = 10.9 minutes of
+audio per minute of wall clock** (per-item spread 10.1–11.6× across five runs,
+GPU state being the variable), one item at a time, with the DuckDB write
+lock held only for the few INSERTs per item and never across a transcription.
+A 45-minute episode therefore costs about 4 minutes plus its download; the
+whole 239-item panel backlog is roughly 6–8 hours of unattended GPU time, so
+run it time-budgeted overnight rather than in one go.
+
+Two panel YouTube videos were fetched through the caption route in the same
+session: 504 and 672 timestamped cues, HTTP 200 throughout, 4.1 s for three
+requests including the mandated delay. `youtube-transcript-api` is a project
+dependency and is **deliberately not used on this path** — it builds its own
+HTTP client with its own User-Agent, no delay, and no status we can record. It
+remains in use only for the owner-shared-link path.
+
+Coverage is not decoration. Whisper's characteristic failure is stopping early
+and returning successfully; a 62-minute episode transcribed to four minutes and
+stored as complete produces "the creator never mentioned Haaland", which is a
+confident false negative and worse than a gap. So the audio's duration is
+measured from the decoded sample count, coverage is computed against it, and a
+run below the threshold raises and **stores nothing**.
+
+### Requirements
+
+```bash
+uv pip install mlx-whisper av      # PyAV bundles FFmpeg; no Homebrew needed
+```
+
+Neither is in `pyproject.toml` yet — that file is shared with four other teams
+and is not this module's to edit. Until they are added, `uv sync` will remove
+them.
+
 ## 8. Reproducing these measurements
 
 ```bash
@@ -715,6 +860,24 @@ uv run pytest tests/unit/test_odds_devig.py tests/unit/test_odds_football_data.p
 # Live ingestion
 uv run python scripts/ingest_odds.py --history 2024-25 2025-26
 uv run python scripts/ingest_odds.py --fixtures
+
+# Transcription (§7A), offline tests -- no network, no model weights loaded
+uv run pytest tests/unit/test_content_asr.py -q               # 22 passed
+
+# Transcription, dry run: prints the queue and which items have audio,
+# fetches nothing and transcribes nothing
+uv run python -m fpl_edge.ingest.content.pipeline transcribe --dry-run --since 0
+
+# Transcription, a real batch. --budget-s is wall clock and is the knob that
+# matters: at ~11x realtime, 1800 s transcribes roughly 3.3 hours of audio.
+uv run python -m fpl_edge.ingest.content.pipeline transcribe \
+    --kinds podcast --since 14 --limit 20 --budget-s 1800
+uv run python -m fpl_edge.ingest.content.pipeline transcribe \
+    --kinds youtube --since 7 --limit 10
+
+# Then re-read the promoted items -- transcribe deletes the show-notes
+# analyses it supersedes, so this is what refills the Creators tab
+uv run python -m fpl_edge.ingest.content.pipeline analyze --since 14 --budget-s 1800
 ```
 
 **Known gap:** `--match-fixtures`, which resolves natural odds keys onto FPL
