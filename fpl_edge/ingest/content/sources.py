@@ -38,6 +38,7 @@ real loss, recorded here rather than quietly recovered.
 from __future__ import annotations
 
 import enum
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 
@@ -230,6 +231,78 @@ def creators() -> tuple[str, ...]:
 
 
 @dataclass(frozen=True, slots=True)
+class Scope:
+    """Which sources a run is allowed to spend itself on, and why those.
+
+    The registry has 38 fetchable sources and the owner cares about roughly
+    nine people. Fetching all 38 to reach those nine costs a full backfill of
+    Sky Sports FPL's archive to find one host's captain pick, and it is the
+    reason an ingest run takes long enough that it does not get run before a
+    deadline.
+
+    A scope NARROWS; it never deletes. Every source stays in the registry, is
+    still upserted into ``content_source``, and is one ``--only`` away. The
+    default target is the panel (see :func:`fpl_edge.ingest.content.panel.
+    panel_scope`), because that is what the owner asked for, but "the panel"
+    is a value passed in rather than a hard-coded list -- when the panel file
+    is absent this degrades to :meth:`everything` with a label saying so,
+    rather than to an empty run that looks like a broken fetcher.
+
+    ``label`` exists so the run can print the provenance of its own narrowing.
+    A run that silently processed 9 of 38 sources and a run whose feeds all
+    404'd produce the same item counts otherwise.
+    """
+
+    #: None means "every source you were given". An empty frozenset means
+    #: "nothing matched", which is a real and different answer.
+    keys: frozenset[str] | None
+    label: str
+    #: Requested keys that are not in the registry. Never silently dropped:
+    #: a typo'd source key would otherwise narrow the run to nothing and look
+    #: like a scope that simply had no work to do.
+    unknown_keys: tuple[str, ...] = ()
+
+    @classmethod
+    def everything(cls, label: str = "all fetchable sources") -> Scope:
+        return cls(keys=None, label=label)
+
+    @classmethod
+    def from_keys(cls, keys: Iterable[str], label: str) -> Scope:
+        wanted = tuple(k.strip() for k in keys if k and k.strip())
+        known = frozenset(k for k in wanted if k in BY_KEY)
+        unknown = tuple(sorted({k for k in wanted if k not in BY_KEY}))
+        return cls(keys=known, label=label, unknown_keys=unknown)
+
+    @classmethod
+    def from_creators(cls, names: Iterable[str], label: str) -> Scope:
+        """Every registered source belonging to these creators (shows).
+
+        Creator-keyed rather than key-keyed because that is the grain the
+        corpus is stored at: ``content_item.creator`` is the show name, and a
+        show publishes on both a YouTube channel and a podcast feed. Scoping
+        to "The FPL Wire" must reach both.
+        """
+        wanted = {n.strip() for n in names if n and n.strip()}
+        matched = frozenset(s.key for s in ALL_SOURCES if s.creator in wanted)
+        seen = {s.creator for s in ALL_SOURCES if s.creator in wanted}
+        unmatched = tuple(sorted(wanted - seen))
+        return cls(keys=matched, label=label, unknown_keys=unmatched)
+
+    def apply(self, sources: tuple[Source, ...] | None = None) -> tuple[Source, ...]:
+        pool = fetchable() if sources is None else sources
+        if self.keys is None:
+            return tuple(pool)
+        return tuple(s for s in pool if s.key in self.keys)
+
+    def render(self) -> str:
+        selected = self.apply()
+        line = f"scope: {len(selected)} sources ({self.label})"
+        if self.unknown_keys:
+            line += f"; UNKNOWN and ignored: {', '.join(self.unknown_keys)}"
+        return line
+
+
+@dataclass(frozen=True, slots=True)
 class ProbeResult:
     """What actually came back. Recorded verbatim, successes and failures."""
 
@@ -246,6 +319,18 @@ class ProbeResult:
     #: still reporting 200. A source losing items this way looks healthy on every
     #: other number here, so the count is carried out to the receipt.
     bad_dates: int = 0
+    #: Items kept, but with no resolvable http(s) link: the feed offered no
+    #: ``<link>``, no Atom alternate, no permalink GUID and no ``<enclosure>``.
+    #: These are stored with a NULL url and a reason (see
+    #: content_003_item_url_and_enclosure.sql), never with a GUID standing in
+    #: for one. Counted here for the same reason ``bad_dates`` is: 353 of 372
+    #: podcast items sat in the warehouse with a UUID in their url column and
+    #: every number on this receipt said the source was healthy.
+    no_url: int = 0
+    #: Items DROPPED because they carry neither a GUID nor a link, so there is
+    #: nothing stable to key ``item_id`` on. Every such item in one feed would
+    #: hash to the same id and silently deduplicate onto a single row.
+    no_identity: int = 0
 
     @property
     def ok(self) -> bool:
@@ -275,18 +360,41 @@ class ProbeReport:
     def bad_dates(self) -> int:
         return sum(r.bad_dates for r in self.results)
 
+    @property
+    def no_url(self) -> int:
+        return sum(r.no_url for r in self.results)
+
+    @property
+    def no_identity(self) -> int:
+        return sum(r.no_identity for r in self.results)
+
     def render(self) -> str:
-        lines = [f"{'status':>6}  {'bytes':>9}  {'items':>5}  {'baddate':>7}  key"]
+        lines = [
+            (
+                f"{'status':>6}  {'bytes':>9}  {'items':>5}  {'baddate':>7}  "
+                f"{'nourl':>5}  {'noid':>4}  key"
+            )
+        ]
         for r in sorted(self.results, key=lambda x: x.key):
             status = r.skipped_reason or (r.error or str(r.http_status))
             lines.append(
                 f"{status:>6}  {r.bytes_received:>9}  {r.items:>5}  "
-                f"{r.bad_dates:>7}  {r.key}"
+                f"{r.bad_dates:>7}  {r.no_url:>5}  {r.no_identity:>4}  {r.key}"
             )
         lines.append(
             f"-- reached {len(self.reached)}, failed {len(self.failed)}, "
             f"skipped-on-policy {len(self.skipped)}, of {len(self.results)}"
         )
+        lines.append(
+            f"-- items kept with no resolvable link (url NULL + reason): "
+            f"{self.no_url}"
+        )
+        lines.append(
+            f"-- items dropped for having neither a GUID nor a link: "
+            f"{self.no_identity}"
+        )
+        # Kept LAST, where it has always been: tests read
+        # render().splitlines()[-1] for this number.
         lines.append(
             f"-- entries dropped for an unparsable or offset-less date: "
             f"{self.bad_dates}"
