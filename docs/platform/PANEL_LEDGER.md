@@ -375,6 +375,43 @@ best-minus-worst across twenty estimated effects is biased upward by sampling
 noise and is therefore a ceiling. The page prints both ends and says which is
 which. Printing the midpoint would invent a precision neither has.
 
+**2026-08-28 — `content_insight` is written now, and its rows know which club.**
+The table held 0 rows for its whole existence. Extraction, storage and the PIT
+read were all built and all tested; nothing called them. Both writers of an
+analysis (`pipeline.cmd_analyze`, `interfaces.creators`) extracted the calls and
+dropped the observations from the same paid reading. Wired into both, plus a
+`backfill-insights` command that recovered 72 observations already sitting in
+`content_analysis.analysis_json` at zero model cost. 120 of the 122 stored
+analyses predate the `insights` key entirely and are counted separately —
+they need a paid re-analysis, and conflating the two numbers would have hidden
+that.
+
+**The club resolver refuses, and the counter-examples are why.** Attaching an
+insight to a fixture needs a club, and creator team names arrive through ASR
+damaged: this warehouse holds `forester`, `suddenland`, `ipsswitch`, `leads`.
+Nearest-club-by-edit-distance over a closed set of twenty looks obviously safe.
+Measured against this season's actual twenty:
+
+    forester -> BRENTFORD (d=6, while Nott'm Forest is d=7)
+    hull     -> FULHAM    (d=4, TIED with Hull City)
+
+So clubs got the rule players already had: exact, then containment on the club's
+own tokens, then refuse. 13 of 16 resolve (including `forester` -> NFO), 3 are
+refused and **counted in the drawer's note** rather than dropped in silence.
+Resolution happens once at write time into `content_insight.team_code`, so an
+attribution can be inspected rather than re-guessed on every read.
+`tests/unit/test_club_resolver.py` break-watch-restores against the
+edit-distance version: 11 of its 20 tests fail when it is installed.
+
+**And the same contract bug, one more time.** `_team_talk_block` accepted the
+fixture's two team codes and never used them, so every drawer showed every
+team-level insight in the season. Separately, the view read
+`creator_team_talk.rows` for a panel publishing `items`. Both would have
+rendered plausibly and wrongly. That is now four instances this cycle of the
+same shape: **a reader and a writer that disagree, where the disagreement
+degrades into a confident, well-worded, false statement.** The contract test
+added earlier covers the fixtures grid; it does not yet cover drawer sections.
+
 ## Corrections to the prompt's AUDITED CURRENT STATE (append-only)
 
 **2026-08-27 — §3.2 B1's "241 rows" becomes 256 on a rescore.** Fifteen claims
