@@ -1,0 +1,343 @@
+/* Fixtures view styles. Owned by the fixtures view only.
+
+   THE COLOUR SCALE
+   ----------------
+   The ticker is a heatmap, so the scale is the design. It is DIVERGING because
+   the midpoint is a real quantity — a league-average fixture — and not the
+   middle of whatever happens to be on screen. Two hues plus a neutral gray
+   midpoint, three equal steps per arm, seven classes total:
+
+       easy  e3  e2  e1  ·n·  h1  h2  h3  hard
+             blue  ←  neutral  →  orange
+
+   Blue and orange are the repo's own validated series hues (--s1 / --s2), kept
+   because blue↔orange is the pair that survives protanopia, deuteranopia and
+   tritanopia simultaneously. FPL's own green→red ticker is exactly the family
+   ColorBrewer flags as NOT colour-blind safe, and the green/yellow boundary it
+   collapses on is the very boundary a ticker needs.
+
+   Steps were generated in OKLCH (hue held per arm, lightness and chroma
+   stepped) and checked with the dataviz palette validator, per mode, against
+   that mode's real card surface. What matters for a diverging scale is that
+   the SIGN is never ambiguous, so the gate is blue-step-k vs orange-step-k:
+
+     light (surface #ffffff)   step1 ΔE 15.7 protan / 19.0 normal
+                               step2 ΔE 23.1 protan / 28.0 normal
+                               step3 ΔE 29.3 protan / 35.2 normal
+     dark  (surface #16181b)   step1 ΔE 16.2 protan / 19.1 normal
+                               step2 ΔE 23.7 protan / 27.8 normal
+                               step3 ΔE 28.6 protan / 34.2 normal
+
+   All PASS (target ≥8 CVD, hard floor ≥15 normal-vision). Neutral vs step-1
+   also passes in both modes and both arms (ΔE 15.3–16.1 normal).
+
+   The validator's one standing FAIL is `Light-end contrast`: the neutral
+   midpoint sits at 1.34:1 (light) / 1.29:1 (dark) against the card surface.
+   That is inherent to a diverging midpoint — a league-average fixture is meant
+   to be quiet — and it is relieved three ways, all of them structural: every
+   cell carries a 1px --line outline and a 2px gap so its footprint is visible
+   whatever the fill; every band prints its signed number; and the whole grid
+   has a table view. Absence never uses a faint fill: a blank gameweek is
+   hatched and says "blank", a missing model is hollow and says so.
+
+   Ink on the fills is one token per theme — no per-step flipping — because
+   every step clears it: light ink on light steps ≥4.16:1, dark ink on dark
+   steps ≥3.91:1.
+
+   Three theme states, exactly as app.css does it: bare :root is dark (the
+   app's identity default), prefers-color-scheme light wins when the reader has
+   made no explicit choice, and an explicit data-theme wins in both directions.
+*/
+
+/* ---------- dark (the identity default) ---------- */
+:root {
+  --fx-e3: #1272db; --fx-e2: #1c60b0; --fx-e1: #244d82;
+  --fx-n:  #2b2d31;
+  --fx-h1: #78371c; --fx-h2: #a13b04; --fx-h3: #c74200;
+  --fx-cell-ink: #e8eaed;
+  --fx-hatch: rgb(255 255 255 / .07);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --fx-e3: #217ee9; --fx-e2: #5a9df3; --fx-e1: #8cbaf6;
+    --fx-n:  #dcdfe3;
+    --fx-h1: #efa286; --fx-h2: #e87950; --fx-h3: #db500a;
+    --fx-cell-ink: #1a1d21;
+    --fx-hatch: rgb(20 24 28 / .09);
+  }
+}
+:root[data-theme="light"] {
+  --fx-e3: #217ee9; --fx-e2: #5a9df3; --fx-e1: #8cbaf6;
+  --fx-n:  #dcdfe3;
+  --fx-h1: #efa286; --fx-h2: #e87950; --fx-h3: #db500a;
+  --fx-cell-ink: #1a1d21;
+  --fx-hatch: rgb(20 24 28 / .09);
+}
+:root[data-theme="dark"] {
+  --fx-e3: #1272db; --fx-e2: #1c60b0; --fx-e1: #244d82;
+  --fx-n:  #2b2d31;
+  --fx-h1: #78371c; --fx-h2: #a13b04; --fx-h3: #c74200;
+  --fx-cell-ink: #e8eaed;
+  --fx-hatch: rgb(255 255 255 / .07);
+}
+
+/* ---------- the two load-bearing claims under the title ---------- */
+.fx-claim {
+  margin: 0 0 8px; max-width: 76ch; font-size: 12.5px; line-height: 1.5;
+  color: var(--muted); border-left: 2px solid var(--line); padding-left: 10px;
+}
+.fx-claim b { color: var(--ink); font-weight: 650; }
+.fx-claim + .fx-claim { margin-top: -2px; }
+.fx-calib {
+  margin: 0 0 10px; max-width: 76ch; font-size: 12px; color: var(--faint);
+  border-left: 2px solid color-mix(in oklab, var(--warn) 50%, var(--line));
+  padding-left: 10px;
+}
+.fx-calib b { color: var(--warn); font-weight: 700; }
+
+/* ---------- freshness strip: one chip per input, above the numbers ---------- */
+.fx-fresh { display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
+            padding: 8px 0; }
+.fx-inchip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px; border-radius: 999px; font-size: 11.5px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--muted);
+  cursor: help;
+}
+.fx-inchip b { color: var(--ink); font-weight: 650; }
+.fx-inchip .age { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.fx-inchip.stale { border-color: color-mix(in oklab, var(--bad) 45%, var(--line));
+                   background: color-mix(in oklab, var(--bad) 8%, var(--surface)); }
+.fx-inchip.warn  { border-color: color-mix(in oklab, var(--warn) 45%, var(--line));
+                   background: color-mix(in oklab, var(--warn) 9%, var(--surface)); }
+.fx-inchip.missing { border-style: dashed; color: var(--faint); }
+.fx-inchip .tag { font-size: 10px; letter-spacing: .07em; text-transform: uppercase;
+                  font-weight: 700; }
+.fx-inchip.stale .tag { color: var(--bad); }
+.fx-inchip.warn .tag  { color: var(--warn); }
+
+/* ---------- toolbar extras ---------- */
+/* A control that cannot do its job says so rather than looking available.
+   Scoped to this view's own toolbar rows so no other view's segment changes. */
+.fx-tb .seg button:disabled, .fx-tb button.chip:disabled {
+  opacity: .45; cursor: not-allowed; text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+.fx-nav { display: inline-flex; gap: 4px; }
+.fx-nav button { padding: 5px 10px; font-size: 12px; }
+.fx-nav button:disabled { opacity: .4; cursor: not-allowed; }
+.fx-win { color: var(--faint); font-size: 11.5px; font-family: var(--mono);
+          font-variant-numeric: tabular-nums; }
+
+/* ---------- the ticker grid ---------- */
+.fx-gridwrap { overflow-x: auto; overscroll-behavior-x: contain;
+               padding-bottom: 4px; }
+.fx-grid {
+  --fx-rail: 152px; --fx-col: 86px;
+  display: grid; gap: 2px; width: max-content; min-width: 100%;
+  grid-template-columns: var(--fx-rail) repeat(var(--fx-cols, 5), var(--fx-col));
+  grid-auto-rows: minmax(48px, auto);
+}
+.fx-hcell {
+  position: sticky; top: 0; z-index: 3;
+  background: var(--surface); color: var(--muted);
+  font-size: 10.5px; letter-spacing: .07em; text-transform: uppercase;
+  font-weight: 700; padding: 5px 6px 6px; text-align: center;
+  border-bottom: 1px solid var(--line);
+}
+.fx-hcell .d { display: block; font-size: 10px; letter-spacing: 0;
+               text-transform: none; color: var(--faint); font-weight: 500; }
+.fx-hcell.fx-railhead { text-align: left; left: 0; z-index: 4; }
+
+/* left rail: club + the horizon summary as two bars on ONE shared axis */
+.fx-rail {
+  position: sticky; left: 0; z-index: 2; background: var(--surface);
+  box-shadow: 1px 0 0 var(--line);
+  display: grid; grid-template-columns: 1fr auto; align-items: center;
+  gap: 2px 8px; padding: 4px 8px 4px 2px; cursor: pointer;
+  border-radius: 6px 0 0 6px;
+}
+.fx-rail:hover { background: var(--raised); }
+.fx-rail .nm { grid-column: 1; font-weight: 700; font-size: 12.5px;
+               display: flex; align-items: center; gap: 5px; }
+.fx-rail .rk { grid-column: 2; color: var(--faint); font-size: 10px;
+               font-family: var(--mono); }
+.fx-rail .bars { grid-column: 1 / -1; display: grid; gap: 2px; }
+.fx-torn { color: var(--warn); font-size: 11px; cursor: help; }
+.fx-prior { border-bottom: 1px dotted var(--muted); cursor: help; }
+
+.fx-brow { display: flex; align-items: center; gap: 6px; }
+.fx-brow .k { color: var(--faint); font-size: 9.5px; width: 20px;
+              letter-spacing: .04em; text-transform: uppercase; font-weight: 700; }
+.fx-track {
+  position: relative; flex: 1; height: 9px; border-radius: 2px;
+  background: color-mix(in oklab, var(--ink) 9%, var(--surface));
+}
+.fx-track::before {                 /* the league-average zero line */
+  content: ""; position: absolute; left: 50%; top: -1px; bottom: -1px;
+  width: 1px; background: var(--line);
+}
+/* The fill is coloured by the PER-GAME average, which for most clubs lands on
+   a faint step of the ramp — so it also carries a hairline edge, or a gently
+   easy run would be invisible against the track. */
+.fx-fill { position: absolute; top: 1px; bottom: 1px; border-radius: 2px;
+           box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--ink) 22%, transparent); }
+.fx-brow .v { font-family: var(--mono); font-size: 10px; width: 34px;
+              text-align: right; color: var(--muted);
+              font-variant-numeric: tabular-nums; }
+
+/* the cell: one rectangle, two bands, never averaged */
+.fx-cell {
+  position: relative; display: block; width: 100%; height: 100%; min-height: 44px;
+  padding: 0; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--raised); overflow: hidden; cursor: pointer;
+  font: inherit; color: var(--fx-cell-ink); text-align: left;
+}
+.fx-cell:hover { border-color: var(--ink); }
+.fx-cell:focus-visible { outline: 2px solid var(--s1); outline-offset: 1px; }
+.fx-band { position: absolute; left: 0; right: 0; background: var(--fx-n); }
+.fx-band.att { top: 0; height: 52%; }
+.fx-band.def { bottom: 0; height: 48%; }
+.fx-cell .seam { position: absolute; left: 0; right: 0; top: 52%; height: 1px;
+                 background: color-mix(in oklab, var(--surface) 55%, transparent); }
+.fx-cell .opp {
+  position: absolute; left: 6px; top: 50%; transform: translateY(-50%);
+  font-weight: 750; font-size: 11.5px; letter-spacing: .02em;
+  color: var(--fx-cell-ink); pointer-events: none; z-index: 2;
+  text-shadow: 0 1px 0 rgb(0 0 0 / .06);
+}
+.fx-cell .vv {
+  position: absolute; right: 5px; font-family: var(--mono); font-size: 9.5px;
+  font-variant-numeric: tabular-nums; color: var(--fx-cell-ink); opacity: .82;
+  z-index: 2; pointer-events: none;
+}
+.fx-cell .vv.att { top: 3px; } .fx-cell .vv.def { bottom: 3px; }
+
+/* the seven classes */
+.fx-e3 { background: var(--fx-e3); } .fx-e2 { background: var(--fx-e2); }
+.fx-e1 { background: var(--fx-e1); } .fx-n0 { background: var(--fx-n); }
+.fx-h1 { background: var(--fx-h1); } .fx-h2 { background: var(--fx-h2); }
+.fx-h3 { background: var(--fx-h3); }
+
+/* single-lens mode: one band fills the cell, so the page never pretends to
+   split a number the panel did not split */
+.fx-cell.solo .fx-band { top: 0; bottom: 0; height: auto; }
+.fx-cell.solo .seam { display: none; }
+
+/* absence is never a colour. A blank and a zero are different answers. */
+.fx-cell.blank, .fx-cell.nomodel {
+  background:
+    repeating-linear-gradient(135deg, transparent 0 5px,
+                              var(--fx-hatch) 5px 6px), var(--surface);
+  border-style: dashed; cursor: default; color: var(--muted);
+}
+.fx-cell.blank:hover, .fx-cell.nomodel:hover { border-color: var(--line); }
+.fx-cell.blank .why, .fx-cell.nomodel .why {
+  position: absolute; inset: 0; display: flex; align-items: center;
+  justify-content: center; font-size: 10px; letter-spacing: .05em;
+  text-transform: uppercase; font-weight: 700; color: var(--faint);
+}
+/* a fixture the panel has, with no fitted rating: the schedule is still a fact */
+.fx-cell.nomodel .opp { color: var(--muted); text-shadow: none; }
+.fx-cell.nomodel .why { align-items: flex-end; padding-bottom: 4px;
+                        font-size: 9px; }
+
+/* double gameweek: two decisions, two marks */
+.fx-dgw { display: grid; grid-auto-rows: 1fr; gap: 2px; height: 100%; }
+.fx-dgw .fx-cell { min-height: 0; }
+.fx-dgw .fx-cell .opp { font-size: 10.5px; }
+.fx-dgw .fx-cell .vv { font-size: 8.5px; }
+
+/* a fixture with a fresh market price behind it — a data-state mark, kept
+   deliberately quiet so provenance never competes with the data */
+.fx-cell.priced { border-style: dashed; border-color: var(--muted); }
+
+/* ---------- legend ---------- */
+.fx-legend { display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-start;
+             margin-top: 12px; padding-top: 10px;
+             border-top: 1px solid var(--line); }
+.fx-ramp { display: flex; align-items: center; gap: 0; }
+.fx-ramp .sw { width: 26px; height: 14px; border: 1px solid var(--line);
+               border-right: 0; }
+.fx-ramp .sw:last-of-type { border-right: 1px solid var(--line); }
+.fx-ramp .sw:first-of-type { border-radius: 3px 0 0 3px; }
+.fx-ramp .sw:last-of-type { border-radius: 0 3px 3px 0; }
+.fx-legend .lab { color: var(--faint); font-size: 11px; }
+.fx-legend .lab b { color: var(--muted); }
+.fx-keys { display: flex; gap: 12px; flex-wrap: wrap; color: var(--faint);
+           font-size: 11px; }
+.fx-keys .k { display: inline-flex; align-items: center; gap: 5px; }
+.fx-swatch-hatch { width: 16px; height: 12px; border-radius: 3px;
+  border: 1px dashed var(--line);
+  background: repeating-linear-gradient(135deg, transparent 0 4px,
+                                        var(--fx-hatch) 4px 5px), var(--surface); }
+.fx-boundaries { color: var(--faint); font-size: 10.5px; font-family: var(--mono);
+                 font-variant-numeric: tabular-nums; margin-top: 4px; }
+
+/* ---------- "what the blend hides" ---------- */
+.fx-torn-list { display: grid; gap: 8px; }
+.fx-torn-row {
+  display: grid; grid-template-columns: 62px 1fr auto; gap: 10px;
+  align-items: center; padding: 8px 10px; border-radius: 8px;
+  background: var(--raised); border: 1px solid var(--line);
+}
+.fx-torn-row .gw { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.fx-torn-row .txt { font-size: 12px; line-height: 1.45; }
+.fx-torn-row .txt b { color: var(--ink); }
+
+/* ---------- the drawer ---------- */
+.fx-drawer { width: min(520px, 96vw); }
+.fx-drawer h2 { margin: 16px 0 4px; font-size: 11px; letter-spacing: .07em;
+                text-transform: uppercase; color: var(--muted); }
+.fx-dh { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 8px; }
+.fx-dh .dname { font-size: 17px; font-weight: 700; }
+.fx-dh button { margin-left: auto; }
+.fx-lens { display: grid; gap: 8px; margin: 6px 0 2px; }
+.fx-lensrow { display: grid; grid-template-columns: 84px 1fr auto; gap: 10px;
+              align-items: center; }
+.fx-lensrow .lk { color: var(--muted); font-size: 11px; letter-spacing: .05em;
+                  text-transform: uppercase; font-weight: 700; }
+.fx-lensrow .lv { font-family: var(--mono); font-size: 11.5px; text-align: right;
+                  font-variant-numeric: tabular-nums; }
+.fx-gap {
+  border: 1px dashed var(--line); border-radius: 8px; padding: 9px 11px;
+  background: var(--raised); color: var(--muted); font-size: 12px;
+  line-height: 1.5;
+}
+.fx-gap b { display: block; color: var(--ink); margin-bottom: 3px;
+            font-size: 12px; }
+.fx-gap code { font-family: var(--mono); font-size: 11px;
+               background: color-mix(in oklab, var(--ink) 7%, transparent);
+               padding: 0 4px; border-radius: 3px; }
+.fx-kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px;
+         font-size: 12px; }
+.fx-kv .k { color: var(--muted); }
+.fx-kv .v { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.fx-links { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+
+/* ---------- the table view (the contrast-relief obligation, made real) ---- */
+.fx-tableview td.n { font-family: var(--mono); text-align: right;
+                     font-variant-numeric: tabular-nums; }
+.fx-tableview td .sw { display: inline-block; width: 9px; height: 9px;
+                       border-radius: 2px; margin-right: 6px;
+                       vertical-align: -1px; border: 1px solid var(--line); }
+
+/* ---------- league shape scatter ---------- */
+.fx-scatter { width: 100%; height: auto; display: block; }
+.fx-scatter text { font-size: 9px; fill: var(--faint); }
+.fx-scatter .ax { stroke: var(--line); stroke-width: 1; }
+.fx-scatter .dot { stroke: var(--surface); stroke-width: 1.5; }
+.fx-scatter .lbl { fill: var(--muted); font-size: 8.5px; font-weight: 600; }
+
+/* ---------- narrow ---------- */
+@media (max-width: 820px) {
+  .fx-grid { --fx-rail: 118px; --fx-col: 72px; grid-auto-rows: minmax(46px, auto); }
+  .fx-brow .v { display: none; }
+  .fx-rail .rk { display: none; }
+}
+@media (max-width: 420px) {
+  .fx-grid { --fx-rail: 104px; --fx-col: 68px; }
+  .fx-cell .opp { font-size: 11px; left: 5px; }
+  .fx-cell .vv { font-size: 9px; right: 4px; }
+  .fx-torn-row { grid-template-columns: 1fr; }
+}

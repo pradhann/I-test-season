@@ -56,6 +56,12 @@ def test_every_panel_script_is_rendered_by_some_view() -> None:
     calling an unregistered script errors at runtime. Both directions pinned."""
     called = set(re.findall(r'runPanel\(\s*"(\w+)"', ALL_JS))
     called |= set(re.findall(r'panelInto\(\w+,\s*"(\w+)"', ALL_JS))
+    # A view may wrap runPanel to add fallback or 404-memoisation and still be
+    # the thing that renders a panel. `tryPanel` is the fixtures view's wrapper
+    # -- it asks for the split board and falls back to the legacy ticker -- and
+    # scanning only the bare call reported the ticker as rendered by nobody.
+    # That was the test's model of the app being behind the app, not a defect.
+    called |= set(re.findall(r'tryPanel\(\s*"(\w+)"', ALL_JS))
     declared = {p.script for p in panels_mod.PANELS}
     unrendered = declared - called
     assert not unrendered, f"panels with no view rendering them: {sorted(unrendered)}"
@@ -129,14 +135,54 @@ def test_the_clock_never_hardcodes_a_gameweek_label() -> None:
 def test_the_fixtures_caption_flips_on_data_not_prose() -> None:
     """Difficulty is optional in the schema (the cached artefact may be
     absent); the view must carry BOTH captions and choose by inspecting the
-    payload, never claim colouring it cannot have."""
+    payload, never claim colouring it cannot have.
+
+    HONEST LIMIT: this is a source scan, not a dataflow proof. It can catch a
+    derived ease value written without a null guard on its own line; it cannot
+    prove the guard is reached, and it is satisfiable by code that looks right
+    and behaves wrongly. The real guarantee is the browser check that an
+    unfitted fixture renders hatched. Two earlier versions of this assertion
+    passed against deliberately broken code -- one matched the guard on an
+    unrelated line, the next matched a ternary -- so treat a pass here as a
+    smoke test.
+    """
     props = _schema_props("fixture_ticker", "teams", "fixtures", "opponents")
     assert "difficulty" in props, "the optional difficulty field left the schema"
     src = VIEWS["fixtures"]
-    assert "anyDifficulty" in src
-    assert "No difficulty artefact present" in src
-    assert "difficulty != null" in src.replace("  ", " "), (
-        "colouring must be gated per-opponent on the field being present"
+    # Assert the BEHAVIOUR, not the identifier. This pinned a variable named
+    # `anyDifficulty`, so rebuilding the view broke the test while the
+    # behaviour it protects survived intact. A test that names a local is a
+    # test that fails on a rename and passes on a regression.
+    assert "difficulty" in src, "the view must read the difficulty field"
+    # It must say so when the artefact is absent rather than colouring anyway.
+    assert re.search(r"no (difficulty|fit|fitted)", src, re.I), (
+        "the view must carry a caption for the no-artefact case"
+    )
+    # The property that matters is ABSENCE PRODUCES NO COLOUR. A regex over
+    # source cannot follow dataflow -- the view reads the field into a local
+    # and gates on that -- so assert the shape of the guard rather than the
+    # name it is applied to: somewhere, a missing value must yield null rather
+    # than a number that would be coloured.
+    # Target the ACTUAL computation. A file-wide search for the guard passed
+    # even after the guard on this line was replaced with a 0.5 default --
+    # the pattern matched somewhere else. A test that can be satisfied by an
+    # unrelated line is not testing the thing it names.
+    # Anchored to an object-literal key at line start. An unanchored search
+    # matched the colon of a TERNARY (`a != null ? a : b`) and reported it as
+    # an ungated computation.
+    ease = [ln for ln in src.splitlines() if re.match(r"\s*ease\w*\s*:", ln)]
+    assert ease, "the view no longer computes an ease value under that name"
+    derived = [ln for ln in ease if re.search(r"[-*/+]", ln)]
+    assert derived, "no ease value is derived from anything"
+    for ln in derived:
+        assert re.search(r"==\s*null\s*\?\s*null", ln), (
+            "an ease value derived without a null guard colours a fixture the "
+            f"model has no rating for: {ln.strip()[:90]}"
+        )
+    # And the reader must be told which absence they are looking at: a blank
+    # gameweek and an unfitted fixture are different answers.
+    assert re.search(r"\bblank\b", src, re.I), (
+        "a blank gameweek must be labelled as such, not shown as easy"
     )
 
 
