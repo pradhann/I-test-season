@@ -76,6 +76,8 @@
 import { runPanel, getJSON, el, emptyBox, errBox, provenance, faceImg,
          fmtPrice, fmt1, fmt2 } from "/js/app.js";
 import { renderTools } from "/js/views/template-tools.js";
+// the cross-tab player strip: what the panel owns, said and noticed about him
+import { chatterStrip } from "/js/components/chatter.js";
 
 /* ---------------------------------------------------------------- helpers */
 
@@ -324,7 +326,11 @@ export default async function view(host) {
 
   const drawer = el("aside", "drawer");
   document.body.appendChild(drawer);
-  const closeDrawer = () => drawer.classList.remove("open");
+  let chatter = null;                    // the player strip's live handle
+  const closeDrawer = () => {
+    drawer.classList.remove("open");
+    chatter?.cancel(); chatter = null;   // a closed drawer stops rendering
+  };
   addEventListener("keydown", e => { if (e.key === "Escape") closeDrawer(); });
 
   head.appendChild(el("h2", null, "The field you're racing"));
@@ -2424,6 +2430,7 @@ export default async function view(host) {
 
   // ---- drawer: every field's read on one player -----------------------
   function showDetail(r) {
+    chatter?.cancel(); chatter = null;
     drawer.textContent = "";
     drawer.classList.add("open");
     const hd = el("div", "dhead");
@@ -2524,6 +2531,10 @@ export default async function view(host) {
       drawer.appendChild(el("p", "sub",
         `${f.label} is ` +
         f.composition.map(c => `${c.n} ${c.label || c.tag}`).join(", ") + "."));
+
+    // Below "Your position on him": what the panel owns, said and noticed
+    // about him. Async and self-contained — it never blocks the drawer above.
+    chatter = chatterStrip(drawer, r.code, { name: r.name });
   }
 
   // ---- the honest footer ---------------------------------------------

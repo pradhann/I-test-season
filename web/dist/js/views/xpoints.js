@@ -5,6 +5,8 @@
 
 import { runPanel, el, emptyBox, errBox, provenance, faceImg,
          fmtPrice, fmt1, fmt2 } from "/js/app.js";
+// the cross-tab player strip: what the panel owns, said and noticed about him
+import { chatterStrip } from "/js/components/chatter.js";
 
 export default async function xpoints(host) {
   const card = el("section", "card");
@@ -20,9 +22,12 @@ export default async function xpoints(host) {
   const foot = el("div");
   const drawer = el("aside", "drawer");
   document.body.appendChild(drawer);
-  addEventListener("keydown", e => {
-    if (e.key === "Escape") drawer.classList.remove("open");
-  });
+  let chatter = null;                    // the player strip's live handle
+  const closeDrawer = () => {
+    drawer.classList.remove("open");
+    chatter?.cancel(); chatter = null;   // a closed drawer stops rendering
+  };
+  addEventListener("keydown", e => { if (e.key === "Escape") closeDrawer(); });
   card.append(srcRow, gwRow, filterRow, body, foot);
   host.appendChild(card);
 
@@ -403,6 +408,7 @@ export default async function xpoints(host) {
 
   // ---- per-source breakdown ----
   async function showDetail(r) {
+    chatter?.cancel(); chatter = null;
     drawer.textContent = "";
     drawer.classList.add("open");
     drawer.appendChild(el("p", "sub", "loading…"));
@@ -422,7 +428,7 @@ export default async function xpoints(host) {
           .filter(Boolean).join(" · ")));
       head.appendChild(id);
       const close = el("button", null, "✕");
-      close.onclick = () => drawer.classList.remove("open");
+      close.onclick = closeDrawer;
       head.appendChild(close);
       drawer.appendChild(head);
 
@@ -497,6 +503,11 @@ export default async function xpoints(host) {
         "Row tint = that source's own scale. The gap between rows IS the " +
         "uncertainty."));
     } catch (e) { drawer.textContent = ""; drawer.appendChild(errBox(e)); }
+    finally {
+      // Mounted last and in `finally` so it appears on every path — including
+      // the no-projections one — and never blocks or breaks the drawer above.
+      chatter = chatterStrip(drawer, r.code, { name: r.name });
+    }
   }
 
   await fetchPanel();
