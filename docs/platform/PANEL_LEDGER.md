@@ -23,6 +23,30 @@ Nothing discloses this. Options: exclude `mini_league` from the elite cohort,
 give it its own cohort, or keep and disclose. This is a judgement about what
 "elite" should mean here, so it is the owner's call rather than mine.
 
+**The panel and the macro pick their gameweek by different rules.**
+Surfaced 2026-08-28, ~26 minutes after the GW2 deadline. `ownership_eo` falls
+back to the last gameweek that HAS data and labels it (`cohort_gw: 1`, and its
+`cohort_note` says so); `measure_cohort` insists on the last LOCKED gameweek
+and returns `n_managers=0` with the reason "the crawl has not run since that
+deadline". Both are defensible. Both are documented. But
+`test_the_panel_reports_the_same_eo_as_the_macro`'s own docstring says the
+panel must be "a reader of the definition, never a second implementation" --
+and "which gameweek" is now implemented twice.
+
+Live state at the time of writing: GW2's deadline has passed, `fact_manager_pick`
+holds GW1 only, so the macro reports nothing while the panel serves GW1 EO. **No
+wrong number reaches the UI** -- the panel labels the gameweek in both the field
+and the note -- so this is not urgent. It matters when a caller compares the two
+layers without noticing they answered about different gameweeks.
+
+Options: (a) the panel adopts last-locked-gw and reports `{empty, reason}` until
+the crawl runs, which makes the tab go blank for the window between a deadline
+and its crawl; (b) the macro adopts last-gw-with-data; (c) keep both and give
+the panel an explicit `gw` parameter so the caller chooses. Related and worth
+deciding together: **`ownership_eo` has no `as_of` parameter at all**, so it
+cannot be evaluated at a fixed instant -- it is the one layer here that is not
+point-in-time, and that is why its agreement test had to read the real clock.
+
 ## Decisions taken (append-only)
 
 **2026-08-27 — Re-verification of the prompt's AUDITED CURRENT STATE.**
