@@ -776,11 +776,28 @@ export default async function fixtures(host) {
     }
     lensRow.appendChild(seg);
 
-    const tv = el("button", "chip" + (tableView ? " s1" : ""), "table view");
-    tv.title = "the same numbers as a sortable table — colour is never the only "
-      + "way to read this page";
-    tv.onclick = () => { tableView = !tableView; renderLens(); renderBody(); };
-    lensRow.appendChild(tv);
+    /* This used to be one chip that toggled. It sat inside the lens group, so
+       turning it on left "Both" still lit while the grid was gone, and nothing
+       on screen said which control had hidden it. Two mutually exclusive
+       buttons in their own labelled slot: the current view is always readable
+       off the row, and the way back is the button next to it. */
+    lensRow.appendChild(el("span", "tlabel fx-tlabel2", "Shown as"));
+    const vseg = el("div", "seg");
+    for (const [isTable, label, title] of [
+      [false, "Grid", "the colour ticker — six gameweeks per club at a glance"],
+      [true, "Table", "the same numbers as a sortable table; colour is never the "
+                      + "only way to read this page"],
+    ]) {
+      const b = el("button", tableView === isTable ? "on" : "", label);
+      b.title = title;
+      b.setAttribute("aria-pressed", String(tableView === isTable));
+      b.onclick = () => {
+        if (tableView === isTable) return;
+        tableView = isTable; renderLens(); renderBody();
+      };
+      vseg.appendChild(b);
+    }
+    lensRow.appendChild(vseg);
   }
 
   function renderSort() {
