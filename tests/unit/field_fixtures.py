@@ -44,7 +44,17 @@ from fpl_edge.store.warehouse import Warehouse
 UTC = dt.timezone.utc
 SEASON = "2026-27"
 GW1_DEADLINE = dt.datetime(2026, 8, 21, 17, 30, tzinfo=UTC)
-GW2_DEADLINE = dt.datetime(2026, 8, 28, 17, 30, tzinfo=UTC)
+# GW2 must be in the FUTURE for this fixture to mean what it says: GW1 locked,
+# GW2 upcoming, picks seeded for GW1 only. It was hardcoded to 2026-08-28
+# 17:30Z, and at 17:30:01 that stopped being true -- `last_locked_gw` started
+# answering 2, found no GW2 picks, and every test comparing a panel (which has
+# no as_of parameter and so always reads the real clock) against the Python
+# layer began failing. A fixture that encodes "hasn't happened yet" as a fixed
+# date is a test that passes until it doesn't, for reasons no diff explains.
+GW2_DEADLINE = max(
+    dt.datetime(2026, 8, 28, 17, 30, tzinfo=UTC),
+    dt.datetime.now(UTC) + dt.timedelta(days=30),
+)
 #: First ownership/state poll, pre-GW1.
 T_POOL = GW1_DEADLINE - dt.timedelta(days=3)
 #: The GW2 decision instant: after GW1 locked, before GW2 does.
