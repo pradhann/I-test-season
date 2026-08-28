@@ -45,6 +45,17 @@ def _schema_props(script: str, *path: str) -> set[str]:
     return set(node.get("properties", {}))
 
 
+def _strip_comments(src: str) -> str:
+    """Comments are prose, not field reads.
+
+    A comment that names the field it is explaining ("there is deliberately no
+    `o.market_age_hours` fallback") would otherwise be scanned as a read of it,
+    and the check would fail on the documentation of its own rule.
+    """
+    src = re.sub(r"/\*.*?\*/", " ", src, flags=re.S)
+    return re.sub(r"//[^\n]*", " ", src)
+
+
 def _fn_body(src: str, name: str) -> str:
     m = re.search(rf"function {name}\([^)]*\)\s*\{{(.*?)\n\}}", src, re.S)
     assert m, f"function {name} not found"
@@ -108,6 +119,58 @@ def test_the_movers_renderer_reads_what_the_price_schema_declares() -> None:
         f"renderMovers reads {sorted(unknown)} which riser rows do not carry "
         f"(they have {sorted(row_props)})"
     )
+
+
+def test_the_fixture_adapter_reads_only_fields_fixture_board_publishes() -> None:
+    """The whole fixtures tab rendered blank on a name mismatch, silently.
+
+    The view read `o.attack_xg`; the panel publishes `opponent_only.attack_xg`.
+    Every lookup returned undefined, so the grid drew 20 rows of empty club
+    names, greyed every cell "no fit", and printed "The split is not in this
+    payload" -- while holding the split. Nothing failed. Nothing threw. Every
+    message on screen was individually true.
+
+    `flatten()` is now the single place the two contracts meet, so it is the
+    single place worth pinning: everything it reads off an opponent must be a
+    field `fixture_board` actually declares.
+    """
+    # The view falls back to fixture_ticker when the split artefact is absent,
+    # so the union of the two is what it may legitimately see. Anything outside
+    # that union is a field no registered panel publishes.
+    allowed = (_schema_props("fixture_board", "teams", "fixtures", "opponents")
+               | _schema_props("fixture_ticker", "teams", "fixtures", "opponents"))
+    body = _strip_comments(_fn_body(VIEWS["fixtures"], "flatten"))
+    used = set(re.findall(r"\bo\.(\w+)", body))
+    unknown = used - allowed
+    assert not unknown, (
+        f"flatten() reads {sorted(unknown)} off an opponent, which the "
+        f"fixture_board opponent schema does not carry (it has "
+        f"{sorted(allowed)}); those silently become undefined"
+    )
+    # The nested blocks are the whole reason this adapter exists.
+    for nested in ("opponent_only", "fixture_specific", "market"):
+        assert nested in allowed and f"o.{nested}" in body, (
+            f"flatten() must read o.{nested}; that nesting is what the view "
+            "got wrong the first time"
+        )
+
+
+def test_the_fixture_grid_reads_the_split_the_panel_actually_names() -> None:
+    """`anySplit` decides whether the page believes it has two axes.
+
+    It was false for a live payload carrying both, which is how the page came
+    to deny the split in its own banner. Pin the two field names that decision
+    rests on.
+    """
+    opp = _schema_props("fixture_board", "teams", "fixtures", "opponents",
+                        "opponent_only")
+    assert {"attack_ease", "defence_ease"} <= opp, (
+        "fixture_board must publish both axes under opponent_only; the view "
+        "keys its entire split/no-split decision on them"
+    )
+    body = _fn_body(VIEWS["fixtures"], "flatten")
+    for field in ("attack_ease", "defence_ease"):
+        assert field in body, f"flatten() must surface {field}"
 
 
 def test_idea_chips_speak_the_panel_vocabulary() -> None:

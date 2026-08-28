@@ -308,6 +308,49 @@ and only 4 creators produce takes carrying actual player calls. The second is
 the highest-value next step for the Creators tab and podcast ASR is the fix,
 not more model calls.
 
+**2026-08-28 — Fixtures: the view and the panel were built to different names.**
+The rebuilt tab looked identical to the old one, and the reason was not the
+design: `fixture_board` published `opponent_only.attack_xg`, `market.age_hours`,
+`scale.anchor_attack_xg`, `team_news.by_team{code: [...]}`, `calibration.model`;
+the view read `attack_xg`, `market_age_hours`, `anchor_attack`, `team_news[]`,
+`calibration.sentence`. Every lookup returned `undefined`, so the page drew 20
+rows of blank club names, greyed every cell "no fit", and printed "The split is
+not in this payload" while holding the split. The panel had never returned zero
+rows -- it returned 20 in ~95ms throughout.
+
+Fixed with two flattening adapters (`flatten`, `flattenDetail`) rather than
+edits at ~40 call sites, so the two contracts meet in one auditable place.
+This is the third time this class has shipped here: a view that degrades
+*gracefully* and *honestly* on missing fields is indistinguishable, from the
+outside, from one whose fields are all missing. The named-gap discipline that
+makes this codebase trustworthy is exactly what hid the defect -- every message
+on screen was true, and the conclusion drawn from them was false.
+**Guard worth building:** a contract test that asserts each view's field reads
+are a subset of its panel's published schema. Nothing today would catch this.
+
+**2026-08-28 — A 13-man Crystal Palace XI, and why per-player "latest" is wrong.**
+Rendering the predicted XI surfaced a real defect: `_lineups_block` deduped with
+`row_number() OVER (PARTITION BY provider, season, gw, code ORDER BY as_of DESC)`
+-- latest row per PLAYER. rotowire drops a player from the XI by ceasing to emit
+a row for them, never by writing `predicted_start = false`, so a dropped
+player's own latest row says `true` forever. Palace's GW2 XI came back as the
+real eleven plus two players dropped the day before.
+Now the latest SNAPSHOT per `(provider, team_code)`; absence from it is absence
+from the XI. Safe **only** because `ProjectionStore.append` includes `as_of` in
+its dedupe key, so every poll writes its complete emitted set -- verified before
+shipping, because if unchanged rows were skipped this fix would silently delete
+starters. Break-watch-restored: 12 with the old query, 11 with the new.
+Chip filed to audit `fact_player_state` and `set_piece_duty` for the same
+pattern (removal-by-omission vs removal-by-explicit-row).
+
+**2026-08-28 — Calibration is a bracket, not a number.**
+The model says the six-gameweek fixture swing is worth 2.4 pts to an attacker;
+the empirical fit on 28,353 starts says 5.4 for an outfielder. Neither is "the"
+answer: the model carries no estimation noise and is therefore a floor, and
+best-minus-worst across twenty estimated effects is biased upward by sampling
+noise and is therefore a ceiling. The page prints both ends and says which is
+which. Printing the midpoint would invent a precision neither has.
+
 ## Corrections to the prompt's AUDITED CURRENT STATE (append-only)
 
 **2026-08-27 — §3.2 B1's "241 rows" becomes 256 on a rescore.** Fifteen claims

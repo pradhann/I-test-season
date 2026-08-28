@@ -201,15 +201,16 @@ function flatten(o) {
     p_clean_sheet: pick("p_clean_sheet"),
     p_opponent_clean_sheet: pick("p_opponent_clean_sheet"),
     p_concede_2plus: pick("p_concede_2plus"),
-    relative_attack: spec.attack_ease != null ? spec.attack_ease : o.relative_attack,
-    relative_defence: spec.defence_ease != null ? spec.defence_ease : o.relative_defence,
+    relative_attack: spec.attack_ease, relative_defence: spec.defence_ease,
     relative_attack_xg: spec.attack_xg, relative_defence_xg: spec.defence_xg,
     relative_p_clean_sheet: spec.p_clean_sheet,
-    market_state: mkt.state != null ? mkt.state : o.market_state,
-    market_age_hours: mkt.age_hours != null ? mkt.age_hours : o.market_age_hours,
-    market_as_of: mkt.as_of != null ? mkt.as_of : o.market_as_of,
-    market_reason: mkt.reason != null ? mkt.reason : o.market_reason,
-    n_books: mkt.n_books != null ? mkt.n_books : o.n_books,
+    // These come from the `market` block or not at all. There is deliberately
+    // no `?? o.market_age_hours` fallback: no registered panel publishes a flat
+    // market field, so such a branch could only ever be dead -- and a dead
+    // fallback is what lets a future rename look like a legitimate shape
+    // instead of the contract break it is.
+    market_state: mkt.state, market_age_hours: mkt.age_hours,
+    market_as_of: mkt.as_of, market_reason: mkt.reason, n_books: mkt.n_books,
   };
 }
 
