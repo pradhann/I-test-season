@@ -183,13 +183,26 @@ def store_dir(tmp_path):
 
 
 def run_job(db, store_dir, url, *, fetcher=None, ingest=never_called_ingest,
-            **kwargs) -> dict:
+            accept: bool = True, **kwargs) -> dict:
+    """Submit, and by default ACCEPT the preview so the job runs to the end.
+
+    Since 2026-08-27 a paste parks at the ``preview`` halt instead of running
+    straight through -- the owner decides whether the content is worth
+    transcribing before any GPU second is spent. These tests are about what
+    happens on either side of that halt, not about the halt itself (which
+    ``test_link_identity.py`` covers), so they accept and carry on. Pass
+    ``accept=False`` to observe the parked state.
+    """
     fetcher = fetcher or FakeFetcher(FakeResponse(200, watch_page()))
     jobs = link_jobs.LinkJobs(db, store_dir=store_dir, background=False,
                               preflight_fn=preflight_with(fetcher),
                               ingest_fn=ingest, **kwargs)
     started = jobs.submit(url)
-    return jobs.poll(started["job_id"])
+    state = jobs.poll(started["job_id"])
+    if accept and state["awaiting_decision"]:
+        jobs.accept(started["job_id"])
+        state = jobs.poll(started["job_id"])
+    return state
 
 
 def item_count(db) -> int:
@@ -440,6 +453,8 @@ def test_the_path_is_named_before_the_wait_starts(db, store_dir):
                               preflight_fn=preflight_with(fetcher),
                               ingest_fn=_blocking_ingest)
     job_id = jobs.submit(WATCH)["job_id"]
+    jobs.wait_for(job_id, timeout=10.0)   # phase one parks at the preview
+    jobs.accept(job_id)                    # phase two is what has an ETA
     try:
         assert started.wait(10.0), "the job did not reach the ingester"
         mid = jobs.poll(job_id)
@@ -465,6 +480,7 @@ def test_a_finished_job_keeps_answering_polls(db, store_dir):
                               preflight_fn=preflight_with(fetcher),
                               ingest_fn=storing_ingest())
     job_id = jobs.submit(WATCH)["job_id"]
+    jobs.accept(job_id)
 
     first = jobs.poll(job_id)
     second = jobs.poll(job_id)
@@ -481,6 +497,7 @@ def test_a_job_survives_the_process_losing_its_in_memory_copy(db, store_dir):
                               preflight_fn=preflight_with(fetcher),
                               ingest_fn=storing_ingest())
     job_id = jobs.submit(WATCH)["job_id"]
+    jobs.accept(job_id)
 
     reborn = link_jobs.LinkJobs(db, store_dir=store_dir, background=False)
     state = reborn.poll(job_id)
@@ -558,11 +575,15 @@ def test_post_returns_a_job_id_and_the_agreed_stage_list(client):
     assert r.status_code == 202
     body = r.json()
     assert body["job_id"]
-    assert body["stages"] == ["fetch", "transcribe", "analyse", "attribute"]
+    # `preview` joined the ladder on 2026-08-27; it is a HALT between the one
+    # page fetch and the expensive half, not another step that just happens.
+    assert body["stages"] == ["fetch", "preview", "transcribe", "analyse",
+                              "attribute"]
 
 
 def test_get_returns_the_agreed_poll_shape(client):
     job_id = client.post("/api/ingest/link", json={"url": WATCH}).json()["job_id"]
+    client.post(f"/api/ingest/link/{job_id}/accept")
     body = client.get(f"/api/ingest/link/{job_id}").json()
 
     assert set(body) >= {"stage", "pct", "eta_s", "done", "error", "item_id"}

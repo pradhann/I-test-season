@@ -9,6 +9,12 @@
     POST /api/chat                    QuestionRouter answer (text + images)
     POST /api/ingest/link             {url} -> {job_id, stages}
     GET  /api/ingest/link/{job_id}    {stage, pct, eta_s, done, error, item_id}
+    POST /api/ingest/link/{job_id}/accept   transcribe it (the only GPU spend)
+    POST /api/ingest/link/{job_id}/decline  say no at the preview; nothing stored
+    DELETE /api/ingest/link/{job_id}  abort: declines if parked, cancels if running
+    POST /api/content/items/{id}/discard   hide an ingested item (deletes nothing)
+    POST /api/content/items/{id}/restore   put it back
+    POST /api/content/items/{id}/gameweek  correct the gameweek, by hand, on record
     POST /api/conversations           new agent conversation -> {conv_id}
     GET  /api/conversations           conversation metas, newest first
     POST /api/conversations/{id}/chat start an agent turn (202; 409 in-flight)
@@ -20,8 +26,8 @@
 
 What is deliberately *absent* is as load-bearing as what is here: no route
 takes SQL from a panel and no route accepts credentials. Exactly one route
-writes -- ``POST /api/ingest/link``, which is the owner pasting a link at their
-own explicit request, and it writes only by calling
+writes to the CORPUS -- ``POST /api/ingest/link``, which is the owner pasting a
+link at their own explicit request, and it writes only by calling
 :func:`fpl_edge.interfaces.creators.ingest_link`, the sanctioned single-URL
 path that the robots exception in ``docs/data_sources.md`` §7A was granted for.
 It opens no warehouse handle of its own and adds no second ingester; see
@@ -105,6 +111,19 @@ class SolveRequest(BaseModel):
 
 class IngestLinkRequest(BaseModel):
     url: str
+
+
+class DiscardRequest(BaseModel):
+    """Why an item is being hidden. Optional, and recorded when given."""
+
+    reason: str = ""
+
+
+class GameweekRequest(BaseModel):
+    """The owner's gameweek for an item, recorded AS A CORRECTION."""
+
+    gameweek: int
+    note: str = ""
 
 
 def create_app(db: Path | str = DEFAULT_DB,
@@ -279,10 +298,12 @@ def create_app(db: Path | str = DEFAULT_DB,
         return JSONResponse(_chat(body, db_path))
 
     # ---- paste a link (fpl_edge/platform/link_jobs.py) ----
-    # The only writing route on this server, and it writes exactly one way:
+    # The corpus-writing route on this server, and it writes exactly one way:
     # through the owner-initiated ingester in interfaces/creators.py. The job
     # runs server-side and the browser polls, so closing the tab mid-transcribe
-    # loses nothing; state is keyed by job_id and never held in a request.
+    # loses nothing; state is keyed by job_id and never held in a request. The
+    # item annotation routes further down also write, but only to the paste
+    # flow's own ledger table -- they never touch the archive or a claim.
     app.state.link_jobs = link_jobs_mod.LinkJobs(db_path)
 
     @app.post("/api/ingest/link")
@@ -304,6 +325,92 @@ def create_app(db: Path | str = DEFAULT_DB,
             raise HTTPException(status_code=404,
                                 detail=f"no ingest job {job_id!r}")
         return JSONResponse(state)
+
+    # ---- the preview gate: decide BEFORE anything is transcribed ----
+    # POST /api/ingest/link now returns after one page fetch and parks at
+    # stage "preview" with `awaiting_decision: true` and a `preview` payload.
+    # Accept spends the GPU seconds; decline spends nothing. DELETE is the
+    # single abort verb: it declines a parked job and cancels a running one.
+
+    @app.post("/api/ingest/link/{job_id}/accept")
+    def post_accept_link(job_id: str) -> JSONResponse:
+        """Go ahead and transcribe. The only call that costs GPU seconds."""
+        try:
+            return JSONResponse(app.state.link_jobs.accept(job_id),
+                                status_code=202)
+        except link_jobs_mod.UnknownJob as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except (link_jobs_mod.NotAwaitingDecision,
+                link_jobs_mod.JobAlreadyFinished) as exc:
+            return JSONResponse({"detail": str(exc), "job": exc.state},
+                                status_code=409)
+
+    @app.post("/api/ingest/link/{job_id}/decline")
+    def post_decline_link(job_id: str, body: DiscardRequest | None = None) -> JSONResponse:
+        """Say no at the preview. Nothing was written, so nothing is undone."""
+        try:
+            return JSONResponse(app.state.link_jobs.decline(
+                job_id, reason=(body.reason if body else "")))
+        except link_jobs_mod.UnknownJob as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except link_jobs_mod.JobAlreadyFinished as exc:
+            return JSONResponse({"detail": str(exc), "job": exc.state},
+                                status_code=409)
+
+    @app.delete("/api/ingest/link/{job_id}")
+    def delete_ingest_link(job_id: str) -> JSONResponse:
+        """Abort. Declines a parked job; cancels a running one."""
+        try:
+            return JSONResponse(app.state.link_jobs.cancel(job_id))
+        except link_jobs_mod.UnknownJob as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except link_jobs_mod.JobAlreadyFinished as exc:
+            # 409, not 200: the caller asked to stop something that had already
+            # stopped, and the item it produced is still there. Saying
+            # "cancelled" would hide a stored row from its owner.
+            return JSONResponse({"detail": str(exc), "job": exc.state},
+                                status_code=409)
+
+    @app.post("/api/content/items/{item_id}/discard")
+    def post_discard_item(item_id: str, body: DiscardRequest | None = None) -> JSONResponse:
+        """Hide an item that turned out to be irrelevant. Deletes nothing.
+
+        The second writing route on this server, and it writes one UPDATE to
+        ``user_link_item``. It does not touch ``content_item``,
+        ``transcript_segment``, ``content_analysis`` or ``content_claim``:
+        those are the archive and a claim is an utterance that cannot be
+        un-made. ``restore`` is a real inverse for exactly that reason.
+        """
+        try:
+            return JSONResponse(link_jobs_mod.discard_item(
+                db_path, item_id, reason=(body.reason if body else "")))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/api/content/items/{item_id}/restore")
+    def post_restore_item(item_id: str, body: DiscardRequest | None = None) -> JSONResponse:
+        try:
+            return JSONResponse(link_jobs_mod.restore_item(
+                db_path, item_id, reason=(body.reason if body else "")))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.post("/api/content/items/{item_id}/gameweek")
+    def post_item_gameweek(item_id: str, body: GameweekRequest) -> JSONResponse:
+        """Correct the gameweek an item is about.
+
+        Recorded as a correction, never as a silent overwrite: the prior value
+        is kept in ``gw_corrected_from``, the publish-date inference stays in
+        ``gw_inferred``, and ``gw_basis`` becomes ``"corrected"`` so no reader
+        can mistake a hand-entered week for a derived one.
+        """
+        try:
+            return JSONResponse(link_jobs_mod.correct_gameweek(
+                db_path, item_id, body.gameweek, note=body.note))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     # ---- agent conversations (fpl_edge/platform/chat_agent.py) ----
     # The router fast-path above stays untouched; these routes are the

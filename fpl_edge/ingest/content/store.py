@@ -479,18 +479,46 @@ class ContentStore:
         if gameweek is not None:
             where.append("gameweek = ?")
             params.append(int(gameweek))
-        return self.wh.sql(
+        frame = self.wh.sql(
             "SELECT * FROM content_claim WHERE " + " AND ".join(where)
             + " ORDER BY published_at, claim_id",
             params,
         )
+        return self._drop_discarded(frame)
+
+    def _drop_discarded(self, frame: pd.DataFrame) -> pd.DataFrame:
+        """Hide the items the owner has revoked.
+
+        The claim itself stays: an utterance was made and cannot be un-made,
+        which is the property the whole track record rests on. What the owner
+        revokes is OUR decision to carry it -- a link pasted by mistake, or
+        something that turned out to have nothing to do with FPL. So this is a
+        read-side filter over a flag, never a delete, and `restore` is a real
+        inverse.
+
+        Every honest read path owes this filter. It lives here, on the
+        sanctioned path, so a caller cannot forget it by accident.
+        """
+        if frame is None or frame.empty or "item_id" not in frame.columns:
+            return frame
+        try:
+            from fpl_edge.interfaces.creators import (  # noqa: PLC0415
+                discarded_item_ids,
+            )
+            hidden = discarded_item_ids(self.wh)
+        except Exception:  # noqa: BLE001 - an unreadable ledger hides nothing
+            return frame
+        if not hidden:
+            return frame
+        return frame[~frame["item_id"].isin(hidden)]
 
     def items_visible_at(self, as_of: dt.datetime) -> pd.DataFrame:
         as_of = _require_utc(as_of, "as_of")
-        return self.wh.sql(
+        frame = self.wh.sql(
             "SELECT * FROM content_item WHERE published_at < ? ORDER BY published_at",
             [as_of],
         )
+        return self._drop_discarded(frame)
 
     # -- audit / reporting (not for model input) -----------------------------
 

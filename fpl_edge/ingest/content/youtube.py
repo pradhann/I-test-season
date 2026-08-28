@@ -186,6 +186,33 @@ _TITLE_RE = re.compile(r'<meta name="title" content="([^"]*)"')
 _DESC_RE = re.compile(r'"shortDescription":"(.*?)","isCrawlable"', re.DOTALL)
 _EXTERNAL_ID_RE = re.compile(r'"externalId":"(UC[\w-]{22})"')
 
+# -- who published it ---------------------------------------------------------
+#
+# The watch page states the channel explicitly and this module used to throw it
+# away, which is why every pasted link was filed under the placeholder creator
+# ``user-shared``. Verified live on 2026-08-27 against a FPL Raptor watch page:
+#
+#     "author":"FPL Raptor"
+#     "ownerChannelName":"FPL Raptor"
+#     "externalChannelId":"UC54QLWzsMifTRjNQ02z5pCw"
+#
+# ``ownerChannelName`` is preferred over ``author`` because ``author`` also
+# appears in unrelated embedded JSON-LD blocks on some pages; the owner name is
+# only ever emitted by the microformat renderer for the video's own channel.
+# The UC id is preferred over BOTH, because it is the key the source registry
+# already stores and a display name can be changed by its owner at any time.
+#
+# POLITENESS: these patterns are read from a response the caller has ALREADY
+# fetched. :func:`channel_from_watch` takes text, never a fetcher, so it cannot
+# issue a request -- the extra identity costs the source exactly zero
+# additional hits, which is the condition docs/data_sources.md 7A rests on.
+_OWNER_NAME_RE = re.compile(r'"ownerChannelName"\s*:\s*"((?:[^"\\]|\\.)*)"')
+_AUTHOR_RE = re.compile(r'"author"\s*:\s*"((?:[^"\\]|\\.)*)"')
+_ITEMPROP_NAME_RE = re.compile(r'<link\s+itemprop="name"\s+content="([^"]*)"')
+_OWNER_ID_RE = re.compile(
+    r'"(?:externalChannelId|ownerChannelId|channelId)"\s*:\s*"(UC[\w-]{22})"'
+)
+
 
 @dataclass(frozen=True, slots=True)
 class Video:
@@ -257,6 +284,18 @@ def videos_from_channel_page(
     return videos, resp
 
 
+def published_from_watch(html_text: str) -> dt.datetime | None:
+    """The video's real publication instant, from a page already fetched.
+
+    Public because the pasted-link route needs it: it was stamping every
+    pasted item with the moment of the PASTE, which made the gameweek
+    inference ("the next deadline after publication") answer a question about
+    today rather than about the video. Like :func:`channel_from_watch` this
+    takes text and issues no request.
+    """
+    return _published_from_watch(html_text)
+
+
 def _published_from_watch(html_text: str) -> dt.datetime | None:
     for pattern in (_PUBLISH_RE, _PUBLISH_JSON_RE):
         match = pattern.search(html_text)
@@ -277,6 +316,17 @@ def _published_from_watch(html_text: str) -> dt.datetime | None:
     return None
 
 
+def description_from_watch(html_text: str) -> str:
+    """The video's own description, from a page already fetched.
+
+    Public because the paste-a-link preview shows it: the owner decides
+    whether a video is worth 105 GPU-seconds by reading who made it and what
+    they say it is about, and the description is most of the second half. Like
+    the other readers in this section it takes text and issues no request.
+    """
+    return _description_from_watch(html_text)
+
+
 def _description_from_watch(html_text: str) -> str:
     match = _DESC_RE.search(html_text)
     if not match:
@@ -286,6 +336,171 @@ def _description_from_watch(html_text: str) -> str:
     except json.JSONDecodeError:
         decoded = match.group(1)
     return strip_html(str(decoded))
+
+
+# -- who published it: the channel, and what it maps to ----------------------
+
+
+@dataclass(frozen=True, slots=True)
+class Channel:
+    """The publishing channel as the watch page itself states it.
+
+    ``name`` is the display name verbatim; ``channel_id`` the canonical ``UC``
+    id. ``basis`` names the field that answered, or -- when nothing did -- the
+    reason, because a caller that cannot say WHERE a name came from has no
+    business filing content under it.
+    """
+
+    name: str | None
+    channel_id: str | None
+    basis: str
+
+    @property
+    def known(self) -> bool:
+        return bool(self.name or self.channel_id)
+
+
+def _unescape_json_string(raw: str) -> str:
+    try:
+        return str(json.loads(f'"{raw}"'))
+    except json.JSONDecodeError:
+        return raw
+
+
+def channel_from_watch(html_text: str) -> Channel:
+    """Read the channel off a watch page that has ALREADY been fetched.
+
+    Takes text, not a fetcher, and issues no request: the identity is a free
+    read of a body the caller holds. That is what keeps the politeness terms in
+    ``docs/data_sources.md`` 7A true across this change -- the request count is
+    unchanged, only the number of fields parsed out of the response moved.
+
+    Order matters. ``ownerChannelName`` is the microformat renderer's statement
+    about the video's own channel; ``author`` also occurs in embedded JSON-LD
+    for unrelated entities on some pages, so it is the fallback rather than the
+    first read.
+    """
+    name = None
+    basis = "no channel field on the page"
+    for pattern, label in ((_OWNER_NAME_RE, "ownerChannelName"),
+                           (_ITEMPROP_NAME_RE, "itemprop=name"),
+                           (_AUTHOR_RE, "author")):
+        match = pattern.search(html_text)
+        if match and match.group(1).strip():
+            name = strip_html(_unescape_json_string(match.group(1))).strip()
+            basis = label
+            break
+    id_match = _OWNER_ID_RE.search(html_text)
+    channel_id = id_match.group(1) if id_match else None
+    if name is None and channel_id is not None:
+        basis = "externalChannelId only; the page named no channel"
+    return Channel(name=name or None, channel_id=channel_id, basis=basis)
+
+
+def fold_creator(name: str | None) -> str:
+    """Case-, space- and punctuation-insensitive key for creator identity.
+
+    Folds to lowercase alphanumerics so ``"Let's Talk FPL"``, ``"lets talk
+    fpl"`` and the ``@LetsTalkFPL`` handle are one key. It is still an EXACT
+    comparison after folding -- no containment, no edit distance. "FPL Harry"
+    and "FPL Harry Clips" stay different creators, which is the point: a
+    near-match that becomes an attribution is a fabricated name with extra
+    steps.
+    """
+    return re.sub(r"[^a-z0-9]+", "", (name or "").casefold())
+
+
+@dataclass(frozen=True, slots=True)
+class CreatorMatch:
+    """What a channel resolved to, and how. ``creator`` is None when nothing did.
+
+    ``tracked`` answers the question the creator board actually asks: is this
+    identity one the panel scope admits? A resolved-but-untracked channel is a
+    real, named creator whose content the board legitimately excludes -- the
+    reader still sees WHO said it.
+    """
+
+    creator: str | None
+    basis: str
+    reason: str
+    tracked: bool = False
+
+    @property
+    def resolved(self) -> bool:
+        return self.creator is not None
+
+
+def creator_for_channel(channel: Channel, *,
+                        panel_shows: frozenset[str] | set[str] = frozenset(),
+                        ) -> CreatorMatch:
+    """Map a watch page's channel onto a registry / panel creator identity.
+
+    Three exact matches, strongest first, and NO fuzzy fallback:
+
+    1. the canonical ``UC`` id against ``sources.YOUTUBE_SOURCES[*].channel_id``
+       -- the strongest key there is, because a display name is renameable and
+       the id is not;
+    2. the folded display name (or ``@handle``) against every registered
+       source's creator;
+    3. the folded display name against the live panel roster's ``show_creator``
+       values, passed in by the caller so this module never opens a warehouse.
+
+    An unmatched channel is NOT an error and NOT a gap to fill. It comes back
+    with ``creator=None`` and a reason; the caller keeps the real channel name
+    as the creator and marks the item untracked. What must never happen is a
+    name being invented for it.
+
+    An EMPTY ``panel_shows`` means the roster could not be read, not that the
+    panel is empty, so a registry match degrades UPWARD to ``tracked=True`` --
+    the same direction ``creators._panel_shows`` degrades in. An unreadable
+    roster must not look like a world in which nobody is tracked.
+    """
+    from fpl_edge.ingest.content.sources import ALL_SOURCES, YOUTUBE_SOURCES
+
+    if channel.channel_id:
+        for source in YOUTUBE_SOURCES:
+            if source.channel_id == channel.channel_id:
+                return CreatorMatch(
+                    source.creator, "channel_id",
+                    f"the watch page's channel id {channel.channel_id} is "
+                    f"registered to {source.creator} ({source.key})",
+                    tracked=str(source.creator) in set(panel_shows) or not panel_shows,
+                )
+
+    key = fold_creator(channel.name)
+    if key:
+        for source in ALL_SOURCES:
+            if fold_creator(source.creator) == key or (
+                source.handle and fold_creator(source.handle) == key
+            ):
+                return CreatorMatch(
+                    source.creator, "channel_name",
+                    f"the channel name {channel.name!r} is exactly a "
+                    f"registered creator ({source.key})",
+                    tracked=str(source.creator) in set(panel_shows) or not panel_shows,
+                )
+        for show in panel_shows:
+            if fold_creator(show) == key:
+                return CreatorMatch(
+                    str(show), "panel_show",
+                    f"the channel name {channel.name!r} is exactly a show on "
+                    f"the owner's panel roster",
+                    tracked=True,
+                )
+
+    if channel.name:
+        return CreatorMatch(
+            None, "unregistered_channel",
+            f"the page names the channel {channel.name!r}, and no registered "
+            f"source or panel show has that identity. The real name is kept "
+            f"and the item is marked pasted-but-not-tracked rather than "
+            f"mapped onto a creator it does not belong to.",
+        )
+    return CreatorMatch(
+        None, "no_channel_on_page",
+        f"the page did not state a channel ({channel.basis}), so there is no "
+        f"identity to resolve and none is invented.",
+    )
 
 
 # -- transcripts: implemented, documented, and off ---------------------------
