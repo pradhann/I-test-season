@@ -29,7 +29,50 @@
  * Every colour is a token from app.css, so both themes come for free.
  */
 
-import { runPanel, el } from "/js/app.js";
+import { runPanel, getJSON, el } from "/js/app.js";
+
+/* ---------------- the gameweek axis ----------------
+   "What will happen next GW — there should be a way for me to know what was
+   said in GW2." Every statement already carries its own `gameweek`; the strip
+   just never used it, so a drawer opened on Friday showed last week's takes
+   and this week's in one undated pile.
+
+   SO THE RAIL IS INDEXED, AND THE INDEX IS HONEST:
+     · the default is the NEXT gameweek, the one the reader is about to play;
+     · every gameweek the payload actually holds is one click away, with its
+       own count on the chip — a chip is never offered for a gameweek with
+       nothing behind it;
+     · A FILTER NEVER IMPLIES SILENCE. When the selected gameweek is empty and
+       another is not, the rail says so with the counts ("nothing for GW3; 4
+       statements for GW2") instead of rendering an empty box, because "nobody
+       said anything about him" and "nobody said anything about him FOR THIS
+       WEEK" are different facts and the strip's whole design rests on not
+       confusing them.
+   Statements the extractor could not date are never filtered away: they get
+   their own bucket and say what they are.
+
+   `player_chatter` publishes `gameweek` per statement today, and a `gw` on the
+   envelope is read if it ever appears. Nothing is sent as a param: a payload
+   filtered server-side would still render correctly here (the counts would
+   simply be the counts of what arrived), and an unknown param would 400 the
+   whole strip. */
+const ALLGW = "all";
+let deadlineP = null;                 // one /api/deadline read per page
+function nextGw() {
+  if (!deadlineP) deadlineP = getJSON("/api/deadline").catch(() => null);
+  return deadlineP;
+}
+const stGw = s => (s && s.gameweek != null) ? Number(s.gameweek) : null;
+/* gw -> count, plus the undated bucket, in ascending order with nulls last */
+function gwIndex(said) {
+  const m = new Map();
+  for (const s of said || []) {
+    const g = stGw(s);
+    m.set(g, (m.get(g) || 0) + 1);
+  }
+  return [...m.entries()].sort((a, b) =>
+    (a[0] == null) - (b[0] == null) || (a[0] - b[0]));
+}
 
 /* ---------------- size budget (chosen, and kept) ----------------
    This renders inside a 460px drawer that already has content above it, so
@@ -282,6 +325,14 @@ function renderStatement(s) {
     : "attributed to the show, not to a person — the show may have several hosts";
   if (!s.person) w.appendChild(el("i", "pc-showonly", " (show)"));
   top.appendChild(w);
+  /* WHICH GAMEWEEK THIS IS ABOUT, on the card itself. Without it a rail
+     showing every gameweek is an undated pile, and a take about GW1 reads as
+     a take about the deadline you are standing in front of. */
+  if (s.gameweek != null) {
+    const g = el("span", "pc-stgw", `GW${s.gameweek}`);
+    g.title = `this statement is about gameweek ${s.gameweek}`;
+    top.appendChild(g);
+  }
   if (s.published_at) top.appendChild(el("span", "pc-when", ago(s.published_at)));
   n.appendChild(top);
 
@@ -308,21 +359,97 @@ function renderStatement(s) {
   return n;
 }
 
-function renderSaid(body, d, limit, onMore) {
-  const said = d.said || [];
-  if (!said.length) { body.appendChild(reason(d.said_reason || d.reason)); return; }
+function renderSaid(body, d, limit, onMore, gwState) {
+  const all = d.said || [];
+  if (!all.length) { body.appendChild(reason(d.said_reason || d.reason)); return; }
+
+  const index = gwIndex(all);
+  const sel = gwState.sel;                        // ALLGW | number | null(undated)
+  const said = sel === ALLGW ? all : all.filter(s => stGw(s) === sel);
+  const label = g => g == null ? "undated" : `GW${g}`;
+
+  /* THE INDEX ROW. One chip per gameweek the payload holds, each carrying its
+     own count, plus the selected gameweek even when it holds nothing — the
+     reader has to be able to see that this week is empty and last week is not. */
+  /* Shown whenever there is a choice to make OR the reader has been moved off
+     the default — landing on GW1 with no chips would strand them there with
+     nothing saying they had left the gameweek they are about to play. */
+  const home = gwState.next != null ? gwState.next : ALLGW;
+  if (index.length > 1 || sel !== home || !said.length) {
+    const bar = el("div", "pc-gws");
+    bar.appendChild(el("span", "pc-gwlab", "for"));
+    const chip = (key, text, n, title, on) => {
+      const b = el("button", "pc-gw" + (on ? " on" : "") + (n === 0 ? " empty" : ""));
+      b.append(text);
+      if (n != null) b.appendChild(el("span", "pc-gwn", String(n)));
+      b.title = title;
+      b.onclick = () => gwState.pick(key);
+      return b;
+    };
+    bar.appendChild(chip(ALLGW, "every gameweek", all.length,
+      `all ${all.length} statements in the ${d.window_days ?? "30"}-day window, ` +
+      "whichever gameweek they are about", sel === ALLGW));
+    const known = new Set(index.map(e => e[0]));
+    for (const [g, n] of index)
+      bar.appendChild(chip(g, label(g), n,
+        g == null
+          ? `${n} statement${n === 1 ? "" : "s"} the extractor could not date — ` +
+            "they are kept, not dropped"
+          : `${n} statement${n === 1 ? "" : "s"} about GW${g}` +
+            (g === gwState.next ? "\nthe next deadline — the strip opens here" : ""),
+        sel === g));
+    /* The selected gameweek and the DEFAULT one both stay on the row even
+       with nothing behind them: a measured zero is an answer, and dropping
+       the chip would quietly turn "nothing said for the deadline you are
+       about to play" into a gameweek that appears not to exist. */
+    for (const g of [sel, home])
+      if (g !== ALLGW && g != null && !known.has(g)) {
+        known.add(g);
+        bar.appendChild(chip(g, label(g), 0,
+          `nothing in this window is about ${label(g)}` +
+          (g === gwState.next ? " — and it is the next deadline" : ""), sel === g));
+      }
+    body.appendChild(bar);
+  }
+
+  /* THE EMPTY-BUT-NOT-SILENT STATE. A gameweek filter must never be allowed
+     to read as "nobody said anything about him". */
+  if (!said.length) {
+    const elsewhere = index.filter(([g]) => g !== sel);
+    const box = el("div", "pc-gwempty");
+    box.appendChild(el("b", null, `Nothing for ${label(sel)}.`));
+    if (elsewhere.length) {
+      box.append(" But " + elsewhere
+        .map(([g, n]) => `${n} statement${n === 1 ? "" : "s"} for ${label(g)}`)
+        .join(", ") + " — ");
+      const b = el("button", "pc-more", `show ${label(elsewhere[0][0])}`);
+      b.onclick = () => gwState.pick(elsewhere[0][0]);
+      box.appendChild(b);
+      box.append(elsewhere.length > 1 ? ", or every gameweek above." : ".");
+    }
+    body.appendChild(box);
+    body.appendChild(el("div", "pc-caveat", d.record_note ||
+      "Not a forecast — the panel's record is below chance. This is what was said."));
+    return;
+  }
+
   const c = d.counts || {};
+  const whole = sel === ALLGW;         // envelope counts describe the WHOLE payload
   const obs = said.filter(s => s.is_observation === true || s.action === "watch").length;
   const llm = said.filter(s => String(s.extractor || "").startsWith("llm")).length;
-  const nSaid = c.said != null ? c.said : said.length - obs;
-  const nObs = c.observations != null ? c.observations : obs;
+  const nSaid = whole && c.said != null ? c.said : said.length - obs;
+  const nObs = whole && c.observations != null ? c.observations : obs;
 
   // A count, never a verdict. No net, no consensus score — deliberately.
   const sum = el("div", "pc-sum");
   sum.appendChild(el("b", null, `${nSaid} statement${nSaid === 1 ? "" : "s"}`));
+  if (!whole) sum.appendChild(el("span", null, ` for ${label(sel)}`));
   if (nObs) sum.appendChild(el("span", null, ` · ${nObs} observation${nObs === 1 ? "" : "s"}`));
   sum.appendChild(el("span", "pc-split",
     ` · ${llm} considered, ${said.length - llm} keyword`));
+  if (!whole && said.length < all.length)
+    sum.appendChild(el("span", "pc-split",
+      ` · ${all.length - said.length} more for other gameweeks`));
   body.appendChild(sum);
 
   for (const s of said.slice(0, limit)) body.appendChild(renderStatement(s));
@@ -387,7 +514,21 @@ function mount(host, code, opts, limitsFor) {
   rails.appendChild(el("div", "pc-load", "reading the panel…"));
   host.appendChild(root);
 
+  /* The gameweek the strip opens on. `/api/deadline` is the same next-gameweek
+     the whole app counts down to, read once per page; the payload's own `gw`
+     wins if `player_chatter` ever publishes one, and an explicit `opts.gw`
+     wins over both. With none of the three there is no "next" to default to,
+     and the rail opens on every gameweek and says so on the chip. */
+  const gwState = {
+    sel: undefined, next: opts.gw ?? null,
+    pick(k) { gwState.sel = k; if (last) draw(last); },
+  };
+  let last = null;
+
   function draw(d) {
+    last = d;
+    if (gwState.sel === undefined)
+      gwState.sel = gwState.next != null ? gwState.next : ALLGW;
     rails.textContent = "";
     const L = lim || limitsFor(d);
     if (d.name && !opts.name) title.textContent = `The panel on ${d.name}`;
@@ -404,17 +545,23 @@ function mount(host, code, opts, limitsFor) {
     renderDid(did.body, d);
     const said = railNode("said", "SAID", "🗣 spoken");
     renderSaid(said.body, d, L.said,
-      () => { lim = { ...L, said: L.said >= FULL.said ? 1e9 : FULL.said }; draw(d); });
+      () => { lim = { ...L, said: L.said >= FULL.said ? 1e9 : FULL.said }; draw(d); },
+      gwState);
     const noticed = railNode("noticed", "NOTICED", "⚙ measured");
     renderNoticed(noticed.body, d, L.noticed,
       () => { lim = { ...L, noticed: L.noticed >= FULL.noticed ? 1e9 : FULL.noticed }; draw(d); });
     rails.append(did.node, said.node, noticed.node);
   }
 
-  fetchChatter(code, days).then(r => {
+  /* Both, before the first paint: choosing the default gameweek after drawing
+     would move the rail under the reader a beat after it appeared. The
+     deadline read is cached per page and never blocks a second drawer. */
+  Promise.all([fetchChatter(code, days), nextGw()]).then(([r, dl]) => {
     if (cancelled || !root.isConnected) return;
+    if (gwState.next == null && dl && dl.gw != null) gwState.next = Number(dl.gw);
     if (r.ok) {
       const d = r.data || {};
+      if (gwState.next == null && d.gw != null) gwState.next = Number(d.gw);
       if (d.empty) {                       // the panel's own empty envelope
         root.dataset.state = "quiet";
         rails.textContent = ""; rails.appendChild(reason(d.reason));

@@ -69,6 +69,39 @@
 .pc-sum b { color: var(--ink); }
 .pc-split { color: var(--faint); }
 
+/* the gameweek index. It sits INSIDE the SAID rail, not in the strip's head,
+   because it governs SAID alone: DID is the latest crawled squad and NOTICED
+   is measured intel, and a control floating above all three would claim to
+   filter things it does not touch. Small, quiet, and always escapable. */
+.pc-gws { display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
+          margin-bottom: 5px; }
+.pc-gwlab { color: var(--faint); font-size: 10px; letter-spacing: .09em;
+            text-transform: uppercase; font-weight: 650; margin-right: 2px; }
+.pc-gw { font: inherit; font-size: 10.5px; line-height: 1.3; cursor: pointer;
+         padding: 2px 8px; border-radius: 999px; color: var(--muted);
+         background: var(--surface); border: 1px solid var(--line); }
+.pc-gw:hover { border-color: var(--muted); color: var(--ink); }
+.pc-gw.on { color: var(--ink); border-color: var(--s1);
+            background: color-mix(in oklab, var(--s1) 14%, var(--surface)); }
+/* a gameweek with nothing behind it is still reachable and still says zero:
+   it is drawn dashed and quiet, never removed, so the emptiness is a fact on
+   the page rather than a chip that silently does not exist */
+.pc-gw.empty { border-style: dashed; color: var(--faint); }
+.pc-gwn { margin-left: 5px; font-family: var(--mono);
+          font-variant-numeric: tabular-nums; color: var(--faint); }
+.pc-gw.on .pc-gwn { color: var(--muted); }
+
+/* the filter is empty and the record is NOT — never an empty rail */
+.pc-gwempty { font-size: 11.5px; color: var(--muted); line-height: 1.45;
+              border-left: 2px solid var(--s1); padding: 3px 0 3px 8px; }
+.pc-gwempty b { color: var(--ink); }
+.pc-gwempty .pc-more { font-size: 11.5px; }
+
+/* which gameweek a single statement is about */
+.pc-stgw { font-size: 10px; font-family: var(--mono); color: var(--faint);
+           border: 1px solid var(--line); border-radius: 4px; padding: 0 4px;
+           white-space: nowrap; }
+
 .pc-st { border-left: 2px solid var(--line); padding: 2px 0 3px 8px;
          margin: 5px 0; }
 .pc-st[data-dir="pos"] { border-left-color: var(--s1); }

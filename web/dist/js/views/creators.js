@@ -161,10 +161,12 @@ export default async function creators(host) {
   host.append(teachCard, linkCard, mainCard);
 
   const viewRow = el("div", "toolbar");
+  const gwRow   = el("div", "toolbar");
+  const gwNote  = el("div", "cx-gwnote");
   const evRow   = el("div", "toolbar");
   const body    = el("div", "cx-body");
   const foot    = el("div");
-  mainCard.append(viewRow, evRow, body, foot);
+  mainCard.append(viewRow, gwRow, gwNote, evRow, body, foot);
 
   /* One drawer per visit: a re-entered view must not stack a second one on
      the body, and the previous visit's key handler must stop listening. */
@@ -194,6 +196,36 @@ export default async function creators(host) {
   const pasted = new Map();           // canonical key -> url, this session only
   let linkBody = null;
 
+  /* ---- the gameweek axis ---------------------------------------------
+     `creator_board` has always taken a `gw` and always defaulted it to the
+     next one; the page just never offered the control, so the moment a
+     deadline passed the board flipped forward and last week was gone. The
+     picker is the xPoints chip row: same `.chip.gw` vocabulary, same rule
+     that a chip with nothing behind it is drawn dead rather than offered.
+
+     A CHIP NEVER CLAIMS A COUNT IT HAS NOT MEASURED. Coverage is not in the
+     payload — `creator_board` publishes one gameweek, not a histogram — so
+     each neighbouring gameweek is measured by actually asking for it, in
+     the background, after the first paint. Until a probe lands its chip
+     says "counting", never "0", and the probe doubles as the prefetch: a
+     chip you click after it resolves renders from cache with no wait. */
+  /* ---- the OWN channel ------------------------------------------------
+     `creator_detail` has returned `squad` — a person's locked 15 with a
+     multiplier and a captain flag — and `squad_reason` all along. The grid
+     drew no rings because nothing ever asked for it. These are filled in the
+     background the first time the grid is opened; the ring appears when the
+     answer lands, and the page says which rows have a squad and which do not
+     rather than leaving a blank that reads as "owns nothing". */
+  const squadByCreator = new Map();   // creator -> {squad, reason, entry}
+  let squadsAsked = false, squadsPending = 0;
+
+  let defaultGw = null;               // the panel's own next-gameweek default
+  let gwSel = null;                   // null = whatever the panel defaulted to
+  const boardCache = new Map();       // gw -> {result, provenance}
+  const gwCount = new Map();          // gw -> integer | null (measured empty)
+  const gwProbing = new Set();
+  const BACK = 4, FWD = 2;            // how far the picker reaches either way
+
   /* ---- load ----------------------------------------------------------- */
   /* not `.sub`: an empty state and a pending one must not look the same */
   body.appendChild(el("p", "cx-loading", "loading the panel…"));
@@ -212,6 +244,14 @@ export default async function creators(host) {
       "different service and is unaffected by this failure."));
     renderLinkBar();
     return;
+  }
+  /* The board's own answer to "which gameweek" IS the default, and the first
+     read is the one the picker is anchored on. */
+  defaultGw = res.gw ?? null;
+  gwSel = defaultGw;
+  if (defaultGw != null) {
+    boardCache.set(defaultGw, { result: res, provenance: prov });
+    gwCount.set(defaultGw, (res.consensus || []).length);
   }
   const sq = await squadP;
   if (sq && sq.error) squadErr = String(sq.error.message || sq.error);
@@ -286,14 +326,149 @@ export default async function creators(host) {
   renderTeach();
   renderLinkBar();
   render();
+  probeGameweeks();
 
   function render() {
     renderViewRow();
+    renderGwRow();
     renderEvidenceRow();
     body.textContent = "";
     if (view === "board") renderBoard(); else renderGrid();
     foot.textContent = "";
     foot.appendChild(provenance(prov));
+  }
+
+  /* ==================================================== the gameweek axis */
+
+  /* The reachable range, stated rather than assumed: four gameweeks back and
+     two forward from the panel's default, clamped to the season. Back, because
+     "what did they say last week" is the question the static label made
+     impossible; forward, because takes for a later gameweek are already in the
+     corpus before its deadline. */
+  function gwCandidates() {
+    if (defaultGw == null) return [];
+    const lo = Math.max(1, defaultGw - BACK), hi = Math.min(38, defaultGw + FWD);
+    const out = [];
+    for (let g = lo; g <= hi; g++) out.push(g);
+    return out;
+  }
+
+  /* Measure the neighbours by asking for them — three at a time, after the
+     first paint, and each answer kept so the click is instant. A failed probe
+     leaves the chip UNMEASURED, never zero: not knowing and knowing nothing
+     are different facts and must not render alike. */
+  function probeGameweeks() {
+    const todo = gwCandidates().filter(g => !gwCount.has(g) && !gwProbing.has(g));
+    let live = 0;
+    const pump = () => {
+      while (live < 3 && todo.length) {
+        const g = todo.shift();
+        gwProbing.add(g); live++;
+        runPanel("creator_board", { gw: g })
+          .then(r => {
+            boardCache.set(g, { result: r.result, provenance: r.provenance });
+            gwCount.set(g, ((r.result || {}).consensus || []).length);
+          })
+          .catch(() => { /* leave it unmeasured — see above */ })
+          .finally(() => {
+            gwProbing.delete(g); live--;
+            if (mainCard.isConnected) renderGwRow();
+            pump();
+          });
+      }
+    };
+    pump();
+  }
+
+  async function selectGw(g) {
+    if (g === gwSel) return;
+    gwSel = g;
+    const hit = boardCache.get(g);
+    if (hit) { res = hit.result; prov = hit.provenance; renderTeach(); render(); return; }
+    gwRow.textContent = "";
+    renderGwRow();
+    body.textContent = "";
+    body.appendChild(el("p", "cx-loading", `reading GW${g}…`));
+    try {
+      const r = await runPanel("creator_board", { gw: g });
+      if (gwSel !== g) return;                 // a later click already won
+      boardCache.set(g, { result: r.result, provenance: r.provenance });
+      gwCount.set(g, ((r.result || {}).consensus || []).length);
+      res = r.result; prov = r.provenance;
+      renderTeach(); render();
+    } catch (e) {
+      if (gwSel !== g) return;
+      renderGwRow();
+      body.textContent = "";
+      body.appendChild(errBox(e));
+    }
+  }
+
+  function renderGwRow() {
+    gwRow.textContent = "";
+    gwNote.textContent = "";
+    const cands = gwCandidates();
+    if (!cands.length) {
+      /* No gameweek could be determined at all. The panel says why; the row
+         says that the control cannot exist without one, and does not draw a
+         picker over nothing. */
+      gwRow.appendChild(el("span", "tlabel", "Gameweek"));
+      gwRow.appendChild(el("span", "sub",
+        "`creator_board` returned no gameweek, so there is nothing to index " +
+        "the board by and no picker to offer."));
+      if (res.gw_reason) gwNote.appendChild(el("p", "cx-provline warn", res.gw_reason));
+      return;
+    }
+    gwRow.appendChild(el("span", "tlabel", "Gameweek"));
+    for (const g of cands) {
+      const n = gwCount.get(g);
+      const measured = gwCount.has(g);
+      const empty = measured && n === 0;
+      const on = g === gwSel;
+      const chip = el("button", "chip gw" +
+        (on ? " on" : "") + (empty && !on ? " off" : ""));
+      chip.appendChild(document.createTextNode(`GW${g}`));
+      if (g === defaultGw) chip.appendChild(el("span", "cx-gwnext", "next"));
+      chip.appendChild(el("span", "cx-gwn",
+        measured ? (n === 0 ? "none" : String(n)) : "…"));
+      chip.title = `GW${g} — ` + (measured
+        ? (n === 0
+            ? "no claim in this window names this gameweek"
+            : `${plural(n, "player")} named for this gameweek, ` +
+              `across all claims in the window`)
+        : "counting — the board for this gameweek is still being read") +
+        (g === defaultGw
+          ? "\nthe panel's own default: the next deadline"
+          : g < defaultGw ? "\nbehind the next deadline — this is what was said then"
+          : "\nahead of the next deadline");
+      if (empty && !on) chip.disabled = true;
+      else chip.onclick = () => selectGw(g);
+      gwRow.appendChild(chip);
+    }
+    const hint = el("span", "cx-gwhint");
+    hint.append(gwProbing.size
+      ? `counting ${plural(gwProbing.size, "more gameweek")}…`
+      : "counts are players named, measured by reading each board");
+    gwRow.appendChild(hint);
+
+    /* WHICH gameweek you are on, said in words wherever it is not the
+       default — a board that silently moved on is exactly the bug here. */
+    if (defaultGw != null && gwSel !== defaultGw) {
+      const p = el("p", "cx-provline");
+      p.appendChild(el("b", null, `You are reading GW${gwSel}, not the next deadline.`));
+      p.append(` The board defaults to GW${defaultGw}. Everything below — the ` +
+        "lanes, the decisions, the armband, the grid — is drawn from what the " +
+        "panel said about " + (gwSel < defaultGw ? "that earlier" : "that later") +
+        " gameweek. Your squad lanes are not re-wound: they are whichever " +
+        "squad `squad_overview` can read right now.");
+      gwNote.appendChild(p);
+    }
+    if (res.gw_reason) {
+      const p = el("p", "cx-provline warn");
+      p.appendChild(el("b", null, "How this gameweek was chosen: "));
+      p.append(res.gw_reason);
+      gwNote.appendChild(p);
+    }
   }
 
   /* ============================================================ the teach */
@@ -755,12 +930,9 @@ export default async function creators(host) {
        reference. They are different things, so the slice travels as one
        right-aligned cluster rather than three loose runs beside the buttons. */
     const meta = el("span", "cx-toolmeta");
-    const gw = res.gw;
-    if (gw != null) {
-      const c = el("span", "cx-gw");
-      c.append(el("b", null, `GW${gw}`), res.gw_reason ? ` · ${res.gw_reason}` : "");
-      meta.appendChild(c);
-    }
+    /* The gameweek used to be printed here as a dead label. It is a CONTROL
+       now, one row down, and its reason travels with it — a slice you can
+       change does not belong in the cluster that says what cannot be changed. */
     if (res.window_days != null)
       meta.appendChild(el("span", null,
         `claims from the last ${plural(res.window_days, "day")}`));
@@ -1434,6 +1606,10 @@ export default async function creators(host) {
         "The grid needs somebody to have said something."));
       return;
     }
+    /* The ring channel needs the squads, and the squads are one call per show.
+       Fired here rather than on page load: it costs nothing until somebody
+       actually asks for this view, and the grid redraws when they land. */
+    loadSquads(() => { if (view === "grid" && mainCard.isConnected) render(); });
 
     /* SAID: creator (show) -> code -> {in, out, cap, cueOnly} */
     const said = new Map();
@@ -1469,11 +1645,18 @@ export default async function creators(host) {
 
     /* OWN: person -> Set(code), from whatever the panel actually publishes */
     const own = new Map();
-    let ownSource = null;
+    /* WHOLE SQUAD vs SEEN ON THIS BOARD. `panel_owned` names who holds each
+       player ON the board, so a set built from it is bounded by the columns —
+       it is NOT that person's squad size, and printing "8 owned" beside a
+       full 15 would silently compare two different quantities. `ownFull`
+       marks the sets that really are a complete locked 15. */
+    const ownFull = new Set();
+    const ownSources = new Set();
+    const byCreator = new Map((res.creators || []).map(c => [c.creator, c]));
     for (const r of rows) {
       const po = r.panel_owned;
       if (po && Array.isArray(po.people)) {
-        ownSource = "panel_owned";
+        ownSources.add("panel_owned");
         for (const p of po.people) {
           if (!own.has(p)) own.set(p, new Set());
           own.get(p).add(r.code);
@@ -1484,21 +1667,36 @@ export default async function creators(host) {
       for (const p of (c.entry && c.entry.people) || c.people || []) {
         const codes = p.owned || p.squad;
         if (Array.isArray(codes) && codes.length) {
-          ownSource = ownSource || "entry.people[].owned";
+          ownSources.add("entry.people[].owned");
           const key = p.display_name || p.name;
           if (!own.has(key)) own.set(key, new Set());
           for (const x of codes) own.get(key).add(typeof x === "object" ? x.code : x);
         }
       }
+    /* THE THIRD SOURCE, AND THE ONE THAT IS ACTUALLY POPULATED TODAY.
+       `creator_detail.squad` is a person's locked 15. It is attached ONLY to a
+       show with exactly one host, because that is the only case where the
+       show's entry id and a person are the same thing — a four-host show's
+       `entry_id` is null and there is no team to hang on it. */
+    for (const [creator, s] of squadByCreator) {
+      if (!s || !Array.isArray(s.squad) || !s.squad.length) continue;
+      const people = personsOf(byCreator.get(creator));
+      if (people.length !== 1) continue;
+      const nm = personName(people[0]) || creator;
+      ownSources.add("creator_detail.squad");
+      if (!own.has(nm)) own.set(nm, new Set());
+      for (const p of s.squad) own.get(nm).add(p.code);
+      ownFull.add(nm);
+    }
+    const ownSource = [...ownSources].join(" + ") || null;
 
     /* ROWS, banded. A show is not a person. */
     const bands = [];
-    const byCreator = new Map((res.creators || []).map(c => [c.creator, c]));
     const said1 = [...said.keys()];
     const solo = [], showBand = [];
     for (const who of said1) {
       const c = byCreator.get(who);
-      const people = (c && ((c.entry && c.entry.people) || c.people)) || [];
+      const people = personsOf(c);
       if (people.length === 1) {
         const p = people[0];
         // `person` is the curated display name and is the SAME namespace
@@ -1507,22 +1705,25 @@ export default async function creators(host) {
         // name -- and only 3 of 7 people matched: the cards said "Andy owns
         // him" while the grid said Andy's squad was never crawled, on one
         // page. Join on the key both sides actually share.
-        const nm = p.person || p.display_name || p.name || who;
+        const nm = personName(p) || who;
         /* the show under the person's name, EXCEPT where they are the same
            string — "FPL Raptor / FPL Raptor" says nothing twice */
         solo.push({ key: who, label: nm, sub: nm === who ? null : who, kind: "person",
-                    ownKey: nm, note: "the only host on this show, so what the show said is what he said" });
+                    ownKey: nm, show: who, person: p, people,
+                    note: "the only host on this show, so what the show said is what he said" });
       } else if (people.length > 1) {
         showBand.push({ key: who, label: who, sub: `${people.length} hosts`,
-                        kind: "show", ownKey: null,
+                        kind: "show", ownKey: null, show: who, people,
                         note: "said by the show — this payload does not attribute its claims to a host" });
         for (const p of people) {
-          const nm = p.person || p.display_name || p.name;
+          const nm = personName(p);
           showBand.push({ key: `__own__${nm}`, label: nm, sub: who, kind: "own-only",
-                          ownKey: nm, note: "his squad, on a show whose claims are not attributed to a host" });
+                          ownKey: nm, show: who, person: p, people,
+                          note: "his squad, on a show whose claims are not attributed to a host" });
         }
       } else {
         showBand.push({ key: who, label: who, sub: null, kind: "show", ownKey: null,
+                        show: who, people: [],
                         note: "no panel person is published for this show" });
       }
     }
@@ -1568,7 +1769,11 @@ export default async function creators(host) {
       lead.append(` The own channel is live from \`${ownSource}\`. ` +
         "A ring with no hue is a QUIET holding — a player somebody owns and " +
         "has never mentioned on air, which no transcript can ever surface. A " +
-        "column of hue with no rings is talk with nobody's money behind it.");
+        "column of hue with no rings is talk with nobody's money behind it. " +
+        "Click a person's name in the left column for their whole 15 and " +
+        "every quiet holding in it, including the ones no column here shows.");
+    } else if (squadsPending > 0) {
+      lead.append(" Reading the squads behind these rows…");
     } else {
       // The counts come from the payload, never from prose. This paragraph
       // used to hard-code "seven of the fifteen verified panel entries",
@@ -1590,6 +1795,49 @@ export default async function creators(host) {
         "That is missing data, not an absence of holdings.");
     }
     body.appendChild(lead);
+
+    /* WHICH ROWS HAVE A TEAM BEHIND THEM, counted from what came back. A row
+       with no ring is either a person whose squad has not been crawled or a
+       show, which is not a person and has no squad at all — two different
+       facts, so they are counted apart and neither is drawn as "owns
+       nothing". Every reason below is the panel's own sentence. */
+    if (squadsAsked && squadsPending === 0) {
+      const allRows = bands.flatMap(b => b.rows);
+      const personRows = allRows.filter(R => R.kind === "person" || R.kind === "own-only");
+      const fullRows = personRows.filter(R => R.ownKey && ownFull.has(R.ownKey));
+      const partRows = personRows.filter(R =>
+        R.ownKey && own.has(R.ownKey) && !ownFull.has(R.ownKey));
+      const showRows = allRows.filter(R => R.kind === "show");
+      const cover = el("p", "cx-provline" + (fullRows.length || partRows.length ? "" : " warn"));
+      cover.appendChild(el("b", null,
+        `${fullRows.length} of ${plural(personRows.length, "person row")} ` +
+        `${fullRows.length === 1 ? "carries" : "carry"} a whole locked squad`));
+      cover.append(" — read from `creator_detail.squad`, so every one of their " +
+        "fifteen is known whether or not it reached a column here. ");
+      if (partRows.length)
+        cover.append(`${plural(partRows.length, "other row")} ` +
+          `${partRows.length === 1 ? "is" : "are"} ringed from \`panel_owned\`, ` +
+          "which names owners of the players ON this board and not the rest of " +
+          "their team: those counts are what they own HERE, never a squad size. ");
+      if (showRows.length)
+        cover.append(`${plural(showRows.length, "row")} ` +
+          `${showRows.length === 1 ? "is" : "are"} a SHOW, not a person, and ` +
+          `${showRows.length === 1 ? "carries" : "carry"} no ring at all: a ` +
+          "multi-host show's entry id is null, and merging its hosts' teams " +
+          "into one would be inventing a squad nobody picked. ");
+      cover.append("Click any name in the left column — a person opens what is " +
+        "known of their team and the holdings they have never mentioned; a " +
+        "show says why it has none.");
+      const reasons = [...new Set([...squadByCreator.values()]
+        .filter(s => s && !s.squad.length && s.reason).map(s => s.reason))];
+      for (const rr of reasons) {
+        const d = el("div", "cx-tiny");
+        d.appendChild(el("span", "cx-quotemark", "the panel's own words: "));
+        d.append(rr);
+        cover.appendChild(d);
+      }
+      body.appendChild(cover);
+    }
 
     const wrap = el("div", "scroll-x");
     const t = el("table", "cx-grid");
@@ -1646,8 +1894,34 @@ export default async function creators(host) {
     function gridRow(R) {
       const tr = el("tr", "cx-gridrow " + R.kind);
       const g = el("td", "cx-gutter");
-      g.appendChild(el("b", null, R.label));
-      if (R.sub) g.appendChild(el("span", "cx-gutsub", R.sub));
+      /* THE ROW HEAD IS THE WAY IN TO THE TEAM. Before this, every click in
+         this view opened a PLAYER, so a person row could never reach the one
+         thing the row is about — the person's own 15 and which of it they
+         have never once mentioned. A show head opens the reason it has no
+         squad instead of pretending to have one. */
+      const nameBtn = el("button", "cx-gutname" + (R.kind === "show" ? " show" : ""));
+      nameBtn.appendChild(el("b", null, R.label));
+      if (R.sub) nameBtn.appendChild(el("span", "cx-gutsub", R.sub));
+      const owned = R.ownKey ? own.get(R.ownKey) : null;
+      const full = R.ownKey && ownFull.has(R.ownKey);
+      nameBtn.title = R.kind === "show"
+        ? `${R.label} — a show, not a person. Open for why it has no squad.`
+        : full
+          ? `${R.label} — open his locked ${owned.size} and the holdings he has never mentioned`
+          : `${R.label} — open what the panel says about his squad`;
+      nameBtn.onclick = () => openPerson(R);
+      g.appendChild(nameBtn);
+      if (owned) {
+        const s = el("span", "cx-gutown" + (full ? "" : " part"),
+          full ? `locked ${owned.size}` : `${owned.size} of these`);
+        s.title = full
+          ? "his whole locked squad was read — the rings on this row are the " +
+            "members of it that reached these columns"
+          : "`panel_owned` names him on " + plural(owned.size, "player") +
+            " ON THIS BOARD. It does not publish his whole squad, so this is " +
+            "not his squad size and the rest of his team cannot be shown here.";
+        g.appendChild(s);
+      }
       if (R.note) g.appendChild(el("div", "cx-tiny", R.note));
       tr.appendChild(g);
       const m = said.get(R.key) || new Map();
@@ -1739,6 +2013,66 @@ export default async function creators(host) {
     return detailCache.get(creator);
   }
 
+  /* `person` is the curated display name and is the namespace panel_owned
+     uses; `name` is the FPL account name. Joining on the wrong one matched 3
+     of 7 people once already, so both readers go through here. */
+  const personName = p =>
+    !p ? null : (typeof p === "string" ? p : (p.person || p.display_name || p.name || null));
+  const personsOf = c => (c && ((c.entry && c.entry.people) || c.people)) || [];
+
+  /* Ask every show for its squad, once. The answer is `creator_detail.squad`
+     — the locked 15 with a multiplier and a captain flag — plus the panel's
+     own `squad_reason` for the shows that have none. Nothing is inferred
+     from an empty list: a show with no verified entry id HAS no squad to
+     serve, and its reason says so in the panel's words. */
+  function loadSquads(after) {
+    /* `after` is the COMPLETION EDGE, not a "call me back whatever the state".
+       Firing it on an already-finished load re-entered renderGrid from inside
+       renderGrid and blew the stack; a second caller needs nothing, because
+       the first one's callback is what redraws. */
+    if (squadsAsked) return;
+    squadsAsked = true;
+    const creators = (res.creators || []).map(c => c.creator);
+    squadsPending = creators.length;
+    if (!squadsPending) { after && after(); return; }
+    for (const creator of creators) {
+      detailFor(creator).then(d => {
+        if (d && !d.__error) {
+          squadByCreator.set(creator, {
+            squad: Array.isArray(d.squad) ? d.squad : [],
+            reason: d.squad_reason || null,
+            entry: d.entry || null,
+            window_days: d.window_days ?? null,
+          });
+        } else {
+          squadByCreator.set(creator, {
+            squad: [], reason: null,
+            error: (d && d.__error) || "creator_detail could not be read",
+          });
+        }
+      }).finally(() => {
+        squadsPending--;
+        if (squadsPending === 0 && after) after();
+      });
+    }
+  }
+
+  /* What the panel itself says about a named person's squad, verbatim where
+     it can. `panel_squads` names who has no stored picks; anybody verified
+     and NOT on that list is counted in its `known` total. */
+  function panelSquadWord(name) {
+    const ps = res.panel_squads || {};
+    if ((ps.no_entry_people || []).includes(name))
+      return { known: false, text: "the panel publishes no verified entry id for him" };
+    if ((ps.unknown_people || []).includes(name))
+      return { known: false, text: "`panel_squads` lists him under the people no picks are stored for" };
+    if (ps.known != null)
+      return { known: true, text:
+        `\`panel_squads\` counts him inside its ${ps.known} crawled ` +
+        `squad${ps.known === 1 ? "" : "s"}` + (ps.gw != null ? ` (GW${ps.gw})` : "") };
+    return { known: null, text: "the payload does not say whether his squad has been crawled" };
+  }
+
   function quoteBlock(text, claim, item) {
     const q = el("blockquote", "cx-quote");
     q.appendChild(el("span", "cx-qmark", "“"));
@@ -1774,6 +2108,344 @@ export default async function creators(host) {
     }
     q.appendChild(foot2);
     return q;
+  }
+
+  /* ------------------------------------------- a PERSON, and their team */
+  /* The question this view exists to answer is "what do they own that they
+     never talk about", and until now clicking a person opened a PLAYER. This
+     opens the person: their locked 15 from `creator_detail.squad`, the
+     captain inside it, and the holdings no claim in the record ever names. */
+
+  const POS_ORDER = { GKP: 0, DEF: 1, MID: 2, FWD: 3 };
+
+  function drawerHead(title, sub) {
+    const head = el("div", "dhead");
+    const id = el("div");
+    id.appendChild(el("div", "dname", title));
+    if (sub) id.appendChild(el("div", "sub", sub));
+    head.appendChild(id);
+    const close = el("button", null, "✕");
+    close.onclick = closeDrawer;
+    head.appendChild(close);
+    return head;
+  }
+
+  async function openPerson(R) {
+    try { chatterHandle?.cancel(); } catch { /* may be mid-build */ }
+    chatterHandle = null;
+    drawer.textContent = "";
+    drawer.classList.add("open");
+    drawer.scrollTop = 0;
+
+    const people = R.people || [];
+    drawer.appendChild(drawerHead(R.label,
+      R.kind === "show"
+        ? `a show${people.length ? ` — ${plural(people.length, "host")}` : ""}`
+        : [R.show && R.show !== R.label ? R.show : null,
+           R.person && R.person.entry_id != null ? `entry ${R.person.entry_id}` : null]
+            .filter(Boolean).join(" · ") || "a person on the panel"));
+
+    /* A SHOW IS NOT A PERSON, and this is where that stops being a caption
+       and starts being enforced: there is no squad to open, and the drawer
+       says why rather than averaging its hosts into a team nobody picked. */
+    if (R.kind === "show") {
+      const p = el("p", "cx-provline warn");
+      p.appendChild(el("b", null, "A show has no squad."));
+      p.append(people.length > 1
+        ? ` ${R.label} has ${plural(people.length, "host")} with ` +
+          `${people.length} different teams. \`creator_detail\` is keyed on the ` +
+          "show, and this show's own `entry_id` is null, so there is no one " +
+          "locked 15 behind this row. Merging four squads into one would be " +
+          "inventing a team nobody picked, so this row carries hue and never " +
+          "a ring — what was SAID here is the show's, not any one host's."
+        : " No panel person is published for this show, so there is nobody " +
+          "whose team this row could show. That is a missing attribution, not " +
+          "an empty squad.");
+      drawer.appendChild(p);
+      const s = squadByCreator.get(R.show);
+      if (s && s.reason) {
+        const q = el("p", "cx-note");
+        q.appendChild(el("span", "cx-quotemark", "the panel's own words: "));
+        q.append(s.reason);
+        drawer.appendChild(q);
+      }
+      if (people.length) {
+        drawer.appendChild(el("h2", null, "The hosts, and whether a team was read"));
+        const list = el("div", "cx-people-list");
+        for (const p2 of people) {
+          const nm = personName(p2);
+          const row = el("div", "cx-personrow");
+          const t = el("div", "cx-personname");
+          t.appendChild(el("b", null, nm || "unnamed"));
+          if (p2.entry_id != null) {
+            const a = el("a", "cx-cross", `entry ${p2.entry_id} ↗`);
+            a.href = p2.source_url ||
+              `https://fantasy.premierleague.com/api/entry/${p2.entry_id}/`;
+            a.target = "_blank"; a.rel = "noopener noreferrer";
+            t.appendChild(a);
+          }
+          row.appendChild(t);
+          const w = panelSquadWord(nm);
+          const note = el("div", "cx-tiny");
+          note.append(w.text + ". ");
+          if (w.known === true) note.append(
+            "His whole fifteen is still not reachable from here: " +
+            "`creator_detail` serves one squad per SHOW, and this show has no " +
+            "entry id of its own. Open his own row for the part `panel_owned` " +
+            "does name.");
+          row.appendChild(note);
+          list.appendChild(row);
+        }
+        drawer.appendChild(list);
+      }
+      return;
+    }
+
+    const load = el("p", "cx-loading", "reading his record…");
+    drawer.appendChild(load);
+    const d = await detailFor(R.show);
+    if (!drawer.classList.contains("open")) return;
+    load.remove();
+    if (!d || d.__error) {
+      drawer.appendChild(errBox(new Error(
+        (d && d.__error) || "creator_detail could not be read")));
+      return;
+    }
+
+    const squad = Array.isArray(d.squad) ? d.squad : [];
+    const solo = personsOf(byCreatorOf(R.show)).length === 1;
+
+    /* Every claim this record holds for this source, across its OWN window
+       and EVERY gameweek — because "never once mentioned" is a claim about
+       the whole record, not about the gameweek the board happens to show. */
+    const mentioned = new Map();       // code -> [claim]
+    for (const item of d.items || [])
+      for (const c of item.claims || []) {
+        if (c.code == null) continue;
+        if (!mentioned.has(c.code)) mentioned.set(c.code, []);
+        mentioned.get(c.code).push({ ...c, item });
+      }
+
+    if (!squad.length || !solo) {
+      const p = el("p", "cx-provline warn");
+      p.appendChild(el("b", null, "No locked 15 to show for him."));
+      if (!solo) {
+        const w = panelSquadWord(R.label);
+        p.append(` ${R.label} is one of ${plural((R.people || []).length, "host")} ` +
+          `on ${R.show}. \`creator_detail\` returns one squad per SHOW, keyed ` +
+          "on the show's own entry id — and a multi-host show has none — so " +
+          `his team cannot be fetched from this page. ${w.text}.`);
+      } else if (d.squad_reason) {
+        p.append(" The panel gives a reason rather than an empty team, and it " +
+          "is the reason, not a count of zero.");
+      } else {
+        p.append(" `creator_detail` returned no squad and no reason for it.");
+      }
+      drawer.appendChild(p);
+      if (d.squad_reason) {
+        const q = el("p", "cx-note");
+        q.appendChild(el("span", "cx-quotemark", "the panel's own words: "));
+        q.append(d.squad_reason);
+        drawer.appendChild(q);
+      }
+
+      /* What IS known about him, which is not nothing: `panel_owned` names
+         owners of the players on THIS BOARD. That is a slice of his team, not
+         his team, and the heading says so rather than letting a partial list
+         read as a squad. */
+      const held = (res.consensus || []).filter(c =>
+        ((c.panel_owned || {}).people || []).includes(R.label));
+      drawer.appendChild(el("h2", null, "What the board does know he holds"));
+      if (!held.length) {
+        drawer.appendChild(el("p", "sub",
+          `\`panel_owned\` names him on none of the ${plural((res.consensus || []).length, "player")} ` +
+          `on this board for GW${res.gw}. That is a statement about these ` +
+          "players only — it is not a statement that he owns nobody."));
+      } else {
+        drawer.appendChild(el("p", "sub",
+          `${held.length} of the ` +
+          `${plural((res.consensus || []).length, "player")} on this board, ` +
+          "from `panel_owned`. " +
+          "The other members of his fifteen are not published anywhere this " +
+          "page can read, so this is a slice of his team and never the whole " +
+          "of it. Marked below: whether this show's record ever names them."));
+        const hl = el("div", "cx-quietlist");
+        for (const c of held) {
+          const said = mentioned.get(c.code) || [];
+          const b = el("button", "cx-thinrow");
+          b.appendChild(el("span", "cx-dot " + (said.length ? "solid" : "hollow")));
+          b.appendChild(el("b", null, c.name));
+          b.appendChild(el("span", "sub",
+            ` ${c.pos || ""} ${c.price != null ? fmtPrice(c.price) : ""} · ` +
+            (said.length
+              ? `${plural(said.length, "claim")} on ${R.show}`
+              : `never named on ${R.show}`)));
+          b.onclick = () => openPlayerByCode(c.code, c.name);
+          hl.appendChild(b);
+        }
+        drawer.appendChild(hl);
+        drawer.appendChild(el("p", "cx-note",
+          "The claims counted here are the SHOW's — this show does not " +
+          "attribute them to a host, so a hollow dot means nobody on the show " +
+          "named him, not that this person did not."));
+      }
+    }
+
+    if (squad.length && solo) {
+      const capName = (squad.find(p => p.is_captain) || {}).name;
+      const prov = el("p", "cx-provline");
+      prov.appendChild(el("b", null, `His locked ${squad.length}`));
+      prov.append(d.squad_reason ? ` — ${d.squad_reason}.` : ".");
+      if (capName) prov.append(` Captain: ${capName}.`);
+      /* Read the multipliers rather than assuming them: in this payload every
+         pick carries ×1 except the captain's ×2, which means it does NOT mark
+         which four were benched. Saying "starting XI" over that would be an
+         invention, so the drawer says fifteen and says why. */
+      const benched = squad.filter(p => p.multiplier === 0).length;
+      prov.append(benched
+        ? ` ${benched} of them carry a ×0 multiplier — the bench.`
+        : " Every pick here carries a multiplier of ×1 apart from the " +
+          "captain's ×2, so this payload does not mark which four were " +
+          "benched: these are the fifteen, not a starting eleven.");
+      drawer.appendChild(prov);
+
+      const grid = el("div", "cx-sq");
+      const ordered = squad.slice().sort((a, b) =>
+        (POS_ORDER[a.pos] ?? 9) - (POS_ORDER[b.pos] ?? 9) ||
+        (b.price ?? 0) - (a.price ?? 0) ||
+        String(a.name).localeCompare(String(b.name)));
+      for (const p of ordered) {
+        const said = mentioned.get(p.code) || [];
+        const cell = el("button", "cx-sqcard" + (said.length ? " said" : " quiet"));
+        cell.appendChild(faceImg(p.code, "cx-sqface"));
+        const nm = el("div", "cx-sqname");
+        if (p.is_captain) nm.appendChild(el("span", "cx-sqcap", "★"));
+        nm.append(p.name);
+        cell.appendChild(nm);
+        cell.appendChild(el("div", "cx-sqmeta",
+          [p.pos, p.price != null ? fmtPrice(p.price) : null,
+           p.multiplier != null ? `×${p.multiplier}` : null]
+            .filter(Boolean).join(" · ")));
+        cell.appendChild(el("div", "cx-sqsay",
+          said.length ? `${plural(said.length, "claim")}` : "never mentioned"));
+        if (laneOf.has(p.code))
+          cell.appendChild(el("span", "cx-sqyours", laneLabel(laneOf.get(p.code))));
+        cell.title = `${p.name}${p.is_captain ? " — his captain" : ""}\n` +
+          (said.length
+            ? said.map(c => `${c.action || "claim"}${c.gameweek != null ? ` · GW${c.gameweek}` : ""}`).join("\n")
+            : `no claim in ${R.show}'s record names him`) +
+          (laneOf.has(p.code) ? `\nyou: ${laneLabel(laneOf.get(p.code)).toLowerCase()}` : "");
+        cell.onclick = () => openPlayerByCode(p.code, p.name);
+        grid.appendChild(cell);
+      }
+      drawer.appendChild(grid);
+
+      /* THE POINT OF THE VIEW, spelled out rather than left to be inferred
+         from the absence of a hue on a row of coloured squares. */
+      const quiet = ordered.filter(p => !mentioned.has(p.code));
+      drawer.appendChild(el("h2", null, "Quiet holdings — owns him, never mentions him"));
+      const qp = el("p", "sub");
+      if (quiet.length) {
+        qp.append(`${quiet.length} of his ${squad.length}. ` +
+          `Measured against every claim \`creator_detail\` holds for ${R.show}` +
+          (d.window_days != null ? ` — ${plural(d.window_days, "day")}` : "") +
+          `, across every gameweek, not just GW${res.gw}. A transcript can ` +
+          "never surface these: they are the picks he made and did not " +
+          "discuss, and they only exist on this page because the squad and " +
+          "the claims are read together.");
+      } else {
+        qp.append("None — every one of his " + squad.length + " has been " +
+          "named in the record at least once. That is a finding, not a blank.");
+      }
+      drawer.appendChild(qp);
+      if (quiet.length) {
+        const ql = el("div", "cx-quietlist");
+        for (const p of quiet) {
+          const b = el("button", "cx-thinrow");
+          b.appendChild(el("span", "cx-dot hollow"));
+          b.appendChild(el("b", null, p.name));
+          b.appendChild(el("span", "sub",
+            ` ${p.pos || ""} ${p.price != null ? fmtPrice(p.price) : ""}` +
+            (p.is_captain ? " · his captain" : "") +
+            (laneOf.has(p.code) ? ` · ${laneLabel(laneOf.get(p.code)).toLowerCase()}` : "")));
+          b.onclick = () => openPlayerByCode(p.code, p.name);
+          ql.appendChild(b);
+        }
+        drawer.appendChild(ql);
+      }
+
+      /* The mirror: talk with none of his own money behind it. */
+      const codes = new Set(squad.map(p => p.code));
+      const talkedNotOwned = [...mentioned.entries()].filter(([c]) => !codes.has(c));
+      drawer.appendChild(el("h2", null, "Talked about, does not own"));
+      drawer.appendChild(el("p", "sub", talkedNotOwned.length
+        ? `${plural(talkedNotOwned.length, "player")} he named and did not pick. ` +
+          "Neither a contradiction nor a signal — a squad holds fifteen and a " +
+          "show discusses more than fifteen. It is here because the other " +
+          "half of the same question is."
+        : "Nobody. Every player he named is in his fifteen."));
+      if (talkedNotOwned.length) {
+        const tl = el("div", "cx-quietlist");
+        for (const [code, cl] of talkedNotOwned
+            .sort((a, b) => b[1].length - a[1].length)) {
+          const nm = cl[0].name || `player ${code}`;
+          const b = el("button", "cx-thinrow");
+          b.appendChild(el("span", "cx-dot solid"));
+          b.appendChild(el("b", null, nm));
+          b.appendChild(el("span", "sub",
+            ` ${plural(cl.length, "claim")} · ` +
+            [...new Set(cl.map(c => c.action).filter(Boolean))].join(", ")));
+          b.onclick = () => openPlayerByCode(code, nm);
+          tl.appendChild(b);
+        }
+        drawer.appendChild(tl);
+      }
+    }
+
+    const rec = d.record || {};
+    if (rec.scored != null) {
+      const p = el("p", "cx-note");
+      p.append(`His measured record: ${rec.hits ?? "?"} hits from ` +
+        `${rec.scored} scored calls` +
+        (rec.hit_rate != null ? ` (${(100 * rec.hit_rate).toFixed(0)}%)` : "") +
+        `, earned weight ${rec.weight != null ? rec.weight.toFixed(1) : "–"}. ` +
+        "Reference material, not a ranking — no weight on this page has been earned.");
+      drawer.appendChild(p);
+    }
+  }
+
+  const byCreatorOf = k => (res.creators || []).find(c => c.creator === k) || null;
+
+  /* Reach a player from a squad card. The board row is the rich one; where a
+     quiet holding is on nobody's buy or sell list there is no board row at
+     all, so a minimal one is built from what the squad card knows and the
+     drawer says which of the two it is. */
+  function openPlayerByCode(code, name) {
+    const r = buildRows().find(x => x.code === code);
+    if (r) { openPlayer(r); return; }
+    /* `buildRows` is filtered by the Evidence switch, so "not in it" is not
+       the same as "nobody named him". A player the switch dropped IS on the
+       board — read him from the raw consensus with the filter off rather than
+       telling the reader he was never mentioned. */
+    const raw = (res.consensus || []).find(c => c.code === code);
+    if (raw) {
+      const was = consideredOnly;
+      consideredOnly = false;
+      const r2 = buildRows().find(x => x.code === code);
+      consideredOnly = was;
+      if (r2) { openPlayer(r2); return; }
+    }
+    openPlayer({
+      code, name, pos: null, team: null, price: null, own_pct: null,
+      buy: grp(null), sell: grp(null), cap: grp(null),
+      nBuy: 0, nSell: 0, nCap: 0, net: 0,
+      lane: laneOf.get(code) || "none", split: false, capElsewhere: false,
+      agreed: false, voices: 0, anyCue: 0, anyLlm: 0, cueOnly: false,
+      __unnamed: true,
+      reason: `Nobody on the panel named ${name} for GW${res.gw} in this ` +
+        `window — he is here because somebody owns him, which is the one ` +
+        `thing a transcript can never tell you.`,
+    });
   }
 
   async function openPlayer(r) {
@@ -1835,12 +2507,22 @@ export default async function creators(host) {
       (parseTs(b.c.published_at) - parseTs(a.c.published_at)));
 
     if (!claims.length) {
-      list.appendChild(emptyBox(
-        "No stored claim for this player carries a quote.",
-        "He is counted above from the consensus rollup, but the per-creator " +
-        "record for these sources holds no quoted claim on him inside its own " +
-        "window — the two windows differ. Nothing has been invented to fill " +
-        "the gap."));
+      /* Two different silences, and they must not share a sentence. A player
+         on the board with no quoted claim is a window mismatch; a player who
+         reached this drawer from somebody's SQUAD was never on the board at
+         all, and saying "counted above" about him would be false. */
+      list.appendChild(r.__unnamed
+        ? emptyBox(
+            "Nobody on the panel named him.",
+            `He is here because he is in somebody's fifteen. No claim in this ` +
+            `window names him for GW${res.gw}, so there is nothing said to ` +
+            "show — that is the quiet holding, not a failed lookup.")
+        : emptyBox(
+            "No stored claim for this player carries a quote.",
+            "He is counted above from the consensus rollup, but the per-creator " +
+            "record for these sources holds no quoted claim on him inside its own " +
+            "window — the two windows differ. Nothing has been invented to fill " +
+            "the gap."));
     }
     for (const { creator, item, c } of claims) {
       const d = el("div", "cx-qcard");

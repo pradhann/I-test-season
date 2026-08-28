@@ -197,10 +197,27 @@ a.cx-job-url:hover { color: var(--ink); text-decoration: underline; }
 /* .cx-asof is itself a flex box with a 6px gap, so its separator only owes
    the remaining 3px — otherwise that one gap sits 6px wider than the others */
 .cx-toolmeta > .cx-asof::before { margin-right: 3px; }
-.cx-gw { color: var(--muted); font-size: 12px; }
-.cx-gw b { color: var(--ink); font-family: var(--mono);
-           font-variant-numeric: tabular-nums; }
 .cx-asof { display: inline-flex; align-items: center; gap: 6px; }
+
+/* ---------------------------------------------------- the gameweek picker */
+/* Same `.chip.gw` vocabulary as xPoints, because it is the same control: pick
+   which gameweek the board is drawn for. Two things ride ON the chip rather
+   than beside it — the count behind that gameweek, and which one is the next
+   deadline — so the row answers "is there anything there" before it is
+   clicked. A chip that has been MEASURED empty is `.chip.off` and disabled;
+   an unmeasured one stays live and says "…", because not knowing and knowing
+   nothing are different facts. */
+.cx-gwn { margin-left: 6px; font-family: var(--mono);
+          font-variant-numeric: tabular-nums; font-weight: 500;
+          font-size: 11px; color: var(--faint); }
+.chip.gw.on .cx-gwn { color: var(--muted); }
+.cx-gwnext { margin-left: 6px; font-size: 9px; font-weight: 700;
+             letter-spacing: .08em; text-transform: uppercase;
+             color: var(--accent-ink); }
+.cx-gwhint { margin-left: auto; color: var(--faint); font-size: 11px; }
+/* the reasons under the row: which gameweek you are on, and how it was picked */
+.cx-gwnote:not(:empty) { padding: 2px 0 6px; }
+.cx-gwnote .cx-provline { margin: 4px 0 0; }
 .cx-key { display: inline-flex; gap: 14px; align-items: center;
           margin-left: auto; }
 .cx-keyitem { display: inline-flex; align-items: center; gap: 6px;
@@ -512,6 +529,26 @@ td.cx-gutter, th.cx-gutter { position: sticky; left: 0; z-index: 2;
 td.cx-gutter b { color: var(--ink); font-size: 12.5px; }
 .cx-gutsub { color: var(--faint); font-size: 10.5px; margin-left: 6px; }
 
+/* The row head is the way in to the person's team. It is a real button — the
+   whole point of the view was unreachable while this was inert text — but it
+   is drawn as the name it already was, with the affordance carried by the
+   underline on hover and a real focus ring, so the gutter keeps its density. */
+.cx-gutname { display: block; width: 100%; text-align: left; padding: 0;
+              margin: 0; background: none; border: 0; cursor: pointer;
+              font: inherit; color: inherit; line-height: 1.35; }
+.cx-gutname:hover b { text-decoration: underline; }
+.cx-gutname.show:hover b { text-decoration-style: dashed; }
+.cx-gutname:focus-visible { outline: 2px solid var(--s1); outline-offset: 2px;
+                            border-radius: 4px; }
+tr.cx-gridrow.show .cx-gutname b { font-style: italic; color: var(--muted); }
+/* how many of that person's 15 were read — the ring channel, counted */
+.cx-gutown { display: inline-block; font-size: 10px; letter-spacing: .04em;
+             text-transform: uppercase; color: var(--accent-ink);
+             font-weight: 650; margin-top: 1px; }
+/* a count bounded by these columns is NOT a squad size, so it is not drawn
+   with the weight of one */
+.cx-gutown.part { color: var(--faint); font-weight: 500; }
+
 th.cx-colh { height: 118px; vertical-align: bottom; padding-bottom: 4px;
              width: 22px; }
 .cx-colname { writing-mode: vertical-rl; transform: rotate(180deg);
@@ -575,6 +612,45 @@ tr.cx-you td.cx-gutter { background: color-mix(in oklab, var(--accent) 10%, var(
 .cx-act.out { color: var(--cx-out);
   border-color: color-mix(in oklab, var(--cx-out) 50%, var(--line)); }
 .cx-qitem { margin-top: 5px; font-size: 12px; }
+/* ------------------------------------------------- a person and their team */
+/* The squad is a grid of small cards, not a pitch: the payload gives fifteen
+   picks with a captain flag and no bench marker, so drawing a formation would
+   invent the one fact it does not carry. QUIET is the state the view exists
+   for, so it is the one that is drawn — a dashed edge and a muted card, the
+   same "hollow = weaker evidence" grammar the board uses, here meaning
+   "held, never spoken about". */
+.cx-sq { display: grid; gap: 6px; margin-top: 10px;
+         grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); }
+.cx-sqcard { display: block; text-align: left; cursor: pointer;
+             background: var(--raised); border: 1px solid var(--line);
+             border-radius: 9px; padding: 6px 7px 7px; color: inherit;
+             font: inherit; position: relative; }
+.cx-sqcard:hover { border-color: var(--muted); }
+.cx-sqcard:focus-visible { outline: 2px solid var(--s1); outline-offset: 2px; }
+.cx-sqcard.quiet { border-style: dashed;
+  border-color: color-mix(in oklab, var(--ink) 26%, var(--line));
+  background: var(--surface); }
+.cx-sqface { width: 30px; height: 36px; object-fit: cover;
+             object-position: top center; border-radius: 5px;
+             background: var(--raised); display: block; margin-bottom: 3px; }
+.cx-sqface.missing { visibility: hidden; }
+.cx-sqname { font-size: 12px; font-weight: 650; color: var(--ink);
+             overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cx-sqcap { color: var(--warn); margin-right: 3px; }
+.cx-sqmeta { font-size: 10px; color: var(--faint); font-family: var(--mono);
+             font-variant-numeric: tabular-nums; margin-top: 1px; }
+.cx-sqsay { font-size: 10px; margin-top: 3px; color: var(--muted); }
+.cx-sqcard.quiet .cx-sqsay { color: var(--ink); font-weight: 600; }
+.cx-sqyours { display: inline-block; margin-top: 3px; font-size: 9px;
+              font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+              padding: 0 5px; border-radius: 999px; color: var(--accent-ink);
+              background: color-mix(in oklab, var(--accent) 16%, var(--surface)); }
+.cx-quietlist { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
+.cx-people-list { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.cx-personrow { border-left: 2px solid var(--line); padding-left: 9px; }
+.cx-personname { display: flex; align-items: baseline; gap: 8px;
+                 flex-wrap: wrap; font-size: 12.5px; }
+
 /* The cross-tab strip is a PEER SECTION of "what was said, and where", but it
    mounts in its `pc-full` variant, which drops its own top rule. Without one
    the two sections ran together as a single column of cards. */
@@ -590,7 +666,7 @@ tr.cx-you td.cx-gutter { background: color-mix(in oklab, var(--accent) 10%, var(
   .cx-wholine, .cx-dissent, .cx-owned { grid-template-columns: minmax(0, 1fr);
                                         gap: 1px; }
   .cx-armname { min-width: 120px; }
-  .cx-key, .cx-toolmeta { margin-left: 0; flex-basis: 100%; }
+  .cx-key, .cx-toolmeta, .cx-gwhint { margin-left: 0; flex-basis: 100%; }
   td.cx-gutter, th.cx-gutter { min-width: 132px; max-width: 132px; }
   .cx-legend { gap: 6px 14px; }
   /* the clamps buy nothing once the table scrolls anyway, and a 280px title
