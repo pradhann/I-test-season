@@ -2188,12 +2188,21 @@ def _intel_block(wh, season: str, codes: tuple[int, int], now: dt.datetime) -> d
 
 def _lineups_block(wh, season: str, gw: int, codes: tuple[int, int],
                    now: dt.datetime) -> dict[str, Any]:
+    # Latest SNAPSHOT per team, not latest ROW per player. When rotowire drops a
+    # player from the XI it stops emitting a row for them rather than writing
+    # predicted_start = false, so a per-player "latest" resurrects every player
+    # who was ever named: Palace's GW2 XI came back with thirteen starters, the
+    # eleven plus two dropped a day earlier. A player absent from the newest
+    # snapshot is not in the XI.
     rows = q(wh, """
-        WITH lu AS (SELECT * EXCLUDE(rn) FROM (
-              SELECT *, row_number() OVER (
-                PARTITION BY provider, season, gw, code ORDER BY as_of DESC) rn
-              FROM fact_predicted_lineup WHERE season = ? AND gw = ? AND as_of <= ?)
-            WHERE rn = 1),
+        WITH vis AS (SELECT * FROM fact_predicted_lineup
+                     WHERE season = ? AND gw = ? AND as_of <= ?),
+             newest AS (SELECT provider, team_code, max(as_of) AS mx
+                        FROM vis GROUP BY 1, 2),
+             lu AS (SELECT vis.* FROM vis JOIN newest
+                      ON newest.provider = vis.provider
+                     AND newest.team_code = vis.team_code
+                     AND newest.mx = vis.as_of),
              pl AS (SELECT season, code, web_name, position FROM (
               SELECT *, row_number() OVER (PARTITION BY season, code ORDER BY as_of DESC) rn
               FROM dim_player WHERE season = ? AND as_of <= ?) WHERE rn = 1)

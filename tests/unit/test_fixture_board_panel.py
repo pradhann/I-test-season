@@ -563,3 +563,40 @@ def test_a_backdated_as_of_against_a_newer_fit_warns_about_leakage(tmp_path):
     clean = _seed(tmp_path / "clean", fitted_at=pd.Timestamp("2026-01-01", tz="UTC"))
     run2 = run_script("fixture_board", {"horizon": 1}, db=clean)
     assert not any("LEAKAGE" in n for n in run2.result["notes"])
+
+
+def test_a_player_dropped_from_the_xi_does_not_stay_in_it(tmp_path):
+    """rotowire drops a player by ceasing to emit them, not by writing false.
+
+    So "latest row per player" resurrects everyone ever named: the player's own
+    last row still says predicted_start = true, forever. Live, this returned a
+    thirteen-man Crystal Palace XI for GW2 -- the real eleven plus two dropped
+    the day before. The dedupe has to be the latest SNAPSHOT per team; a player
+    absent from it is not in the XI.
+    """
+    path = _seed(tmp_path)
+    old = pd.Timestamp("2026-08-13 10:00", tz="UTC")
+    new = pd.Timestamp("2026-08-14 10:00", tz="UTC")
+    from fpl_edge.ingest.projections.store import ProjectionStore
+    wh = Warehouse(path)
+    store = ProjectionStore(wh)
+    rows = []
+    # Yesterday: codes 1-11 start. Today: 11 is dropped and 12 comes in, and
+    # rotowire says nothing at all about 11 in the newer snapshot.
+    for code in range(1, 12):
+        rows.append({"provider": "rotowire", "season": SEASON, "gw": 1,
+                     "code": code, "team_code": 1, "predicted_start": True,
+                     "certainty": "expected", "as_of": old})
+    for code in list(range(1, 11)) + [12]:
+        rows.append({"provider": "rotowire", "season": SEASON, "gw": 1,
+                     "code": code, "team_code": 1, "predicted_start": True,
+                     "certainty": "expected", "as_of": new})
+    store.append("fact_predicted_lineup", pd.DataFrame(rows))
+    wh.close()
+
+    run = run_script("fixture_detail", {"fixture_id": 1}, db=path)
+    xi = run.result["predicted_lineups"]["by_team"]["1"]
+    starters = [r for r in xi if r["predicted_start"]]
+    assert len(starters) == 11, (
+        f"an XI is eleven; got {len(starters)} because a dropped player kept "
+        "his stale predicted_start from an older snapshot")

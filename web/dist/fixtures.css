@@ -93,7 +93,24 @@
   border-left: 2px solid color-mix(in oklab, var(--warn) 50%, var(--line));
   padding-left: 10px;
 }
-.fx-calib b { color: var(--warn); font-weight: 700; }
+.fx-calib b { color: var(--ink); font-weight: 650; }
+.fx-calib p { margin: 0; }
+.fx-cal-line { font-size: 12.5px; color: var(--ink); line-height: 1.55; }
+.fx-cal-line b.fx-cal-hi { color: var(--warn); font-weight: 700;
+                           font-variant-numeric: tabular-nums; }
+.fx-calib .sub { display: block; margin-top: 4px; color: var(--faint);
+                 font-size: 11.5px; line-height: 1.5; }
+.fx-cal-poslab { display: block; margin-top: 8px; color: var(--muted);
+                 font-size: 10px; letter-spacing: .07em; text-transform: uppercase;
+                 font-weight: 700; }
+.fx-cal-pos { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 5px; }
+.fx-cal-chip { display: inline-flex; align-items: baseline; gap: 6px;
+               border: 1px solid var(--line); border-radius: 999px;
+               padding: 2px 9px; background: var(--raised); cursor: help; }
+.fx-cal-chip .p { font-size: 10px; letter-spacing: .06em; font-weight: 700;
+                  color: var(--muted); }
+.fx-cal-chip .n { font-family: var(--mono); font-size: 11.5px; color: var(--ink);
+                  font-variant-numeric: tabular-nums; }
 
 /* ---------- freshness strip: one chip per input, above the numbers ---------- */
 .fx-fresh { display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
@@ -309,6 +326,16 @@
 .fx-gap code { font-family: var(--mono); font-size: 11px;
                background: color-mix(in oklab, var(--ink) 7%, transparent);
                padding: 0 4px; border-radius: 3px; }
+.fx-note {
+  border: 1px solid var(--line); border-left: 3px solid var(--accent);
+  border-radius: 8px; padding: 9px 11px;
+  background: var(--raised); color: var(--muted); font-size: 12px;
+  line-height: 1.5;
+}
+.fx-note b { display: block; color: var(--ink); margin-bottom: 3px; font-size: 12px; }
+.fx-note code { font-family: var(--mono); font-size: 11px;
+                background: color-mix(in oklab, var(--ink) 7%, transparent);
+                padding: 0 4px; border-radius: 3px; }
 .fx-kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px;
          font-size: 12px; }
 .fx-kv .k { color: var(--muted); }
@@ -341,3 +368,42 @@
   .fx-cell .vv { font-size: 9px; right: 4px; }
   .fx-torn-row { grid-template-columns: 1fr; }
 }
+
+/* ---------- method disclosure: one click, not six lines every visit -------- */
+.fx-how { margin: 8px 0 2px; }
+.fx-how > summary {
+  cursor: pointer; list-style: none; display: inline-flex; align-items: center;
+  gap: 6px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+  font-weight: 700; color: var(--muted); padding: 3px 0;
+}
+.fx-how > summary::-webkit-details-marker { display: none; }
+.fx-how > summary::before { content: "+"; font-family: var(--mono); font-size: 12px;
+                            color: var(--accent); font-weight: 700; }
+.fx-how[open] > summary::before { content: "\2212"; }
+.fx-how > summary:hover { color: var(--ink); }
+.fx-how > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px;
+                                  border-radius: 3px; }
+.fx-how > .fx-claim:first-of-type { margin-top: 8px; }
+.fx-hownotes { margin-top: 6px; }
+.fx-hownotes p { margin: 0 0 5px; max-width: 76ch; font-size: 11.5px;
+                 color: var(--faint); line-height: 1.55; }
+
+/* ---------- controls: three axes, one block, not three stacked bars -------- */
+.fx-controls {
+  display: flex; flex-direction: column; gap: 2px;
+  border: 1px solid var(--line); border-radius: 10px;
+  background: var(--raised); padding: 4px 10px; margin: 10px 0 8px;
+}
+.fx-controls .fx-tb { border: 0; background: none; padding: 4px 0; margin: 0; }
+.fx-controls .fx-tb + .fx-tb { border-top: 1px solid
+  color-mix(in oklab, var(--line) 55%, transparent); }
+
+/* ---------- predicted XI: names as a line, annotation only where it differs -- */
+.fx-xi { display: flex; flex-direction: column; gap: 8px; }
+.fx-xi-club { display: flex; align-items: baseline; gap: 8px; }
+.fx-xi-club b { font-size: 11px; letter-spacing: .06em; font-weight: 700; color: var(--ink); }
+.fx-xi-club .n { font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
+.fx-xi-names { margin: 2px 0 0; font-size: 11.5px; line-height: 1.55; color: var(--faint); }
+.fx-xi-other { margin: 3px 0 0; font-size: 11.5px; line-height: 1.55; color: var(--muted);
+               border-left: 2px solid color-mix(in oklab, var(--warn) 45%, var(--line));
+               padding-left: 8px; }
