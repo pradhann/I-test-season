@@ -685,7 +685,27 @@ def test_a_creator_score_stamped_in_the_future_is_not_in_force_now(seeded_db):
 def test_the_board_reports_the_next_undecided_gameweek(seeded_db):
     res = board(seeded_db)
     assert res["gw"] == 2
-    assert res["gw_reason"] is None
+    # `gw_reason` is a string on EVERY branch, including this happy one. "GW2"
+    # alone does not tell a reader whether it was asked for, deduced from the
+    # calendar, or scraped off the claims because the calendar was unreadable,
+    # and those are three different amounts of trust.
+    assert "next gameweek" in res["gw_reason"]
+    assert board(seeded_db, gw=1)["gw_reason"] == "GW1 was requested explicitly."
+
+
+def test_the_board_and_the_player_strip_resolve_the_same_gameweek(chatter_db):
+    """One ladder, or the board and the strip beneath it name different weeks.
+
+    They were two separate rules for exactly one release: `creator_board` had
+    the next-deadline ladder and `player_chatter` had no gameweek at all, so
+    the page could show "the panel for GW2" above a strip windowed by days that
+    silently mixed GW2 and GW3 talk together.
+    """
+    b = board(chatter_db)
+    c = chatter(chatter_db, code=HAALAND)
+    assert b["gw"] == c["gw"] == 2
+    assert "next gameweek" in b["gw_reason"]
+    assert "next gameweek" in c["gw_reason"]
 
 
 # ---------------------------------------------------------------------------
@@ -862,7 +882,10 @@ def test_a_player_nobody_has_mentioned_is_the_modal_case_and_explains_itself(
     render as "no", because "nobody has said anything about him" and "nobody
     rates him" are different statements and only the first one is true.
     """
-    res = chatter(chatter_db, code=SALIBA)
+    # GW3: the only thing anybody said about Saliba is a watch call ABOUT GW3,
+    # and the default gameweek here is GW2. Asking for the wrong week is a
+    # different sentence from nobody speaking -- see the gameweek block below.
+    res = chatter(chatter_db, code=SALIBA, gw=3)
     assert res.get("empty") is not True, "silence is not an empty panel"
     said_actions = {s["action"] for s in res["said"]}
     assert said_actions == {"watch"}, "the only thing said about him is a watch"
@@ -901,7 +924,7 @@ def test_a_watch_call_never_appears_as_a_recommendation(chatter_db):
     "keep an eye on Saliba" under a transfers-out heading, which attributes a
     sell to a named show that it never made.
     """
-    res = chatter(chatter_db, code=SALIBA)
+    res = chatter(chatter_db, code=SALIBA, gw=3)
     watches = [s for s in res["said"] if s["action"] == "watch"]
     assert len(watches) == 1, "the watch call reached the panel"
     call = watches[0]
@@ -959,7 +982,7 @@ def test_said_and_noticed_are_never_merged(chatter_db):
     tried to render them through one component would fail loudly rather than
     silently presenting a percentile calculation as somebody's opinion.
     """
-    res = chatter(chatter_db, code=SALIBA)
+    res = chatter(chatter_db, code=SALIBA, gw=3)
     assert res["said"] and res["noticed"]
     assert all("kind" not in s for s in res["said"])
     assert all("action" not in n and "conviction" not in n
@@ -1053,7 +1076,7 @@ def test_the_panel_emits_no_net_and_no_consensus_score(chatter_db):
     assert not (_keys(script("player_chatter").result_schema) & banned)
     # Volume is an honest ordering and it is all `counts` reports.
     assert set(res["counts"]) == {"said", "observations", "owned", "noticed",
-                                  "panel_size", "squads_known"}
+                                  "panel_size", "squads_known", "said_all_gw"}
 
 
 # -- provenance of a statement ---------------------------------------------
@@ -1275,3 +1298,257 @@ class TestAWatchNeverRidesInTheBuyList:
             "'watch, raised while discussing transfers in' says more than "
             "'watch' alone"
         )
+
+
+# ---------------------------------------------------------------------------
+# The gameweek axis.
+#
+# `content_claim.gameweek` has always held the gameweek a statement was ABOUT
+# (267 GW1 claims, 174 GW2, 37 GW3, 21 GW4 in the live warehouse) and nothing
+# read it back on a per-player basis. `player_chatter` was windowed by DAYS,
+# which rots in two directions at once: while GW2 is live a 30-day window shows
+# GW2 talk beside GW3 talk with nothing distinguishing them, and once GW3
+# arrives the GW2 statements age out of the window entirely rather than staying
+# findable. Days and gameweeks are two axes and the tests below exist to keep
+# them from being conflated again.
+
+def _plant_old_take_about_gw2(db):
+    """A statement made 90 days ago that is still ABOUT GW2.
+
+    This is the row that makes the two axes distinguishable: any test where
+    "recent" and "about this gameweek" coincide proves nothing about which one
+    the code is actually using.
+    """
+    old = NOW - dt.timedelta(days=90)
+    wh = Warehouse(db)
+    _item(wh, "old_row", "yt_notes", "Notes Only", "youtube", "Season preview",
+          "https://www.youtube.com/watch?v=OLDvid00001", old, "description")
+    _claim(wh, "c_old_gw2", "old_row", "Notes Only", "yt_notes", HAALAND,
+           "Erling Haaland", "buy", old, gw=2)
+    wh.close()
+
+
+def _plant_undated_watch(db):
+    """A watch call the model never dated, on an item published two days ago.
+
+    A watch is unmapped in the claim writer, so nothing stamped a gameweek on
+    it at ingest -- which is exactly the row that tempts a reader-side rule of
+    its own.
+    """
+    undated = {
+        "summary": ["Undated."],
+        "transfers_in": [], "transfers_out": [], "captaincy": [],
+        "differentials": [{
+            "player": "Erling Haaland", "stance": "watch",
+            "conviction": "medium", "reasoning": "No gameweek named.",
+            "quote": "undated thought about Haaland",
+        }],
+    }
+    wh = Warehouse(db)
+    _item(wh, "undated_row", "yt_notes", "Notes Only", "youtube", "Rambles",
+          "https://www.youtube.com/watch?v=UNDATEDvid1", PAST, "description")
+    wh.sql("INSERT INTO content_analysis VALUES (?, ?, ?, ?)",
+           ["undated_row", "claude-opus-5", PAST, json.dumps(undated)])
+    wh.close()
+
+
+def test_the_player_strip_defaults_to_the_next_gameweek(chatter_db):
+    """Same default as the board above it, through the same resolver."""
+    res = chatter(chatter_db, code=HAALAND)
+    assert res["gw"] == 2
+    assert "next gameweek" in res["gw_reason"]
+    assert all(s["gameweek"] == 2 for s in res["said"])
+
+
+def test_every_statement_carries_the_gameweek_it_was_about(chatter_db):
+    """`published_at` is not it. The UI has to be able to label and group.
+
+    Without this the strip can only sort by recency, which is the wrong axis:
+    a GW3 preview recorded on Monday and a GW2 post-mortem recorded on Tuesday
+    sort with the post-mortem on top and nothing on either row says which week
+    it is talking about.
+    """
+    res = chatter(chatter_db, code=HAALAND, gw=2)
+    assert res["said"], "the fixture's captain claim is a GW2 claim"
+    for row in res["said"]:
+        assert row["gameweek"] == 2
+        assert row["gameweek_basis"] in {"stated", "inferred", None}
+    # `_claim` writes gw_inferred = false, so the gameweek was stored as
+    # stated and is not re-derived here.
+    assert {r["gameweek_basis"] for r in res["said"]} == {"stated"}
+
+
+def test_an_undated_watch_call_is_dated_by_the_ingesters_own_rule(chatter_db):
+    """A watch never becomes a claim, so nothing stamps its gameweek.
+
+    Reading it back needs the SAME rule the claim extractor used -- the first
+    gameweek whose deadline falls after publication -- or one video's dated buy
+    and undated watch land in two different gameweeks and the panel disagrees
+    with itself about what that video was about.
+    """
+    _plant_undated_watch(chatter_db)
+    res = chatter(chatter_db, code=HAALAND, gw=2)
+    call = next(s for s in res["said"]
+                if s["quote"] == "undated thought about Haaland")
+    # PAST is two days ago; GW1's deadline is six days ago and GW2's is
+    # tomorrow, so the first deadline after publication is GW2's.
+    assert call["gameweek"] == 2
+    assert call["gameweek_basis"] == "inferred", (
+        "an inferred gameweek must never be presented as one the speaker named"
+    )
+    # ...and it is absent from GW1, which is the point of dating it at all.
+    assert not any(s["quote"] == "undated thought about Haaland"
+                   for s in chatter(chatter_db, code=HAALAND, gw=1)["said"])
+
+
+def test_days_does_not_bound_a_gameweek_scoped_read(chatter_db):
+    """A claim made three weeks ago ABOUT GW3 is a GW3 claim.
+
+    Letting a day window also apply to a gameweek-scoped read drops statements
+    for a reason no reader could ever guess, and it is what made the old strip
+    rot: once GW2 was played its talk aged out of the window rather than
+    staying findable under GW2.
+    """
+    _plant_old_take_about_gw2(chatter_db)
+    res = chatter(chatter_db, code=HAALAND, gw=2, days=1)
+    quotes = {s["item_title"] for s in res["said"]}
+    assert "Season preview" in quotes, (
+        "a 90-day-old statement about GW2 is still a GW2 statement; `days` "
+        "must not bound a gameweek-scoped read"
+    )
+    assert "does not bound" in res["gw_reason"]
+
+
+def test_gw_all_is_the_escape_hatch_where_days_still_bounds(chatter_db):
+    """The old behaviour stays reachable, but only when asked for by name."""
+    _plant_old_take_about_gw2(chatter_db)
+    wide = chatter(chatter_db, code=HAALAND, gw="all", days=365)
+    narrow = chatter(chatter_db, code=HAALAND, gw="all", days=1)
+    assert wide["gw"] is None and narrow["gw"] is None
+    assert "no gameweek filter" in wide["gw_reason"]
+    assert any(s["item_title"] == "Season preview" for s in wide["said"])
+    assert not any(s["item_title"] == "Season preview" for s in narrow["said"]), (
+        "`gw: all` is the one mode where `days` is the bound"
+    )
+    # And it blames the right control. Saying "this is a gameweek filter"
+    # when the day window did the hiding sends the reader to the wrong one.
+    assert "outside that window" in narrow["said_reason"]
+    assert "day window, not silence" in narrow["said_reason"]
+    assert "gameweek filter" not in narrow["said_reason"]
+
+
+def test_a_gameweek_filter_never_hides_that_other_gameweeks_have_content(
+        chatter_db):
+    """"Nothing for GW2" and "nobody rates him" are different statements.
+
+    Saliba's only visible statement is a watch call about GW3. Asked for the
+    default gameweek the strip is empty -- and an empty strip under a gameweek
+    selector reads as silence unless it says, with a count, where the talk
+    actually is.
+    """
+    res = chatter(chatter_db, code=SALIBA, gw=2)
+    assert res["said"] == []
+    assert res["said_by_gw"] == [{"gw": 3, "n": 1}], (
+        "the census is computed before the filter, or it cannot contradict it"
+    )
+    assert "1 for GW3" in res["said_reason"]
+    assert "not silence" in res["said_reason"]
+    assert res["counts"]["said"] == 0
+    assert res["counts"]["said_all_gw"] == 1
+
+
+def test_the_census_counts_every_gameweek_whatever_the_filter(chatter_db):
+    """`said_by_gw` must not move when `gw` does, or it is just `said` again."""
+    _plant_old_take_about_gw2(chatter_db)
+    seen = [chatter(chatter_db, code=HAALAND, gw=g)["said_by_gw"]
+            for g in (1, 2, 3)]
+    seen.append(chatter(chatter_db, code=HAALAND, gw="all", days=1)["said_by_gw"])
+    assert all(c == seen[0] for c in seen), (
+        "the census is the thing the filter is filtering; it cannot itself be "
+        "filtered or it can never tell the reader what they are not seeing"
+    )
+    assert {b["gw"]: b["n"] for b in seen[0]}[2] >= 2
+
+
+def test_a_gameweek_nobody_spoke_about_is_not_an_empty_corpus(chatter_db):
+    res = chatter(chatter_db, code=HAALAND, gw=38)
+    assert res["said"] == []
+    assert "gameweek filter, not silence" in res["said_reason"]
+    assert res["said_by_gw"], "the other gameweeks still have to be visible"
+
+
+def test_an_all_empty_player_still_separates_the_week_from_the_world(chatter_db):
+    """KEEPER is in no claim at all: that reason must NOT blame the filter."""
+    res = chatter(chatter_db, code=KEEPER, gw=2)
+    assert res["said"] == [] and res["said_by_gw"] == []
+    assert "nor for any other gameweek" in res["said_reason"]
+
+
+# ---------------------------------------------------------------------------
+# creator_detail: which gameweek's team am I looking at?
+
+def _talker_with_two_squads(db):
+    """The Talker with a verified entry and TWO crawled gameweeks.
+
+    One gameweek was the whole bug: `_squad` answered `max(gw)` and labelled it
+    in prose, so a reader scrolling GW1's claims saw GW2's team above them and
+    nothing in the payload could tell the UI otherwise.
+    """
+    _plant_panel_member(db, "The Talker", 53517)
+    _plant_picks(db, 53517, 1, [(10, 2, True), (20, 1, False)])
+    _plant_picks(db, 53517, 2, [(20, 2, True)])
+    return db
+
+
+def test_the_squad_is_selectable_by_gameweek(seeded_db):
+    _talker_with_two_squads(seeded_db)
+    gw1 = detail(seeded_db, creator="The Talker", gw=1)
+    gw2 = detail(seeded_db, creator="The Talker", gw=2)
+
+    assert gw1["squad_gw"] == 1 and gw2["squad_gw"] == 2
+    assert gw1["squad_gws"] == gw2["squad_gws"] == [1, 2]
+    assert {p["name"] for p in gw1["squad"]} == {"Haaland", "Saliba"}
+    assert {p["name"] for p in gw2["squad"]} == {"Saliba"}
+    # A pick is a fact about a deadline, and the captaincy moved between them.
+    assert next(p for p in gw1["squad"] if p["is_captain"])["name"] == "Haaland"
+    assert next(p for p in gw2["squad"] if p["is_captain"])["name"] == "Saliba"
+    assert "GW1" in gw1["squad_reason"] and "requested explicitly" in gw1["squad_reason"]
+
+
+def test_the_default_squad_is_the_newest_that_actually_locked(seeded_db):
+    """Not literally the next gameweek: a squad is public only at its deadline.
+
+    GW2's deadline has not passed in this fixture, so defaulting to it the way
+    `creator_board` defaults would empty this panel every week of the season.
+    The default is the same intent -- the team you are reading about -- against
+    a table that can only ever be behind the calendar.
+    """
+    _plant_panel_member(seeded_db, "The Talker", 53517)
+    _plant_picks(seeded_db, 53517, 1, [(10, 2, True)])
+    det = detail(seeded_db, creator="The Talker")
+    assert det["squad_gw"] == 1
+    assert det["squad_gws"] == [1]
+    assert "newest squad that has actually locked" in det["squad_reason"]
+    assert "GW2's deadline has not passed" in det["squad_reason"]
+
+
+def test_a_gameweek_with_no_crawled_squad_names_the_ones_that_have_one(seeded_db):
+    """A bare empty sends the reader nowhere. Say which weeks ARE readable."""
+    _plant_panel_member(seeded_db, "The Talker", 53517)
+    _plant_picks(seeded_db, 53517, 1, [(10, 2, True)])
+    det = detail(seeded_db, creator="The Talker", gw=3)
+    assert det["squad"] is None
+    assert det["squad_gw"] == 3
+    assert det["squad_gws"] == [1], "the readable gameweeks are still named"
+    assert "GW1 is on file" in det["squad_reason"]
+    assert "has not been crawled" in det["squad_reason"]
+
+
+def test_a_creator_with_no_entry_still_reports_the_gameweek_keys(seeded_db):
+    """The two new keys are REQUIRED, so the null path has to populate them."""
+    det = detail(seeded_db, creator="The Talker")
+    assert det["squad"] is None
+    assert det["squad_gw"] is None and det["squad_gws"] == []
+    jsonschema.Draft202012Validator(
+        script("creator_detail").result_schema
+    ).validate(det)

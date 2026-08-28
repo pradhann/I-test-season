@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 
 import fpl_edge.platform.scripts  # noqa: F401  (registers the panel scripts)
 from fpl_edge.jobs import outbox
+from fpl_edge.platform import panels as panels_mod
 from fpl_edge.platform.app import create_app
 from fpl_edge.store.warehouse import Warehouse
 
@@ -57,9 +58,14 @@ def client(db):
 
 def test_panels_lists_every_panel_with_its_pinned_script(client):
     body = client.get("/api/panels").json()
-    assert {p["id"] for p in body["panels"]} == {
-        "squad", "projections", "fixtures", "prices", "ideas", "market",
-        "planner", "ownership"}
+    # The endpoint must list EVERY registered panel, so the expectation is the
+    # registry itself rather than a copy of it. A hardcoded set here went stale
+    # the moment the creator panels were registered and failed with "extra
+    # items in the left set" -- which says the API grew, not that it broke.
+    # A test whose maintenance cost is a second list is a test that will be
+    # silenced rather than read.
+    assert {p["id"] for p in body["panels"]} == {p.id for p in panels_mod.PANELS}
+    assert len(body["panels"]) >= 8, "the panel set should never shrink silently"
     for panel in body["panels"]:
         assert panel["script"], f"{panel['id']} pins no script"
         assert panel["params_schema"]["type"] == "object"

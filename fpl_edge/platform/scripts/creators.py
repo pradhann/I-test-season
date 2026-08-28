@@ -753,6 +753,25 @@ def _panel_roster(wh, present: set[str]) -> tuple[list[dict[str, Any]], str | No
     return out, None
 
 
+def _events(wh, moment: dt.datetime):
+    """``(gw, deadline_utc)`` as known at ``moment``, one row per gameweek.
+
+    The single read of ``dim_event`` in this module. Everything gameweek-shaped
+    here -- which deadline a squad locked at, which gameweek a panel answers
+    for, which gameweek an undated call was about -- is that one table asked a
+    different question, and three copies of this SELECT would be three chances
+    to forget the ``as_of <=`` bound.
+    """
+    return q(
+        wh,
+        "SELECT gw, deadline_utc FROM ("
+        "  SELECT *, row_number() OVER (PARTITION BY season, gw ORDER BY as_of DESC) rn"
+        "  FROM dim_event WHERE season = ? AND as_of <= ?"
+        ") WHERE rn = 1",
+        (SEASON_DEFAULT, moment),
+    )
+
+
 def _deadlines(wh, moment: dt.datetime) -> dict[int, str | None]:
     """gw -> the deadline it locked at, as known at ``moment``.
 
@@ -761,16 +780,88 @@ def _deadlines(wh, moment: dt.datetime) -> dict[int, str | None]:
     a fact about the world. Reading it from ``dim_event`` rather than reaching
     into ``fact_manager_pick`` keeps the one sanctioned manager read intact.
     """
-    df = q(
-        wh,
-        "SELECT gw, deadline_utc FROM ("
-        "  SELECT *, row_number() OVER (PARTITION BY season, gw ORDER BY as_of DESC) rn"
-        "  FROM dim_event WHERE season = ? AND as_of <= ?"
-        ") WHERE rn = 1",
-        (SEASON_DEFAULT, moment),
-    )
+    df = _events(wh, moment)
     return {int(r["gw"]): _iso(r["deadline_utc"]) for r in df.to_dict("records")
             if _i(r["gw"]) is not None}
+
+
+def _gw_calendar(wh, moment: dt.datetime) -> list[tuple[Any, int]]:
+    """``[(deadline, gw), ...]`` ascending -- the rule the INGESTER already uses.
+
+    ``ingest/content/claims.py::GwCalendar.next_after`` answers "which gameweek
+    was this published before the deadline of", and it is what stamps
+    ``content_claim.gameweek`` for every call the model did not date itself
+    (``gw_inferred = true``, 122 rows in the live warehouse). A ``watch`` call
+    never becomes a claim, so nothing stamps it -- and reading one back needs
+    the SAME rule, or a panel filtered to GW2 would show a dated buy beside an
+    undated watch from the same video and disagree with itself about which
+    gameweek that video was about.
+    """
+    import pandas as pd
+
+    out: list[tuple[Any, int]] = []
+    for r in _events(wh, moment).to_dict("records"):
+        gw = _i(r["gw"])
+        when = pd.to_datetime(r["deadline_utc"], utc=True, errors="coerce")
+        if gw is None or pd.isna(when):
+            continue
+        out.append((when, gw))
+    out.sort(key=lambda p: p[0])
+    return out
+
+
+def _gw_after(calendar: list[tuple[Any, int]], when) -> int | None:
+    """The first gameweek whose deadline is strictly after ``when``. None if none."""
+    import pandas as pd
+
+    if not calendar or when is None:
+        return None
+    stamp = pd.to_datetime(when, utc=True, errors="coerce")
+    if pd.isna(stamp):
+        return None
+    for deadline, gw in calendar:
+        if deadline > stamp:
+            return gw
+    return None
+
+
+def _resolve_gw(wh, gw: int | None, moment: dt.datetime,
+                claims=None) -> tuple[int | None, str]:
+    """Which gameweek a panel is answering for, and WHY. One rule, shared.
+
+    ``creator_board`` established it and ``player_chatter`` reuses it verbatim:
+    an explicit ``gw`` wins, otherwise the next gameweek whose deadline has not
+    passed, otherwise the newest gameweek any visible claim names, otherwise
+    nothing -- and every branch says which one it took. A second copy of this
+    ladder is how two panels on one page come to disagree about what "this
+    week" means, so there is exactly one.
+
+    The reason is ALWAYS a string, never null. "GW2" alone does not tell a
+    reader whether it was asked for, deduced from the calendar, or scraped off
+    the claims because the calendar was unreadable, and those are three
+    different amounts of trust.
+    """
+    if gw is not None:
+        return int(gw), f"GW{int(gw)} was requested explicitly."
+    nxt = next_gw(wh, SEASON_DEFAULT, moment)
+    if nxt is not None:
+        return int(nxt), (
+            f"GW{int(nxt)} is the next gameweek: it is the first whose "
+            f"deadline has not passed at this instant. No gameweek was "
+            f"requested, so the panel answers for the one being played into."
+        )
+    if claims is not None and not claims.empty:
+        latest = _i(claims["gameweek"].max())
+        if latest is not None:
+            return latest, (
+                f"no future deadline is on file, so this falls back to GW"
+                f"{latest} -- the latest gameweek any visible claim names. "
+                f"That is the corpus talking, not the calendar."
+            )
+    return None, (
+        "no gameweek could be determined: dim_event has no future deadline and "
+        "no visible claim names one. Nothing is filtered by gameweek here."
+    )
 
 
 def _panel_squads(wh, roster: list[dict[str, Any]], present: set[str],
@@ -1209,12 +1300,17 @@ BOARD_PARAMS: dict[str, Any] = {
 BOARD_RESULT: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["as_of", "window_days", "gw", "creators", "consensus"],
+    "required": ["as_of", "window_days", "gw", "gw_reason", "creators",
+                 "consensus"],
     "properties": {
         "as_of": {"type": "string"},
         "window_days": {"type": "integer"},
         "gw": {"type": ["integer", "null"]},
-        "gw_reason": {"type": ["string", "null"]},
+        # ALWAYS a string, never null. "GW2" alone does not say whether it was
+        # requested, deduced from the calendar, or scraped off the claims
+        # because the calendar was unreadable, and a reader trusts those three
+        # differently. `player_chatter.gw_reason` carries the identical rule.
+        "gw_reason": {"type": "string"},
         # Which creators this board is about, and which the scope excluded.
         # Named explicitly so the page can say "16 people across 7 shows"
         # rather than a count of whatever ingest happened to reach.
@@ -1311,13 +1407,21 @@ DETAIL_PARAMS: dict[str, Any] = {
         "creator": {"type": "string", "minLength": 1},
         "days": {"type": "integer", "minimum": 1, "maximum": 3650, "default": 60},
         "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 40},
+        # Which gameweek's SQUAD to show. `days`/`limit` bound the item list and
+        # are a different axis entirely: a video published five weeks ago about
+        # GW2 is still what this creator's GW2 team should be read beside.
+        # Null defaults to the newest squad that has actually locked -- see
+        # `_squad_gw` for why that is not literally the next gameweek.
+        "gw": {"type": ["integer", "null"], "minimum": 1, "maximum": 38,
+               "default": None},
     },
 }
 
 DETAIL_RESULT: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["creator", "as_of", "entry", "squad", "transfers", "items"],
+    "required": ["creator", "as_of", "entry", "squad", "squad_gw", "squad_gws",
+                 "transfers", "items"],
     "properties": {
         "creator": {"type": "string"},
         "as_of": {"type": "string"},
@@ -1326,6 +1430,11 @@ DETAIL_RESULT: dict[str, Any] = {
         "entry_reason": {"type": ["string", "null"]},
         "squad": {"type": ["array", "null"], "items": _SQUAD_PICK},
         "squad_reason": {"type": ["string", "null"]},
+        # The gameweek `squad` IS, and the gameweeks a squad exists for. Both
+        # are required: a squad with no gameweek on it is a team from an
+        # unnamed week, which is what this pair exists to stop rendering.
+        "squad_gw": {"type": ["integer", "null"]},
+        "squad_gws": {"type": "array", "items": {"type": "integer"}},
         "transfers": {"type": "array", "items": _TRANSFER},
         "transfers_reason": {"type": ["string", "null"]},
         "items": {"type": "array", "items": _ITEM},
@@ -1433,16 +1542,10 @@ def creator_board(wh, *, days: int = 30, gw: int | None = None,
         claims = claims[_stamps(claims["published_at"]) >= since]
 
     # -- which gameweek the takes are about --------------------------------
-    gw_reason: str | None = None
-    if gw is None:
-        gw = next_gw(wh, SEASON_DEFAULT, moment)
-        if gw is None and not claims.empty:
-            gw = _i(claims["gameweek"].max())
-            gw_reason = ("no future deadline is on file; falling back to the "
-                         "latest gameweek any visible claim names")
-        if gw is None:
-            gw_reason = ("no gameweek could be determined: dim_event has no "
-                         "future deadline and no claim is visible in the window")
+    # The ladder lives in `_resolve_gw`, shared with `player_chatter`: one rule
+    # for "which gameweek is this page about", so the board and the per-player
+    # strip beneath it can never name different weeks from the same warehouse.
+    gw, gw_reason = _resolve_gw(wh, gw, moment, claims)
 
     # -- per-source last item, so a silent source is visible as silent ------
     # `items` is ordered published_at DESC by SQL, so the first row seen for a
@@ -1751,8 +1854,8 @@ def _consensus(wh, claims, gw: int | None, moment: dt.datetime,
 # ---------------------------------------------------------------------------
 # creator_detail
 
-def creator_detail(wh, *, creator: str, days: int = 60,
-                   limit: int = 40) -> dict[str, Any]:
+def creator_detail(wh, *, creator: str, days: int = 60, limit: int = 40,
+                   gw: int | None = None) -> dict[str, Any]:
     """One creator expanded: their items, analyses, claims and public FPL trail.
 
     Every claim carries a deep link built here -- YouTube ``&t=NNNs`` when the
@@ -1869,7 +1972,7 @@ def creator_detail(wh, *, creator: str, days: int = 60,
     entry = entries.get(creator)
     weights = _weights_as_of(wh, moment) if "creator_score" in present else {}
 
-    squad, squad_reason = _squad(wh, entry, present, moment)
+    squad, squad_reason, squad_meta = _squad(wh, entry, present, moment, gw)
     transfers, transfers_reason = _transfers(wh, entry, present, moment)
 
     return {
@@ -1880,6 +1983,11 @@ def creator_detail(wh, *, creator: str, days: int = 60,
         "entry_reason": None if entry else entry_reason,
         "squad": squad,
         "squad_reason": squad_reason,
+        # WHICH gameweek the squad above is, and every gameweek that has one.
+        # `squad_gw` is null exactly when `squad` is; `squad_gws` is populated
+        # either way, so "nothing for GW3" always names where to look instead.
+        "squad_gw": squad_meta["gw"],
+        "squad_gws": squad_meta["available"],
         "transfers": transfers,
         "transfers_reason": transfers_reason,
         "items": out_items,
@@ -1914,26 +2022,76 @@ def _claim_row(c: dict[str, Any], index: TranscriptIndex,
 
 
 def _squad(wh, entry: dict[str, Any] | None, present: set[str],
-           moment: dt.datetime) -> tuple[list[dict[str, Any]] | None, str | None]:
-    """The creator's locked squad, through ``sem_manager_picks(as_of)``."""
+           moment: dt.datetime, gw: int | None = None
+           ) -> tuple[list[dict[str, Any]] | None, str | None, dict[str, Any]]:
+    """The creator's locked squad FOR A GAMEWEEK, through ``sem_manager_picks``.
+
+    ``fact_manager_pick`` is keyed on (entry_id, season, gw) and a pick's
+    ``as_of`` IS the deadline it locked at, so "what was his team in GW2" is a
+    read, not a model. This used to answer only ``max(gw)`` -- fine while one
+    gameweek had been crawled, and quietly wrong the moment two had: a reader
+    scrolling GW2's claims saw GW3's team above them with no label saying so.
+
+    The default is NOT literally "the next gameweek". Picks become public only
+    when a deadline passes, so the next gameweek's squad is by definition not
+    published yet; defaulting to it would empty this panel for every creator on
+    every day of the season. The default is the newest squad that has actually
+    LOCKED at or before the next deadline, which is the same intent -- the team
+    you are reading about this week -- expressed against what exists.
+
+    Returns ``(squad | None, reason, meta)``. ``meta`` names the gameweek the
+    squad is FOR and every gameweek that has one, so "no squad for GW3" is
+    never a dead end: it says where to look instead.
+    """
+    meta: dict[str, Any] = {"gw": None, "requested": None if gw is None else int(gw),
+                            "available": []}
     if entry is None:
         return None, ("no verified entry id for this creator, so there is no "
-                      "squad to read; see entry_reason")
+                      "squad to read; see entry_reason"), meta
     if "fact_manager_pick" not in present:
-        return None, "fact_manager_pick is not in this warehouse"
-    rows = q(
+        return None, "fact_manager_pick is not in this warehouse", meta
+
+    # Which gameweeks this entry HAS a crawled squad for. Asked first and
+    # separately: it is the answer to "then what do you have?", which is the
+    # only useful thing to say when the requested gameweek has nothing.
+    have = q(
         wh,
-        "SELECT gw, code, web_name, multiplier, is_captain FROM sem_manager_picks(?) "
-        "WHERE entry_id = ? AND season = ? AND gw = ("
-        "  SELECT max(gw) FROM sem_manager_picks(?) WHERE entry_id = ? AND season = ?)",
-        (moment, entry["entry_id"], SEASON_DEFAULT,
-         moment, entry["entry_id"], SEASON_DEFAULT),
+        "SELECT DISTINCT gw FROM sem_manager_picks(?) WHERE entry_id = ? "
+        "AND season = ? ORDER BY gw",
+        (moment, entry["entry_id"], SEASON_DEFAULT),
     )
-    if rows.empty:
+    available = sorted({g for g in (_i(r["gw"]) for r in have.to_dict("records"))
+                        if g is not None})
+    meta["available"] = available
+    if not available:
         return None, (
             "picks become public only at a gameweek's deadline and none is "
             "stored for this entry yet"
-        )
+        ), meta
+
+    target, basis = _squad_gw(wh, gw, available, moment)
+    meta["gw"] = target
+    if target is None or target not in available:
+        return None, (
+            f"no crawled squad for GW{int(gw)} for this entry. "
+            f"{_gw_list(available)} on file, so the gameweek is selectable -- "
+            f"this one simply has not been crawled. A squad is public only "
+            f"once its deadline has passed."
+            if gw is not None else
+            f"no squad could be selected. {_gw_list(available)} on file."
+        ), meta
+
+    rows = q(
+        wh,
+        "SELECT gw, code, web_name, multiplier, is_captain FROM sem_manager_picks(?) "
+        "WHERE entry_id = ? AND season = ? AND gw = ?",
+        (moment, entry["entry_id"], SEASON_DEFAULT, int(target)),
+    )
+    if rows.empty:  # pragma: no cover - `target` came out of `available`
+        return None, (
+            f"no crawled squad for GW{int(target)} for this entry. "
+            f"{_gw_list(available)} on file."
+        ), meta
     prices = q(
         wh, "SELECT code, price, position FROM sem_players(?) WHERE season = ?",
         (moment, SEASON_DEFAULT),
@@ -1952,8 +2110,51 @@ def _squad(wh, entry: dict[str, Any] | None, present: set[str],
             "multiplier": _i(r["multiplier"]),
             "is_captain": bool(r["is_captain"]),
         })
-    gw = _i(rows.iloc[0]["gw"])
-    return squad, f"locked GW{gw} squad, as published at that deadline"
+    return squad, (
+        f"locked GW{int(target)} squad, as published at that deadline. {basis} "
+        f"{_gw_list(available)} on file for this entry."
+    ), meta
+
+
+def _gw_list(gws: list[int]) -> str:
+    """``"GW1 and GW2 are"`` / ``"GW1 is"`` -- what a reader can ask for next."""
+    if not gws:
+        return "No gameweek is"
+    names = [f"GW{g}" for g in gws]
+    if len(names) == 1:
+        return f"{names[0]} is"
+    return f"{', '.join(names[:-1])} and {names[-1]} are"
+
+
+def _squad_gw(wh, gw: int | None, available: list[int],
+              moment: dt.datetime) -> tuple[int | None, str]:
+    """Which gameweek's squad to show, and the sentence explaining the choice.
+
+    Deliberately NOT ``_resolve_gw``. That one answers "which gameweek is this
+    page about" and correctly returns the next, unplayed one; a squad for an
+    unplayed gameweek does not exist yet, because a squad is public only at its
+    deadline. So the default here is the newest LOCKED gameweek at or before
+    the next deadline -- the same question, answered against a table that can
+    only ever be behind it.
+    """
+    if gw is not None:
+        return int(gw), f"GW{int(gw)} was requested explicitly."
+    nxt = next_gw(wh, SEASON_DEFAULT, moment)
+    if nxt is not None and nxt in available:
+        return nxt, (f"GW{nxt} is the next gameweek and its squad is already "
+                     f"published.")
+    locked = [g for g in available if nxt is None or g <= nxt]
+    if locked:
+        target = max(locked)
+        return target, (
+            f"No gameweek was requested. GW{target} is the newest squad that "
+            f"has actually locked"
+            + (f"; GW{nxt}'s deadline has not passed, so no team is public for "
+               f"it yet." if nxt is not None else ".")
+        )
+    target = max(available)
+    return target, (f"No gameweek was requested and no deadline is on file, so "
+                    f"this is the newest crawled gameweek, GW{target}.")
 
 
 def _transfers(wh, entry: dict[str, Any] | None, present: set[str],
@@ -2044,9 +2245,14 @@ _CONF_TO_CONVICTION = {0.8: "high", 0.6: "medium", 0.4: "low"}
 _SAID = {
     "type": "object",
     "additionalProperties": False,
+    # `gameweek` is REQUIRED. A statement with no gameweek on it cannot be
+    # labelled, grouped or filtered, and a strip that mixes GW2 and GW3 talk
+    # with nothing distinguishing them is the failure this whole panel was
+    # rebuilt to fix.
     "required": ["person", "person_basis", "show", "action", "is_observation",
                  "conviction", "extractor", "quote", "start_s", "deep_link",
-                 "published_at", "item_title", "item_url", "url_basis"],
+                 "published_at", "item_title", "item_url", "url_basis",
+                 "gameweek", "gameweek_basis"],
     "properties": {
         # null when only the SHOW is known. The FPL Wire has four hosts with
         # four different teams, so "the Wire said" is not a person saying it.
@@ -2071,7 +2277,17 @@ _SAID = {
         # `enclosure` means the "link" IS an mp3: play audio, do not open a page.
         "url_basis": {"type": ["string", "null"]},
         "item_id": {"type": "string"},
+        # The gameweek this statement was ABOUT, which is not when it was made:
+        # `published_at` is the second axis and they diverge by weeks.
         "gameweek": {"type": ["integer", "null"]},
+        # "stated" -- the speaker named the gameweek and the extractor stored
+        # it. "inferred" -- nobody named one, so it is the first gameweek whose
+        # deadline fell after publication (`content_claim.gw_inferred` for a
+        # claim; `_gw_after` for a watch call, which is the same rule the
+        # ingester uses). null -- neither was possible. A UI may want to mark
+        # an inferred gameweek; it must never present one as spoken.
+        "gameweek_basis": {"type": ["string", "null"],
+                           "enum": ["stated", "inferred", None]},
         "confidence": {"type": ["number", "null"]},
         # Is this show on the owner's curated panel, or merely in the corpus?
         "on_panel": {"type": "boolean"},
@@ -2118,7 +2334,18 @@ CHATTER_PARAMS: dict[str, Any] = {
         # The stable cross-season PlayerCode, never element_id -- the same key
         # xpoints.js and template.js already index their rows on.
         "code": {"type": "integer", "minimum": 1},
+        # Bounds `said` ONLY when `gw` is "all". `noticed` was never windowed
+        # (a set-piece finding is a standing fact) and `owned` is a deadline
+        # fact, so with a gameweek in force this parameter bounds nothing.
         "days": {"type": "integer", "minimum": 1, "maximum": 365, "default": 30},
+        # Which gameweek `said` is about. Null defaults to the next gameweek,
+        # exactly as `creator_board.gw` does and through the same resolver.
+        # "all" is the escape hatch: no gameweek filter, `days` bounds instead.
+        "gw": {"anyOf": [
+            {"type": "integer", "minimum": 1, "maximum": 38},
+            {"const": "all"},
+            {"type": "null"},
+        ], "default": None},
     },
 }
 
@@ -2128,24 +2355,40 @@ CHATTER_RESULT: dict[str, Any] = {
     # Disjoint from the registry's {empty, reason} branch by construction:
     # these keys are required and `additionalProperties` is false, so an honest
     # empty can never also validate as a real payload.
-    "required": ["code", "name", "as_of", "owned", "owned_reason", "said",
-                 "noticed", "counts"],
+    "required": ["code", "name", "as_of", "gw", "gw_reason", "owned",
+                 "owned_reason", "said", "said_by_gw", "noticed", "counts"],
     "properties": {
         "code": {"type": "integer"},
         "name": {"type": "string"},
         "as_of": {"type": "string"},
         "window_days": {"type": "integer"},
+        # The gameweek `said` is filtered to; null when no filter is in force.
+        "gw": {"type": ["integer", "null"]},
+        # Always a string, never null -- same guarantee as creator_board's.
+        "gw_reason": {"type": "string"},
         "owned": {"type": "array", "items": _OWNED},
         "owned_reason": {"type": "string"},
         "said": {"type": "array", "items": _SAID},
         "said_reason": {"type": ["string", "null"]},
+        # The census `gw` filters. Counted over everything visible at `as_of`,
+        # before the gameweek filter and before any day window, so an empty
+        # `said` can always be told apart from an empty corpus.
+        "said_by_gw": {
+            "type": "array",
+            "items": {
+                "type": "object", "additionalProperties": False,
+                "required": ["gw", "n"],
+                "properties": {"gw": {"type": ["integer", "null"]},
+                               "n": {"type": "integer"}},
+            },
+        },
         "noticed": {"type": "array", "items": _NOTICED},
         "noticed_reason": {"type": ["string", "null"]},
         "counts": {
             "type": "object",
             "additionalProperties": False,
             "required": ["said", "observations", "owned", "noticed",
-                         "panel_size", "squads_known"],
+                         "panel_size", "squads_known", "said_all_gw"],
             "properties": {
                 "said": {"type": "integer"},
                 "observations": {"type": "integer"},
@@ -2153,6 +2396,8 @@ CHATTER_RESULT: dict[str, Any] = {
                 "noticed": {"type": "integer"},
                 "panel_size": {"type": "integer"},
                 "squads_known": {"type": "integer"},
+                # `said` across every gameweek. `said` is a slice of it.
+                "said_all_gw": {"type": "integer"},
             },
         },
         "reason": {"type": ["string", "null"]},
@@ -2295,11 +2540,12 @@ def _conviction(extractor: str, confidence: float | None) -> str | None:
     return _CONF_TO_CONVICTION.get(round(float(confidence or 0.0), 2))
 
 
-def _said(wh, code: int, moment: dt.datetime, since: dt.datetime,
-          present: set[str], roster: list[dict[str, Any]], panel_shows: set[str],
-          coverage: dict[str, int | None]
-          ) -> tuple[list[dict[str, Any]], str | None]:
-    """Everything anybody tracked SAID about this player inside the window.
+def _said(wh, code: int, moment: dt.datetime, present: set[str],
+          roster: list[dict[str, Any]], panel_shows: set[str],
+          coverage: dict[str, int | None], *,
+          gw: int | None = None, since: dt.datetime | None = None
+          ) -> tuple[list[dict[str, Any]], str | None, list[dict[str, Any]]]:
+    """Everything anybody tracked SAID about this player, FOR A GAMEWEEK.
 
     Two reads, because the warehouse stores the two kinds of utterance in two
     places and only one of them is a claim:
@@ -2316,7 +2562,27 @@ def _said(wh, code: int, moment: dt.datetime, since: dt.datetime,
     A position whose spoken name the resolver refused to disambiguate never
     became a claim either. That is the extractor declining to guess, not a gap
     this function may fill in.
+
+    GAMEWEEK, NOT DAYS
+    ------------------
+    ``gw`` and ``since`` are two different axes and exactly one of them is
+    active. ``content_claim.gameweek`` records the gameweek a statement was
+    ABOUT; ``published_at`` records when it was made. A claim made three weeks
+    ago about GW3 is a GW3 claim, and windowing by days answers neither
+    question honestly: once GW2 has been played a 30-day window still shows GW2
+    talk beside GW3 talk with nothing separating them, and once GW3 arrives the
+    GW2 statements age out of the window entirely rather than staying findable.
+    So a gameweek-scoped read is NOT also day-bounded -- ``since`` is None
+    whenever ``gw`` is set, and the caller reaches the old behaviour by asking
+    for ``gw: "all"`` explicitly, where ``days`` is the only bound there is.
+
+    The third return value is the whole antidote to a filter that lies by
+    omission: ``[{"gw", "n"}, ...]`` over EVERY gameweek this player has
+    content for, computed before any filter is applied. "Nothing for GW3" is
+    only useful next to "4 statements for GW2".
     """
+    import pandas as pd
+
     from fpl_edge.ingest.content.panel import person_claims_visible_at
 
     names = {p["person_key"]: p["person"] for p in roster}
@@ -2324,59 +2590,34 @@ def _said(wh, code: int, moment: dt.datetime, since: dt.datetime,
     claims = person_claims_visible_at(store, moment)
     if not claims.empty:
         claims = claims[claims["player_code"].astype("Int64") == int(code)]
-    if not claims.empty:
-        claims = claims[_stamps(claims["published_at"]) >= since]
 
-    # Items in the window, for the analysis pass AND for the metadata every
-    # said row carries (title, url, the canonical publication key).
-    window_items = q(
+    # Metadata for every VISIBLE item, not for a window of them. The window
+    # used to bound this read and it cost twice: a claim whose item fell
+    # outside it needed a second repair query to get a title at all, and a
+    # sibling row outside it could not lend its transcript to a sibling inside
+    # it, so the deep link silently lost its offset. `published_at < moment` is
+    # the point-in-time bound and it is the only one this read needs.
+    all_items = q(
         wh,
         "SELECT item_id, creator, title, url, published_at, kind, text_source "
-        "FROM content_item WHERE published_at < ? AND published_at >= ?",
-        (moment, since),
+        "FROM content_item WHERE published_at < ?",
+        (moment,),
     )
-    meta: dict[str, dict[str, Any]] = {}
-    for r in window_items.to_dict("records"):
-        meta[str(r["item_id"])] = r
-    # Frozen before the out-of-window repair below: the analysis pass reads
-    # only items INSIDE the window, so a watch call cannot enter through the
-    # back door of a claim whose item row is stamped differently.
-    window_ids = set(meta)
-
-    claim_ids = {str(i) for i in claims["item_id"]} if not claims.empty else set()
-    missing_meta = sorted(claim_ids - set(meta))
-    if missing_meta:
-        # A claim whose item is outside the window read: fetch those rows
-        # rather than dropping the claim or rendering it without a title.
-        extra = q(
-            wh,
-            "SELECT item_id, creator, title, url, published_at, kind, "
-            "text_source FROM content_item WHERE item_id IN ("
-            + ", ".join("?" for _ in missing_meta) + ")",
-            tuple(missing_meta),
-        )
-        for r in extra.to_dict("records"):
-            meta[str(r["item_id"])] = r
-
-    analysis_ids = window_ids if "content_analysis" in present else set()
-    analyses = _analyses(wh, analysis_ids)
-    wanted = claim_ids | set(meta)
-    transcripts = (_transcripts(wh, wanted)
-                   if wanted and "transcript_segment" in present else {})
-    bases = _url_bases(wh, wanted, present)
+    meta: dict[str, dict[str, Any]] = {
+        str(r["item_id"]): r for r in all_items.to_dict("records")
+    }
 
     # One publication may be stored under several rows, and in the live
     # warehouse the analysis sits on one of them while the transcript sits on
     # the other. Grouping on the canonical key is what lets a watch call
     # extracted from the `youtu.be/` row find its timestamp in the `watch?v=`
-    # row's segments; without it every deep link on this panel silently loses
-    # its offset.
+    # row's segments; without it every deep link on this panel loses its offset.
     family: dict[str, set[str]] = {}
     for iid, info in meta.items():
         family.setdefault(canonical_key(_s(info.get("url")), iid), set()).add(iid)
 
-    def _publication(item_id: str) -> tuple[dict[str, Any], TranscriptIndex, str]:
-        """The richest stored row of this publication, and its transcript."""
+    def _representative(item_id: str) -> tuple[dict[str, Any], str, list[str]]:
+        """The richest stored row of this publication, and its whole family."""
         info = meta.get(item_id, {})
         canon = canonical_key(_s(info.get("url")), item_id)
         kin = sorted(family.get(canon, {item_id}))
@@ -2385,79 +2626,45 @@ def _said(wh, code: int, moment: dt.datetime, since: dt.datetime,
             key=lambda i: (
                 _TEXT_RANK.get(str(meta.get(i, {}).get("text_source")), 9), i),
         ) if kin else item_id
-        rep = meta.get(rep_id, info) or info
-        index = _NO_TRANSCRIPT
-        for sib in kin:
-            if sib in transcripts:
-                index = transcripts[sib]
-                break
-        return rep, index, rep_id
+        return (meta.get(rep_id, info) or info), rep_id, kin
 
-    def _row(item_id: str, *, action: str, is_observation: bool,
-             conviction: str | None, extractor: str, quote: str | None,
-             person_key: str | None, basis: str | None, gameweek: int | None,
-             confidence: float | None) -> dict[str, Any]:
-        info, index, rep_id = _publication(item_id)
-        url = _s(info.get("url"))
-        start_s = index.find(quote)
-        show = _s(info.get("creator")) or "(unknown show)"
-        item_id = rep_id
-        return {
-            "person": names.get(str(person_key)) if person_key else None,
-            "person_basis": basis,
-            "show": show,
-            "action": action,
-            "is_observation": is_observation,
-            "conviction": conviction,
-            "extractor": extractor,
-            "quote": quote or None,
-            "start_s": _f(start_s, 2),
-            "deep_link": deep_link(url, start_s),
-            "published_at": _iso(info.get("published_at")),
-            "item_title": _s(info.get("title")),
-            "item_url": url,
-            "url_basis": bases.get(item_id),
-            "item_id": item_id,
-            "gameweek": gameweek,
-            "confidence": confidence,
-            "on_panel": show in panel_shows,
-        }
+    # The gameweek an UNDATED call was about, by the rule the ingester already
+    # uses for exactly this (`GwCalendar.next_after`). A watch call never
+    # becomes a claim, so nothing stamped it at ingest; inferring it here with
+    # a second rule would let one video's dated buy and undated watch land in
+    # two different gameweeks.
+    calendar = _gw_calendar(wh, moment)
 
-    # One publication, not one stored row. The same video under `watch?v=` and
-    # `youtu.be/` is one thing somebody said once; keying on the raw item id
-    # shows the reader two opinions where one was voiced.
-    best: dict[tuple, dict[str, Any]] = {}
-
-    def _keep(key: tuple, row: dict[str, Any]) -> None:
-        kept = best.get(key)
-        # Of two rows saying the same thing, keep the one whose quote could be
-        # located in a transcript: same position, better evidence.
-        if kept is None or (kept["start_s"] is None and row["start_s"] is not None):
-            best[key] = row
+    # -- pass one: every candidate statement, with no transcript yet ---------
+    pending: list[dict[str, Any]] = []
 
     for c in (claims.to_dict("records") if not claims.empty else []):
-        item_id = str(c["item_id"])
         rationale = _s(c.get("rationale")) or ""
         quote = (rationale.split("| quote: ", 1)[1]
                  if "| quote: " in rationale else rationale)
         extractor = str(c.get("extractor") or "cue")
         confidence = _f(c.get("confidence"), 3)
-        row = _row(
-            item_id,
-            action=str(c.get("action")),
-            is_observation=False,
-            conviction=_conviction(extractor, confidence),
-            extractor=extractor,
-            quote=quote,
-            person_key=_s(c.get("person_key")),
-            basis=_s(c.get("basis")),
-            gameweek=_i(c.get("gameweek")),
-            confidence=confidence,
-        )
-        canon = canonical_key(row["item_url"], item_id)
-        _keep((canon, row["show"], row["action"], row["gameweek"], extractor), row)
+        pending.append({
+            "item_id": str(c["item_id"]),
+            "action": str(c.get("action")),
+            "is_observation": False,
+            "conviction": _conviction(extractor, confidence),
+            "extractor": extractor,
+            "quote": quote,
+            "person_key": _s(c.get("person_key")),
+            "basis": _s(c.get("basis")),
+            # content_claim.gameweek is NOT NULL: the extractor stamps every
+            # claim, and `gw_inferred` records whether the speaker said which
+            # gameweek or the calendar decided for them. Both are on file, so
+            # neither has to be guessed back.
+            "gameweek": _i(c.get("gameweek")),
+            "gameweek_basis": ("inferred" if bool(c.get("gw_inferred"))
+                               else "stated"),
+            "confidence": confidence,
+        })
 
     resolver = None
+    analyses = _analyses(wh, set(meta)) if "content_analysis" in present else {}
     for item_id, (analysis, model) in analyses.items():
         calls = []
         for _key, source in _CALL_BUCKETS:
@@ -2476,66 +2683,212 @@ def _said(wh, code: int, moment: dt.datetime, since: dt.datetime,
         for c in calls:
             if _resolve_code(resolver, str(c.get("player") or "")) != int(code):
                 continue
-            quote = _s(c.get("quote"))
             conviction = _s(c.get("conviction"))
-            row = _row(
-                item_id,
-                action="watch",
-                is_observation=True,
-                conviction=conviction if conviction in _CONF_TO_CONVICTION.values()
-                else None,
-                extractor=f"llm:{model}",
-                quote=quote,
-                person_key=None,
-                basis=None,
-                gameweek=_i(c.get("gameweek")),
-                confidence=None,
-            )
-            canon = canonical_key(row["item_url"], item_id)
-            _keep((canon, row["show"], "watch", _norm(quote or "")), row)
+            stated = _i(c.get("gameweek"))
+            published = meta.get(item_id, {}).get("published_at")
+            pending.append({
+                "item_id": item_id,
+                "action": "watch",
+                "is_observation": True,
+                "conviction": (conviction
+                               if conviction in _CONF_TO_CONVICTION.values()
+                               else None),
+                "extractor": f"llm:{model}",
+                "quote": _s(c.get("quote")),
+                "person_key": None,
+                "basis": None,
+                "gameweek": stated if stated is not None
+                else _gw_after(calendar, published),
+                "gameweek_basis": ("stated" if stated is not None else
+                                   ("inferred" if _gw_after(calendar, published)
+                                    is not None else None)),
+                "confidence": None,
+            })
 
-    rows = sorted(
-        best.values(),
-        key=lambda r: (r["published_at"] or "", r["show"], r["action"]),
-        reverse=True,
-    )
+    # -- pass two: transcripts, but only for the publications that matter ----
+    # The window used to bound this and the bound is gone, so the set is
+    # narrowed by relevance instead: 8,508 segments live in the live warehouse
+    # and this player's statements touch a handful of videos. Loading all of
+    # them to time-stamp four quotes would be the cost of the window with none
+    # of its (wrong) benefit.
+    wanted: set[str] = set()
+    for p in pending:
+        _rep, _rep_id, kin = _representative(p["item_id"])
+        wanted.update(kin)
+    transcripts = (_transcripts(wh, wanted)
+                   if wanted and "transcript_segment" in present else {})
+    bases = _url_bases(wh, wanted, present)
+
+    def _row(p: dict[str, Any]) -> dict[str, Any]:
+        info, rep_id, kin = _representative(p["item_id"])
+        url = _s(info.get("url"))
+        index = _NO_TRANSCRIPT
+        for sib in kin:
+            if sib in transcripts:
+                index = transcripts[sib]
+                break
+        start_s = index.find(p["quote"])
+        show = _s(info.get("creator")) or "(unknown show)"
+        return {
+            "person": (names.get(str(p["person_key"]))
+                       if p["person_key"] else None),
+            "person_basis": p["basis"],
+            "show": show,
+            "action": p["action"],
+            "is_observation": p["is_observation"],
+            "conviction": p["conviction"],
+            "extractor": p["extractor"],
+            "quote": p["quote"] or None,
+            "start_s": _f(start_s, 2),
+            "deep_link": deep_link(url, start_s),
+            "published_at": _iso(info.get("published_at")),
+            "item_title": _s(info.get("title")),
+            "item_url": url,
+            "url_basis": bases.get(rep_id),
+            "item_id": rep_id,
+            "gameweek": p["gameweek"],
+            "gameweek_basis": p["gameweek_basis"],
+            "confidence": p["confidence"],
+            "on_panel": show in panel_shows,
+        }
+
+    # One publication, not one stored row. The same video under `watch?v=` and
+    # `youtu.be/` is one thing somebody said once; keying on the raw item id
+    # shows the reader two opinions where one was voiced.
+    best: dict[tuple, dict[str, Any]] = {}
+    for p in pending:
+        row = _row(p)
+        canon = canonical_key(row["item_url"], row["item_id"])
+        key = ((canon, row["show"], "watch", _norm(row["quote"] or ""))
+               if p["is_observation"] else
+               (canon, row["show"], row["action"], row["gameweek"],
+                row["extractor"]))
+        kept = best.get(key)
+        # Of two rows saying the same thing, keep the one whose quote could be
+        # located in a transcript: same position, better evidence.
+        if kept is None or (kept["start_s"] is None and row["start_s"] is not None):
+            best[key] = row
+    everything = list(best.values())
+
+    # -- what exists PER GAMEWEEK, counted before anything is filtered -------
+    tally: dict[Any, int] = {}
+    for r in everything:
+        tally[r["gameweek"]] = tally.get(r["gameweek"], 0) + 1
+    by_gw = [{"gw": g, "n": n} for g, n in
+             sorted(tally.items(), key=lambda kv: (kv[0] is None, kv[0] or 0))]
+
+    # -- and only now, the filter -------------------------------------------
+    if gw is not None:
+        rows = [r for r in everything if r["gameweek"] == int(gw)]
+    elif since is not None:
+        keep = _stamps(pd.Series([r["published_at"] for r in everything]))
+        rows = [r for r, when in zip(everything, keep)
+                if not pd.isna(when) and when >= since]
+    else:
+        rows = list(everything)
+    rows.sort(key=lambda r: (r["published_at"] or "", r["show"], r["action"]),
+              reverse=True)
+
+    scope = (f"for GW{int(gw)}" if gw is not None else
+             (f"in the last {(moment - since).days} days" if since is not None
+              else "for any gameweek"))
     if not rows:
+        if everything:
+            # THE POINT OF THE WHOLE BLOCK ABOVE. An empty strip under a
+            # gameweek selector reads as "nobody rates him"; what is true is
+            # "nobody said this about THIS week". Those are different claims
+            # and only the second one is supported. The sentence names the
+            # control that is actually hiding the rows -- blaming the gameweek
+            # for what the day window did would send the reader to the wrong
+            # one and leave them believing the panel is silent.
+            if gw is not None:
+                return [], (
+                    f"nothing was said about this player {scope}. The panel "
+                    f"did speak about him for other gameweeks: "
+                    f"{_by_gw_phrase([b for b in by_gw if b['gw'] != int(gw)])}"
+                    f". This is a gameweek filter, not silence -- switch the "
+                    f"gameweek to read those."
+                ), by_gw
+            return [], (
+                f"nothing was said about this player {scope}, but "
+                f"{sum(b['n'] for b in by_gw)} statements about him sit "
+                f"outside that window ({_by_gw_phrase(by_gw)}). This is the "
+                f"day window, not silence -- widen `days`, or ask for a "
+                f"gameweek, which is not day-bounded."
+            ), by_gw
         reach = _of_pool(coverage.get("said"), coverage.get("pool"))
         return [], (
-            f"nobody tracked has mentioned this player in the last "
-            f"{(moment - since).days} days."
+            f"nobody tracked has mentioned this player {scope}, nor for any "
+            f"other gameweek."
             + (f" Claims exist for {reach}, so silence here is the ordinary "
                f"state and not a failed lookup." if reach else "")
-        )
+        ), by_gw
+
+    # What the filter is HIDING, named. Counted against the axis that is
+    # actually in force, because "17 statements in other gameweeks" and "17
+    # statements older than 30 days" are different facts and swapping them
+    # would send a reader to the wrong control.
+    if gw is not None:
+        others = [b for b in by_gw if b["gw"] != int(gw)]
+        n_hidden = sum(b["n"] for b in others)
+        also = (f" {n_hidden} further statement{'s' if n_hidden != 1 else ''} "
+                f"about him sit{'' if n_hidden != 1 else 's'} under other "
+                f"gameweeks ({_by_gw_phrase(others)})." if n_hidden else "")
+    else:
+        n_hidden = sum(b["n"] for b in by_gw) - len(rows)
+        also = (f" {n_hidden} further statement{'s' if n_hidden != 1 else ''} "
+                f"about him fall{'' if n_hidden != 1 else 's'} outside that "
+                f"window; the full census is {_by_gw_phrase(by_gw)}."
+                if n_hidden > 0 else "")
     unattributed = sum(1 for r in rows if r["person"] is None)
     if unattributed == len(rows):
         return rows, (
-            "every statement here is attributed to a SHOW, not a person: "
-            "item_person carries no attribution for these items yet, and a "
-            "round-table episode belongs to the show until somebody is named. "
-            "Run `python -m fpl_edge.ingest.content.panel attribute` to fill in "
-            "the sole-host and title bases."
-        )
+            f"Everything here is {scope}." + also + " Every statement is "
+            "attributed to a SHOW, not a person: item_person carries no "
+            "attribution for these items yet, and a round-table episode "
+            "belongs to the show until somebody is named. Run `python -m "
+            "fpl_edge.ingest.content.panel attribute` to fill in the sole-host "
+            "and title bases."
+        ), by_gw
     if unattributed:
         return rows, (
-            f"{unattributed} of {len(rows)} statements are attributed to the "
-            f"show rather than a person: no item_person row establishes who "
-            f"was speaking, and the show is the honest answer for a "
+            f"Everything here is {scope}." + also
+            + f" {unattributed} of {len(rows)} statements are attributed to "
+            f"the show rather than a person: no item_person row establishes "
+            f"who was speaking, and the show is the honest answer for a "
             f"round-table episode."
-        )
-    return rows, None
+        ), by_gw
+    return rows, (f"Everything here is {scope}." + also if also else None), by_gw
 
 
-def player_chatter(wh, *, code: int, days: int = 30) -> dict[str, Any]:
+def _by_gw_phrase(by_gw: list[dict[str, Any]]) -> str:
+    """``"4 for GW2, 1 for GW3"`` -- where the rest of the talk actually is."""
+    if not by_gw:
+        return "none"
+    return ", ".join(
+        f"{b['n']} for GW{b['gw']}" if b["gw"] is not None
+        else f"{b['n']} with no gameweek on file"
+        for b in by_gw
+    )
+
+
+def player_chatter(wh, *, code: int, days: int = 30,
+                   gw: int | str | None = None) -> dict[str, Any]:
     """One player, three separately-sourced channels, and no consensus score.
 
     ``owned`` is what the panel HOLDS, ``said`` is what they said, ``noticed``
     is what was measured about him. They are never merged, never netted and
     never summed into an agreement number -- see the section header above for
     why that refusal is the feature.
+
+    ``gw`` indexes ``said`` the way ``creator_board`` indexes the board, and
+    through the same ``_resolve_gw`` ladder: null means the next gameweek, an
+    integer means that one, and ``"all"`` turns the gameweek filter off and
+    lets ``days`` bound the read instead. ``said_by_gw`` is always the full
+    per-gameweek census, so choosing a gameweek narrows what is shown and never
+    hides that the other weeks have content.
     """
     moment = dt.datetime.now(UTC)
-    since = moment - dt.timedelta(days=int(days))
     code = int(code)
     present = _tables_present(wh, _CONTENT_TABLES + (
         "content_analysis", "transcript_segment", "content_item_asset",
@@ -2573,18 +2926,48 @@ def player_chatter(wh, *, code: int, days: int = 30) -> dict[str, Any]:
 
     coverage = _coverage(wh, present, moment)
     panel_shows = {s for p in roster for s in p["shows"]}
-    said, said_reason = _said(wh, code, moment, since, present, roster,
-                              panel_shows, coverage)
+
+    # The two axes, resolved once and kept apart. `days` bounds this read only
+    # when the caller has explicitly switched the gameweek filter off: a claim
+    # made three weeks ago ABOUT GW3 is a GW3 claim, and letting a day window
+    # also apply would drop it from the GW3 strip for no reason a reader could
+    # ever guess. See `_said`'s "GAMEWEEK, NOT DAYS".
+    if gw == "all":
+        want_gw, gw_reason = None, (
+            f"no gameweek filter was applied (`gw: \"all\"`), so the {int(days)}-"
+            f"day window is the only bound on `said`. Statements about "
+            f"different gameweeks are mixed together here; `said_by_gw` says "
+            f"which is which."
+        )
+        since: dt.datetime | None = moment - dt.timedelta(days=int(days))
+    else:
+        want_gw, gw_reason = _resolve_gw(wh, None if gw is None else int(gw),
+                                         moment)
+        since = None
+        gw_reason += (
+            " `days` does not bound this: a statement made three weeks ago "
+            "about this gameweek is still about this gameweek. Ask for "
+            "`gw: \"all\"` to read by recency instead."
+        )
+    said, said_reason, said_by_gw = _said(
+        wh, code, moment, present, roster, panel_shows, coverage,
+        gw=want_gw, since=since,
+    )
     noticed, noticed_reason = _noticed(wh, code, moment, present, coverage)
 
     reason = None
     if not owned and not said and not noticed:
         reach = _of_pool(coverage.get("said"), coverage.get("pool"))
+        scope = (f"for GW{want_gw}" if want_gw is not None
+                 else f"in {int(days)} days")
+        elsewhere = sum(b["n"] for b in said_by_gw)
         reason = (
             f"Nothing is on file for {name} in any of the three channels: no "
             f"panel squad that has been read holds him, nobody tracked has "
-            f"mentioned him in {int(days)} days, and no measured intel row "
-            f"names him."
+            f"mentioned him {scope}, and no measured intel row names him."
+            + (f" He IS spoken about in other gameweeks "
+               f"({_by_gw_phrase(said_by_gw)}), so only this gameweek is "
+               f"silent." if elsewhere else "")
             + (f" Claims cover {reach}, so this is the ordinary state for most "
                f"of the pool." if reach else "")
         )
@@ -2594,11 +2977,20 @@ def player_chatter(wh, *, code: int, days: int = 30) -> dict[str, Any]:
         "name": name,
         "as_of": moment.isoformat(),
         "window_days": int(days),
+        # Which gameweek `said` is FOR, and why that one. Null means no
+        # gameweek filter is in force (`gw: "all"`, or no calendar to resolve
+        # against) -- `gw_reason` says which of the two.
+        "gw": want_gw,
+        "gw_reason": gw_reason,
         # DID first. The one channel with no epistemic problem leads.
         "owned": owned,
         "owned_reason": owned_reason,
         "said": said,
         "said_reason": said_reason,
+        # Every gameweek this player has been spoken about in, counted BEFORE
+        # the filter above. A gameweek selector that hides the existence of the
+        # other gameweeks is worse than no selector at all.
+        "said_by_gw": said_by_gw,
         "noticed": noticed,
         "noticed_reason": noticed_reason,
         "counts": {
@@ -2608,6 +3000,8 @@ def player_chatter(wh, *, code: int, days: int = 30) -> dict[str, Any]:
             "noticed": len(noticed),
             "panel_size": int(panel_meta["panel_size"]),
             "squads_known": int(panel_meta["known"]),
+            # Across ALL gameweeks. `said` is a slice of this, never the whole.
+            "said_all_gw": sum(b["n"] for b in said_by_gw),
         },
         "reason": reason,
     }
