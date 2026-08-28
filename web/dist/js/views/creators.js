@@ -195,7 +195,8 @@ export default async function creators(host) {
   let linkBody = null;
 
   /* ---- load ----------------------------------------------------------- */
-  body.appendChild(el("p", "sub", "loading the panel…"));
+  /* not `.sub`: an empty state and a pending one must not look the same */
+  body.appendChild(el("p", "cx-loading", "loading the panel…"));
   const boardP = runPanel("creator_board", {});
   const squadP = runPanel("squad_overview", {}).catch(e => ({ error: e }));
 
@@ -312,25 +313,36 @@ export default async function creators(host) {
       "disagree with your squad.");
     teachCard.appendChild(lead);
 
-    /* the governing expression, in the Template idiom */
+    /* The governing expression, in the Template idiom. Each term carries its
+       own unit directly beneath it: as two sibling rows the second unit was
+       held under its term by a magic min-width and sat 41px off it. */
     const idn = el("div", "cx-identity");
-    idn.appendChild(el("span", "cx-eq-term intent", "panel intent"));
+    const term = (cls, label, unit) => {
+      const d = el("div", "cx-eq-col");
+      d.appendChild(el("span", "cx-eq-term " + cls, label));
+      d.appendChild(el("span", "cx-eq-gloss", unit));
+      return d;
+    };
+    idn.appendChild(term("intent", "panel intent", "buy − sell, counted in people"));
     idn.appendChild(el("span", "cx-eq-op", "×"));
-    idn.appendChild(el("span", "cx-eq-term mine", "your exposure"));
+    idn.appendChild(term("mine", "your exposure", "captain · start · bench · not owned"));
     teachCard.appendChild(idn);
-    const idsub = el("div", "cx-identity-sub");
-    idsub.appendChild(el("span", null, "buy − sell, counted in people"));
-    idsub.appendChild(el("span", "cx-eq-op", " "));
-    idsub.appendChild(el("span", null, "captain · start · bench · not owned"));
-    teachCard.appendChild(idsub);
 
     const rules = el("div", "cx-rules");
-    const r1 = el("div", "cx-rule");
-    r1.appendChild(el("span", "cx-sw agree"));
-    r1.append(el("b", null, "agree"), " → collapses to a count, and costs you nothing but background");
-    const r2 = el("div", "cx-rule");
-    r2.appendChild(el("span", "cx-sw dis"));
-    r2.append(el("b", null, "disagree"), " → becomes a row with a quote, a timestamp and a link to the source");
+    /* swatch, then ONE text run: the bold lead-in stays inline with the
+       sentence instead of becoming its own column when the line wraps. */
+    const rule = (swClass, word, rest) => {
+      const d = el("div", "cx-rule");
+      d.appendChild(el("span", "cx-sw " + swClass));
+      const t = el("span", "cx-ruletext");
+      t.append(el("b", null, word), rest);
+      d.appendChild(t);
+      return d;
+    };
+    const r1 = rule("agree", "agree",
+      " → collapses to a count, and costs you nothing but background");
+    const r2 = rule("dis", "disagree",
+      " → becomes a row with a quote, a timestamp and a link to the source");
     rules.append(r1, r2);
     teachCard.appendChild(rules);
 
@@ -731,20 +743,25 @@ export default async function creators(host) {
       seg.appendChild(b);
     }
     viewRow.appendChild(seg);
+    /* WHAT is being shown is a control; WHICH SLICE it is drawn from is
+       reference. They are different things, so the slice travels as one
+       right-aligned cluster rather than three loose runs beside the buttons. */
+    const meta = el("span", "cx-toolmeta");
     const gw = res.gw;
     if (gw != null) {
       const c = el("span", "cx-gw");
       c.append(el("b", null, `GW${gw}`), res.gw_reason ? ` · ${res.gw_reason}` : "");
-      viewRow.appendChild(c);
+      meta.appendChild(c);
     }
     if (res.window_days != null)
-      viewRow.appendChild(el("span", "sub",
+      meta.appendChild(el("span", null,
         `claims from the last ${plural(res.window_days, "day")}`));
     const age = relAge(res.as_of);
-    const asof = el("span", "sub cx-asof");
+    const asof = el("span", "cx-asof");
     asof.appendChild(el("span", "freshdot " + age.cls));
     asof.append(` read ${age.text}`);
-    viewRow.appendChild(asof);
+    meta.appendChild(asof);
+    viewRow.appendChild(meta);
   }
 
   function renderEvidenceRow() {
@@ -1334,12 +1351,16 @@ export default async function creators(host) {
       det.appendChild(miss);
     }
     const wrap = el("div", "scroll-x");
-    const t = el("table", "data");
+    /* `cx-roster` clamps the two prose columns. Un-clamped, one episode title
+       is 680px wide and pushes the scoreboard this section is FOR — scored,
+       hit rate, weight — off the right edge of the container. */
+    const t = el("table", "data cx-roster");
     const thead = el("thead"); const hr = el("tr");
-    for (const [l, num] of [["source", 0], ["people", 0], ["latest", 0],
+    for (const [l, num, cls] of [["source", 0], ["people", 0, "cx-people"],
+                            ["latest", 0, "cx-latest"],
                             ["items 30d", 1], ["claims 30d", 1],
                             ["scored", 1], ["hit rate", 1], ["weight", 1]])
-      hr.appendChild(el("th", num ? "num" : "", l));
+      hr.appendChild(el("th", [num ? "num" : "", cls].filter(Boolean).join(" "), l));
     thead.appendChild(hr); t.appendChild(thead);
     const tb = el("tbody");
     for (const c of cs) {
@@ -1350,7 +1371,7 @@ export default async function creators(host) {
         nameTd.appendChild(el("div", "cx-tiny", "no verified entry id"));
       tr.appendChild(nameTd);
 
-      const ppl = el("td");
+      const ppl = el("td", "cx-people");
       const people = (c.entry && c.entry.people) || c.people || [];
       if (people.length) {
         ppl.textContent = people.map(p => p.display_name || p.name || p).join(", ");
@@ -1362,12 +1383,13 @@ export default async function creators(host) {
       }
       tr.appendChild(ppl);
 
-      const lt = el("td");
+      const lt = el("td", "cx-latest");
       if (c.latest) {
         const k = linkKind(c.latest.url, c.latest.url_basis);
         const a = el("a", "cx-title", c.latest.title || c.latest.url);
         a.href = c.latest.url; a.target = "_blank"; a.rel = "noopener noreferrer";
-        a.title = k.why || "";
+        /* the title is clamped in the cell, so it must be readable on hover */
+        a.title = [c.latest.title, k.why].filter(Boolean).join("\n");
         lt.appendChild(a);
         const meta = el("div", "cx-tiny");
         meta.append(`${k.label} · ${relAge(c.latest.published_at).text}`);
@@ -1472,7 +1494,9 @@ export default async function creators(host) {
       if (people.length === 1) {
         const p = people[0];
         const nm = p.display_name || p.name || who;
-        solo.push({ key: who, label: nm, sub: who, kind: "person",
+        /* the show under the person's name, EXCEPT where they are the same
+           string — "FPL Raptor / FPL Raptor" says nothing twice */
+        solo.push({ key: who, label: nm, sub: nm === who ? null : who, kind: "person",
                     ownKey: nm, note: "the only host on this show, so what the show said is what he said" });
       } else if (people.length > 1) {
         showBand.push({ key: who, label: who, sub: `${people.length} hosts`,

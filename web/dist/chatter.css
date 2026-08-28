@@ -38,8 +38,12 @@
 .pc-rail { display: grid; grid-template-columns: 66px 1fr; gap: 10px;
            padding: 5px 0; align-items: start; }
 .pc-rail + .pc-rail { border-top: 1px dashed var(--line); }
+/* DID / SAID / NOTICED are the strip's SPINE — the thing that makes silence
+   read as the same answer shape as content. At --muted they were quieter
+   than the reasons beside them, so four drawers in five were an undivided
+   wall of grey. Ink at 10px tracked reads as a label, not as body copy. */
 .pc-lab b { display: block; font-size: 10px; font-weight: 700;
-            letter-spacing: .1em; color: var(--muted); }
+            letter-spacing: .1em; color: var(--ink); }
 .pc-lab span { display: block; font-size: 10px; color: var(--faint);
                margin-top: 1px; }
 .pc-body { min-width: 0; }
@@ -102,8 +106,18 @@
     var(--raised);
 }
 .pc-clamp { display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2;
-            -webkit-box-orient: vertical; overflow: hidden; cursor: pointer; }
+            -webkit-box-orient: vertical; overflow: hidden; }
 .pc-full .pc-clamp { -webkit-line-clamp: 3; line-clamp: 3; }
+/* Clamped text expands on click, and nothing said so — no hover state, and
+   no way in from the keyboard at all. `pc-cut` is set by the component only
+   on nodes that ACTUALLY overflow, so the affordance never lands on text
+   that is already whole (a focus stop on every paragraph is worse than
+   none). A line-clamped box cannot carry an ::after hint — it would be
+   clamped away — so the affordance is the pointer, the colour shift and a
+   real focus ring. */
+.pc-cut { cursor: pointer; border-radius: 4px; }
+.pc-cut:hover { color: var(--ink); }
+.pc-cut:focus-visible { outline: 2px solid var(--s1); outline-offset: 2px; }
 
 .pc-st-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px;
               margin-top: 3px; font-size: 10.5px; color: var(--faint); }

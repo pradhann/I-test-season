@@ -172,12 +172,40 @@ function convPips(band) {
   return w;
 }
 /* Quotes are the point, so they clamp rather than truncate: two lines, and
-   the whole thing on click. Nothing is ever silently dropped. */
+   the whole thing on click. Nothing is ever silently dropped.
+   The affordance is added ONLY where the text really overflows, and only
+   once layout can answer that — a keyboard stop on every short paragraph in
+   a strip made mostly of short paragraphs is noise, not access. */
 function clampable(tag, cls, text) {
   const n = el(tag, cls + " pc-clamp", text);
-  n.title = "click to show the whole thing";
-  n.onclick = () => { n.classList.toggle("pc-clamp"); };
+  const toggle = () => {
+    const open = n.classList.toggle("pc-clamp");
+    n.setAttribute("aria-expanded", String(!open));
+  };
+  n.onclick = () => { if (n.classList.contains("pc-cut")) toggle(); };
+  n.onkeydown = e => {
+    if (!n.classList.contains("pc-cut")) return;
+    if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
+  };
+  markIfClamped(n);
   return n;
+}
+
+/* Measured after the node is in the document: scrollHeight beats clientHeight
+   exactly when -webkit-line-clamp actually cut something off. */
+function markIfClamped(n) {
+  requestAnimationFrame(() => {
+    if (!n.isConnected || !n.classList.contains("pc-clamp")) return;
+    if (n.scrollHeight - n.clientHeight < 2) return;
+    n.classList.add("pc-cut");
+    n.tabIndex = 0;
+    /* A quote stays a <blockquote>: role="button" would trade its quotation
+       semantics for an affordance, and on this page the quote-ness is the
+       editorial point. Everything else takes the button role. */
+    if (n.tagName !== "BLOCKQUOTE") n.setAttribute("role", "button");
+    n.setAttribute("aria-expanded", "false");
+    if (!n.title) n.title = "click to show the whole thing";
+  });
 }
 
 /* ---------------- section renderers ---------------- */

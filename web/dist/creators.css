@@ -40,34 +40,51 @@
            margin: 2px 0 12px; color: var(--muted); }
 .cx-lead b { color: var(--ink); font-weight: 650; }
 
-.cx-identity { display: flex; flex-wrap: wrap; align-items: center; gap: 9px;
-               font-size: 14px; }
+/* Each term is a COLUMN — the term over the unit it is counted in — so the
+   two never drift apart. A flex column's baseline is its first line's, so
+   the × still sits on the terms' baseline rather than between the rows. */
+.cx-identity { display: flex; flex-wrap: wrap; align-items: baseline;
+               gap: 6px 9px; font-size: 14px; margin-top: 2px; }
+.cx-eq-col { display: flex; flex-direction: column; align-items: flex-start;
+             gap: 4px; min-width: 0; }
 .cx-eq-term { padding: 4px 12px; border-radius: 7px; font-weight: 650;
               color: var(--ink); border: 1px solid var(--line); }
 .cx-eq-term.intent { background: color-mix(in oklab, var(--cx-in) 20%, var(--surface)); }
 .cx-eq-term.mine   { background: color-mix(in oklab, var(--accent) 24%, var(--surface)); }
 .cx-eq-op { color: var(--faint); font-family: var(--mono); font-size: 15px; }
-.cx-identity-sub { display: flex; flex-wrap: wrap; gap: 9px; margin: 4px 0 0;
-                   color: var(--faint); font-size: 11.5px; }
-.cx-identity-sub > span:first-child { min-width: 148px; }
+.cx-eq-gloss { color: var(--faint); font-size: 11.5px; line-height: 1.4;
+               padding-left: 1px; }
 
 .cx-rules { display: flex; flex-direction: column; gap: 4px; margin: 12px 0 10px; }
-.cx-rule { display: flex; align-items: center; gap: 9px; font-size: 12.5px;
-           color: var(--muted); }
+/* A grid, not a flex row: as three flex items the bold lead-in became its own
+   column and the sentence wrapped in a narrow gutter beside it once the text
+   had to break. Swatch, then one text run that keeps its lead-in inline. */
+.cx-rule { display: grid; grid-template-columns: 24px minmax(0, 1fr);
+           align-items: baseline; gap: 9px; font-size: 12.5px;
+           color: var(--muted); line-height: 1.55; }
 .cx-rule b { color: var(--ink); }
 .cx-sw { width: 24px; height: 10px; border-radius: 3px; flex: none;
          border: 1px solid var(--line); }
 .cx-sw.agree { background: color-mix(in oklab, var(--muted) 16%, var(--surface)); }
 .cx-sw.dis { background: color-mix(in oklab, var(--cx-in) 30%, var(--surface)); }
 
-.cx-record { font-size: 13px; color: var(--muted); margin: 10px 0 4px;
-             max-width: 74ch; line-height: 1.55; }
-.cx-record b { color: var(--ink); font-family: var(--mono); font-size: 15px;
-               font-variant-numeric: tabular-nums; }
-.cx-note { color: var(--faint); font-size: 12px; max-width: 74ch;
-           line-height: 1.55; margin: 0 0 8px; }
+/* THE MEASUREMENT. The hit rate is the governing fact of the whole page, so
+   it is the one number on this card with display weight — everything else on
+   it is prose. The sentence around it stays at reading weight; only the
+   figure is promoted. */
+.cx-record { font-size: 13px; color: var(--muted); margin: 14px 0 6px;
+             max-width: 74ch; line-height: 1.6; }
+.cx-record b { color: var(--ink); font-family: var(--mono); font-size: 19px;
+               font-weight: 700; letter-spacing: -.01em;
+               font-variant-numeric: tabular-nums; margin-right: 2px; }
+/* The panel's own words about that measurement: a QUOTATION, so it reads as
+   an aside — a rule down the left rather than eight lines of the faintest
+   grey on the page, which is what a bare paragraph gave it. */
+.cx-note { color: var(--muted); font-size: 12px; max-width: 74ch;
+           line-height: 1.6; margin: 0 0 10px;
+           border-left: 2px solid var(--line); padding: 1px 0 1px 11px; }
 .cx-quotemark { text-transform: uppercase; letter-spacing: .07em;
-                font-size: 10px; font-weight: 700; }
+                font-size: 10px; font-weight: 700; color: var(--faint); }
 
 /* a disclosure, never a tab: the honest paragraph lives one click away */
 .cx-disclose { margin: 6px 0; }
@@ -78,6 +95,10 @@
 .cx-disclose > summary::before { content: "▸"; color: var(--faint); }
 .cx-disclose[open] > summary::before { content: "▾"; }
 .cx-disclose > summary:hover { color: var(--ink); }
+/* the custom marker replaced the UA one, so the keyboard ring has to be
+   restated here — app.css only rings button, a, select and input */
+.cx-disclose > summary:focus-visible { outline: 2px solid var(--s1);
+  outline-offset: 3px; border-radius: 4px; color: var(--ink); }
 .cx-disclose > p, .cx-disclose > .sub { max-width: 78ch; line-height: 1.6;
                                         color: var(--muted); font-size: 12.5px; }
 .cx-disclose.big > summary { font-size: 13px; font-weight: 600; }
@@ -164,8 +185,21 @@ a.cx-job-url:hover { color: var(--ink); text-decoration: underline; }
 
 /* ========================================================== toolbar bits */
 
+/* WHICH SLICE the board is drawn from — gameweek, window, freshness. One
+   right-aligned cluster with hairline separators, so it reads as reference
+   beside the controls instead of three loose runs at full body weight. It
+   lands in the same right-hand column as the Evidence row's key below it. */
+.cx-toolmeta { margin-left: auto; display: inline-flex; align-items: center;
+               flex-wrap: wrap; gap: 3px 10px; color: var(--muted);
+               font-size: 12px; }
+.cx-toolmeta > * + *::before { content: "·"; color: var(--faint);
+                               margin-right: 9px; }
+/* .cx-asof is itself a flex box with a 6px gap, so its separator only owes
+   the remaining 3px — otherwise that one gap sits 6px wider than the others */
+.cx-toolmeta > .cx-asof::before { margin-right: 3px; }
 .cx-gw { color: var(--muted); font-size: 12px; }
-.cx-gw b { color: var(--ink); font-family: var(--mono); }
+.cx-gw b { color: var(--ink); font-family: var(--mono);
+           font-variant-numeric: tabular-nums; }
 .cx-asof { display: inline-flex; align-items: center; gap: 6px; }
 .cx-key { display: inline-flex; gap: 14px; align-items: center;
           margin-left: auto; }
@@ -230,7 +264,11 @@ svg.cx-board .cx-plabel { fill: var(--muted); font-size: 11px; }
 svg.cx-board .cx-plabel.mine { fill: var(--ink); font-weight: 650; }
 svg.cx-board .cx-mark { cursor: pointer; }
 svg.cx-board .cx-mark.agreed { opacity: .38; }
-svg.cx-board .cx-mark:hover .cx-node { stroke: var(--ink); }
+/* a split is drawn as two half-discs, not a .cx-node, so it needs its own
+   hover rule — the most informative mark on the board was the one mark that
+   did not answer the pointer */
+svg.cx-board .cx-mark:hover .cx-node,
+svg.cx-board .cx-mark:hover .cx-half { stroke: var(--ink); }
 svg.cx-board .cx-mark:focus-visible { outline: 2px solid var(--s1);
                                       outline-offset: 2px; }
 
@@ -259,8 +297,12 @@ svg.cx-board .cx-mark:focus-visible { outline: 2px solid var(--s1);
 .cx-legend > .sub, .cx-legend > p { flex-basis: 100%; color: var(--faint);
              font-size: 11.5px; line-height: 1.6; max-width: 88ch; margin: 2px 0 0; }
 .cx-legend > .cx-disclose { flex-basis: 100%; }
-.cx-shape { flex-basis: 100%; color: var(--muted); font-size: 12.5px;
-            line-height: 1.6; max-width: 88ch; margin: 4px 0 0; }
+/* The shape of tonight's board is a FINDING, not legend chrome — it has to
+   out-specify the `.cx-legend > p` rule above, which was quietly demoting it
+   to the faintest grey and the smallest size on the page. */
+.cx-legend > p.cx-shape { color: var(--muted); font-size: 12.5px;
+            line-height: 1.6; max-width: 88ch; margin: 6px 0 0; }
+.cx-shape { flex-basis: 100%; }
 .cx-shape b { color: var(--ink); }
 
 /* ========================================================== the decisions */
@@ -273,6 +315,19 @@ svg.cx-board .cx-mark:focus-visible { outline: 2px solid var(--s1);
               max-width: 74ch; }
 .cx-subhead { margin: 14px 0 6px; font-size: 11px; letter-spacing: .08em;
               text-transform: uppercase; color: var(--muted); font-weight: 650; }
+
+/* EMPTY IS THE COMMON CASE, so it gets a container of its own. A bare
+   `p.sub` inherits full ink at body size — an empty armband was rendering
+   LOUDER than the populated one it replaces, and with nothing around it to
+   say the emptiness was deliberate. These read as the app's own empty box
+   (dashed, raised) so a finding and a gap look like the same considered
+   answer everywhere on the page. */
+.cx-sec > p.sub, .cx-body > p.sub {
+  color: var(--muted); font-size: 12.5px; line-height: 1.6; max-width: 82ch;
+  margin: 8px 0 2px; padding: 11px 13px; border-radius: 8px;
+  background: var(--raised); border: 1px dashed var(--line); }
+/* PENDING is not EMPTY. No box: a container would claim the answer is in. */
+.cx-loading { color: var(--muted); font-size: 12.5px; margin: 10px 0; }
 
 .cx-card { border: 1px solid var(--line); border-left: 3px solid var(--line);
            border-radius: 9px; background: var(--raised);
@@ -300,21 +355,27 @@ svg.cx-board .cx-mark:focus-visible { outline: 2px solid var(--s1);
 .cx-count { font-size: 11.5px; color: var(--muted); padding: 3px 9px;
             border-radius: 999px; border: 1px solid var(--line);
             background: var(--surface); white-space: nowrap; }
-.cx-count b { font-family: var(--mono); color: var(--ink); }
+.cx-count b { font-family: var(--mono); color: var(--ink);
+              font-variant-numeric: tabular-nums; }
 .cx-count.in { border-color: color-mix(in oklab, var(--cx-in) 45%, var(--line)); }
 .cx-count.out { border-color: color-mix(in oklab, var(--cx-out) 45%, var(--line)); }
 
-.cx-why { color: var(--ink); font-size: 13px; margin: 9px 0 6px;
+.cx-why { color: var(--ink); font-size: 13px; margin: 9px 0 4px;
           line-height: 1.55; max-width: 82ch; }
-.cx-evline { color: var(--faint); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.cx-evline { color: var(--faint); font-size: 11.5px; margin-bottom: 6px;
+             font-variant-numeric: tabular-nums; }
 .cx-who { margin: 5px 0 0; }
-.cx-wholine, .cx-dissent, .cx-owned { display: flex; gap: 8px;
-  font-size: 12px; color: var(--muted); line-height: 1.6; flex-wrap: wrap;
-  margin-top: 2px; }
+/* A GRID, not a flex row. As a flex row the label was sized by its own text,
+   so "actually own him" (120px) pushed its value 32px right of every other
+   value on the card and the whole block read ragged. One fixed label column
+   means every value on every card starts on the same line. */
+.cx-wholine, .cx-dissent, .cx-owned {
+  display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 8px;
+  font-size: 12px; color: var(--muted); line-height: 1.6; margin-top: 2px; }
 .cx-wholabel { color: var(--faint); font-size: 10px; letter-spacing: .09em;
-               text-transform: uppercase; min-width: 88px; padding-top: 2px;
-               font-weight: 650; flex: none; }
-.cx-dissent { margin-top: 5px; padding-top: 5px; border-top: 1px dashed var(--line); }
+               text-transform: uppercase; padding-top: 2px;
+               font-weight: 650; }
+.cx-dissent { margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--line); }
 
 .cx-actions { display: flex; gap: 8px; align-items: center; margin-top: 9px;
               flex-wrap: wrap; }
@@ -337,7 +398,7 @@ a.cx-cross:hover { color: var(--accent-ink); border-bottom-color: var(--accent-i
                  cursor: pointer; }
 .cx-agreed-btn:hover { border-color: var(--muted); color: var(--ink); }
 .cx-agreed-btn b { color: var(--ink); font-family: var(--mono); font-size: 16px;
-                   margin-right: 6px; }
+                   font-variant-numeric: tabular-nums; margin-right: 6px; }
 .cx-agreed-list { display: flex; flex-direction: column; gap: 1px;
                   margin-top: 6px; }
 .cx-agreed-list[hidden] { display: none; }
@@ -360,7 +421,8 @@ a.cx-cross:hover { color: var(--accent-ink); border-bottom-color: var(--accent-i
               background: color-mix(in oklab, var(--muted) 62%, var(--surface)); }
 .cx-armn { font-family: var(--mono); font-variant-numeric: tabular-nums;
            font-weight: 700; min-width: 20px; text-align: right; }
-.cx-armmeta { color: var(--faint); font-size: 11px; }
+.cx-armmeta { color: var(--faint); font-size: 11px;
+              font-variant-numeric: tabular-nums; }
 
 /* ======================================================= watch calls */
 
@@ -368,9 +430,14 @@ a.cx-cross:hover { color: var(--accent-ink); border-bottom-color: var(--accent-i
 .cx-obs { border: 1px dashed var(--line); border-radius: 9px;
           background: var(--raised); padding: 9px 12px; }
 .cx-obs-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.cx-obs-head b { color: var(--ink); font-size: 13px; }
+/* who said it is attribution, not the headline — it was inheriting full ink
+   at body size and reading level with the player's name beside it */
+.cx-obs-head .sub { color: var(--muted); font-size: 12px; }
 .cx-obsbadge { font-size: 9.5px; font-weight: 700; letter-spacing: .1em;
                text-transform: uppercase; color: var(--muted);
-               border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px; }
+               border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px;
+               white-space: nowrap; }
 
 /* ============================================================== quotes */
 
@@ -383,7 +450,12 @@ a.cx-cross:hover { color: var(--accent-ink); border-bottom-color: var(--accent-i
 .cx-tier { font-size: 9.5px; font-weight: 700; letter-spacing: .08em;
            text-transform: uppercase; padding: 1px 7px; border-radius: 999px;
            border: 1px solid var(--line); color: var(--muted);
-           background: var(--raised); }
+           background: var(--raised); white-space: nowrap; }
+/* "extractor not recorded" is an ABSENCE, and it repeats on every card in a
+   section. A filled badge for it shouts as loudly as the two tiers that
+   carry meaning, so the absence is drawn as an outline instead. */
+.cx-tier.unknown { color: var(--faint); background: transparent;
+                   border-style: dashed; font-weight: 650; }
 .cx-tier.llm { color: var(--ink);
   border-color: color-mix(in oklab, var(--s1) 50%, var(--line));
   background: color-mix(in oklab, var(--s1) 12%, var(--surface)); }
@@ -391,16 +463,38 @@ a.cx-cross:hover { color: var(--accent-ink); border-bottom-color: var(--accent-i
 .cx-tier.cue { color: var(--faint); background:
   repeating-linear-gradient(135deg, var(--raised) 0 3px,
                             var(--surface) 3px 6px); }
-.cx-conv { color: var(--faint); font-size: 11px; }
+.cx-conv { color: var(--faint); font-size: 11px;
+           font-variant-numeric: tabular-nums; white-space: nowrap; }
 a.cx-src-link { color: var(--accent-ink); font-size: 11.5px;
                 text-decoration: none; margin-left: auto; white-space: nowrap; }
 a.cx-src-link:hover { text-decoration: underline; }
 
 .cx-tiny { color: var(--faint); font-size: 10.5px; line-height: 1.5; }
+
+/* ------------------------------------------------------------- the roster */
+/* The roster's own summary promises "the honest scoreboard". Un-clamped, one
+   episode title took 683px and `people` 340px, so scored / hit rate / weight
+   sat outside the container and the promise was only kept by scrolling. Both
+   prose columns are clamped and ellipsised; the full string stays in the
+   link's title, and every number is visible without moving anything. */
+table.cx-roster td.cx-latest, table.cx-roster th.cx-latest { max-width: 300px; }
+table.cx-roster td.cx-people, table.cx-roster th.cx-people { max-width: 210px; }
+/* The title is a link with the whole string in its tooltip, so it ellipsises.
+   The people column WRAPS instead — a host list and the "this show's claims
+   are the show's" caveat are sentences, and cutting a caveat mid-word is the
+   one thing this page must not do to make a table fit. */
+table.cx-roster td.cx-latest a.cx-title { display: block; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; overflow-wrap: normal; }
+table.cx-roster td.cx-latest .cx-tiny { overflow: hidden; white-space: nowrap;
+  text-overflow: ellipsis; }
+table.cx-roster td.cx-people { white-space: normal; vertical-align: top;
+  padding-top: 6px; }
 a.cx-title { color: var(--ink); font-weight: 550; text-decoration: none;
              overflow-wrap: anywhere; }
 a.cx-title:hover { text-decoration: underline; }
-.cx-src { font-size: 9.5px; font-weight: 700; letter-spacing: .05em;
+/* nowrap: "FULL TRANSCRIPT" was breaking across two lines inside its own pill */
+.cx-src { display: inline-block; font-size: 9.5px; font-weight: 700;
+          letter-spacing: .05em; white-space: nowrap;
           text-transform: uppercase; padding: 1px 6px; border-radius: 999px;
           margin-left: 7px; color: var(--muted); background: var(--raised);
           border: 1px solid var(--line); }
@@ -481,16 +575,36 @@ tr.cx-you td.cx-gutter { background: color-mix(in oklab, var(--accent) 10%, var(
 .cx-act.out { color: var(--cx-out);
   border-color: color-mix(in oklab, var(--cx-out) 50%, var(--line)); }
 .cx-qitem { margin-top: 5px; font-size: 12px; }
-.cx-strip { margin-top: 16px; }
+/* The cross-tab strip is a PEER SECTION of "what was said, and where", but it
+   mounts in its `pc-full` variant, which drops its own top rule. Without one
+   the two sections ran together as a single column of cards. */
+.cx-strip { margin-top: 20px; padding-top: 14px;
+            border-top: 1px solid var(--line); }
 
 /* ============================================================ narrow */
 
 @media (max-width: 760px) {
   .cx-card-counts { margin-left: 0; width: 100%; }
-  .cx-wholabel { min-width: 72px; }
+  /* no room for a 120px label column — the label goes above its value, which
+     keeps the left edge shared instead of half-aligning to a squeezed one */
+  .cx-wholine, .cx-dissent, .cx-owned { grid-template-columns: minmax(0, 1fr);
+                                        gap: 1px; }
   .cx-armname { min-width: 120px; }
-  .cx-key { margin-left: 0; flex-basis: 100%; }
-  .cx-identity-sub > span:first-child { min-width: 0; }
+  .cx-key, .cx-toolmeta { margin-left: 0; flex-basis: 100%; }
   td.cx-gutter, th.cx-gutter { min-width: 132px; max-width: 132px; }
   .cx-legend { gap: 6px 14px; }
+  /* the clamps buy nothing once the table scrolls anyway, and a 280px title
+     column inside a 375px viewport is unreadable */
+  table.cx-roster td.cx-latest, table.cx-roster th.cx-latest,
+  table.cx-roster td.cx-people, table.cx-roster th.cx-people {
+    max-width: 190px; }
+}
+
+/* Below this the two terms cannot sit side by side, and a wrapped × strands
+   at the right of the first column reading exactly like a close button. The
+   expression stacks instead, with the operator on its own line between. */
+@media (max-width: 520px) {
+  .cx-identity { display: block; }
+  .cx-identity > .cx-eq-op { display: block; padding: 5px 0 3px 2px; }
+  .cx-eq-col + .cx-eq-col { margin-top: 2px; }
 }
