@@ -1018,12 +1018,30 @@ def _creator_from_host(url: str) -> tuple[str | None, str, str]:
     host = (urlparse(url).hostname or "").lower().removeprefix("www.")
     if not host:
         return None, "no_host", "the pasted URL has no host to identify"
+
+    # A host only identifies a publisher when exactly ONE registered source
+    # lives there. fantasyfootballscout.co.uk is that show; youtube.com is a
+    # PLATFORM shared by thirteen registered channels and by everyone else
+    # alive. Matching on it attributed a bare "https://www.youtube.com/" --
+    # no video at all -- to Let's Talk FPL, with a confident basis string, on
+    # the strength of being first in the registry. That is a fabrication: it
+    # puts content in a named creator's mouth from a URL that names nobody.
+    by_host: dict[str, list] = {}
     for source in ALL_SOURCES:
         src_host = (urlparse(source.url).hostname or "").lower().removeprefix("www.")
-        if src_host and src_host == host:
-            return (source.creator, "host_registry",
-                    (f"{host} is the host of a registered source "
-                     f"({source.key}), which publishes as {source.creator}"))
+        if src_host:
+            by_host.setdefault(src_host, []).append(source)
+    here = by_host.get(host, [])
+    creators_here = {s.creator for s in here}
+    if len(creators_here) > 1:
+        return (None, "shared_host",
+                (f"{host} hosts {len(creators_here)} registered creators, so "
+                 f"the host alone does not say who published this. The "
+                 f"channel itself has to name them."))
+    for source in here:
+        return (source.creator, "host_registry",
+                (f"{host} is the host of a registered source "
+                 f"({source.key}), which publishes as {source.creator}"))
     return (None, "unregistered_host",
             (f"no registered source publishes at {host}, so this page's "
              f"publisher is not identified and none is invented"))

@@ -608,7 +608,42 @@ export default async function creators(host) {
     return box;
   }
 
-  /* ======================================================== the link bar */
+  /* ======================================================== the link bar
+   *
+   * TWO PHASES, AND A GATE BETWEEN THEM. The owner, 2026-08-27: "look at the
+   * summary before transcribing — if it's not relevant why even transcribe?"
+   * So `POST /api/ingest/link` no longer runs to completion. It runs ONE page
+   * fetch and parks at stage `preview` with `awaiting_decision: true`. Accept
+   * is the only call that spends GPU seconds; decline spends none, and this
+   * bar says so where the button is, because a cost you cannot see is not a
+   * decision you can make.
+   *
+   * That makes three things this bar never had to render before:
+   *
+   *   1. A PREVIEW YOU CAN JUDGE RELEVANCE FROM — who published it (the
+   *      resolved creator, and plainly when that is a real channel we do not
+   *      track or could not resolve at all), what they called it, when, which
+   *      gameweek that makes it AND on what basis, what they say it is about,
+   *      and what yes would cost in seconds of this machine for THIS video.
+   *      "About 4 seconds" and "about 105 seconds" are different decisions
+   *      and they are drawn as different decisions.
+   *   2. TWO ACTIONS, ONE OF THEM FREE. Declining costs the page fetch that
+   *      already happened and nothing else. Nothing is written until accept.
+   *   3. AN EXPIRY. `preview_expires_utc` is 30 real minutes. A parked job
+   *      that has aged out must SAY it aged out rather than sit there looking
+   *      live with two buttons that would 409.
+   *
+   * REFUSED URLS AND DUPLICATES SKIP THE HALT, on the server, because neither
+   * is a decision about spending anything — there is nothing to transcribe,
+   * or it is transcribed already. They surface here exactly as they did.
+   *
+   * PHASE TWO is the ladder that was already here, with `preview` and
+   * `attribute` in it, plus one abort verb: DELETE. A cancel that arrives
+   * after the single opaque write is NOT the same as never having run, and
+   * `cancelled_after_write` is rendered as the different thing it is.
+   */
+
+  const LINK_STAGES = ["fetch", "preview", "transcribe", "analyse", "attribute"];
 
   function renderLinkBar() {
     linkCard.textContent = "";
@@ -635,6 +670,16 @@ export default async function creators(host) {
       " runs at about 11.5× — the same video is roughly 105 seconds. Both " +
       "figures are measured from stored runs, not estimated.");
     linkCard.appendChild(rates);
+
+    /* The halt, stated once, above the jobs. Nothing below this line spends
+       anything until a button is pressed. */
+    const gate = el("p", "cx-gate");
+    gate.append(
+      el("b", null, "Nothing is transcribed until you say so."),
+      " A paste fetches the page once and stops with a summary — who published " +
+      "it, when, which gameweek, and what saying yes would cost. Declining is " +
+      "free: nothing has been written at that point, so there is nothing to undo.");
+    linkCard.appendChild(gate);
 
     const err = el("div", "cx-linkerr");
     linkCard.appendChild(err);
@@ -677,10 +722,28 @@ export default async function creators(host) {
     return d;
   }
 
+  /* ---------------------------------------------------------- job driving */
+
+  function stopJob(job) {
+    clearInterval(job.timer); clearTimeout(job.timer); job.timer = null;
+    clearInterval(job.tick);  clearTimeout(job.tick);  job.tick = null;
+  }
+
+  /* A job that stored nothing may be pasted again — the session's duplicate
+     guard exists to stop a second INGEST, and a declined, expired or
+     cancelled job did not ingest anything. */
+  const STORED_NOTHING = new Set(["passed", "expired", "cancelled", "failed",
+                                  "down", "robots", "nomedia", "notepisode",
+                                  "declined"]);
+
   async function startJob(url, key) {
     const job = { url, key, state: "posting", stages: null, stage: null,
                   pct: null, eta: null, error: null, item_id: null,
-                  started: Date.now(), timer: null, path: null };
+                  started: Date.now(), timer: null, tick: null, path: null,
+                  path_reason: null, eta_basis: null, eta_reason: null,
+                  preview: null, expires: null, accepted: false, aborting: false,
+                  busy: null, conflict: null, actErr: null, descOpen: false,
+                  dupes: [], note: null, p: null };
     jobs.unshift(job);
     renderJobs();
     /* Raw fetch, not postJSON: the STATUS CODE is the thing that tells a
@@ -716,10 +779,6 @@ export default async function creators(host) {
     }
     job.job_id = payload && payload.job_id;
     job.stages = (payload && payload.stages) || null;
-    if (payload && payload.duplicate_of) {
-      job.state = "duplicate"; job.item_id = payload.duplicate_of;
-      renderJobs(); return;
-    }
     if (!job.job_id) {
       job.state = "failed";
       job.error = "the endpoint accepted the link but returned no job_id";
@@ -731,47 +790,100 @@ export default async function creators(host) {
   }
 
   function poll(job) {
-    job.timer = setInterval(async () => {
-      if (!document.body.contains(linkCard)) { clearInterval(job.timer); return; }
+    stopJob(job);
+    const once = async () => {
+      if (!document.body.contains(linkCard)) { stopJob(job); return; }
       let r, p = null;
       try {
         r = await fetch(`/api/ingest/link/${encodeURIComponent(job.job_id)}`);
         p = await r.json();
       } catch (e) {
-        clearInterval(job.timer);
+        stopJob(job);
         job.state = "down";
         job.error = `polling failed: ${String(e.message || e)}`;
         renderJobs(); return;
       }
       if (!r.ok) {
-        clearInterval(job.timer);
+        stopJob(job);
         job.state = r.status === 404 ? "down" : "failed";
         job.error = (p && (p.detail || p.error)) || `HTTP ${r.status}`;
         renderJobs(); return;
       }
-      job.stage = p.stage ?? job.stage;
-      job.pct = p.pct ?? job.pct;
-      job.eta = p.eta_s ?? job.eta;
-      job.item_id = p.item_id ?? job.item_id;
-      if (p.path || p.transcript_path) job.path = p.path || p.transcript_path;
-      /* The stage detail is where the path shows itself, so read it. */
-      const blob = JSON.stringify(p).toLowerCase();
-      if (!job.path && /caption/.test(blob)) job.path = "captions";
-      else if (!job.path && /(whisper|asr|audio)/.test(blob)) job.path = "asr";
-      if (p.error) {
-        clearInterval(job.timer);
-        job.error = String(p.error);
-        job.state = classifyError(job.error);
-        renderJobs(); return;
-      }
-      if (p.done) {
-        clearInterval(job.timer);
-        job.state = "done";
-        renderJobs();
-        return;
-      }
+      applyPoll(job, p);
       renderJobs();
-    }, 1200);
+    };
+    job.timer = setInterval(once, 900);
+    once();
+  }
+
+  /* Every terminal answer the server can give, BY ITS OWN CODE. The regex
+     classifier below stays as the fallback for a server that predates
+     `error_code`, but a code is exact and a message is a guess about a
+     message. */
+  const ERR_STATE = {
+    declined: "passed",                    // the OWNER said no, at the halt
+    preview_expired: "expired",
+    cancelled: "cancelled",
+    not_an_episode: "notepisode",
+    source_refused: "declined",            // the SOURCE said no (403 / 429)
+    robots_disallow: "robots",
+    no_transcript_source: "nomedia",
+    no_asr_route_for_pasted_media: "nomedia",
+  };
+
+  function errState(code, msg) {
+    if (code && ERR_STATE[code]) return ERR_STATE[code];
+    if (code) return "failed";
+    return classifyError(msg);
+  }
+
+  function applyPoll(job, p) {
+    if (!p || typeof p !== "object") return;
+    job.p = p;
+    if (Array.isArray(p.stages) && p.stages.length) job.stages = p.stages;
+    job.stage = p.stage ?? job.stage;
+    job.pct = p.pct ?? job.pct;
+    job.item_id = p.item_id ?? job.item_id;
+    /* NOT sticky. The server nulls the ETA when the job ends and says why in
+       `eta_reason`; carrying the old number forward would show a countdown
+       for work that is not going to happen. */
+    job.eta = p.eta_s ?? null;
+    job.eta_basis = p.eta_basis ?? null;
+    job.eta_reason = p.eta_reason ?? null;
+    if (p.transcript_path) job.path = p.transcript_path;
+    if (p.path_reason) job.path_reason = p.path_reason;
+    if (p.preview) job.preview = p.preview;
+    if (p.preview_expires_utc) job.expires = p.preview_expires_utc;
+    job.note = p.note ?? job.note;
+
+    if (p.awaiting_decision) {
+      /* PARKED IS NOT RUNNING. Nothing advances until a button is pressed, so
+         the poll stops here — what changes from now on is the clock, and the
+         clock is local. */
+      stopJob(job);
+      job.state = "preview";
+      startExpiryTicker(job);
+      return;
+    }
+    if (p.error) {
+      stopJob(job);
+      job.error = String(p.error);
+      job.state = errState(p.error_code, job.error);
+      if (STORED_NOTHING.has(job.state)) pasted.delete(job.key);
+      return;
+    }
+    if (p.done) {
+      stopJob(job);
+      job.dupes = p.duplicate_of || [];
+      /* Finished without an accept and without an error means the server
+         SKIPPED the halt, and only one thing does that on a clean run: the
+         video is already in the warehouse. No decision was owed because
+         nothing would have been transcribed either way. */
+      job.state = (!job.accepted && (job.dupes.length || p.note))
+        ? "duplicate" : "done";
+      return;
+    }
+    job.state = job.aborting ? "stopping" : "running";
   }
 
   /* The four failures the warehouse already contains, handled BY NAME. */
@@ -792,6 +904,124 @@ export default async function creators(host) {
     return "failed";
   }
 
+  /* ------------------------------------------------------------- the gate */
+
+  function expiryLeft(job) {
+    if (!job.expires) return null;
+    const t = Date.parse(String(job.expires).replace(" ", "T"));
+    return isFinite(t) ? (t - Date.now()) / 1000 : null;
+  }
+
+  function expiryText(job) {
+    const left = expiryLeft(job);
+    if (left == null) return "the payload carried no preview_expires_utc";
+    if (left <= 0) return "the 30 minutes are up — asking the server";
+    const m = Math.floor(left / 60), s = Math.floor(left % 60);
+    return `${m}m ${String(s).padStart(2, "0")}s left`;
+  }
+
+  function startExpiryTicker(job) {
+    stopJob(job);
+    if (!job.expires) return;
+    job.tick = setInterval(() => {
+      if (!document.body.contains(linkCard)) { stopJob(job); return; }
+      if (job.state !== "preview") { stopJob(job); return; }
+      const left = expiryLeft(job);
+      if (left != null && left <= 0) { stopJob(job); confirmExpiry(job); return; }
+      if (job.expEl && job.expEl.isConnected) job.expEl.textContent = expiryText(job);
+    }, 1000);
+  }
+
+  /* The server expires a preview LAZILY, on the next poll. So a countdown
+     reaching zero is not the answer — it is the reason to go and ask for one.
+     Until the server agrees, this keeps saying "parked", because inventing an
+     expiry the server has not applied is inventing state. */
+  async function confirmExpiry(job) {
+    let r, p = null;
+    try {
+      r = await fetch(`/api/ingest/link/${encodeURIComponent(job.job_id)}`);
+      p = await r.json();
+    } catch { /* the retry below is the handler */ }
+    if (r && r.ok && p) { applyPoll(job, p); renderJobs(); }
+    if (job.state === "preview") job.tick = setTimeout(() => confirmExpiry(job), 5000);
+  }
+
+  async function decide(job, verb) {
+    if (job.busy) return;
+    job.busy = verb; job.conflict = null; job.actErr = null;
+    renderJobs();
+    let r, p = null;
+    try {
+      r = await fetch(
+        `/api/ingest/link/${encodeURIComponent(job.job_id)}/${verb}`,
+        { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reason: "" }) });
+      p = await r.json();
+    } catch (e) {
+      job.busy = null;
+      job.actErr = `the ${verb} never reached the server (${String(e.message || e)}). ` +
+        "Nothing has changed on the server either way.";
+      renderJobs(); return;
+    }
+    job.busy = null;
+    if (r.status === 409) {
+      job.conflict = (p && p.detail) ||
+        "the server says this job is no longer waiting for a decision";
+      if (p && p.job) applyPoll(job, p.job);
+      renderJobs(); return;
+    }
+    if (!r.ok) {
+      job.actErr = (p && (p.detail || p.error)) || `HTTP ${r.status}`;
+      renderJobs(); return;
+    }
+    if (verb === "accept") job.accepted = true;
+    applyPoll(job, p);
+    renderJobs();
+    if (verb === "accept") poll(job);
+  }
+
+  async function abortJob(job) {
+    if (job.busy) return;
+    job.busy = "abort"; job.aborting = true; job.conflict = null; job.actErr = null;
+    renderJobs();
+    let r, p = null;
+    try {
+      r = await fetch(`/api/ingest/link/${encodeURIComponent(job.job_id)}`,
+                      { method: "DELETE" });
+      p = await r.json();
+    } catch (e) {
+      job.busy = null; job.aborting = false;
+      job.actErr = `the abort never reached the server (${String(e.message || e)}). ` +
+        "The job is still running there.";
+      renderJobs(); return;
+    }
+    job.busy = null;
+    if (r.status === 409) {
+      job.aborting = false;
+      job.conflict = (p && p.detail) || `the server answered HTTP ${r.status}`;
+      if (p && p.job) applyPoll(job, p.job);
+      renderJobs(); return;
+    }
+    if (!r.ok) {
+      job.aborting = false;
+      job.actErr = (p && (p.detail || p.error)) || `HTTP ${r.status}`;
+      renderJobs(); return;
+    }
+    applyPoll(job, p);
+    renderJobs();
+    /* A cancel is a REQUEST. The worker applies it at its next checkpoint, and
+       the one write has no checkpoint inside it, so keep polling until the
+       server says which of the two happened. */
+    if (!(job.p && job.p.done)) poll(job);
+  }
+
+  function repaste(job) {
+    pasted.set(job.key, job.url);
+    startJob(job.url, job.key);
+  }
+
+  /* --------------------------------------------------------- job renderer */
+
   function renderJobs() {
     if (!linkBody) return;
     linkBody.textContent = "";
@@ -799,7 +1029,7 @@ export default async function creators(host) {
   }
 
   function renderJob(job) {
-    const d = el("div", "cx-job");
+    const d = el("div", "cx-job" + (job.state === "preview" ? " parked" : ""));
     const hd = el("div", "cx-job-head");
     hd.appendChild(el("span", "cx-job-state " + job.state, jobStateLabel(job)));
     const a = el("a", "cx-job-url", job.url);
@@ -808,7 +1038,9 @@ export default async function creators(host) {
     const x = el("button", "cx-x", "✕");
     x.title = "remove this row (the server keeps whatever it is doing)";
     x.onclick = () => {
-      clearInterval(job.timer);
+      stopJob(job);
+      if (STORED_NOTHING.has(job.state) || job.state === "preview")
+        pasted.delete(job.key);
       jobs.splice(jobs.indexOf(job), 1); renderJobs();
     };
     hd.appendChild(x);
@@ -828,11 +1060,26 @@ export default async function creators(host) {
         "or a 429 is how a source starts refusing everything.", "stop"));
       return d;
     }
+    if (job.state === "robots") {
+      d.appendChild(failLine("robots.txt disallows this URL for our fetcher.",
+        `${job.error} Nothing was fetched beyond the robots file, and nothing ` +
+        "was stored. This is our own rule, obeyed rather than worked around.",
+        "stop"));
+      return d;
+    }
     if (job.state === "duplicate") {
       d.appendChild(failLine("Already held.",
         (job.item_id ? `Stored as ${job.item_id}. ` : "") +
         "The same video under a second URL form is already in the corpus, so " +
         "nothing was ingested twice. Its take is on the board already."));
+      if (job.note) d.appendChild(el("div", "cx-verbatim", job.note));
+      if (job.dupes && job.dupes.length > 1)
+        d.appendChild(el("div", "sub",
+          `The warehouse holds it under ${plural(job.dupes.length, "item id")}: ` +
+          job.dupes.join(", ") + ". watch?v=, youtu.be/ and /live/ are one video."));
+      d.appendChild(el("div", "sub",
+        "No decision was owed here: a duplicate skips the preview halt " +
+        "because nothing would have been transcribed either way."));
       return d;
     }
     if (job.state === "notepisode") {
@@ -840,6 +1087,9 @@ export default async function creators(host) {
         `${job.error} — there is no substantive text behind it. An FPL league ` +
         "invite has been ingested this way before and became an article " +
         "titled `a6fgym`. Paste a video or an episode page instead."));
+      d.appendChild(el("div", "sub",
+        "This skipped the preview halt too: a refusal is an answer, not a " +
+        "spend to decide about."));
       return d;
     }
     if (job.state === "nomedia") {
@@ -849,15 +1099,61 @@ export default async function creators(host) {
         "usually has captions and takes about four seconds."));
       return d;
     }
+    if (job.state === "passed") {
+      const box = el("div", "cx-pass");
+      box.appendChild(el("b", null, "Declined. Nothing was spent."));
+      box.appendChild(el("div", "sub", String(job.error ||
+        "the server recorded the decline but returned no sentence about it")));
+      box.appendChild(againRow(job, "Paste it again"));
+      d.appendChild(box);
+      return d;
+    }
+    if (job.state === "expired") {
+      const box = el("div", "cx-fail");
+      box.appendChild(el("b", null, "The preview expired before you decided."));
+      box.appendChild(el("div", "sub", String(job.error ||
+        "the preview aged out; the server returned no sentence about it")));
+      box.appendChild(el("div", "sub",
+        "Expiring writes nothing and undoes nothing, because nothing had been " +
+        "written. A fresh paste fetches the page again and parks again."));
+      box.appendChild(againRow(job, "Paste it again"));
+      d.appendChild(box);
+      return d;
+    }
+    if (job.state === "cancelled") {
+      const late = !!(job.p && job.p.cancelled_after_write);
+      const box = el("div", "cx-fail" + (late ? " stop" : ""));
+      box.appendChild(el("b", null, late
+        ? "Stopped, but the cancel arrived after the write."
+        : "Stopped before anything was written."));
+      box.appendChild(el("div", "sub", String(job.error ||
+        "the server recorded the cancel but returned no sentence about it")));
+      if (late) {
+        const id = job.p && job.p.discarded_item_id;
+        box.appendChild(el("div", "sub",
+          "That is not the same as never having run. The transcription and " +
+          "analysis finished and " + (id ? `item ${id} was written, then ` : "what they wrote was ") +
+          "discarded — hidden from every read path, not deleted. GPU seconds " +
+          "were spent. Restoring it is possible; the archive still has it."));
+      }
+      box.appendChild(againRow(job, "Paste it again"));
+      d.appendChild(box);
+      return d;
+    }
     if (job.state === "failed") {
       d.appendChild(failLine("The job failed.", String(job.error)));
+      if (job.p && job.p.error_code)
+        d.appendChild(el("div", "sub", `error_code: ${job.p.error_code}`));
+      d.appendChild(againRow(job, "Try it again"));
       return d;
     }
 
-    /* the stage ledger */
-    const names = job.stages || ["fetch", "transcribe", "analyse", "attribute"];
-    const idx = job.stage ? names.indexOf(job.stage) : -1;
-    if (job.path) {
+    /* ---- the live states: parked, running, stopping, done -------------- */
+
+    if (job.state === "preview") {
+      d.appendChild(renderPreview(job));
+      d.appendChild(el("div", "cx-ledger-cap", "What yes would run"));
+    } else if (job.path) {
       const p = el("div", "cx-job-path");
       p.append(job.path === "captions"
         ? "Captions path — measured at about 286× realtime."
@@ -866,35 +1162,36 @@ export default async function creators(host) {
           : `Path: ${job.path}.`);
       d.appendChild(p);
     }
-    const ledger = el("div", "cx-stages");
-    names.forEach((nm, i) => {
-      const state = job.state === "done" ? "done"
-        : idx < 0 ? (i === 0 ? "now" : "wait")
-        : i < idx ? "done" : i === idx ? "now" : "wait";
-      const row = el("div", "cx-stage " + state);
-      row.appendChild(el("span", "cx-stage-mark",
-        state === "done" ? "✓" : state === "now" ? "◐" : "○"));
-      row.appendChild(el("span", "cx-stage-name", nm));
-      if (state === "now" && job.pct != null) {
-        const barwrap = el("span", "cx-stage-bar");
-        const fill = el("span", "cx-stage-fill");
-        fill.style.width = `${Math.max(0, Math.min(100, Number(job.pct)))}%`;
-        barwrap.appendChild(fill);
-        row.appendChild(barwrap);
-        row.appendChild(el("span", "cx-stage-pct", `${Math.round(job.pct)}%`));
-      }
-      if (state === "now" && job.eta != null)
-        row.appendChild(el("span", "cx-stage-eta", `~${Math.round(job.eta)}s left`));
-      ledger.appendChild(row);
-    });
-    d.appendChild(ledger);
+
+    d.appendChild(renderLedger(job));
+
+    if (job.conflict) d.appendChild(failLine("The server disagreed.", job.conflict));
+    if (job.actErr) d.appendChild(failLine("That request did not land.", job.actErr));
+
     if (job.state === "done") {
       const ok = el("div", "cx-job-ok");
       ok.append(el("b", null, "Ingested."),
         job.item_id ? ` Stored as ${job.item_id}. ` : " ",
         "It joins the board on the next panel read — reload to see it.");
       d.appendChild(ok);
+      d.appendChild(renderTake(job));
     } else {
+      if (job.state === "running" || job.state === "stopping") {
+        const acts = el("div", "cx-job-acts");
+        const stop = el("button", "", job.state === "stopping"
+          ? "Stopping…" : "Stop this");
+        stop.disabled = job.state === "stopping" || job.busy === "abort";
+        stop.onclick = () => abortJob(job);
+        acts.appendChild(stop);
+        acts.appendChild(el("span", "sub",
+          job.stage === "transcribe" || job.stage === "analyse"
+            ? "The transcribe/analyse call cannot be interrupted mid-way. A " +
+              "stop now lets it finish and discards what it wrote — that costs " +
+              "the seconds either way, and this row will say so."
+            : "Nothing has been written yet, so stopping now is clean by " +
+              "ordering rather than by cleanup."));
+        d.appendChild(acts);
+      }
       d.appendChild(el("div", "sub",
         "This keeps running on the server if you leave the page. This ledger " +
         "does not — it stops updating when the view unmounts."));
@@ -902,10 +1199,294 @@ export default async function creators(host) {
     return d;
   }
 
+  function againRow(job, label) {
+    const row = el("div", "cx-job-acts");
+    const b = el("button", "", label);
+    b.onclick = () => { jobs.splice(jobs.indexOf(job), 1); repaste(job); };
+    row.appendChild(b);
+    row.appendChild(el("span", "sub",
+      "Nothing was stored for this url, so pasting it again is a fresh page " +
+      "fetch and a fresh preview."));
+    return row;
+  }
+
+  /* ---- the preview card: everything needed to judge relevance, once ---- */
+
+  function renderPreview(job) {
+    const pv = job.preview || {};
+    const box = el("div", "cx-pv");
+
+    box.appendChild(el("h3", "cx-pv-title", pv.title ||
+      "the page stated no title"));
+
+    /* WHO. The resolved identity, an honest "we do not track this one", or an
+       honest absence — never a placeholder standing in for a name. */
+    const who = el("div", "cx-pv-who");
+    const name = pv.creator || pv.channel || null;
+    if (name) {
+      who.appendChild(el("b", null, name));
+      if (pv.creator == null)
+        who.appendChild(el("span", "chip warn", "unresolved — this is the channel name"));
+      else if (pv.tracked === true)
+        who.appendChild(el("span", "chip s1", "on your panel"));
+      else if (pv.tracked === false)
+        who.appendChild(el("span", "chip warn", "a real channel you do not track"));
+      else
+        who.appendChild(el("span", "chip", "the payload did not say whether it is tracked"));
+    } else {
+      who.appendChild(el("b", null, "Nobody is named on this page"));
+      who.appendChild(el("span", "chip warn", "creator unresolved"));
+    }
+    if (pv.channel && pv.creator && pv.channel !== pv.creator)
+      who.appendChild(el("span", "cx-pv-chan", `channel: ${pv.channel}`));
+    box.appendChild(who);
+    if (pv.creator_reason) box.appendChild(el("div", "cx-pv-why", pv.creator_reason));
+    else if (pv.creator_basis)
+      box.appendChild(el("div", "cx-pv-why",
+        `resolved by ${pv.creator_basis}; the payload carried no creator_reason.`));
+    else
+      box.appendChild(el("div", "cx-pv-why",
+        "the payload carried no creator_basis and no creator_reason, so how " +
+        "this name was arrived at is not recorded."));
+
+    /* WHEN, and therefore WHICH WEEK — with the basis attached to the week,
+       never separated from it. An inferred week rendered bare is a guess
+       presented as a fact. */
+    const facts = el("dl", "cx-pv-facts");
+    const fact = (k, v, why, chip) => {
+      facts.appendChild(el("dt", null, k));
+      const dd = el("dd");
+      dd.appendChild(el("span", "cx-pv-v", v));
+      if (chip) dd.appendChild(chip);
+      if (why) dd.appendChild(el("div", "cx-pv-why", why));
+      facts.appendChild(dd);
+    };
+
+    const when = fmtWhen(pv.published_at);
+    fact("Published",
+      when ? `${when} · ${relAge(pv.published_at).text}` : "not stated",
+      pv.published_basis || null);
+
+    const gw = pv.gameweek;
+    if (gw && gw.label) {
+      fact("Gameweek", gw.label, gw.reason || null,
+        gw.is_guess ? el("span", "chip warn", "a guess") :
+        gw.basis === "stated" ? el("span", "chip s1", "stated in the content") : null);
+    } else {
+      fact("Gameweek", "none derived",
+        "the payload carried no gameweek block for this preview — with no " +
+        "publication date there is no deadline to place it against, and none " +
+        "is invented.");
+    }
+
+    fact("Length", clock(pv.media_seconds) ||
+      "the source did not state a duration");
+
+    box.appendChild(facts);
+
+    /* WHAT IT SAYS IT IS ABOUT. Verbatim, and clamped rather than cut, so the
+       judgement is made on the source's own words. */
+    if (pv.description) {
+      const desc = el("p", "cx-pv-desc" + (job.descOpen ? " open" : ""),
+        String(pv.description));
+      box.appendChild(desc);
+      if (String(pv.description).length > 260) {
+        const more = el("button", "cx-link-btn",
+          job.descOpen ? "less" : "more of the description");
+        more.onclick = () => { job.descOpen = !job.descOpen; renderJobs(); };
+        box.appendChild(more);
+      }
+    } else {
+      box.appendChild(el("p", "cx-pv-desc empty-note",
+        "The page carried no description, so there is nothing here to read " +
+        "except the title."));
+    }
+
+    if (Array.isArray(pv.duplicate_of) && pv.duplicate_of.length)
+      box.appendChild(el("div", "cx-pv-why",
+        `The warehouse already holds ${plural(pv.duplicate_of.length, "row")} ` +
+        `for this url shape (${pv.duplicate_of.join(", ")}), but none of them ` +
+        "is this video's stored item."));
+
+    /* WHAT YES COSTS. The measured ETA for THIS video, or the payload's own
+       sentence about why there is not one. Never a number we made up. */
+    const cost = el("div", "cx-pv-cost");
+    const line = el("div", "cx-pv-costline");
+    if (pv.eta_s != null) {
+      line.append("Saying yes runs ", el("b", null, secs(pv.eta_s)),
+                  " of transcription on this machine.");
+    } else {
+      line.append(el("b", null, "No ETA for this one."),
+        " " + (pv.eta_reason || "the payload gave no eta_s and no eta_reason, " +
+               "so there is nothing to quote — no number is invented here."));
+    }
+    cost.appendChild(line);
+    const path = el("div", "cx-pv-why");
+    path.append(pathLabel(pv.transcript_path),
+      pv.path_reason ? ` — ${pv.path_reason}` : " — the payload carried no path_reason.");
+    cost.appendChild(path);
+    if (pv.eta_s != null && pv.eta_basis)
+      cost.appendChild(el("div", "cx-pv-why", `measured basis: ${pv.eta_basis}`));
+    box.appendChild(cost);
+
+    /* TWO ACTIONS. The free one says it is free where the button is. */
+    const acts = el("div", "cx-pv-acts");
+    const yes = el("button", "primary", job.busy === "accept"
+      ? "Starting…" : "Transcribe it");
+    yes.disabled = !!job.busy;
+    yes.onclick = () => decide(job, "accept");
+    const no = el("button", "cx-no", job.busy === "decline"
+      ? "Declining…" : "Not relevant");
+    no.disabled = !!job.busy;
+    no.onclick = () => decide(job, "decline");
+    acts.append(yes, no);
+    box.appendChild(acts);
+    box.appendChild(el("div", "cx-pv-freeline",
+      "Declining costs nothing: the page has already been fetched, and " +
+      "nothing is transcribed, analysed or stored unless you say yes."));
+
+    if (job.conflict) box.appendChild(failLine("The server disagreed.", job.conflict));
+    if (job.actErr) box.appendChild(failLine("That request did not land.", job.actErr));
+
+    /* THE CLOCK. A parked job that has aged out must not look live. */
+    const exp = el("div", "cx-pv-exp");
+    const until = fmtWhen(job.expires);
+    job.expEl = el("b", null, expiryText(job));
+    exp.append(job.expEl, until
+      ? ` to decide — this preview is held until ${until}, then it expires and you paste the link again.`
+      : ". The payload carried no preview_expires_utc, so when this parks out is unknown to this page.");
+    box.appendChild(exp);
+    return box;
+  }
+
+  function pathLabel(path) {
+    if (path === "captions") return "Published captions, about 286× realtime";
+    if (path === "asr") return "Local speech-to-text, about 11.5× realtime";
+    if (path === "text") return "Article text, nothing to transcribe";
+    if (!path) return "No transcription path stated in the payload";
+    return `Path: ${path}`;
+  }
+
+  /* Seconds, kept in seconds where seconds is what makes two decisions
+     comparable: "about 4 seconds" and "about 105 seconds" must be readable as
+     the same unit at a glance. */
+  function secs(s) {
+    const n = Number(s);
+    if (!isFinite(n)) return "an unstated amount";
+    if (n < 1) return "under a second";
+    if (n < 300) return `about ${Math.round(n)} seconds`;
+    return `about ${Math.round(n / 60)} minutes`;
+  }
+
+  function fmtWhen(iso) {
+    const d = parseTs(iso);
+    if (!d || isNaN(d)) return null;
+    return d.toLocaleString(undefined, { year: "numeric", month: "short",
+      day: "numeric", hour: "2-digit", minute: "2-digit" });
+  }
+
+  /* ---- the stage ladder ------------------------------------------------ */
+
+  function renderLedger(job) {
+    const names = job.stages || LINK_STAGES;
+    const idx = job.stage ? names.indexOf(job.stage) : -1;
+    const parked = job.state === "preview";
+    const ledger = el("div", "cx-stages");
+    names.forEach((nm, i) => {
+      let state = job.state === "done" ? "done"
+        : idx < 0 ? (i === 0 ? "now" : "wait")
+        : i < idx ? "done" : i === idx ? "now" : "wait";
+      const halt = parked && state === "now";
+      const row = el("div", "cx-stage " + state + (halt ? " halt" : ""));
+      row.appendChild(el("span", "cx-stage-mark",
+        halt ? "◆" : state === "done" ? "✓" : state === "now" ? "◐" : "○"));
+      row.appendChild(el("span", "cx-stage-name", nm));
+      if (halt) row.appendChild(el("span", "cx-stage-note", "parked — your call"));
+      if (!parked && state === "now" && job.pct != null) {
+        const barwrap = el("span", "cx-stage-bar");
+        const fill = el("span", "cx-stage-fill");
+        fill.style.width = `${Math.max(0, Math.min(100, Number(job.pct)))}%`;
+        barwrap.appendChild(fill);
+        row.appendChild(barwrap);
+        row.appendChild(el("span", "cx-stage-pct", `${Math.round(job.pct)}%`));
+      }
+      /* `eta_s` is the ESTIMATE FOR THE WHOLE TRANSCRIPTION, set once from a
+         measured rate and a measured duration. The server never decrements
+         it, so calling it "left" was a countdown that never counted down. */
+      if (!parked && state === "now" && nm === "transcribe" && job.eta != null)
+        row.appendChild(el("span", "cx-stage-eta",
+          `≈${Math.round(job.eta)}s for this video`));
+      ledger.appendChild(row);
+    });
+    return ledger;
+  }
+
+  /* ---- what it turned into --------------------------------------------- */
+
+  /* The take's own bucket names, which are NOT the analysis's: `_take` renames
+     `captaincy` to `captain` and `chip_advice` to `chips` on the way out, and
+     lifts every "watch" call into `watching` so a watch is never counted as a
+     transfer in. Counting the wrong keys here would print "no calls at all"
+     over a take that has twelve. */
+  const TAKE_BUCKETS = [["transfers_in", "in"], ["transfers_out", "out"],
+                        ["captain", "captain"], ["differentials", "differential"],
+                        ["chips", "chip"], ["watching", "watching"]];
+
+  function renderTake(job) {
+    const p = job.p || {}, r = p.result || null;
+    const box = el("div", "cx-take");
+    const who = p.creator || (r && r.creator);
+    if (who) {
+      const w = el("div", "cx-take-row");
+      w.appendChild(el("span", "cx-take-k", "Creator"));
+      w.appendChild(el("span", null, who));
+      if (p.tracked === false) w.appendChild(el("span", "chip warn", "not tracked"));
+      else if (p.tracked === true) w.appendChild(el("span", "chip s1", "on your panel"));
+      box.appendChild(w);
+      if (p.creator_reason) box.appendChild(el("div", "cx-pv-why", p.creator_reason));
+    }
+    const gw = p.gameweek;
+    if (gw && gw.label) {
+      const g = el("div", "cx-take-row");
+      g.appendChild(el("span", "cx-take-k", "Gameweek"));
+      g.appendChild(el("span", null, gw.label));
+      box.appendChild(g);
+      if (gw.reason) box.appendChild(el("div", "cx-pv-why", gw.reason));
+    }
+    if (!r) {
+      box.appendChild(el("div", "sub",
+        "The payload carried no `result` block, so what this became is not " +
+        "readable from here — open the board to see it."));
+      return box;
+    }
+    if (!r.take) {
+      box.appendChild(el("div", "sub", r.reason ||
+        "there is no take and the payload gave no reason for its absence"));
+      return box;
+    }
+    const counts = TAKE_BUCKETS
+      .map(([k, label]) => [((r.take[k] || []).length), label])
+      .filter(([n]) => n > 0)
+      .map(([n, label]) => `${n} ${label}`);
+    const c = el("div", "cx-take-row");
+    c.appendChild(el("span", "cx-take-k", "Calls"));
+    c.appendChild(el("span", null, counts.length ? counts.join(" · ")
+      : "the analysis returned no calls at all"));
+    box.appendChild(c);
+    const bullets = (r.take.summary_bullets || []).slice(0, 2);
+    for (const b of bullets) box.appendChild(el("div", "cx-take-b", String(b)));
+    if (r.take.model)
+      box.appendChild(el("div", "cx-pv-why", `read by ${r.take.model}` +
+        (r.n_segments ? `, over ${plural(r.n_segments, "transcript segment")}` : "")));
+    return box;
+  }
+
   const jobStateLabel = j => ({
     posting: "SENDING", running: "WORKING", done: "DONE", down: "UNAVAILABLE",
     declined: "STOPPED", duplicate: "DUPLICATE", nomedia: "NO MEDIA",
     notepisode: "NOT AN EPISODE", failed: "FAILED",
+    preview: "YOUR CALL", passed: "NOT TRANSCRIBED", expired: "PREVIEW EXPIRED",
+    cancelled: "CANCELLED", stopping: "STOPPING", robots: "ROBOTS SAY NO",
   }[j.state] || j.state);
 
   /* ======================================================== the toolbars */

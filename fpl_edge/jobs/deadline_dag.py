@@ -87,6 +87,50 @@ DEADLINE_OFFSETS: dict[str, dt.timedelta] = {
 NIGHTLY_TASK = "price_radar"
 NIGHTLY_LOCAL_HOUR = 2
 
+#: The odds refresh task, and the only task in this module that fires MORE THAN
+#: ONCE per deadline. It gets its own ladder rather than a slot in
+#: :data:`DEADLINE_OFFSETS` because that dict answers "when does this task
+#: happen", one instant per task, and odds are the one input whose answer is
+#: "repeatedly, accelerating toward the deadline".
+ODDS_TASK = "odds_refresh"
+
+#: The ladder, and the reasoning behind each rung. Bookmakers reprice
+#: continuously, but the *information* arrives in lumps, and the rungs are
+#: placed at the lumps rather than spread evenly:
+#:
+#: * **T-36h** -- after midweek results have settled and the first team news
+#:   leaks, and far enough out that a stale-forward (the machine slept) still
+#:   lands usefully. This is the rung that also refreshes the extra markets.
+#: * **T-12h** -- the morning of a Friday-evening deadline, after overnight
+#:   moves and the first press conferences.
+#: * **T-5h** -- after the last pressers, and deliberately ONE HOUR BEFORE
+#:   ``final_solve_delivery`` at T-4h. A refresh that lands after the plan has
+#:   been delivered has bought nothing for this deadline; the ordering here is
+#:   the whole point of the rung, not an incidental detail.
+#:
+#: **Cost.** One refresh is 2 credits (featured h2h+totals) plus 1 per fixture
+#: priced, and the CLI's horizon restricts that to the fixtures before the next
+#: deadline: 12 credits for a 10-fixture gameweek, measured 2026-08-28. Three
+#: rungs is 36 credits a gameweek. The nightly ``post_gw`` top-up is gated at
+#: ``--max-age-hours 48`` so it only fires in the gap between ladders -- about
+#: twice a week, 24 more. ~60 a gameweek, ~258 in a 4.3-gameweek month, against
+#: a measured free tier of 500. See ``docs/data_sources.md`` §2.4.
+#:
+#: Why not more rungs: the binding constraint is not the credit budget, it is
+#: that a refresh nobody reads before the deadline bought nothing. Every rung
+#: here sits immediately before something that consumes odds.
+ODDS_LADDER: tuple[dt.timedelta, ...] = (
+    dt.timedelta(hours=36),
+    dt.timedelta(hours=12),
+    dt.timedelta(hours=5),
+)
+
+#: The rung that also refreshes correct score / BTTS / team totals, which have
+#: their own 200-credit monthly ledger and cost 42 a run. Once per gameweek,
+#: at the earliest rung, so a failure has two later rungs' worth of time to be
+#: noticed before the deadline.
+ODDS_EXTRAS_AT = dt.timedelta(hours=36)
+
 #: A firing due longer ago than its window is recorded and skipped, never run.
 #:
 #: The window is PER TASK because staleness means different things per task, and
@@ -110,6 +154,14 @@ STALE_WINDOWS: dict[str, dt.timedelta] = {
     "final_solve_delivery": dt.timedelta(hours=3),
     # Confirmed XI vs picked captain. Worthless the moment the deadline passes.
     "lineup_captain_check": dt.timedelta(minutes=75),
+    # An odds refresh is an idempotent, credit-metered fetch whose value decays
+    # with the deadline but never inverts: prices fetched two hours late are
+    # still the current prices. The window is deliberately SHORTER THAN THE
+    # SMALLEST GAP BETWEEN RUNGS (6h < the 7h from T-12h to T-5h) so a
+    # slept-through rung is recorded skipped_stale and the next rung does the
+    # work. With a wider window a laptop that woke at T-5h would fire T-12h
+    # and T-5h back to back and pay twice for the same cards.
+    "odds_refresh": dt.timedelta(hours=6),
 }
 
 #: Fallback for a task not named above.
@@ -228,6 +280,26 @@ def due_tasks(
                 )
             )
 
+    # The odds ladder: one task, several firings per deadline. Kept out of the
+    # DEADLINE_OFFSETS loop above because that loop's shape -- one offset per
+    # task -- is what every other task and every existing test depends on.
+    for gw, deadline in sorted(deadlines):
+        deadline = deadline.astimezone(UTC)
+        for offset in ODDS_LADDER:
+            due = deadline - offset
+            if not (horizon < due <= now):
+                continue
+            out.append(
+                Due(
+                    task=ODDS_TASK,
+                    season=season,
+                    gw=int(gw),
+                    due_utc=due,
+                    deadline_utc=deadline,
+                    stale=(now - due) > _window(ODDS_TASK),
+                )
+            )
+
     # The nightly radar is not deadline-relative, but it is still filed under a
     # gameweek so the firing key matches the rest and the row reads sensibly.
     # The gameweek it belongs to is the one it is running up to.
@@ -280,6 +352,14 @@ def next_due(
         ]
         if future:
             out.append((task, min(future)))
+    odds_future = [
+        d.astimezone(UTC) - offset
+        for _, d in deadlines
+        for offset in ODDS_LADDER
+        if d.astimezone(UTC) - offset > now
+    ]
+    if odds_future:
+        out.append((ODDS_TASK, min(odds_future)))
     nxt = now + dt.timedelta(minutes=1)
     for _ in range(3):
         cand = nightly_instants(nxt + dt.timedelta(days=1), lookback=dt.timedelta(days=1))
@@ -993,11 +1073,151 @@ def lineup_captain_check(ctx: TaskContext) -> TaskResult:
     )
 
 
+def odds_refresh(ctx: TaskContext) -> TaskResult:
+    """One rung of the odds ladder: refetch the market, then say how old it is.
+
+    Two properties this task exists to hold, both of them learned the hard way.
+
+    **A refresh that fetched nothing is an error outcome, not a quiet one.**
+    ``quiet`` means "the task ran and the deterministic trigger did not fire",
+    which is what the price radar does on a calm night. It is emphatically NOT
+    what an odds refresh does when the vendor refuses it: that is a fetch that
+    did not happen, and it must go in ``dag_firing`` as ``error`` so the row is
+    evidence rather than reassurance. The nine-day outage this ladder was built
+    after consisted entirely of runs that fetched nothing and said ok.
+
+    **The freshness is reported whether or not the fetch worked.** The digest
+    line is built from :func:`~fpl_edge.ingest.odds.odds_freshness` reading the
+    warehouse *after* the step, so a failed refresh produces a message that
+    names the real age of the data rather than the failure alone. "odds-api
+    refused AND anytime_scorer is 206h old" is a different sentence from
+    "odds-api refused", and only the first one gets acted on.
+
+    The refresh runs as a subprocess for the same reason every other step does
+    -- the CLI opens the warehouse for writing and a hung lock must not take
+    the scheduler with it -- and the CLI itself fetches before it takes the
+    lock (:func:`~fpl_edge.ingest.odds.refresh_odds_api`), so twelve HTTP round
+    trips at T-5h do not sit on the lock the solver is waiting for.
+    """
+    # A metered fetch must never happen by accident. This repo has already had
+    # a unit test refresh the developer's real FPL tokens over the network as a
+    # side effect of rendering a fixture (see tests/conftest.py), and an odds
+    # rung is worse: it spends credits from a 500/month allowance, and the
+    # firing key means the spend is not even repeatable. So the fetch is gated
+    # on an explicit off-switch that the unit suite sets, and a gated run is
+    # reported as `no_source` -- an honest gap -- rather than as success.
+    if os.environ.get("FPL_EDGE_DISABLE_NETWORK_INGEST", "") not in ("", "0"):
+        return TaskResult(
+            outcome="no_source", kind="digest",
+            detail="skipped: FPL_EDGE_DISABLE_NETWORK_INGEST is set; "
+                   "no credits were spent and nothing was fetched",
+        )
+
+    py = ctx.python
+    argv = [py, "scripts/ingest_odds.py", "--odds-api", "--season", ctx.season]
+    steps = [run_step("ingest_odds_props", argv)]
+
+    # The earliest rung also refreshes correct score / BTTS / team totals,
+    # which have their own monthly ledger and are the derivation layer's input.
+    # Once per gameweek: they are 42 credits a run and they move far less than
+    # the featured markets do.
+    at_extras_rung = (
+        ctx.deadline_utc is not None
+        and abs((ctx.deadline_utc - ctx.due_utc) - ODDS_EXTRAS_AT)
+        < dt.timedelta(minutes=30)
+    )
+    if at_extras_rung:
+        steps.append(run_step(
+            "ingest_odds_extras",
+            [py, "scripts/ingest_odds_extras.py", "--season", ctx.season],
+        ))
+    else:
+        steps.append(Step(
+            name="ingest_odds_extras", ok=True, seconds=0.0,
+            detail=f"skipped: extras run once a gameweek, at T-{ODDS_EXTRAS_AT}",
+        ))
+
+    # Freshness AFTER the steps, from a read copy: no lock contention with the
+    # subprocess that just wrote.
+    from fpl_edge.ingest.odds import freshness_summary, odds_freshness
+
+    try:
+        with ctx.read() as wh:
+            fresh = freshness_summary(odds_freshness(wh, season=ctx.season,
+                                                     now=ctx.now))
+    except Exception as exc:  # noqa: BLE001 - a failed read is itself reportable
+        fresh = {"ok": False, "stale_markets": ["<unreadable>"],
+                 "error": f"{type(exc).__name__}: {exc}", "markets": []}
+
+    failed = [s.name for s in steps if not s.ok]
+    stale = list(fresh.get("stale_markets") or [])
+
+    lines = [
+        (f"GW{ctx.gw} deadline in {_fmt_delta(ctx.deadline_utc, ctx.now)} "
+         f"(odds rung T-{_fmt_delta(ctx.deadline_utc, ctx.due_utc)})."),
+        "",
+    ]
+    for s in steps:
+        mark = "ok" if s.ok else "FAILED"
+        if s.ok and s.detail.startswith("skipped:"):
+            lines.append(f"  {s.name}: {s.detail}")
+        else:
+            lines.append(f"  {s.name}: {mark} ({s.seconds}s)"
+                         + (f" -- {s.detail}" if s.detail and not s.ok else ""))
+    lines.append("")
+    lines.append("Market freshness:")
+    for m in fresh.get("markets") or []:
+        age = m.get("age_hours")
+        age_s = "never fetched" if age is None else f"{age:.1f}h"
+        flag = "  STALE" if m.get("stale") else ""
+        lines.append(f"  {m['market']}: {age_s} "
+                     f"(budget {m.get('max_age_hours')}h){flag}")
+
+    detail = (f"{len(steps) - len(failed)}/{len(steps)} steps ok; "
+              f"stale markets: {','.join(stale) if stale else 'none'}")
+    if failed:
+        detail = "failed: " + ",".join(failed) + "; " + detail
+
+    observations = [
+        (0, f"odds_age_h.{m['market']}", float(m["age_hours"]))
+        for m in (fresh.get("markets") or [])
+        if m.get("age_hours") is not None
+    ]
+
+    # An outcome of "error" whenever a step failed. The scheduled job and the
+    # dag_firing row must both go red for a refresh that did not refresh --
+    # that is the entire lesson of the 2026-08-19..28 outage.
+    if failed:
+        return TaskResult(
+            outcome="error", kind="alert", steps=steps, detail=detail,
+            observations=observations,
+            title=f"ODDS REFRESH FAILED — GW{ctx.gw}, "
+                  f"{_fmt_delta(ctx.deadline_utc, ctx.now)} to deadline",
+            body=("The odds refresh did not complete. The prices the solver "
+                  "will read at this deadline are the ones listed below, at "
+                  "the ages listed below.\n\n" + "\n".join(lines)),
+        )
+    if stale:
+        return TaskResult(
+            outcome="delivered", kind="alert", steps=steps, detail=detail,
+            observations=observations,
+            title=f"Odds refreshed, {len(stale)} market(s) still stale — GW{ctx.gw}",
+            body=("Every step succeeded and these markets are still outside "
+                  "their freshness budget:\n\n" + "\n".join(lines)),
+        )
+    # Everything fetched and everything is inside budget. No message: an alert
+    # that arrives three times a gameweek saying "fine" is an alert nobody
+    # reads, and the observations above are still written.
+    return TaskResult(outcome="quiet", detail=detail, steps=steps,
+                      observations=observations)
+
+
 TASKS: dict[str, Callable[[TaskContext], TaskResult]] = {
     "presser_projection_refresh": presser_projection_refresh,
     "price_radar": price_radar,
     "final_solve_delivery": final_solve_delivery,
     "lineup_captain_check": lineup_captain_check,
+    ODDS_TASK: odds_refresh,
 }
 
 

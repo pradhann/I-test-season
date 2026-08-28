@@ -65,6 +65,7 @@ import datetime as dt
 import io
 import math
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
@@ -88,6 +89,39 @@ MARKET_H2H = "h2h"
 MARKET_TOTALS = "totals"
 MARKET_CLEAN_SHEET = "clean_sheet"
 MARKET_ANYTIME_SCORER = "anytime_scorer"
+
+#: The Odds API free tier's monthly allowance. Measured, not documented: the
+#: account's own ``x-requests-remaining`` + ``x-requests-used`` headers summed
+#: to exactly this on 2026-08-28 (433 + 67). Written down here because every
+#: cap in the repo is a fraction of it and a cap with no denominator beside it
+#: is a number nobody can sanity-check.
+FREE_TIER_MONTHLY_CREDITS = 500
+
+#: How old a market's newest quote may be before a consumer must treat it as
+#: stale. These are decision budgets, not vendor limits: they answer "would I
+#: still act on this number at a deadline?".
+#:
+#: The featured markets (h2h, totals) and everything derived from them move
+#: continuously and are cheap to refresh, so they get a day. The player props
+#: are the expensive call and move more slowly in absolute terms -- a striker's
+#: anytime price does not swing much until team news -- so they get two days,
+#: which is still inside the T-48h rung of the refresh ladder.
+#:
+#: Nothing here deletes or hides a stale row. The contract is only that every
+#: consumer can *ask*, via :func:`odds_freshness`, and therefore can never
+#: present an eight-day-old price as if it were current.
+MARKET_MAX_AGE_H: dict[str, float] = {
+    MARKET_H2H: 24.0,
+    MARKET_TOTALS: 24.0,
+    MARKET_CLEAN_SHEET: 24.0,
+    MARKET_ANYTIME_SCORER: 48.0,
+    "correct_score": 48.0,
+    "btts": 48.0,
+    "team_totals": 48.0,
+}
+
+#: Fallback budget for a market not named above.
+DEFAULT_MAX_AGE_H = 48.0
 
 DevigMethod = Literal["multiplicative", "shin", "power"]
 
@@ -756,8 +790,42 @@ class OddsApiError(RuntimeError):
     """The Odds API refused a request, or no key is configured."""
 
 
+#: Why a run was refused. The distinction is load-bearing, not cosmetic.
+#:
+#: ``month_exhausted`` and ``key_exhausted`` are *budgets working*: the month's
+#: allowance is genuinely spent and next month (or a raised cap) fixes it.
+#: ``impossible`` is a **misconfiguration**: the cap is smaller than what a
+#: single run needs, so no amount of waiting will ever let the job succeed.
+#:
+#: That third case is the one that cost a deadline week of market data. On
+#: 2026-08-28 the props ingest had been refusing every night since 2026-08-19
+#: with ``cap=30`` against a run that needs 22 and a month that had already
+#: spent 67 -- an arithmetic dead end that could not resolve itself, reported
+#: as ``ok=True``, for nine days. A cap below one run's cost is not a budget;
+#: it is an off switch nobody knows they flipped.
+REFUSAL_IMPOSSIBLE = "impossible"
+REFUSAL_MONTH_EXHAUSTED = "month_exhausted"
+REFUSAL_KEY_EXHAUSTED = "key_exhausted"
+
+
 class CreditBudgetExceeded(RuntimeError):
-    """A planned run would breach the configured credit cap. Nothing was spent."""
+    """A planned run would breach the configured credit cap. Nothing was spent.
+
+    ``kind`` is one of :data:`REFUSAL_IMPOSSIBLE`,
+    :data:`REFUSAL_MONTH_EXHAUSTED`, :data:`REFUSAL_KEY_EXHAUSTED`. Callers
+    must treat all three as a **failure** -- a run that fetched nothing did not
+    succeed -- but only ``impossible`` names an operator error that will never
+    clear on its own.
+    """
+
+    def __init__(self, message: str, *, kind: str = REFUSAL_MONTH_EXHAUSTED) -> None:
+        super().__init__(message)
+        self.kind = kind
+
+    @property
+    def impossible(self) -> bool:
+        """Is this cap arithmetically unsatisfiable, rather than merely spent?"""
+        return self.kind == REFUSAL_IMPOSSIBLE
 
 
 #: The Odds API team names are the long forms; FPL uses its own short forms.
@@ -838,18 +906,53 @@ class CreditPlan:
     def total(self) -> int:
         return self.events + self.featured + self.scorer
 
+    @property
+    def impossible(self) -> bool:
+        """True when the cap is below one run's cost, so no run can ever fit.
+
+        Checked *independently of what has been used*, which is the whole
+        point: ``used_before`` moves and this does not. A cap of 30 against a
+        22-credit run looks survivable until you notice that ``used_before``
+        only ever grows, so the very first run that pushes past 8 makes every
+        subsequent run impossible forever.
+        """
+        return self.cap < self.total
+
     def check(self) -> None:
-        """Refuse the run if it would breach the cap or the remaining balance."""
+        """Refuse the run if it would breach the cap or the remaining balance.
+
+        Order matters. The *impossible* cap is tested first and reported first,
+        because when a cap is set below one run's cost the "already used N this
+        month" clause is a red herring: it says the month is spent when the
+        truth is that the cap can never be met, in this month or any other.
+        Reading the wrong one of those two messages is what let this refuse
+        silently from 2026-08-19 to 2026-08-28.
+        """
+        if self.impossible:
+            raise CreditBudgetExceeded(
+                f"MISCONFIGURED CAP: one run of this ingest costs {self.total} "
+                f"credits ({self.featured} featured + {self.scorer} scorer cards) "
+                f"but the configured monthly cap is {self.cap}. No run can ever "
+                f"fit inside this cap -- not this month, not next month. This is "
+                f"an operator error, not a spent budget. Raise the cap to at "
+                f"least {self.total} (the free tier allows "
+                f"{FREE_TIER_MONTHLY_CREDITS}/month; this repo's default is "
+                f"{OddsApiClient.DEFAULT_MONTHLY_CAP}) or narrow the run. "
+                f"Nothing was spent.",
+                kind=REFUSAL_IMPOSSIBLE,
+            )
         if self.remaining_before is not None and self.total > self.remaining_before:
             raise CreditBudgetExceeded(
                 f"run needs {self.total} credits but only {self.remaining_before} "
-                "remain this month. Nothing was spent."
+                "remain on the key this month. Nothing was spent.",
+                kind=REFUSAL_KEY_EXHAUSTED,
             )
         if self.used_before is not None and self.used_before + self.total > self.cap:
             raise CreditBudgetExceeded(
                 f"run needs {self.total} credits; {self.used_before} already used "
                 f"this month and the configured cap is {self.cap}. "
-                f"Raise max_monthly_credits to proceed. Nothing was spent."
+                f"Raise max_monthly_credits to proceed. Nothing was spent.",
+                kind=REFUSAL_MONTH_EXHAUSTED,
             )
 
 
@@ -887,9 +990,39 @@ class OddsApiClient:
     its budget against the vendor's own counter before it spends a credit.
     """
 
-    #: Default ceiling on credits used per calendar month. The free tier allows
-    #: 500; stopping at 400 leaves headroom for a re-run after a failure.
+    #: Default ceiling on credits used per calendar month, as a fraction of the
+    #: measured :data:`FREE_TIER_MONTHLY_CREDITS`.
+    #:
+    #: The budget this has to cover, arithmetic first (see
+    #: ``docs/data_sources.md`` §2.4 for the same table):
+    #:
+    #: * one refresh = 2 (featured h2h+totals, uk) + 1 per fixture priced.
+    #:   Restricted to the fixtures before the next deadline that is **12** for
+    #:   a 10-fixture gameweek, not the 22 an unfiltered ``/events`` list costs.
+    #: * the pre-deadline ladder fires 3 times a gameweek (T-36h, T-12h, T-3h)
+    #:   = 36 credits.
+    #: * the nightly job tops up only when nothing has been fetched for 48h,
+    #:   which outside a deadline window is about twice a week = 24 credits.
+    #: * so ~60 credits a gameweek, ~258 in a 4.3-gameweek month, plus the
+    #:   150-credit ceiling the extra-markets expansion enforces on itself
+    #:   (:data:`~fpl_edge.ingest.odds_markets.EXPANSION_MONTHLY_CAP`).
+    #:
+    #: 258 + 150 = 408, so 400 is the right ceiling for the props path only if
+    #: the two are read as sharing one 500-credit key -- which they do, because
+    #: ``x-requests-used`` counts every consumer of it. The 100 credits between
+    #: this cap and the free tier are the manual-trigger and re-run reserve.
+    #:
+    #: **This number must never be set below one run's cost.** A cap of 30 was
+    #: passed on the command line in ``post_gw.py`` and refused every nightly
+    #: run for nine days while the job reported success;
+    #: :meth:`CreditPlan.impossible` now names that case explicitly rather than
+    #: letting it hide behind "already used N this month".
     DEFAULT_MONTHLY_CAP = 400
+
+    #: A cap below this cannot price even a single small gameweek and is
+    #: almost certainly a typo. Used by the CLI to refuse the *flag* rather
+    #: than waiting for the run to refuse itself.
+    MIN_SANE_MONTHLY_CAP = 60
 
     def __init__(
         self,
@@ -1284,6 +1417,128 @@ def squad_for_fixture(
 
 
 # --------------------------------------------------------------------------
+# freshness: the one question every consumer of fact_odds must be able to ask
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class MarketFreshness:
+    """How old one market's newest quote is, and whether that is acceptable.
+
+    Deliberately carries the *inputs* to the verdict (``last_as_of``,
+    ``age_hours``, ``max_age_hours``) and not only the verdict, so a caller can
+    render "anytime_scorer: 206h old, budget 48h" rather than a bare red dot.
+    A consumer that can only see a boolean cannot explain itself to the owner.
+    """
+
+    market: str
+    last_as_of: dt.datetime | None
+    age_hours: float | None
+    max_age_hours: float
+    rows: int
+    fixtures: int
+
+    @property
+    def present(self) -> bool:
+        return self.last_as_of is not None
+
+    @property
+    def stale(self) -> bool:
+        """Absent counts as stale. A market with no rows at all is not fresh."""
+        return self.age_hours is None or self.age_hours > self.max_age_hours
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "market": self.market,
+            "last_as_of": self.last_as_of.isoformat() if self.last_as_of else None,
+            "age_hours": (None if self.age_hours is None
+                          else round(float(self.age_hours), 2)),
+            "max_age_hours": float(self.max_age_hours),
+            "stale": self.stale,
+            "present": self.present,
+            "rows": int(self.rows),
+            "fixtures": int(self.fixtures),
+        }
+
+
+def odds_freshness(
+    wh: Warehouse,
+    *,
+    season: str | None = None,
+    now: dt.datetime | None = None,
+    markets: Iterable[str] | None = None,
+) -> list[MarketFreshness]:
+    """Per-market age of ``fact_odds``, newest quote first.
+
+    Every market named in :data:`MARKET_MAX_AGE_H` is returned even when it has
+    no rows at all, because the failure this exists to catch is a market that
+    stopped arriving -- and a market that stopped arriving is invisible if the
+    report is built by grouping over the rows that are there. That is the same
+    "something absent cannot be noticed unless it was expected" rule the crawl's
+    stage table is built on.
+
+    Read-only and cheap: one aggregate over ``fact_odds``. It deliberately does
+    NOT go through ``snapshot_at`` -- the question is "how old is the newest
+    thing we hold", which a point-in-time view would answer with the age at the
+    snapshot instant instead.
+    """
+    now = (now or dt.datetime.now(dt.UTC)).astimezone(dt.UTC)
+    wanted = list(markets) if markets is not None else list(MARKET_MAX_AGE_H)
+
+    sql = ("SELECT market, max(as_of) AS last_as_of, count(*) AS n, "
+           "count(DISTINCT fixture_key) AS fixtures FROM fact_odds")
+    params: list[Any] = []
+    if season:
+        sql += " WHERE fixture_key LIKE ?"
+        params.append(f"{season}:%")
+    sql += " GROUP BY market"
+
+    try:
+        got = wh.sql(sql, params)
+    except Exception:  # noqa: BLE001 - a missing table is "nothing is fresh"
+        got = pd.DataFrame(columns=["market", "last_as_of", "n", "fixtures"])
+
+    by_market = {str(r["market"]): r for _, r in got.iterrows()}
+    out: list[MarketFreshness] = []
+    for market in sorted(set(wanted) | set(by_market)):
+        row = by_market.get(market)
+        last = None
+        if row is not None and row["last_as_of"] is not None:
+            last = pd.Timestamp(row["last_as_of"]).to_pydatetime()
+            if last.tzinfo is None:
+                last = last.replace(tzinfo=dt.UTC)
+            last = last.astimezone(dt.UTC)
+        out.append(MarketFreshness(
+            market=market,
+            last_as_of=last,
+            age_hours=None if last is None else (now - last).total_seconds() / 3600.0,
+            max_age_hours=MARKET_MAX_AGE_H.get(market, DEFAULT_MAX_AGE_H),
+            rows=int(row["n"]) if row is not None else 0,
+            fixtures=int(row["fixtures"]) if row is not None else 0,
+        ))
+    return sorted(out, key=lambda f: (f.age_hours is None, -(f.age_hours or 0.0)))
+
+
+def freshness_summary(rows: list[MarketFreshness]) -> dict[str, Any]:
+    """One JSON blob for an API response or a digest line.
+
+    ``ok`` is false when ANY market is stale. There is no partial credit here
+    on purpose: the consumer asking this question is about to make a transfer
+    decision, and "three of seven markets are current" is not a green light.
+    """
+    stale = [f.market for f in rows if f.stale]
+    oldest = rows[0] if rows else None
+    return {
+        "ok": not stale,
+        "stale_markets": stale,
+        "oldest_market": oldest.market if oldest else None,
+        "oldest_age_hours": (None if oldest is None or oldest.age_hours is None
+                             else round(float(oldest.age_hours), 2)),
+        "markets": [f.to_dict() for f in rows],
+    }
+
+
+# --------------------------------------------------------------------------
 # live ingestion for the upcoming gameweek
 # --------------------------------------------------------------------------
 
@@ -1341,6 +1596,194 @@ def _fixture_goal_rates(featured: pd.DataFrame, key: str) -> GoalRates | None:
         return None
 
 
+def commence_utc(event: dict[str, Any]) -> dt.datetime | None:
+    """Kickoff instant of one ``/events`` row, or None if unparseable."""
+    raw = event.get("commence_time")
+    if not raw:
+        return None
+    try:
+        return dt.datetime.fromisoformat(str(raw).replace("Z", "+00:00"))  # noqa: FURB162
+    except ValueError:
+        return None
+
+
+def events_within(
+    events: list[dict[str, Any]], horizon: dt.datetime | None
+) -> list[dict[str, Any]]:
+    """The events kicking off at or before ``horizon``. Identity when None.
+
+    This is a *credit* decision, not a cosmetic one. ``/events`` returns every
+    upcoming EPL fixture the vendor knows about -- 20 on 2026-08-28, i.e. two
+    gameweeks -- and the scorer card costs one credit per event. Pricing the
+    gameweek after next at every rung of the refresh ladder doubles the bill
+    for cards that will be re-fetched three more times before they matter.
+
+    Measured 2026-08-28: unfiltered the run planned 22 credits (2 featured +
+    20 scorer); filtered to the fixtures before the *next* deadline it plans
+    **12** (2 + 10). That is the number ``docs/data_sources.md`` has claimed
+    since 2026-08-18, and it was only ever true for a one-gameweek horizon.
+
+    An event with no parseable ``commence_time`` is KEPT. Dropping it would be
+    a silent narrowing of the run driven by a vendor formatting change, and a
+    fixture we fail to price is worse than a credit we did not need to spend.
+    """
+    if horizon is None:
+        return list(events)
+    horizon = horizon.astimezone(dt.UTC)
+    out = []
+    for e in events:
+        ko = commence_utc(e)
+        if ko is None or ko <= horizon:
+            out.append(e)
+    return out
+
+
+@dataclass(frozen=True, slots=True)
+class OddsApiFetch:
+    """Everything one refresh pulled off the network, before any lock is taken.
+
+    Exists so the two halves of a refresh can be separated in time. DuckDB
+    permits a single writer and this repo has several ingests that can run at
+    once; a refresh that held the write lock for the thirty-odd seconds it
+    spends waiting on twelve HTTP round trips would block every other job for
+    no reason, and would do it at the worst possible moment -- the hour before
+    a deadline, when the DAG, the solver and the Telegram bot all want it.
+
+    The crawl reached the same conclusion for the same reason (see
+    ``fpl_edge.ingest.rivals.crawl.run``: "Fetch everything BEFORE opening the
+    warehouse"). This is that rule applied to odds.
+    """
+
+    events: list[dict[str, Any]]
+    as_of: dt.datetime
+    #: ``(endpoint, params, Fetched)`` for every body, to be recorded in
+    #: ``raw_fetch``. The endpoint travels WITH the response because
+    #: :class:`~fpl_edge.ingest.http.Fetched` does not carry its own URL,
+    #: and an audit row that has to guess where a body came from is not an
+    #: audit row.
+    fetched: list[tuple[str, str | None, Fetched]]
+    featured_body: Any
+    featured_fetched: Fetched
+    payloads: dict[str, Any]         # event id -> scorer card body
+    credits_spent: int
+    credits_remaining: int | None
+    credits_used_month: int | None
+    plan: CreditPlan
+
+
+def fetch_odds_api_gameweek(
+    client: OddsApiClient,
+    *,
+    regions: str = "uk",
+    max_monthly_credits: int = OddsApiClient.DEFAULT_MONTHLY_CAP,
+    horizon: dt.datetime | None = None,
+) -> OddsApiFetch:
+    """The network half of a refresh. Takes no warehouse and no lock.
+
+    Order of operations is chosen so that nothing is spent until the budget is
+    known to be sufficient:
+
+    1. ``/events`` -- **free**, and returns the quota headers. This is both the
+       fixture list and the balance check.
+    2. :meth:`CreditPlan.check` -- refuses the whole run if the cap is
+       unsatisfiable, if the month's allowance is spent, or if the key's
+       remaining balance is too small. No partial spend, ever.
+    3. ``/odds`` for h2h + totals -- one call for all events.
+    4. ``/events/{id}/odds`` for anytime scorer -- one call per fixture inside
+       the horizon.
+
+    Raises :class:`CreditBudgetExceeded` at step 2. A caller must treat that as
+    a **failed** refresh: it fetched nothing.
+    """
+    ev = client.events()
+    events = events_within(ev.body, horizon)
+    plan = CreditPlan(
+        events=0, featured=2, scorer=len(events),
+        cap=max_monthly_credits,
+        used_before=client.quota.used if client.quota else None,
+        remaining_before=client.quota.remaining if client.quota else None,
+    )
+    plan.check()  # raises CreditBudgetExceeded before anything is spent
+
+    fetched: list[tuple[str, str | None, Fetched]] = [("events", None, ev)]
+    feat = client.featured_odds(regions=regions)
+    fetched.append(("odds", f"regions={regions}", feat))
+
+    payloads: dict[str, Any] = {}
+    for e in events:
+        got = client.anytime_scorers(e["id"], regions=regions)
+        fetched.append((f"events/{e['id']}/odds", f"regions={regions}", got))
+        payloads[e["id"]] = got.body
+
+    return OddsApiFetch(
+        events=events, as_of=ev.fetched_at, fetched=fetched,
+        featured_body=feat.body, featured_fetched=feat, payloads=payloads,
+        credits_spent=client.spent_this_run,
+        credits_remaining=client.quota.remaining if client.quota else None,
+        credits_used_month=client.quota.used if client.quota else None,
+        plan=plan,
+    )
+
+
+def land_odds_api_gameweek(
+    wh: Warehouse,
+    season: str,
+    got: OddsApiFetch,
+    *,
+    regions: str = "uk",
+    scorer_coverage: float = 0.95,
+) -> ScorerIngestReport:
+    """The warehouse half of a refresh. Takes no network and holds the lock briefly.
+
+    Writes four kinds of row to ``fact_odds``:
+
+    * quoted h2h / totals / anytime scorer, one per bookmaker;
+    * ``fair#shin`` de-vigged h2h and totals consensus;
+    * ``derived#poisson`` clean sheets;
+    * ``fair#scorer_power`` anytime-scorer estimates, keyed on the FPL
+      ``code`` so the points model can join them, and written **only** for
+      players that resolved unambiguously.
+
+    ``as_of`` is the fetch instant for every row: these prices are observable
+    now, which is what makes them legitimate input to the upcoming deadline.
+    """
+    as_of = got.as_of
+    for endpoint, params, f in got.fetched:
+        wh.record_fetch(source="odds_api", endpoint=endpoint, params=params,
+                        fetched_at=f.fetched_at, sha256=f.sha256,
+                        body_path=str(f.body_path), http_status=f.http_status)
+
+    featured = parse_odds_api_events(
+        got.featured_body, got.featured_fetched.fetched_at, season)
+    scorer_frames = [
+        parse_odds_api_events(body, as_of, season) for body in got.payloads.values()
+    ]
+    scorer = (pd.concat(scorer_frames, ignore_index=True)
+              if scorer_frames else pd.DataFrame())
+
+    quoted = pd.concat([featured, scorer], ignore_index=True)
+    derived, matches = _derive_live_rows(
+        wh, season, as_of, got.events, featured, got.payloads, scorer_coverage
+    )
+
+    all_rows = (pd.concat([quoted, derived], ignore_index=True)
+                if len(derived) else quoted)
+    written = wh.append("fact_odds", all_rows) if len(all_rows) else 0
+
+    return ScorerIngestReport(
+        events=len(got.events),
+        credits_spent=got.credits_spent,
+        credits_remaining=got.credits_remaining,
+        credits_used_month=got.credits_used_month,
+        rows_written=written,
+        scorer_selections=len(matches),
+        matched=sum(1 for m in matches if m.code is not None),
+        unmatched=[m for m in matches if m.code is None],
+        clean_sheets_written=int((derived["market"] == MARKET_CLEAN_SHEET).sum())
+        if len(derived) else 0,
+    )
+
+
 def ingest_odds_api_gameweek(
     wh: Warehouse,
     season: str,
@@ -1351,44 +1794,28 @@ def ingest_odds_api_gameweek(
     max_monthly_credits: int = OddsApiClient.DEFAULT_MONTHLY_CAP,
     scorer_coverage: float = 0.95,
     dry_run: bool = False,
+    horizon: dt.datetime | None = None,
 ) -> ScorerIngestReport:
     """Fetch and land the next gameweek's odds, including anytime scorer.
 
-    Order of operations is chosen so that nothing is spent until the budget is
-    known to be sufficient:
-
-    1. ``/events`` -- **free**, and returns the quota headers. This is both the
-       fixture list and the balance check.
-    2. :meth:`CreditPlan.check` -- refuses the whole run if it would breach the
-       remaining balance or the configured monthly cap. No partial spend.
-    3. ``/odds`` for h2h + totals -- one call for all events.
-    4. ``/events/{id}/odds`` for anytime scorer -- one call per fixture.
-
-    ``as_of`` is the fetch instant for every row: these prices are observable
-    now, which is what makes them legitimate input to the upcoming deadline.
-
-    Writes four kinds of row to ``fact_odds``:
-
-    * quoted h2h / totals / anytime scorer, one per bookmaker;
-    * ``fair#shin`` de-vigged h2h and totals consensus;
-    * ``derived#poisson`` clean sheets;
-    * ``fair#scorer_power`` anytime-scorer estimates, keyed on the FPL
-      ``code`` so the points model can join them, and written **only** for
-      players that resolved unambiguously.
+    Kept as the one-call form for callers that already hold a warehouse. It is
+    :func:`fetch_odds_api_gameweek` followed by :func:`land_odds_api_gameweek`;
+    prefer :func:`refresh_odds_api`, which does not hold the write lock across
+    the network half.
     """
     owns = client is None
     client = client or OddsApiClient(api_key, max_monthly_credits=max_monthly_credits)
     try:
-        ev = client.events()
-        events = ev.body
-        plan = CreditPlan(
-            events=0, featured=2, scorer=len(events),
-            cap=max_monthly_credits,
-            used_before=client.quota.used if client.quota else None,
-            remaining_before=client.quota.remaining if client.quota else None,
-        )
-        plan.check()  # raises CreditBudgetExceeded before anything is spent
         if dry_run:
+            ev = client.events()
+            events = events_within(ev.body, horizon)
+            plan = CreditPlan(
+                events=0, featured=2, scorer=len(events),
+                cap=max_monthly_credits,
+                used_before=client.quota.used if client.quota else None,
+                remaining_before=client.quota.remaining if client.quota else None,
+            )
+            plan.check()  # a dry run still reports an unsatisfiable cap
             return ScorerIngestReport(
                 events=len(events), credits_spent=0,
                 credits_remaining=plan.remaining_before,
@@ -1396,54 +1823,57 @@ def ingest_odds_api_gameweek(
                 rows_written=0, scorer_selections=0, matched=0,
                 unmatched=[], clean_sheets_written=0,
             )
-
-        as_of = ev.fetched_at
-        wh.record_fetch(source="odds_api", endpoint="events", params=None,
-                        fetched_at=as_of, sha256=ev.sha256,
-                        body_path=str(ev.body_path), http_status=ev.http_status)
-
-        # -- featured markets, one call ---------------------------------
-        feat = client.featured_odds(regions=regions)
-        wh.record_fetch(source="odds_api", endpoint="odds", params=f"regions={regions}",
-                        fetched_at=feat.fetched_at, sha256=feat.sha256,
-                        body_path=str(feat.body_path), http_status=feat.http_status)
-        featured = parse_odds_api_events(feat.body, feat.fetched_at, season)
-
-        # -- per-event scorer cards -------------------------------------
-        scorer_frames, payloads = [], {}
-        for e in events:
-            got = client.anytime_scorers(e["id"], regions=regions)
-            wh.record_fetch(source="odds_api", endpoint=f"events/{e['id']}/odds",
-                            params=f"regions={regions}", fetched_at=got.fetched_at,
-                            sha256=got.sha256, body_path=str(got.body_path),
-                            http_status=got.http_status)
-            payloads[e["id"]] = got.body
-            scorer_frames.append(parse_odds_api_events(got.body, got.fetched_at, season))
-        scorer = pd.concat(scorer_frames, ignore_index=True) if scorer_frames else pd.DataFrame()
-
-        quoted = pd.concat([featured, scorer], ignore_index=True)
-        derived, matches = _derive_live_rows(
-            wh, season, as_of, events, featured, payloads, scorer_coverage
+        got = fetch_odds_api_gameweek(
+            client, regions=regions, max_monthly_credits=max_monthly_credits,
+            horizon=horizon,
         )
+        return land_odds_api_gameweek(
+            wh, season, got, regions=regions, scorer_coverage=scorer_coverage)
+    finally:
+        if owns:
+            client.close()
 
-        all_rows = pd.concat([quoted, derived], ignore_index=True) if len(derived) else quoted
-        written = wh.append("fact_odds", all_rows)
 
-        return ScorerIngestReport(
-            events=len(events),
-            credits_spent=client.spent_this_run,
-            credits_remaining=client.quota.remaining if client.quota else None,
-            credits_used_month=client.quota.used if client.quota else None,
-            rows_written=written,
-            scorer_selections=len(matches),
-            matched=sum(1 for m in matches if m.code is not None),
-            unmatched=[m for m in matches if m.code is None],
-            clean_sheets_written=int((derived["market"] == MARKET_CLEAN_SHEET).sum())
-            if len(derived) else 0,
+def refresh_odds_api(
+    season: str,
+    *,
+    api_key: str,
+    db_path: str | None = None,
+    client: OddsApiClient | None = None,
+    regions: str = "uk",
+    max_monthly_credits: int = OddsApiClient.DEFAULT_MONTHLY_CAP,
+    scorer_coverage: float = 0.95,
+    horizon: dt.datetime | None = None,
+    lock_timeout_s: float = 180.0,
+) -> ScorerIngestReport:
+    """Fetch first, then take the write lock. The form every scheduler should use.
+
+    This is the whole reason :class:`OddsApiFetch` exists. The network half runs
+    with no warehouse handle open at all; the warehouse is opened only once
+    every body is in memory, and closed as soon as the rows are appended.
+    Twelve HTTP round trips of lock contention become a sub-second write.
+
+    Safe to call twice: ``fact_odds`` appends dedupe on the point-in-time key,
+    and a second run within the same second writes the same rows to the same
+    key rather than doubling them.
+    """
+    owns = client is None
+    client = client or OddsApiClient(api_key, max_monthly_credits=max_monthly_credits)
+    try:
+        got = fetch_odds_api_gameweek(
+            client, regions=regions, max_monthly_credits=max_monthly_credits,
+            horizon=horizon,
         )
     finally:
         if owns:
             client.close()
+    wh = (Warehouse(lock_timeout_s=lock_timeout_s) if db_path is None
+          else Warehouse(db_path, lock_timeout_s=lock_timeout_s))
+    try:
+        return land_odds_api_gameweek(
+            wh, season, got, regions=regions, scorer_coverage=scorer_coverage)
+    finally:
+        wh.close()
 
 
 def _derive_live_rows(

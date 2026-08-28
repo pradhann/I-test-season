@@ -183,6 +183,130 @@ a.cx-job-url:hover { color: var(--ink); text-decoration: underline; }
 .cx-job .sub { color: var(--faint); font-size: 11.5px; margin-top: 6px;
                max-width: 78ch; line-height: 1.55; }
 
+/* ---- the preview halt --------------------------------------------------
+ *
+ * The gate is the feature, so it is the only thing in this card drawn as a
+ * raised surface with a live edge: a parked job is neither running nor done
+ * and must not be mistaken for either. Everything here is a token, so all
+ * three theme states (dark, light, and no attribute under both
+ * prefers-color-scheme values) come out of app.css unchanged.
+ *
+ * The accept/decline pair is deliberately NOT two equal buttons in two hues.
+ * Spending is the affirmative act and it carries the filled button; declining
+ * is free, and free things do not need to be shouted — it is a plain button
+ * with the word "free" spelled out underneath, because the cost is the
+ * decision and the cost belongs next to the control. */
+
+.cx-gate { color: var(--muted); font-size: 12.5px; line-height: 1.6;
+           max-width: 84ch; margin: 0 0 10px; }
+.cx-gate b { color: var(--ink); }
+
+.cx-job.parked { border-color: color-mix(in oklab, var(--s1) 42%, var(--line));
+                 box-shadow: inset 2px 0 0 var(--s1); }
+
+.cx-job-state.preview { color: var(--s1);
+  border-color: color-mix(in oklab, var(--s1) 55%, var(--line));
+  background: color-mix(in oklab, var(--s1) 12%, var(--surface)); }
+.cx-job-state.stopping { color: var(--warn);
+  border-color: color-mix(in oklab, var(--warn) 45%, var(--line)); }
+.cx-job-state.passed { color: var(--muted); }
+.cx-job-state.expired, .cx-job-state.robots { color: var(--warn);
+  border-color: color-mix(in oklab, var(--warn) 45%, var(--line)); }
+.cx-job-state.cancelled { color: var(--bad);
+  border-color: color-mix(in oklab, var(--bad) 45%, var(--line)); }
+
+.cx-pv { margin: 10px 0 4px; }
+.cx-pv-title { font-size: 15.5px; line-height: 1.35; font-weight: 650;
+               color: var(--ink); margin: 0 0 6px; max-width: 62ch;
+               overflow-wrap: anywhere; }
+.cx-pv-who { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px;
+             font-size: 13.5px; color: var(--ink); }
+.cx-pv-who b { font-weight: 650; overflow-wrap: anywhere; }
+.cx-pv-chan { color: var(--faint); font-size: 11.5px; }
+/* Every payload reason lands in this one shape, so "why the page believes
+   this" always looks the same wherever it appears. */
+.cx-pv-why { color: var(--faint); font-size: 11.5px; line-height: 1.55;
+             max-width: 78ch; margin-top: 3px; overflow-wrap: anywhere; }
+
+.cx-pv-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr);
+               gap: 6px 14px; margin: 10px 0 0; align-items: baseline; }
+.cx-pv-facts dt { color: var(--faint); font-size: 10.5px; letter-spacing: .06em;
+                  text-transform: uppercase; }
+.cx-pv-facts dd { margin: 0; min-width: 0; font-size: 13px; color: var(--ink); }
+.cx-pv-facts dd .chip { margin-left: 7px; vertical-align: 1px; }
+.cx-pv-v { font-variant-numeric: tabular-nums; }
+
+.cx-pv-desc { color: var(--muted); font-size: 12.5px; line-height: 1.6;
+              max-width: 80ch; margin: 10px 0 0; white-space: pre-line;
+              overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical;
+              -webkit-line-clamp: 4; overflow: hidden; }
+.cx-pv-desc.open { -webkit-line-clamp: none; display: block; overflow: visible; }
+.cx-pv-desc.empty-note { color: var(--faint); font-style: italic; }
+.cx-link-btn { background: none; border: none; padding: 2px 0; margin-top: 2px;
+               color: var(--s1); font-size: 11.5px; text-decoration: underline; }
+.cx-link-btn:hover { color: var(--ink); }
+
+/* The cost, in the same unit both paths are quoted in, so 4 seconds and 105
+   seconds are visibly different decisions rather than two adjectives. */
+.cx-pv-cost { margin-top: 12px; padding: 9px 12px; border-radius: 8px;
+              border: 1px solid var(--line); background: var(--surface); }
+.cx-pv-costline { font-size: 13px; color: var(--muted); line-height: 1.55; }
+.cx-pv-costline b { color: var(--ink); font-weight: 650; }
+
+.cx-pv-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+              margin-top: 12px; }
+.cx-pv-acts button { padding: 7px 14px; }
+.cx-pv-acts button:disabled { opacity: .55; cursor: default; }
+.cx-pv-acts button:disabled:hover { border-color: var(--line); }
+button.cx-no { color: var(--muted); }
+button.cx-no:hover { color: var(--ink); }
+.cx-pv-freeline { color: var(--faint); font-size: 11.5px; line-height: 1.55;
+                  max-width: 78ch; margin-top: 6px; }
+.cx-pv-exp { color: var(--muted); font-size: 11.5px; line-height: 1.55;
+             max-width: 78ch; margin-top: 10px; padding-top: 8px;
+             border-top: 1px solid var(--line); }
+.cx-pv-exp b { color: var(--ink); font-variant-numeric: tabular-nums; }
+
+.cx-ledger-cap { color: var(--faint); font-size: 10.5px; letter-spacing: .06em;
+                 text-transform: uppercase; margin: 12px 0 2px; }
+.cx-stage.halt { color: var(--s1); }
+.cx-stage.halt .cx-stage-mark { color: var(--s1); }
+.cx-stage-note { color: var(--faint); font-size: 11px; }
+
+.cx-job-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+               margin-top: 8px; }
+.cx-job-acts .sub { flex: 1 1 260px; min-width: 0; margin-top: 0; }
+
+/* A decline is not a failure and must not be drawn as one: nothing went
+   wrong, the owner made the call the halt exists to let them make. */
+.cx-pass { border: 1px solid var(--line); background: var(--surface);
+           border-radius: 8px; padding: 9px 12px; margin: 8px 0 0; }
+.cx-pass b { color: var(--ink); display: block; margin-bottom: 3px; }
+.cx-pass .sub { color: var(--muted); font-size: 12.5px; line-height: 1.6;
+                max-width: 82ch; margin-top: 0; }
+
+.cx-verbatim { color: var(--muted); font-size: 12px; line-height: 1.55;
+               max-width: 82ch; margin-top: 6px; overflow-wrap: anywhere; }
+
+.cx-take { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+.cx-take-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 8px;
+               font-size: 12.5px; color: var(--ink); margin-top: 4px; }
+.cx-take-k { color: var(--faint); font-size: 10.5px; letter-spacing: .06em;
+             text-transform: uppercase; min-width: 68px; }
+.cx-take-b { color: var(--muted); font-size: 12.5px; line-height: 1.6;
+             max-width: 80ch; margin-top: 6px; padding-left: 10px;
+             border-left: 2px solid var(--line); overflow-wrap: anywhere; }
+
+/* 375px: the two-column fact list becomes one column rather than squeezing a
+   value into a gutter, and the actions stack full width. */
+@media (max-width: 430px) {
+  .cx-pv-facts { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .cx-pv-facts dt { margin-top: 8px; }
+  .cx-pv-acts button { flex: 1 1 140px; }
+  .cx-take-k { min-width: 0; }
+}
+
+
 /* ========================================================== toolbar bits */
 
 /* WHICH SLICE the board is drawn from — gameweek, window, freshness. One

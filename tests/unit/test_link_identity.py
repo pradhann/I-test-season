@@ -812,3 +812,33 @@ def test_the_http_surface_exposes_discard_restore_and_gameweek(db, tmp_path):
                        json={"gameweek": 99}).status_code == 400
     assert client.post("/api/content/items/nope/discard",
                        json={}).status_code == 404
+
+
+def test_a_shared_platform_host_names_nobody():
+    """youtube.com is a platform, not a publisher.
+
+    Matching a creator on the host alone attributed a bare
+    "https://www.youtube.com/" -- carrying no video id at all -- to Let's Talk
+    FPL, with a confident basis string, purely because that channel sits first
+    in the registry. A host identifies a publisher only when exactly one
+    registered source lives there; thirteen channels share this one.
+    """
+    from fpl_edge.interfaces.creators import _creator_from_host
+
+    for url in ("https://www.youtube.com/",
+                "https://www.youtube.com/watch?v=",
+                "https://youtube.com/feed/subscriptions"):
+        creator, basis, reason = _creator_from_host(url)
+        assert creator is None, f"{url} named {creator!r} from the host alone"
+        assert basis == "shared_host"
+        assert "does not say who published" in reason
+
+
+def test_a_host_belonging_to_one_publisher_still_identifies_it():
+    """The rule must not over-correct: a blog's own domain IS its identity."""
+    from fpl_edge.interfaces.creators import _creator_from_host
+
+    creator, basis, _ = _creator_from_host(
+        "https://www.fantasyfootballscout.co.uk/2026/08/27/some-article/")
+    assert creator == "Fantasy Football Scout"
+    assert basis == "host_registry"

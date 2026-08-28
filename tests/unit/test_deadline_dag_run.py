@@ -418,7 +418,16 @@ def test_a_firing_the_machine_slept_through_is_recorded_not_fired(db, monkeypatc
     radar = [r for r in firings(db) if r[0] == "price_radar"]
     assert radar and all(r[3] == "skipped_stale" for r in radar)
     assert deliveries(db) == []
-    assert all(f.outcome == "skipped_stale" for f in report.fired)
+    # Stated as the general rule rather than "every firing in this tick", which
+    # is what it used to say. Since 2026-08-28 a tick at this instant also owes
+    # the T-36h odds rung, which is 5.5h old against its own 6h window and so
+    # is legitimately NOT stale. The invariant the test is actually about is
+    # per-firing: anything past its own window is recorded and never run.
+    for f in report.fired:
+        overdue = (now - f.due_utc) > dag.stale_window_for(f.task)
+        assert (f.outcome == "skipped_stale") == overdue, (
+            f"{f.task} due {f.due_utc} outcome {f.outcome}, overdue={overdue}")
+    assert any(f.outcome == "skipped_stale" for f in report.fired)
     assert "stale window" in radar[0][4]
 
 

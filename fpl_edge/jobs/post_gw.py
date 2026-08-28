@@ -208,8 +208,24 @@ def main() -> int:
     # Reads via Warehouse.read_copy, writes only the parquet: no lock contention.
     _run(report, "fixture_difficulty",
          [py, "-m", "fpl_edge.models.team_goals.ratings_cache"])
+    # The nightly odds top-up. Two things here were an outage until 2026-08-28.
+    #
+    # 1. ``--max-credits 30``. One refresh costs 22 credits unrestricted, and
+    #    the cap was 30 against a month that had already spent 67. Every run
+    #    from 2026-08-19 onward refused before spending anything, the script
+    #    caught the refusal and exited 0, and this step recorded ok=true for
+    #    nine consecutive nights. By the GW2 deadline anytime_scorer was 206
+    #    hours old and team_totals 191. The script now refuses a cap below
+    #    MIN_SANE_MONTHLY_CAP at the flag, and exits non-zero on a refusal, so
+    #    neither half of that can happen silently again.
+    # 2. It ran unconditionally and priced two gameweeks. With the deadline
+    #    DAG now firing a T-36h/T-12h/T-3h ladder, a nightly full refresh would
+    #    re-buy cards the ladder just bought. ``--max-age-hours 48`` makes this
+    #    a genuine no-op (an explicit ``skipped:``, not a fake ok) whenever the
+    #    ladder has already covered the week, and a real refresh in a quiet one
+    #    -- about twice a week, 24 credits.
     _run(report, "ingest_odds_props",
-         [py, "scripts/ingest_odds.py", "--odds-api", "--max-credits", "30"])
+         [py, "scripts/ingest_odds.py", "--odds-api", "--max-age-hours", "48"])
     _run(report, "track_ideas", [py, "-m", "fpl_edge.cli.main", "idea", "track"])
     _run(report, "score_creators",
          [py, "-m", "fpl_edge.ingest.content.pipeline", "score"])
