@@ -109,7 +109,17 @@ _CONTENT_TABLES = ("content_source", "content_item", "content_claim")
 #: rather than guessing an entry id from a name collision in dim_manager --
 #: 12,276 crawled managers make a name match a coin flip, and a wrong entry id
 #: renders as somebody else's squad under a creator's name.
-_PANEL_TABLE = "dim_panel_member"
+# The roster of tracked PEOPLE and the shows they appear on.
+#
+# This was written against `dim_panel_member`, the table CREATOR_ELITE_PROMPT.md
+# Stage A specifies. Stage A never ran; what exists is `panel_person` /
+# `panel_person_show`, built by the person-model work when the owner asked for
+# co-hosts to be tracked individually. Two names for one concept, from two
+# pieces of work that did not meet -- and the cost was silent: every entry
+# lookup read a table that does not exist, so every creator's verified team
+# rendered as "not published" while sixteen verified ids sat in the warehouse.
+_PANEL_TABLE = "panel_person"
+_PANEL_SHOW_TABLE = "panel_person_show"
 
 
 # ---------------------------------------------------------------------------
@@ -500,11 +510,28 @@ def _take(analysis: dict[str, Any] | None, model: str | None, resolver,
         "summary_bullets": bullets,
         "model": str(model or "unknown"),
     }
+    # A "watch" is an OBSERVATION, not a recommendation, and the analysis
+    # stores it inside whichever list it came up in -- 41 of them currently sit
+    # in `transfers_in`. Rendering those under a transfer-in heading puts a buy
+    # in a named person's mouth that they did not make: "keep an eye on Foden"
+    # becomes "Foden, transfer in". That is the no-fabrication rule, not a
+    # presentational preference, so watch calls are lifted out into their own
+    # bucket wherever they were stored.
+    watching: list[dict[str, Any]] = []
     for key, source in _CALL_BUCKETS:
-        take[key] = [
-            _call(c, resolver, index, url)
-            for c in (analysis.get(source) or []) if isinstance(c, dict)
-        ]
+        kept = []
+        for c in (analysis.get(source) or []):
+            if not isinstance(c, dict):
+                continue
+            call = _call(c, resolver, index, url)
+            if str(c.get("stance") or "").strip().lower() == "watch":
+                # Where it was stored is kept, because "watch, raised while
+                # talking about transfers in" is more informative than "watch".
+                watching.append({**call, "raised_in": key})
+            else:
+                kept.append(call)
+        take[key] = kept
+    take["watching"] = watching
     chips = []
     for c in analysis.get("chip_advice") or []:
         if not isinstance(c, dict):
@@ -627,23 +654,43 @@ def _entries(wh, present: set[str], moment: dt.datetime
     )
     if _PANEL_TABLE not in present:
         return {}, reason
+    # Keyed by SHOW, because the board's row is a show today. A show with
+    # several hosts yields several people, so this returns a LIST per show --
+    # collapsing four Wire hosts into one "the show's team" is exactly the
+    # conflation the person model exists to end.
     rows = q(
         wh,
-        f"SELECT display_name, entry_id, id_source_url, id_verified_utc, "
-        f"verified_entry_name FROM {_PANEL_TABLE} WHERE entry_id IS NOT NULL",
+        f"SELECT p.display_name, p.entry_id, p.entry_source_url, "
+        f"p.entry_verified, p.entry_api_name, p.entry_reason, s.show_creator "
+        f"FROM {_PANEL_TABLE} p JOIN {_PANEL_SHOW_TABLE} s USING (person_key) "
+        f"WHERE p.active",
     )
     out: dict[str, dict[str, Any]] = {}
     for r in rows.to_dict("records"):
-        entry_id = _i(r.get("entry_id"))
-        if entry_id is None:
+        show = _s(r.get("show_creator"))
+        if not show:
             continue
-        verified_at = _s(r.get("id_verified_utc"))
-        out[str(r["display_name"])] = {
-            "entry_id": entry_id,
-            "name": _s(r.get("verified_entry_name")) or str(r["display_name"]),
-            "verified": verified_at is not None,
-            "source_url": _s(r.get("id_source_url")),
+        person = {
+            "person": str(r["display_name"]),
+            "entry_id": _i(r.get("entry_id")),
+            "name": _s(r.get("entry_api_name")) or str(r["display_name"]),
+            "verified": bool(r.get("entry_verified")),
+            "source_url": _s(r.get("entry_source_url")),
+            "reason": _s(r.get("entry_reason")),
         }
+        bucket = out.setdefault(show, {"people": []})
+        bucket["people"].append(person)
+    for show, bucket in out.items():
+        verified = [x for x in bucket["people"] if x["entry_id"] is not None]
+        # The show-level fields stay populated only when the show has exactly
+        # one verified person; otherwise the UI must name a person, not a show.
+        head = verified[0] if len(verified) == 1 else None
+        bucket.update({
+            "entry_id": head["entry_id"] if head else None,
+            "name": head["name"] if head else None,
+            "verified": bool(head),
+            "source_url": head["source_url"] if head else None,
+        })
     return out, (
         f"no row in {_PANEL_TABLE} carries a verified entry id for this creator"
     )
@@ -698,6 +745,21 @@ _CHIP = {
     },
 }
 
+#: A watch call: the same shape as a recommendation plus WHERE it was raised,
+#: because "watch, mentioned while discussing transfers in" says more than
+#: "watch" alone.
+_WATCH = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["code", "name", "conviction", "quote", "start_s", "deep_link",
+                 "raised_in"],
+    "properties": {
+        **_CALL["properties"],
+        "raised_in": {"enum": ["transfers_in", "transfers_out", "captain",
+                               "differentials"]},
+    },
+}
+
 _TAKE = {
     "type": ["object", "null"],
     "additionalProperties": False,
@@ -711,6 +773,10 @@ _TAKE = {
         "transfers_out": {"type": "array", "items": _CALL},
         "captain": {"type": "array", "items": _CALL},
         "differentials": {"type": "array", "items": _CALL},
+        # Observations, not recommendations. Separated from the buy/sell lists
+        # because the model stores a "watch" in whichever list it arose in, and
+        # showing one as a transfer attributes a call nobody made.
+        "watching": {"type": "array", "items": _WATCH},
         "chips": {"type": "array", "items": _CHIP},
     },
 }
@@ -744,15 +810,35 @@ _RECORD = {
     },
 }
 
+#: A show's FPL identity. `people` is the truthful field: a show is a place
+#: several managers talk, and the FPL Wire alone has four hosts with four
+#: different teams. The flat entry_id/name/verified are populated ONLY when the
+#: show has exactly one verified person -- otherwise they are null and the
+#: caller must name a person, because "the Wire's team" does not exist.
+_PERSON = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["person", "entry_id", "verified"],
+    "properties": {
+        "person": {"type": "string"},
+        "entry_id": {"type": ["integer", "null"]},
+        "name": {"type": ["string", "null"]},
+        "verified": {"type": "boolean"},
+        "source_url": {"type": ["string", "null"]},
+        "reason": {"type": ["string", "null"]},
+    },
+}
+
 _ENTRY = {
     "type": ["object", "null"],
     "additionalProperties": False,
     "required": ["entry_id", "name", "verified"],
     "properties": {
-        "entry_id": {"type": "integer"},
-        "name": {"type": "string"},
+        "entry_id": {"type": ["integer", "null"]},
+        "name": {"type": ["string", "null"]},
         "verified": {"type": "boolean"},
         "source_url": {"type": ["string", "null"]},
+        "people": {"type": "array", "items": _PERSON},
     },
 }
 
@@ -820,6 +906,13 @@ BOARD_PARAMS: dict[str, Any] = {
         "days": {"type": "integer", "minimum": 1, "maximum": 365, "default": 30},
         "gw": {"type": ["integer", "null"], "minimum": 1, "maximum": 38,
                "default": None},
+        # Which creators the board is ABOUT. The corpus holds 30-odd sources
+        # because ingest casts wide; the owner follows a named panel of 16
+        # people across 7 shows. Showing all 30 read as "30 tracked creators",
+        # which is not what tracking means -- it is what ingesting means.
+        # `panel` is the default and the honest one; `all` stays reachable so
+        # the wider corpus is never hidden, only un-defaulted.
+        "scope": {"enum": ["panel", "all"], "default": "panel"},
     },
 }
 
@@ -834,6 +927,19 @@ BOARD_RESULT: dict[str, Any] = {
         "window_days": {"type": "integer"},
         "gw": {"type": ["integer", "null"]},
         "gw_reason": {"type": ["string", "null"]},
+        # Which creators this board is about, and which the scope excluded.
+        # Named explicitly so the page can say "16 people across 7 shows"
+        # rather than a count of whatever ingest happened to reach.
+        "scope": {
+            "type": "object", "additionalProperties": False,
+            "required": ["applied"],
+            "properties": {
+                "applied": {"enum": ["panel", "all"]},
+                "shows": {"type": "array", "items": {"type": "string"}},
+                "excluded": {"type": "array", "items": {"type": "string"}},
+                "reason": {"type": ["string", "null"]},
+            },
+        },
         "creators": {"type": "array", "items": _CREATOR},
         "consensus": {"type": "array", "items": _CONSENSUS},
         "record_note": {"type": "string"},
@@ -939,7 +1045,29 @@ DETAIL_RESULT: dict[str, Any] = {
 # ---------------------------------------------------------------------------
 # creator_board
 
-def creator_board(wh, *, days: int = 30, gw: int | None = None) -> dict[str, Any]:
+def _panel_shows(wh, present) -> tuple[set[str], str | None]:
+    """The shows the owner's panel actually appears on, and why if unknown.
+
+    Returns an empty set with a reason when the roster cannot be read, and the
+    caller then shows everything rather than nothing -- an unreadable panel is
+    a missing filter, not an empty world.
+    """
+    if _PANEL_TABLE not in present or _PANEL_SHOW_TABLE not in present:
+        return set(), "no panel roster in this warehouse; showing every source"
+    try:
+        rows = wh.sql(
+            f"SELECT DISTINCT s.show_creator FROM {_PANEL_SHOW_TABLE} s "
+            f"JOIN {_PANEL_TABLE} p USING (person_key) WHERE p.active")
+    except Exception as exc:  # noqa: BLE001 - a panel reports, it never crashes
+        return set(), f"panel roster unreadable ({type(exc).__name__})"
+    shows = {str(x) for x in rows["show_creator"] if x is not None}
+    if not shows:
+        return set(), "the panel roster is empty; showing every source"
+    return shows, None
+
+
+def creator_board(wh, *, days: int = 30, gw: int | None = None,
+                  scope: str = "panel") -> dict[str, Any]:
     """Every tracked creator: reach, latest item, summarised take, track record.
 
     One row per creator with their sources and probe state, the most recent
@@ -953,7 +1081,9 @@ def creator_board(wh, *, days: int = 30, gw: int | None = None) -> dict[str, Any
     present = _tables_present(wh, _CONTENT_TABLES + ("transcript_segment",
                                                      "content_analysis",
                                                      "creator_score",
-                                                     _PANEL_TABLE))
+                                                     _PANEL_TABLE,
+                                                     "panel_person",
+                                                     "panel_person_show"))
     missing = [t for t in _CONTENT_TABLES if t not in present]
     if missing:
         return empty(
@@ -1070,6 +1200,15 @@ def creator_board(wh, *, days: int = 30, gw: int | None = None) -> dict[str, Any
                     if not claims.empty else {})
 
     names = sorted(set(by_creator_sources) | set(counts_all) | set(claim_counts))
+    # Narrow to the panel's shows unless asked for everything. A panel that is
+    # absent or empty degrades UPWARD to the whole corpus with a stated reason,
+    # never DOWNWARD to nothing: an unreadable roster must not look like a
+    # world in which nobody says anything.
+    panel_shows, panel_reason = _panel_shows(wh, present)
+    scoped_out: list[str] = []
+    if scope == "panel" and panel_shows:
+        scoped_out = sorted(n for n in names if n not in panel_shows)
+        names = [n for n in names if n in panel_shows]
     creators: list[dict[str, Any]] = []
     for name in names:
         row = latest_rows.get(name)
@@ -1128,6 +1267,8 @@ def creator_board(wh, *, days: int = 30, gw: int | None = None) -> dict[str, Any
         "window_days": int(days),
         "gw": gw,
         "gw_reason": gw_reason,
+        "scope": {"applied": scope, "shows": sorted(panel_shows),
+                  "excluded": scoped_out, "reason": panel_reason},
         "creators": creators,
         "consensus": _consensus(wh, claims, gw, moment),
         "record_note": _record_note(weights),

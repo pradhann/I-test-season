@@ -143,27 +143,41 @@ def _score(wh, creator, as_of, *, scored, hits, weight, lo95):
     )
 
 
-def _plant_panel_member(db, display_name, entry_id):
-    """Create the panel registry the entry lookup is waiting for.
+def _plant_panel_member(db, display_name, entry_id, show="The Talker"):
+    """Create the roster the entry lookup reads.
 
-    ``dim_panel_member`` does not exist yet (another team owns Stage A of
-    docs/platform/CREATOR_ELITE_PROMPT.md). The panel must degrade to
-    ``entry: null`` + reason without it and light up when it appears, so the
-    test creates it with the documented columns.
+    This planted ``dim_panel_member``, the table CREATOR_ELITE_PROMPT.md Stage
+    A specifies. Stage A never ran. What exists is ``panel_person`` /
+    ``panel_person_show``, built when the owner asked for podcast co-hosts to
+    be tracked individually -- and because the panel script was still reading
+    the Stage A name, every creator's verified team rendered as "not
+    published" while sixteen verified ids sat in the warehouse. The test now
+    plants what the code reads, which is the only version of this test that
+    could have caught that.
     """
     wh = Warehouse(db)
     wh.sql(
-        "CREATE TABLE IF NOT EXISTS dim_panel_member ("
-        " member_key VARCHAR, display_name VARCHAR, kind VARCHAR,"
-        " entry_id BIGINT, id_source_url VARCHAR, id_verified_utc TIMESTAMPTZ,"
-        " verified_entry_name VARCHAR, weight DOUBLE, active BOOLEAN,"
+        "CREATE TABLE IF NOT EXISTS panel_person ("
+        " person_key VARCHAR, display_name VARCHAR, handles_json VARCHAR,"
+        " aliases_json VARCHAR, entry_id BIGINT, entry_verified BOOLEAN,"
+        " entry_source_url VARCHAR, entry_api_name VARCHAR,"
+        " entry_checked_utc TIMESTAMPTZ, entry_reason VARCHAR,"
+        " edge_note VARCHAR, top10k_finishes INTEGER, active BOOLEAN,"
         " as_of TIMESTAMPTZ)"
     )
     wh.sql(
-        "INSERT INTO dim_panel_member VALUES (?, ?, 'creator', ?, ?, ?, ?, "
-        "0.7, true, ?)",
-        ["talker", display_name, entry_id, "https://example.invalid/proof",
-         PAST, "Talker FC", PAST],
+        "CREATE TABLE IF NOT EXISTS panel_person_show ("
+        " person_key VARCHAR, show_creator VARCHAR, source_key VARCHAR,"
+        " role VARCHAR, as_of TIMESTAMPTZ)"
+    )
+    wh.sql(
+        "INSERT INTO panel_person VALUES ('talker', ?, NULL, NULL, ?, true, ?,"
+        " 'Talker FC', ?, NULL, NULL, NULL, true, ?)",
+        [display_name, entry_id, "https://example.invalid/proof", PAST, PAST],
+    )
+    wh.sql(
+        "INSERT INTO panel_person_show VALUES ('talker', ?, NULL, 'host', ?)",
+        [show, PAST],
     )
     wh.close()
 
@@ -365,7 +379,7 @@ def test_no_verified_entry_means_null_and_a_reason_never_a_guess(seeded_db):
     res = board(seeded_db)
     for row in res["creators"]:
         assert row["entry"] is None
-        assert row["entry_reason"] and "dim_panel_member" in row["entry_reason"]
+        assert row["entry_reason"] and "panel_person" in row["entry_reason"]
     det = detail(seeded_db, creator="The Talker")
     assert det["entry"] is None and det["entry_reason"]
     assert det["squad"] is None and det["squad_reason"]
@@ -397,10 +411,13 @@ def test_with_a_verified_entry_the_empty_transfer_list_is_explained(seeded_db):
     _plant_panel_member(seeded_db, "The Talker", 53517)
     det = detail(seeded_db, creator="The Talker")
 
-    assert det["entry"] == {
-        "entry_id": 53517, "name": "Talker FC", "verified": True,
-        "source_url": "https://example.invalid/proof",
-    }
+    assert det["entry"]["entry_id"] == 53517
+    assert det["entry"]["name"] == "Talker FC"
+    assert det["entry"]["verified"] is True
+    assert det["entry"]["source_url"] == "https://example.invalid/proof"
+    # A show carries PEOPLE. One host here, so the flat fields are populated
+    # too -- with two they would be null and the caller must name a person.
+    assert [p["person"] for p in det["entry"]["people"]] == ["The Talker"]
     assert det["entry_reason"] is None
     assert det["transfers"] == []
     assert "deadline" in det["transfers_reason"]

@@ -386,8 +386,21 @@ def load_panel(path: Path | str = DEFAULT_PANEL_PATH) -> Panel:
         raw = yaml.safe_load(path.read_text()) or {}
     except yaml.YAMLError as exc:
         return Panel(missing_reason=f"unparsable YAML in {path}: {exc}", path=path)
+    # Two shapes are accepted, because two people wrote to this file
+    # independently and both spellings are natural: a mapping with a `people:`
+    # key (which can also carry `as_of`), or a bare list of people, which is
+    # how a roster reads when it is nothing but a roster. Rejecting the second
+    # would have been a contract argument, not a data problem.
+    if isinstance(raw, list):
+        raw = {"people": raw}
     if not isinstance(raw, dict):
-        return Panel(missing_reason=f"{path} is not a mapping", path=path)
+        return Panel(
+            missing_reason=(
+                f"{path} is neither a mapping nor a list of people "
+                f"(got {type(raw).__name__})"
+            ),
+            path=path,
+        )
 
     problems: list[str] = []
     try:
