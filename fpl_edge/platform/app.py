@@ -7,6 +7,8 @@
     POST /api/inbox/{id}/ack          acknowledge one
     GET  /api/monitors                monitor definitions
     POST /api/chat                    QuestionRouter answer (text + images)
+    POST /api/ingest/link             {url} -> {job_id, stages}
+    GET  /api/ingest/link/{job_id}    {stage, pct, eta_s, done, error, item_id}
     POST /api/conversations           new agent conversation -> {conv_id}
     GET  /api/conversations           conversation metas, newest first
     POST /api/conversations/{id}/chat start an agent turn (202; 409 in-flight)
@@ -16,9 +18,14 @@
     GET  /api/chat/assets/{id}.png    charts the agent's make_chart produced
     /                                 the built web/ bundle, if present
 
-What is deliberately *absent* is as load-bearing as what is here: there is no
-route that writes a fact, no route that takes SQL from a panel, and no route
-that accepts credentials. The server holds no API key -- the chat escalation
+What is deliberately *absent* is as load-bearing as what is here: no route
+takes SQL from a panel and no route accepts credentials. Exactly one route
+writes -- ``POST /api/ingest/link``, which is the owner pasting a link at their
+own explicit request, and it writes only by calling
+:func:`fpl_edge.interfaces.creators.ingest_link`, the sanctioned single-URL
+path that the robots exception in ``docs/data_sources.md`` §7A was granted for.
+It opens no warehouse handle of its own and adds no second ingester; see
+:mod:`fpl_edge.platform.link_jobs`. The server holds no API key -- the chat escalation
 shells out to the Max-plan `claude` CLI, which owns its own auth (DESIGN §2
 item 6), and every secret the engine needs is read through
 :func:`fpl_edge.config.secret` at the point of use.
@@ -41,6 +48,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from fpl_edge.platform import inbox as inbox_mod
+from fpl_edge.platform import link_jobs as link_jobs_mod
 from fpl_edge.platform import panels as panels_mod
 from fpl_edge.platform.query import QueryError, guarded_query, read_copy
 from fpl_edge.platform.registry import (
@@ -93,6 +101,10 @@ class TurnRequest(BaseModel):
 
 class SolveRequest(BaseModel):
     mode: str = "both"
+
+
+class IngestLinkRequest(BaseModel):
+    url: str
 
 
 def create_app(db: Path | str = DEFAULT_DB,
@@ -265,6 +277,33 @@ def create_app(db: Path | str = DEFAULT_DB,
     @app.post("/api/chat")
     def post_chat(body: ChatRequest) -> JSONResponse:
         return JSONResponse(_chat(body, db_path))
+
+    # ---- paste a link (fpl_edge/platform/link_jobs.py) ----
+    # The only writing route on this server, and it writes exactly one way:
+    # through the owner-initiated ingester in interfaces/creators.py. The job
+    # runs server-side and the browser polls, so closing the tab mid-transcribe
+    # loses nothing; state is keyed by job_id and never held in a request.
+    app.state.link_jobs = link_jobs_mod.LinkJobs(db_path)
+
+    @app.post("/api/ingest/link")
+    def post_ingest_link(body: IngestLinkRequest) -> JSONResponse:
+        # Only an unusable REQUEST is a 4xx here. A URL that turns out to be a
+        # league invite, a duplicate or a 403 is a real job with a real answer,
+        # and it surfaces through the poll's `error` -- one shape for the UI to
+        # render instead of two.
+        try:
+            started = app.state.link_jobs.submit(body.url)
+        except link_jobs_mod.LinkRefused as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return JSONResponse(started, status_code=202)
+
+    @app.get("/api/ingest/link/{job_id}")
+    def get_ingest_link(job_id: str) -> JSONResponse:
+        state = app.state.link_jobs.poll(job_id)
+        if state is None:
+            raise HTTPException(status_code=404,
+                                detail=f"no ingest job {job_id!r}")
+        return JSONResponse(state)
 
     # ---- agent conversations (fpl_edge/platform/chat_agent.py) ----
     # The router fast-path above stays untouched; these routes are the
