@@ -67,10 +67,13 @@ PANELS: tuple[Panel, ...] = (
     Panel(
         id="fixtures",
         title="Fixture ticker",
-        script="fixture_ticker",
-        default_params={"horizon": 5},
+        script="fixture_board",
+        default_params={"horizon": 6},
         layout="grid",
-        description="The next five gameweeks per club. Blanks and doubles are explicit.",
+        description=(
+            "Six gameweeks per club, split: how easy it is to score in, and "
+            "how easy it is to keep clean. Blanks and doubles are explicit."
+        ),
     ),
     Panel(
         id="prices",
@@ -117,6 +120,27 @@ PANELS: tuple[Panel, ...] = (
         default_params={"limit": 50},
         layout="list",
         description="Your theses, the engine's verdict, and how they actually resolved.",
+    ),
+    Panel(
+        id="fixture_detail",
+        title="One fixture, expanded",
+        script="fixture_detail",
+        layout="list",
+        description=(
+            "One fixture: both models, the market with its age, form, team "
+            "news, set pieces, predicted lineups and previous meetings."
+        ),
+    ),
+    Panel(
+        id="fixture_ticker",
+        title="Fixture ticker (legacy blend)",
+        script="fixture_ticker",
+        layout="table",
+        description=(
+            "The single blended difficulty per fixture. Superseded by "
+            "fixture_board's attack/defence split; kept because the fixtures "
+            "view falls back to it when the split artefact is absent."
+        ),
     ),
     Panel(
         id="creator_board",
