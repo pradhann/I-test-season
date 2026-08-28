@@ -1523,6 +1523,14 @@ def creator_board(wh, *, days: int = 30, gw: int | None = None,
     if scope == "panel" and panel_shows:
         scoped_out = sorted(n for n in names if n not in panel_shows)
         names = [n for n in names if n in panel_shows]
+        # THE CLAIMS TOO, not only the creator list. The board the UI draws is
+        # built from `consensus`, which is built from `claims` -- so scoping
+        # just `names` left the page saying "the panel across 7 shows" above a
+        # board where 48 of 58 voices came from the 24 sources it listed as
+        # excluded, and 32 of 39 rows had no panel voice at all. A scope that
+        # filters the list but not the thing the list describes is worse than
+        # no scope: it puts a true label on untrue content.
+        claims = claims[claims["creator"].isin(panel_shows)]
     creators: list[dict[str, Any]] = []
     for name in names:
         row = latest_rows.get(name)

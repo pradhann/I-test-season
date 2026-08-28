@@ -28,3 +28,4 @@ code_bases/
 
 # chat conversations and chart assets are runtime data, not source
 data/warehouse/chat/
+data/raw/content/

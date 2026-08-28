@@ -1178,3 +1178,100 @@ def test_mine_reports_the_role_and_says_a_multiplier_was_derived(
     absent = next((r for r in res["consensus"] if r["code"] != HAALAND), None)
     if absent is not None:
         assert absent["mine"]["in_squad"] is False
+
+
+class TestTheScopeScopesTheBoardNotJustTheList:
+    """Scoping the creator list but not the claims puts a true label on untrue
+    content.
+
+    This shipped exactly that way: the page said "the panel across 7 shows"
+    above a board where 48 of 58 voices came from the 24 sources it listed as
+    excluded, and 32 of 39 rows carried no panel voice at all. The UI draws the
+    board from `consensus`, which is built from `claims` -- and only `names`
+    was being filtered. Neither the scope nor the leak had a single test, which
+    is why it could ship.
+    """
+
+    def test_a_non_panel_creators_claim_never_reaches_the_consensus(
+            self, seeded_db):
+        _plant_panel_member(seeded_db, "The Talker", 53517, show="The Talker")
+        got = board(seeded_db, scope="panel")
+        shows = set((got.get("scope") or {}).get("shows") or [])
+        assert shows, "the roster must be readable or this proves nothing"
+        for row in got.get("consensus") or []:
+            voices = set()
+            for side in ("buy", "sell", "captain"):
+                voices |= set((row.get(side) or {}).get("creators") or [])
+            off = voices - shows
+            assert not off, (
+                f"{row.get('name')} carries voices from outside the panel: "
+                f"{sorted(off)} -- the board is not scoped to the label above it"
+            )
+
+    def test_asking_for_everything_still_returns_everything(self, seeded_db):
+        _plant_panel_member(seeded_db, "The Talker", 53517, show="The Talker")
+        narrow = board(seeded_db, scope="panel")
+        wide = board(seeded_db, scope="all")
+        assert len(wide.get("consensus") or []) >= len(
+            narrow.get("consensus") or []), (
+            "`all` must not be narrower than `panel`; the wider corpus is "
+            "un-defaulted, never hidden"
+        )
+
+
+class TestAWatchNeverRidesInTheBuyList:
+    """The analysis stores a call in whichever list it arose in, and 41 `watch`
+    stances arrived inside `transfers_in`.
+
+    Rendering those under a transfer heading put buys in named people's mouths
+    -- FPL Harry saying "watch Semenyo" was displayed as Harry recommending
+    him. `_take` lifts them into `watching`. That lift had no test: neutering
+    it left all 57 tests in this file green, so the fix could have been undone
+    silently at any time.
+    """
+
+    @staticmethod
+    def _take_from(calls):
+        from fpl_edge.platform.scripts import creators as C
+
+        analysis = {"summary": ["s"], "transfers_in": calls,
+                    "transfers_out": [], "captaincy": [], "differentials": []}
+
+        class _Idx:
+            def find(self, _quote):
+                return None
+
+        class _Res:
+            def lookup(self, name):
+                return (1, "ok")
+
+            def find_mentions(self, *_a, **_k):
+                return []
+
+        return C._take(analysis, "claude-opus-5", _Res(), _Idx(), None)
+
+    def test_a_watch_stored_among_the_buys_is_lifted_out_of_them(self):
+        take = self._take_from([
+            {"player": "Semenyo", "stance": "watch", "conviction": "low",
+             "quote": "keep an eye on Semenyo"},
+            {"player": "Haaland", "stance": "buy", "conviction": "high",
+             "quote": "get Haaland in"},
+        ])
+        buys = [c["name"] for c in take["transfers_in"]]
+        watching = [c["name"] for c in take["watching"]]
+        assert "Semenyo" not in buys, (
+            "a watch is an observation; rendering it under transfers_in "
+            "attributes a recommendation nobody made"
+        )
+        assert "Haaland" in buys
+        assert "Semenyo" in watching
+
+    def test_the_lifted_call_remembers_where_it_was_raised(self):
+        take = self._take_from([
+            {"player": "Semenyo", "stance": "watch", "conviction": "low",
+             "quote": "keep an eye on Semenyo"},
+        ])
+        assert take["watching"][0]["raised_in"] == "transfers_in", (
+            "'watch, raised while discussing transfers in' says more than "
+            "'watch' alone"
+        )
