@@ -1525,7 +1525,16 @@ export default async function creators(host) {
       const counts = new Map();
       for (const r of b.rows) counts.set(r.note, (counts.get(r.note) || 0) + 1);
       const [common, n] = [...counts.entries()].sort((x, y) => y[1] - x[1])[0] || [];
-      if (n > 1) { b.common = common; for (const r of b.rows) if (r.note === common) r.note = null; }
+      // Lift a note into the band header ONLY when it is true of every row in
+      // the band. Lifting the merely most-common one stated "no panel person
+      // is published for this show" across a band that included the FPL
+      // Wire's four named hosts -- a header speaks for the whole band, so a
+      // note that is false for even one row must stay on the rows it fits.
+      // Deduplicating clutter is not worth asserting something untrue.
+      if (common && n === b.rows.length && n > 1) {
+        b.common = common;
+        for (const r of b.rows) r.note = null;
+      }
     }
 
     /* COLUMNS */
@@ -1547,14 +1556,24 @@ export default async function creators(host) {
         "has never mentioned on air, which no transcript can ever surface. A " +
         "column of hue with no rings is talk with nobody's money behind it.");
     } else {
+      // The counts come from the payload, never from prose. This paragraph
+      // used to hard-code "seven of the fifteen verified panel entries",
+      // which was true the day it was written and would have gone quietly
+      // wrong the next time a squad was crawled -- a stale number that still
+      // reads as measured is worse than no number.
+      const sq = res.panel_squads || {};
       lead.append(" The own channel is EMPTY for the panel in this payload: " +
         "`creator_board` is not yet publishing `panel_owned` or " +
         "`entry.people[].owned`, so no panel row can carry a ring. Only your " +
-        "own row, pinned at the bottom, has a squad to draw. Seven of the " +
-        "fifteen verified panel entries have a crawled GW1 squad; until the " +
-        "panel serves them, this grid is half of itself — quiet holdings, the " +
-        "thing this view exists for, cannot be shown. That is missing data, " +
-        "not an absence of holdings.");
+        "own row, pinned at the bottom, has a squad to draw. ");
+      if (sq.known != null && sq.with_entry != null) {
+        lead.append(`${sq.known} of the ${sq.with_entry} verified panel ` +
+          `entries have a crawled squad` +
+          (sq.gw != null ? ` (GW${sq.gw})` : "") + ". ");
+      }
+      lead.append("Until the panel serves them, this grid is half of itself — " +
+        "quiet holdings, the thing this view exists for, cannot be shown. " +
+        "That is missing data, not an absence of holdings.");
     }
     body.appendChild(lead);
 
