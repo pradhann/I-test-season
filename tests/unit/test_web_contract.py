@@ -25,7 +25,13 @@ WEB = Path(__file__).resolve().parents[2] / "web" / "dist"
 APP = (WEB / "js" / "app.js").read_text()
 HTML = (WEB / "index.html").read_text()
 VIEWS = {p.stem: p.read_text() for p in sorted((WEB / "js" / "views").glob("*.js"))}
-ALL_JS = APP + "".join(VIEWS.values())
+#: Shared components render panels too. `chatter.js` is mounted from the
+#: xPoints and Template drawers rather than being a view of its own, and
+#: scanning only `views/` reported its panel as unrendered -- the test's model
+#: of the app, not a real gap. A renderer is a renderer wherever it lives.
+COMPONENTS = {p.stem: p.read_text()
+              for p in sorted((WEB / "js" / "components").glob("*.js"))}
+ALL_JS = APP + "".join(VIEWS.values()) + "".join(COMPONENTS.values())
 
 
 def _schema_props(script: str, *path: str) -> set[str]:

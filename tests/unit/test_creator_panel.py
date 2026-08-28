@@ -65,6 +65,7 @@ SEGMENTS = [
     (12.5, "haaland is the captain this week no question about it"),
     (30.25, "i am leaving saliba on the bench for now"),
     (48.0, "that is all from me see you next time"),
+    (60.0, "keep an eye on saliba he could be a differential"),
 ]
 
 ANALYSIS = {
@@ -90,7 +91,16 @@ ANALYSIS = {
         "reasoning": "Wait for the fixture swing.",
         "quote": "I am leaving Saliba on the bench for now",
     }],
-    "differentials": [],
+    # A WATCH. The claim writer refuses to map this stance -- a watch is not a
+    # scoreable position -- so it never reaches `content_claim` and the only
+    # place it exists is here. A panel that reads claims alone drops every one
+    # of them; a panel that reads them as transfers puts a buy in somebody's
+    # mouth that they never said.
+    "differentials": [{
+        "player": "William Saliba", "stance": "watch", "conviction": "medium",
+        "gameweek": 3, "reasoning": "Worth monitoring.",
+        "quote": "keep an eye on Saliba, he could be a differential",
+    }],
 }
 
 
@@ -180,6 +190,95 @@ def _plant_panel_member(db, display_name, entry_id, show="The Talker"):
         [show, PAST],
     )
     wh.close()
+
+
+def _plant_panel_people(db, people, *, shows=None):
+    """Plant several panel PEOPLE at once, with the shows they appear on.
+
+    ``_plant_panel_member`` covers the one-person case the entry lookup needs.
+    The DID channel needs a roster: somebody whose squad has been crawled,
+    somebody whose has not, and somebody with no verified entry id at all --
+    because the three render as three different sentences and collapsing them
+    is the exact lie this panel exists to avoid.
+    """
+    wh = Warehouse(db)
+    wh.sql(
+        "CREATE TABLE IF NOT EXISTS panel_person ("
+        " person_key VARCHAR, display_name VARCHAR, handles_json VARCHAR,"
+        " aliases_json VARCHAR, entry_id BIGINT, entry_verified BOOLEAN,"
+        " entry_source_url VARCHAR, entry_api_name VARCHAR,"
+        " entry_checked_utc TIMESTAMPTZ, entry_reason VARCHAR,"
+        " edge_note VARCHAR, top10k_finishes INTEGER, active BOOLEAN,"
+        " as_of TIMESTAMPTZ)"
+    )
+    wh.sql(
+        "CREATE TABLE IF NOT EXISTS panel_person_show ("
+        " person_key VARCHAR, show_creator VARCHAR, source_key VARCHAR,"
+        " role VARCHAR, as_of TIMESTAMPTZ)"
+    )
+    for key, name, entry_id in people:
+        wh.sql(
+            "INSERT INTO panel_person VALUES (?, ?, NULL, NULL, ?, ?, ?, ?, ?,"
+            " NULL, NULL, NULL, true, ?)",
+            [key, name, entry_id, entry_id is not None,
+             "https://example.invalid/proof", f"{name} FC", PAST, PAST],
+        )
+    for key, show in (shows or []):
+        wh.sql("INSERT INTO panel_person_show VALUES (?, ?, NULL, 'host', ?)",
+               [key, show, PAST])
+    wh.close()
+
+
+def _plant_picks(db, entry_id, gw, picks):
+    """One panel member's locked squad. ``picks`` is (element_id, mult, is_cap)."""
+    wh = Warehouse(db)
+    for slot, (element, mult, cap) in enumerate(picks, start=1):
+        wh.sql(
+            "INSERT INTO fact_manager_pick VALUES (?, ?, ?, ?, ?, ?, ?, false, ?)",
+            [entry_id, SEASON, gw, element, slot, mult, cap,
+             NOW - dt.timedelta(days=6)],
+        )
+    wh.close()
+
+
+def _plant_intel(db, rows):
+    """``intel_item`` rows: MEASURED signals, never spoken ones."""
+    from fpl_edge.intel.store import IntelStore
+
+    wh = Warehouse(db)
+    IntelStore(wh)  # runs the intel migrations
+    for r in rows:
+        wh.sql(
+            "INSERT INTO intel_item VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?,"
+            " NULL, ?)",
+            [r["item_id"], r["published_at"], r["published_at"], SEASON,
+             r["kind"], r["player_code"], r["headline"], r.get("body"),
+             r.get("source", "fpl_edge.intel.test"), r.get("source_url"),
+             r.get("confidence", 0.9)],
+        )
+    wh.close()
+
+
+@pytest.fixture(autouse=True)
+def _no_network_squad(monkeypatch):
+    """Every test in this module is hermetic, INCLUDING the owner's squad read.
+
+    ``creator_board`` now populates ``mine`` through ``ownership._squad_state``,
+    which is the one read on this page that leaves the warehouse: private API,
+    then public picks, then the manually entered 15. Left alone it would reach
+    the network from a unit test -- slow, flaky, and dependent on whose machine
+    is running. Patched to raise, it exercises the honest-degradation path,
+    which is the path that has to be right anyway: ``in_squad: null`` plus a
+    reason, never a silent ``false``. The one test that needs a real squad
+    overrides this deliberately.
+    """
+    from fpl_edge.interfaces import qa
+
+    class _Refuses:
+        def __init__(self, *a, **k):
+            raise RuntimeError("no network in a unit test")
+
+    monkeypatch.setattr(qa, "QuestionRouter", _Refuses)
 
 
 @pytest.fixture()
@@ -631,3 +730,451 @@ def test_a_narrow_window_excludes_older_items(seeded_db):
 def test_detail_limit_bounds_the_item_list(seeded_db):
     det = detail(seeded_db, creator="Notes Only", limit=1)
     assert len(det["items"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# player_chatter -- the cross-tab panel.
+#
+# Mounted in the xPoints and Template drawers, so its hardest case is not a
+# rich player, it is the four-in-five players nobody has said a word about.
+# Every test below is about a way this panel could quietly say something untrue:
+# a watch rendered as a buy, an uncrawled squad rendered as "nobody owns him",
+# a measured signal stacked in with a spoken one, or a below-chance panel
+# collapsed into a consensus number.
+
+KEEPER = 154561          #: intel only: no claim, no panel member holds him.
+TALKER_ENTRY = 53517
+QUIET_ENTRY = 424242
+
+
+def chatter(db, **params):
+    return run_script("player_chatter", params, db=db).result
+
+
+def _keys(obj) -> set:
+    """Every key that appears anywhere in a nested payload."""
+    found: set = set()
+    if isinstance(obj, dict):
+        found |= set(obj)
+        for v in obj.values():
+            found |= _keys(v)
+    elif isinstance(obj, list):
+        for v in obj:
+            found |= _keys(v)
+    return found
+
+
+@pytest.fixture()
+def chatter_db(seeded_db):
+    """The seeded corpus plus a panel, its crawled squads, and measured intel.
+
+    Deliberately asymmetric, because the honest version of this panel is:
+
+    * The Talker has a verified entry id AND a crawled GW1 squad -- he captains
+      Haaland, benches Saliba, and does not own Raya. All three are FACTS.
+    * Quiet Quentin has a verified entry id and NO crawled squad. Nothing at all
+      is known about whether he owns anybody.
+    * No Id Ned has no verified entry id, so not even his team is addressable.
+
+    Those three states must never render as the same sentence, and the whole
+    ``owned_reason`` string exists to keep them apart.
+    """
+    wh = Warehouse(seeded_db)
+    wh.append("dim_player", pd.DataFrame([
+        _player(KEEPER, 30, "Raya", "David", "Raya", 1, team_code=3),
+    ]))
+    wh.append("fact_player_state", pd.DataFrame([_state(KEEPER, 30, 9.0, 55)]))
+    # `enclosure` means the stored "link" IS the mp3: play audio, not open page.
+    wh.sql("INSERT INTO content_item_asset VALUES (?, ?, NULL, ?, NULL, ?, ?)",
+           ["notes_past", "enclosure",
+            "https://example.invalid/ep.mp3", "audio/mpeg", PAST])
+    wh.close()
+
+    _plant_panel_people(
+        seeded_db,
+        [("talker", "The Talker", TALKER_ENTRY),
+         ("quiet", "Quiet Quentin", QUIET_ENTRY),
+         ("noid", "No Id Ned", None)],
+        shows=[("talker", "The Talker"), ("quiet", "Notes Only"),
+               ("noid", "Notes Only")],
+    )
+    # Only The Talker's squad has ever been crawled. Quiet Quentin's has not,
+    # and that difference is the whole point of the fixture.
+    # Haaland captained, Saliba benched, and Raya owned by nobody at all.
+    _plant_picks(seeded_db, TALKER_ENTRY, 1, [(10, 2, True), (20, 0, False)])
+    _plant_intel(seeded_db, [
+        {"item_id": "oop_saliba", "published_at": PAST,
+         "kind": "out_of_position", "player_code": SALIBA,
+         "headline": "Saliba is classified DEF but performs like a MID",
+         "body": "attacking output at the 100% percentile among DEFs",
+         "source": "fpl_edge.intel.oop"},
+        {"item_id": "sp_keeper", "published_at": PAST,
+         "kind": "set_piece", "player_code": KEEPER,
+         "headline": "Raya is listed for corners (#1)", "body": None,
+         "source": "fpl_edge.intel.setpiece"},
+        # 200 days old and still true. A standing fact does not expire on a
+        # 30-day boundary, and windowing it away would hide the most
+        # decision-relevant row on the panel.
+        {"item_id": "avail_keeper", "published_at": NOW - dt.timedelta(days=200),
+         "kind": "availability", "player_code": KEEPER,
+         "headline": "Raya returned to full training", "body": None,
+         "source": "fpl_edge.intel.injuries"},
+        # THE LEAK, intel edition: published two days from now.
+        {"item_id": "future_haaland", "published_at": FUTURE,
+         "kind": "press_conference", "player_code": HAALAND,
+         "headline": "Guardiola confirms Haaland starts tomorrow", "body": None,
+         "source": "fpl_edge.intel.presser"},
+    ])
+    return seeded_db
+
+
+# -- the shape, pinned from the reader's side -------------------------------
+
+def test_chatter_validates_against_its_own_registered_schema(chatter_db):
+    res = chatter(chatter_db, code=HAALAND)
+    assert res.get("empty") is not True
+    jsonschema.Draft202012Validator(
+        script("player_chatter").result_schema
+    ).validate(res)
+
+
+def test_the_chatter_schema_cannot_be_satisfied_by_the_empty_shape():
+    inner = script("player_chatter").result_schema["oneOf"][0]
+    assert not jsonschema.Draft202012Validator(inner).is_valid(
+        {"empty": True, "reason": "nothing yet"}
+    )
+
+
+def test_an_element_id_passed_as_a_player_code_is_an_honest_empty(chatter_db):
+    """10 is Haaland's element_id in this fixture and nobody's player code."""
+    res = chatter(chatter_db, code=10)
+    assert res.get("empty") is True
+    assert "PlayerCode" in res["reason"] and "element_id" in res["reason"]
+
+
+# -- THE MODAL CASE: nobody has said anything ------------------------------
+
+def test_a_player_nobody_has_mentioned_is_the_modal_case_and_explains_itself(
+        chatter_db):
+    """Four players in five have no claim at all. That is the normal state.
+
+    It must not render as an error, must not render as a blank, and must not
+    render as "no", because "nobody has said anything about him" and "nobody
+    rates him" are different statements and only the first one is true.
+    """
+    res = chatter(chatter_db, code=SALIBA)
+    assert res.get("empty") is not True, "silence is not an empty panel"
+    said_actions = {s["action"] for s in res["said"]}
+    assert said_actions == {"watch"}, "the only thing said about him is a watch"
+    assert res["said_reason"] is None or isinstance(res["said_reason"], str)
+
+    # ...and a player nobody has spoken about and nobody read owns still gets
+    # a reason per channel rather than one blank card.
+    quiet = chatter(chatter_db, code=KEEPER)
+    assert quiet["said"] == []
+    assert quiet["owned"] == []
+    assert "mentioned" in quiet["said_reason"]
+    # The count is measured, not remembered: it names the real coverage of the
+    # real table rather than a number that was true the day this was written.
+    assert "of the 3 players in the pool" in quiet["said_reason"]
+
+
+def test_a_player_absent_from_all_three_channels_says_so_once(chatter_db):
+    """No claim, no intel, and not in the one squad that has been read."""
+    wh = Warehouse(chatter_db)
+    wh.sql("DELETE FROM intel_item WHERE player_code = ?", [KEEPER])
+    wh.close()
+    res = chatter(chatter_db, code=KEEPER)
+    assert res["said"] == [] and res["noticed"] == [] and res["owned"] == []
+    assert res["reason"], "an all-empty panel must say why"
+    for phrase in ("panel squad", "mentioned", "intel"):
+        assert phrase in res["reason"]
+
+
+# -- A WATCH IS AN OBSERVATION ---------------------------------------------
+
+def test_a_watch_call_never_appears_as_a_recommendation(chatter_db):
+    """`watch` is unmapped in the claim writer, so it lives only in the analysis.
+
+    A panel that reads `content_claim` alone drops every watch call silently.
+    A panel that reads the analysis without honouring the stance renders
+    "keep an eye on Saliba" under a transfers-out heading, which attributes a
+    sell to a named show that it never made.
+    """
+    res = chatter(chatter_db, code=SALIBA)
+    watches = [s for s in res["said"] if s["action"] == "watch"]
+    assert len(watches) == 1, "the watch call reached the panel"
+    call = watches[0]
+    assert call["is_observation"] is True
+    assert all(s["is_observation"] for s in res["said"]), (
+        "a watch was rendered beside a recommendation without the flag"
+    )
+    assert res["counts"]["observations"] == 1
+    assert res["counts"]["said"] == 1
+    # Its quote is verbatim and its timestamp is real: the analysis sits on the
+    # `youtu.be/` row and the transcript on the `watch?v=` row, so only
+    # canonicalisation pairs them.
+    assert call["quote"] == "keep an eye on Saliba, he could be a differential"
+    assert call["start_s"] == 60.0
+    assert call["deep_link"] == f"https://www.youtube.com/watch?v={VIDEO_ID}&t=60s"
+
+
+# -- NOTICED: measured, separate, and not windowed -------------------------
+
+def test_noticed_is_present_when_said_is_empty(chatter_db):
+    """intel_item reaches players the creator corpus never does.
+
+    286 players against 119 in the live warehouse. If the panel only rendered
+    when somebody had spoken, the drawer would be blank for the majority of
+    players it can actually say something measured about.
+    """
+    res = chatter(chatter_db, code=KEEPER)
+    assert res["said"] == [], "nobody has said a word about him"
+    assert [n["kind"] for n in res["noticed"]] == ["set_piece", "availability"]
+    assert res["counts"]["noticed"] == 2
+    assert res["noticed_reason"] and "measured" in res["noticed_reason"]
+
+
+def test_a_standing_intel_row_is_not_dropped_by_the_window(chatter_db):
+    """The availability row is 200 days old and the window is 30.
+
+    A set-piece or out-of-position finding is a standing fact. Windowing it
+    away would hide "first-choice penalties" because it was recorded in May,
+    which is the single most decision-relevant row the table holds.
+    """
+    res = chatter(chatter_db, code=KEEPER, days=30)
+    kinds = [n["kind"] for n in res["noticed"]]
+    assert "availability" in kinds
+    assert "NOT limited to the window" in res["noticed_reason"]
+    # ...and it carries its own timestamp, so the reader can age it.
+    old = next(n for n in res["noticed"] if n["kind"] == "availability")
+    assert old["published_at"] is not None
+
+
+def test_said_and_noticed_are_never_merged(chatter_db):
+    """One is spoken, the other is computed. Stacking them launders the second.
+
+    The two lists have disjoint shapes on purpose: nothing in `noticed` carries
+    an action or a conviction, and nothing in `said` carries a kind. A UI that
+    tried to render them through one component would fail loudly rather than
+    silently presenting a percentile calculation as somebody's opinion.
+    """
+    res = chatter(chatter_db, code=SALIBA)
+    assert res["said"] and res["noticed"]
+    assert all("kind" not in s for s in res["said"])
+    assert all("action" not in n and "conviction" not in n
+               for n in res["noticed"])
+    assert all(n["source"].startswith("fpl_edge.intel") for n in res["noticed"])
+
+
+def test_an_intel_row_published_after_the_requested_instant_is_invisible(
+        chatter_db):
+    """The leakage rule applies to the measured channel too."""
+    res = chatter(chatter_db, code=HAALAND)
+    assert not any(n["kind"] == "press_conference" for n in res["noticed"]), (
+        "an intel row published two days from now reached the panel"
+    )
+
+
+# -- OWNED: unread is not unowned ------------------------------------------
+
+def test_owned_leads_with_a_measured_pick(chatter_db):
+    """A pick is a fact with a deadline on it -- no caveat needed."""
+    res = chatter(chatter_db, code=HAALAND)
+    assert [o["person"] for o in res["owned"]] == ["The Talker"]
+    held = res["owned"][0]
+    assert held["entry_id"] == TALKER_ENTRY
+    assert held["multiplier"] == 2 and held["role"] == "captain"
+    assert held["gw"] == 1
+    # A benched pick is owned at 0x, and "bench" is read from the stored
+    # multiplier rather than inferred from a slot number.
+    benched = chatter(chatter_db, code=SALIBA)["owned"][0]
+    assert benched["multiplier"] == 0 and benched["role"] == "bench"
+    # The instant the squad LOCKED, not the instant this panel ran.
+    assert held["as_of"] is not None and held["as_of"] < res["as_of"]
+
+
+def test_an_uncrawled_squad_and_a_squad_that_does_not_hold_him_are_different(
+        chatter_db):
+    """The failure this whole reason string exists to prevent.
+
+    Raya is NOT in the one panel squad that has been read: that is a
+    measurement, and `squads_known` is 1. Nobody's squad has been read in the
+    second case: that is an absence of measurement, and `squads_known` is 0.
+    Both produce `owned: []`, and rendering them the same way tells a reader
+    "no panel member owns him" when the truth is "we have not looked".
+    """
+    read_but_not_held = chatter(chatter_db, code=KEEPER)
+    assert read_but_not_held["owned"] == []
+    assert read_but_not_held["counts"]["squads_known"] == 1
+    assert "1 of 2 panel members" in read_but_not_held["owned_reason"]
+    assert "Quiet Quentin" in read_but_not_held["owned_reason"], (
+        "the member whose squad is UNREAD has to be named"
+    )
+    assert "UNREAD" in read_but_not_held["owned_reason"]
+    assert "No Id Ned" in read_but_not_held["owned_reason"]
+
+    # The SAME roster with nothing crawled at all. Only the picks go away.
+    wh = Warehouse(chatter_db)
+    wh.sql("DELETE FROM fact_manager_pick")
+    wh.close()
+    nothing_read = chatter(chatter_db, code=KEEPER)
+    assert nothing_read["owned"] == []
+    assert nothing_read["counts"]["squads_known"] == 0
+    assert "0 of 2 panel members" in nothing_read["owned_reason"]
+    assert "The Talker" in nothing_read["owned_reason"], (
+        "with nothing crawled, EVERY member is named as unread"
+    )
+    assert (read_but_not_held["owned_reason"]
+            != nothing_read["owned_reason"]), (
+        "an unread squad and a squad that does not hold him read identically"
+    )
+
+
+def test_the_panel_size_counts_people_not_show_appearances(chatter_db):
+    res = chatter(chatter_db, code=HAALAND)
+    assert res["counts"]["panel_size"] == 3
+    assert res["counts"]["squads_known"] == 1
+
+
+# -- NO CONSENSUS SCORE ----------------------------------------------------
+
+def test_the_panel_emits_no_net_and_no_consensus_score(chatter_db):
+    """The refusal IS the feature.
+
+    Every earned creator weight in the warehouse is 0.0 across all 330 rows and
+    the aggregate record is 34.6% -- below chance. Counting agreement into one
+    number manufactures exactly the authority this panel exists to decline, so
+    no such field may exist anywhere in the payload or its schema.
+    """
+    res = chatter(chatter_db, code=HAALAND)
+    banned = {"net", "consensus", "score", "agreement", "sentiment", "weight"}
+    assert not (_keys(res) & banned), f"a consensus field appeared: {_keys(res) & banned}"
+    assert not (_keys(script("player_chatter").result_schema) & banned)
+    # Volume is an honest ordering and it is all `counts` reports.
+    assert set(res["counts"]) == {"said", "observations", "owned", "noticed",
+                                  "panel_size", "squads_known"}
+
+
+# -- provenance of a statement ---------------------------------------------
+
+def test_a_keyword_window_and_a_considered_take_stay_distinguishable(chatter_db):
+    res = chatter(chatter_db, code=HAALAND)
+    by_show = {s["show"]: s for s in res["said"]}
+    assert by_show["The Talker"]["extractor"] == "llm:claude-opus-5"
+    assert by_show["The Talker"]["conviction"] == "high"
+    assert by_show["Notes Only"]["extractor"] == "cue"
+    # A cue score is keyword-window arithmetic, not the speaker's certainty.
+    assert by_show["Notes Only"]["conviction"] is None
+    assert by_show["Notes Only"]["confidence"] == 0.8
+
+
+def test_the_same_video_stored_twice_is_one_statement(chatter_db):
+    """c_watch and c_short are the same captain call on two stored rows."""
+    res = chatter(chatter_db, code=HAALAND)
+    captains = [s for s in res["said"] if s["action"] == "captain"]
+    assert len(captains) == 1, "one publication, one statement"
+    assert captains[0]["start_s"] == 12.5
+    assert captains[0]["deep_link"] == (
+        f"https://www.youtube.com/watch?v={VIDEO_ID}&t=12s"
+    )
+
+
+def test_a_show_is_not_a_person_until_an_item_is_attributed(chatter_db):
+    """`item_person` is empty, so every statement belongs to the SHOW.
+
+    The FPL Wire has four hosts with four different teams. Filling `person` in
+    from "the show has a panel member on it" would attribute a call to somebody
+    who may not have been in the room.
+    """
+    res = chatter(chatter_db, code=HAALAND)
+    assert all(s["person"] is None for s in res["said"])
+    assert all(s["person_basis"] is None for s in res["said"])
+    assert "item_person" in res["said_reason"]
+    assert all(s["show"] for s in res["said"]), "the show is always known"
+
+
+def test_an_enclosure_url_is_flagged_as_audio_not_a_page(chatter_db):
+    """353 of 387 asset rows are enclosures: the "link" is the mp3 itself."""
+    res = chatter(chatter_db, code=HAALAND)
+    notes = next(s for s in res["said"] if s["show"] == "Notes Only")
+    assert notes["url_basis"] == "enclosure"
+    talker = next(s for s in res["said"] if s["show"] == "The Talker")
+    assert talker["url_basis"] is None, "unknown is not 'link'"
+
+
+def test_a_narrow_window_hides_statements_but_not_measured_intel(chatter_db):
+    res = chatter(chatter_db, code=SALIBA, days=1)
+    assert res["window_days"] == 1
+    assert res["said"] == [], "the two-day-old watch call is outside the window"
+    assert res["noticed"], "intel is a standing fact and is not windowed"
+
+
+# ---------------------------------------------------------------------------
+# creator_board, extended for the Deadline Board.
+
+def test_panel_owned_counts_only_the_squads_that_were_read(chatter_db):
+    res = board(chatter_db)
+    row = next(r for r in res["consensus"] if r["code"] == HAALAND)
+    assert row["panel_owned"] == {"n": 1, "of": 1, "people": ["The Talker"]}
+    meta = res["panel_squads"]
+    assert meta["panel_size"] == 3 and meta["with_entry"] == 2
+    assert meta["known"] == 1 and meta["gw"] == 1
+    assert meta["unknown_people"] == ["Quiet Quentin"]
+    assert meta["no_entry_people"] == ["No Id Ned"]
+    assert "UNREAD" in meta["reason"]
+
+
+def test_a_squad_that_cannot_be_read_yields_null_not_false(chatter_db):
+    """`in_squad: false` is a claim and it needs a squad read behind it.
+
+    Printing `false` for every row when nothing was read tells the owner "he is
+    not in your team" 39 times over, with no evidence for any of it.
+    """
+    res = board(chatter_db)
+    assert all(r["mine"]["in_squad"] is None for r in res["consensus"])
+    assert res["mine_reason"] and "unreadable" in res["mine_reason"]
+
+
+def test_the_caller_can_decline_the_squad_read_and_is_told_so(chatter_db):
+    res = board(chatter_db, mine=False)
+    assert all(r["mine"]["in_squad"] is None for r in res["consensus"])
+    assert "disabled by the caller" in res["mine_reason"]
+
+
+def test_mine_reports_the_role_and_says_a_multiplier_was_derived(
+        chatter_db, monkeypatch):
+    """A pre-deadline picks payload carries no multiplier, so it is derived.
+
+    Derived from the scoring rule itself -- bench 0x, starter 1x, captain 2x --
+    not guessed, and `source` says which it was so the UI never presents a
+    derivation as a reading.
+    """
+    class _P:
+        def __init__(self, code, cap, starter):
+            self.code, self.is_captain, self.is_starter = code, cap, starter
+
+    class _State:
+        chips_used = ()
+        gw = 2
+        provenance = "PUBLIC_PICKS"
+
+        def __init__(self):
+            self.picks = [_P(HAALAND, True, True), _P(SALIBA, False, False)]
+
+    class _Router:
+        def __init__(self, *a, **k): pass
+        def _team_state(self): return _State()
+
+    from fpl_edge.interfaces import qa
+    monkeypatch.setattr(qa, "QuestionRouter", _Router)
+
+    res = board(chatter_db)
+    assert res["mine_reason"] is None
+    row = next(r for r in res["consensus"] if r["code"] == HAALAND)
+    assert row["mine"] == {"in_squad": True, "multiplier": 2,
+                           "role": "captain", "source": "derived"}
+    # A player who really is not in the squad gets an honest False.
+    absent = next((r for r in res["consensus"] if r["code"] != HAALAND), None)
+    if absent is not None:
+        assert absent["mine"]["in_squad"] is False

@@ -118,6 +118,39 @@ PANELS: tuple[Panel, ...] = (
         layout="list",
         description="Your theses, the engine's verdict, and how they actually resolved.",
     ),
+    Panel(
+        id="creator_board",
+        title="The deadline board",
+        script="creator_board",
+        default_params={"scope": "panel"},
+        layout="table",
+        description=(
+            "What the tracked panel intends this gameweek and what they "
+            "actually own, against your squad. Not a forecast: their measured "
+            "record is below chance."
+        ),
+    ),
+    Panel(
+        id="creator_detail",
+        title="One creator, expanded",
+        script="creator_detail",
+        layout="list",
+        description=(
+            "Every item from one creator with its claims, verbatim quotes and "
+            "deep links to the moment each was said."
+        ),
+    ),
+    Panel(
+        id="player_chatter",
+        title="What the panel says about a player",
+        script="player_chatter",
+        layout="list",
+        description=(
+            "One player: who on the panel owns him, who said what, and what "
+            "has been measured about him. Mounted in the xPoints and Template "
+            "drawers so the corpus is reachable wherever a player is in focus."
+        ),
+    ),
 )
 
 
