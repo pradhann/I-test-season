@@ -1,0 +1,36 @@
+-- content_insight.team_code: the club an insight is about, resolved once, at
+-- write time.
+--
+-- WHY A COLUMN AND NOT A JOIN
+--
+-- The fixtures drawer wants "what have creators said about THESE two clubs".
+-- Before this column it could not ask that question: `_team_talk_block` took
+-- the fixture's two team codes as an argument and then ignored them, returning
+-- every team-level insight in the season. Arsenal v Villa showed opinions about
+-- Hull and Everton, presented as if they were about the fixture on screen.
+--
+-- The alternative -- matching `entity_ref` against `dim_team` at read time --
+-- was rejected because it puts a fuzzy, unauditable decision in the hot path of
+-- every drawer open, and because the same string would be re-resolved (possibly
+-- differently, as dim_team changes between seasons) on every read. Resolving
+-- once at write time makes the decision inspectable: the row records which club
+-- it was attributed to, and `entity_name` still holds what was actually said.
+--
+-- NULL IS A REAL ANSWER
+--
+-- NULL means the resolver refused, not that resolution was never attempted.
+-- Creator team names come out of ASR and arrive mangled: this warehouse holds
+-- "suddenland", "ipsswitch" and "leads" for Sunderland, Ipswich and Leeds. The
+-- resolver does exact, then containment/prefix on the club's own tokens, and
+-- then it stops. It does NOT use an edit distance, for the same reason the
+-- player resolver does not, and the counter-examples here are not hypothetical:
+-- on the twenty clubs of 2026-27, nearest-by-edit-distance sends "forester" to
+-- BRENTFORD (d=6) and "hull" to FULHAM (d=4, tied with Hull City). Attributing
+-- a creator's words about Forest to Brentford, on Brentford's own fixture page,
+-- is a fabrication -- and it would look exactly like data.
+--
+-- So an unresolved insight keeps its verbatim entity_name, gets a NULL
+-- team_code, is excluded from any fixture's drawer, and is COUNTED in that
+-- drawer's note so the shortfall is visible rather than silent.
+
+ALTER TABLE content_insight ADD COLUMN IF NOT EXISTS team_code INTEGER;

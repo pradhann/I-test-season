@@ -790,7 +790,7 @@ INSIGHT_COLS = (
     "insight_id", "item_id", "creator", "source_key", "topic", "entity_kind",
     "player_code", "entity_ref", "entity_name", "claim_text", "quote",
     "start_s", "horizon_gw", "horizon_gw_end", "confidence", "published_at",
-    "season", "gameweek", "extractor",
+    "season", "gameweek", "extractor", "team_code",
 )
 
 #: The FPL season is 38 gameweeks. A horizon outside that is a model slip, and
@@ -862,6 +862,12 @@ class InsightRow:
     season: str
     gameweek: int
     extractor: str
+    #: The club this insight is about, or None. None is a NORMAL state and is
+    #: never a silent one: the entity may not be a club, or may be a club whose
+    #: spoken name the resolver refused. See ingest/content/clubs.py for why
+    #: refusing beats a nearest match -- on this season's twenty clubs, edit
+    #: distance sends "forester" to Brentford and "hull" to Fulham.
+    team_code: int | None = None
 
     def __post_init__(self) -> None:
         if self.published_at.tzinfo is None:
@@ -914,6 +920,7 @@ def insights_from_analysis(
     model: str = MODEL,
     text_source: str | None = None,
     locate=None,                # Callable[[str], float | None]
+    clubs=None,                 # ClubResolver | None
 ) -> tuple[list[InsightRow], list[tuple[str, str]]]:
     """Turn the analysis's observations into ``content_insight`` rows.
 
@@ -980,6 +987,7 @@ def insights_from_analysis(
             continue
 
         code: int | None = None
+        team_code: int | None = None
         entity_ref: str | None = None
         if kind == "player":
             resolved = _resolve_call_name(resolver, spoken)
@@ -991,6 +999,15 @@ def insights_from_analysis(
                 code = int(resolved)
         elif kind != "none":
             entity_ref = normalise_entity_ref(spoken)
+            # Resolve the club ONCE, here, so the attribution is stored and
+            # auditable rather than re-derived on every read. A refusal is
+            # recorded like an unresolved player: the row still carries the
+            # verbatim name and can still be read, it just cannot be attached
+            # to a fixture. See clubs.py for why there is no nearest match.
+            if kind == "team" and clubs is not None:
+                team_code, basis = clubs.lookup(spoken)
+                if team_code is None:
+                    dropped.append(("unresolved_club", f"{spoken}: {basis}"))
 
         start = _insight_gw(getattr(ins, "horizon_gw", None))
         end = _insight_gw(getattr(ins, "horizon_gw_end", None))
@@ -1031,6 +1048,7 @@ def insights_from_analysis(
             published_at=item.published_at,
             season=season,
             gameweek=int(default_gw),
+            team_code=team_code,
             extractor=f"llm:{validate_model_id(model)}",
         ))
     return rows, dropped
@@ -1072,6 +1090,7 @@ def store_insights(wh, rows: list[InsightRow]) -> int:
                 None if row.start_s is None else float(row.start_s),
                 row.horizon_gw, row.horizon_gw_end, float(row.confidence),
                 row.published_at, row.season, int(row.gameweek), row.extractor,
+                None if row.team_code is None else int(row.team_code),
             ],
         )
         written += 1

@@ -468,14 +468,19 @@ def test_the_drilldown_is_fixture_specific_and_says_so(tmp_path):
     assert any("FIXTURE-SPECIFIC" in n for n in run.result["notes"])
 
 
-def test_creator_team_talk_degrades_by_naming_the_missing_caller(tmp_path):
-    """``content_insight`` holds zero rows. The section renders as a named gap
-    with the reason, not as whitespace."""
+def test_creator_team_talk_degrades_by_naming_what_would_fill_it(tmp_path):
+    """An empty ``content_insight`` renders as a named gap, not whitespace.
+
+    The reason changed once the extraction was wired in: an empty table used to
+    mean "nothing calls the extractor" and now means "nothing analysed has
+    produced a team-level observation yet", which has a different remedy. The
+    gap names the remedy.
+    """
     run = run_script("fixture_detail", {"fixture_id": 1}, db=_seed(tmp_path))
     talk = run.result["creator_team_talk"]
     assert talk["available"] is False
     assert talk["rows"] == 0
-    assert "insights_from_analysis" in talk["unavailable"]
+    assert "backfill-insights" in talk["unavailable"], talk["unavailable"]
 
 
 def test_a_content_table_that_does_not_exist_is_a_gap_not_a_traceback(tmp_path):
@@ -600,3 +605,65 @@ def test_a_player_dropped_from_the_xi_does_not_stay_in_it(tmp_path):
     assert len(starters) == 11, (
         f"an XI is eleven; got {len(starters)} because a dropped player kept "
         "his stale predicted_start from an older snapshot")
+
+
+def _seed_insight(path, *, team_code, name, claim, season=SEASON):
+    """One team-level content_insight row, as the extractor would write it."""
+    import hashlib
+    wh = Warehouse(path)
+    ins_id = hashlib.sha256(f"{team_code}{claim}".encode()).hexdigest()[:32]
+    wh.sql(
+        "INSERT INTO content_insight (insight_id, item_id, creator, source_key, "
+        "topic, entity_kind, player_code, entity_ref, entity_name, claim_text, "
+        "quote, start_s, horizon_gw, horizon_gw_end, confidence, published_at, "
+        "season, gameweek, extractor, team_code) VALUES "
+        "(?, 'item-1', 'Someone', 'src', 'tactical', 'team', NULL, ?, ?, ?, "
+        "?, NULL, NULL, NULL, 0.6, ?, ?, 1, 'llm:test', ?)",
+        [ins_id, str(name).lower(), name, claim, f'"{claim}"',
+         pd.Timestamp("2026-08-13 09:00", tz="UTC"), season, team_code],
+    )
+    wh.close()
+
+
+def test_team_talk_shows_only_the_two_clubs_in_this_fixture(tmp_path):
+    """It took the fixture's team codes and ignored them.
+
+    Every team-level insight in the season came back for every fixture, so an
+    ARS v HUL drawer carried opinions about Coventry under a heading saying they
+    were about this match. Nothing looked broken: the quotes were real, the
+    creators were real, and the wrong club was never named on screen.
+    """
+    path = _seed(tmp_path)
+    _seed_insight(path, team_code=1, name="Arsenal",
+                  claim="Arsenal press higher since the break.")
+    _seed_insight(path, team_code=4, name="Coventry",
+                  claim="Coventry sit deep away from home.")
+
+    # fixture 1 is ARS (1) at home to HUL (3). Coventry is in neither.
+    run = run_script("fixture_detail", {"fixture_id": 1}, db=path)
+    talk = run.result["creator_team_talk"]
+    assert talk["available"] is True, talk.get("unavailable")
+    names = {r["entity_name"] for r in talk["items"]}
+    assert names == {"Arsenal"}, (
+        f"the drawer for ARS v HUL showed {sorted(names)}; an insight about a "
+        "club that is not playing in this fixture is not about this fixture")
+
+
+def test_an_unattributable_insight_is_counted_never_shown(tmp_path):
+    """A club the resolver refused is excluded AND disclosed.
+
+    Silently dropping it would make "no team-talk" and "team-talk we could not
+    place" look identical, which is the same failure as showing it under the
+    wrong club -- just quieter.
+    """
+    path = _seed(tmp_path)
+    _seed_insight(path, team_code=1, name="Arsenal",
+                  claim="Arsenal press higher since the break.")
+    _seed_insight(path, team_code=None, name="Suddenland",
+                  claim="Sunderland keep an unchanged eleven.")
+
+    run = run_script("fixture_detail", {"fixture_id": 1}, db=path)
+    talk = run.result["creator_team_talk"]
+    assert {r["entity_name"] for r in talk["items"]} == {"Arsenal"}
+    assert "1 team-level insight" in talk["note"], talk["note"]
+    assert "refused" in talk["note"]

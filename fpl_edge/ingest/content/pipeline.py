@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import json
 import sys
 
 import pandas as pd
@@ -204,6 +205,103 @@ def cmd_reextract(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_backfill_insights(args: argparse.Namespace) -> int:
+    """Recover insights from analyses already on disk, without paying again.
+
+    ``content_insight`` was written by nothing for its whole existence, so
+    every analysis stored before the wiring landed carries observations that
+    were parsed, validated and then dropped. They are still in
+    ``content_analysis.analysis_json``. Re-reading them costs nothing: no
+    network, no model call, no re-fetch.
+
+    The one distinction that matters here is between an analysis that HAS an
+    empty ``insights`` list -- a model read the item and found no observations,
+    which is an answer -- and one with no ``insights`` key at all, written by a
+    prompt that predated the field and therefore never asked. The first is
+    complete; the second needs a paid re-analysis, and this command counts them
+    separately rather than reporting one number that hides the difference.
+    """
+    from fpl_edge.ingest.content.analyze import (
+        TranscriptAnalysis,
+        analysis_has_insight_field,
+        insights_from_analysis,
+        store_insights,
+    )
+    from fpl_edge.ingest.content.clubs import club_resolver
+    from fpl_edge.ingest.content.store import ContentStore
+
+    with Warehouse(args.db) as warehouse:
+        ContentStore(warehouse).migrate()
+        resolver = build_resolver(warehouse)
+        calendar, _ = load_calendar(warehouse)
+        clubs_by_season: dict[str, object] = {}
+
+        rows = warehouse.sql(
+            "SELECT a.item_id, a.analysis_json, i.source_key, i.creator, i.kind, "
+            "       i.title, i.url, i.published_at, i.text, i.text_source "
+            "FROM content_analysis a JOIN content_item i USING (item_id) "
+            "ORDER BY i.published_at"
+        ).to_dict("records")
+
+        never_asked, empty, written, dropped = 0, 0, 0, []
+        for r in rows:
+            try:
+                payload = json.loads(r["analysis_json"])
+            except (TypeError, ValueError):
+                dropped.append(("unreadable_json", str(r["item_id"])))
+                continue
+            if not analysis_has_insight_field(payload):
+                never_asked += 1
+                continue
+            analysis = TranscriptAnalysis.model_validate(payload)
+            if not (analysis.insights or []):
+                empty += 1
+                continue
+
+            published = pd.Timestamp(r["published_at"])
+            if published.tzinfo is None:
+                published = published.tz_localize(UTC)
+            item = ContentItem(
+                item_id=r["item_id"], source_key=r["source_key"],
+                creator=r["creator"], kind=r["kind"], title=r["title"],
+                url=r["url"], published_at=published.to_pydatetime(),
+                text=r["text"] or "", fetched_at=published.to_pydatetime(),
+                text_source=r["text_source"],
+            )
+            # Same gameweek rule the live path uses: inferred from THIS item's
+            # own published_at, so an insight is filed against the gameweek that
+            # was next when it was said.
+            inferred = calendar.next_after(item.published_at)
+            season = inferred[0] if inferred else "2026-27"
+            default_gw = int(inferred[1]) if inferred else 1
+            if season not in clubs_by_season:
+                clubs_by_season[season] = club_resolver(warehouse, season)
+            ins, ins_dropped = insights_from_analysis(
+                analysis, item=item, resolver=resolver, default_gw=default_gw,
+                season=season, text_source=item.text_source,
+                clubs=clubs_by_season[season],
+            )
+            dropped.extend(ins_dropped)
+            if ins:
+                written += store_insights(warehouse, ins)
+
+        total = int(warehouse.sql(
+            "SELECT count(*) c FROM content_insight").iloc[0]["c"])
+
+    print(f"analyses read:            {len(rows)}")
+    print(f"  no `insights` key:      {never_asked}  (written before the field "
+          f"existed -- these need a paid re-analysis, not a backfill)")
+    print(f"  asked, found none:      {empty}  (a real answer, nothing to do)")
+    print(f"insights written:         {written}")
+    if dropped:
+        from collections import Counter
+        why = Counter(reason for reason, _ in dropped)
+        print("dropped rather than stored: "
+              + ", ".join(f"{n} {reason}" for reason, n in why.most_common()))
+    print(f"content_insight now holds {total} rows")
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # analyze: the semantic read, in bulk
 # ---------------------------------------------------------------------------
@@ -323,8 +421,10 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         analysis_is_empty,
         analyze_transcript,
         claims_from_analysis,
+        insights_from_analysis,
         is_scoreable,
         store_analysis,
+        store_insights,
         validate_model_id,
     )
     from fpl_edge.ingest.content.store import ContentStore
@@ -372,6 +472,15 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         ).iloc[0]["c"])
         resolver = build_resolver(wh)
         calendar, cal_report = load_calendar(wh)
+        # One resolver per season, built here because the pool below runs
+        # after this warehouse is closed and opens none of its own. Keyed by
+        # season because a club's name and code are season-scoped and an item
+        # is filed against the season its own published_at lands in.
+        from fpl_edge.ingest.content.clubs import club_resolver
+        clubs_by_season = {
+            str(sn): club_resolver(wh, str(sn))
+            for sn in wh.sql("SELECT DISTINCT season FROM dim_team")["season"]
+        }
 
     ranked = rank_candidates(items)
     if args.limit:
@@ -416,6 +525,8 @@ def cmd_analyze(args: argparse.Namespace) -> int:
 
     stored = empty = failed = 0
     claims_written = 0
+    insights_written = 0
+    insights_dropped: list[tuple[str, str]] = []
     unresolved_names: list[str] = []
     fatal: str | None = None
     spent: list[float] = []
@@ -428,7 +539,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         ), time.monotonic() - t0
 
     def persist(row, analysis) -> None:
-        nonlocal stored, claims_written
+        nonlocal stored, claims_written, insights_written
         # gw/season are inferred from THIS item's own published_at, so a call
         # is filed against the gameweek that was next when it was published --
         # never one that had already happened.
@@ -450,9 +561,21 @@ def cmd_analyze(args: argparse.Namespace) -> int:
                 default_gw=default_gw, season=season, model=model,
             )
             unresolved_names.extend(dropped)
+            # The same analysis carries observations as well as calls. They are
+            # extracted here rather than in a later pass because the analysis
+            # object is what holds them, and re-deriving it would mean paying
+            # the model twice for one reading. `text_source` gates show notes
+            # out: an insight without a verbatim quote is not storable.
+            insights, ins_dropped = insights_from_analysis(
+                analysis, item=item, resolver=resolver,
+                default_gw=default_gw, season=season, model=model,
+                text_source=row.text_source,
+                clubs=clubs_by_season.get(season),
+            )
+            insights_dropped.extend(ins_dropped)
 
         def _write(wh):
-            nonlocal claims_written
+            nonlocal claims_written, insights_written
             store_analysis(wh, row.item_id, analysis, model=model,
                            text_source=row.text_source, chars=len(row.text),
                            substantive_chars=int(row.substantive_chars))
@@ -460,6 +583,11 @@ def cmd_analyze(args: argparse.Namespace) -> int:
                 store = ContentStore.__new__(ContentStore)
                 store.wh = wh
                 claims_written += store.insert_claims(claims)
+            # Same write as the claims: an analysis whose insights failed to
+            # store is an analysis that will never be re-read for them, because
+            # store_analysis has already marked the item done.
+            if insights:
+                insights_written += store_insights(wh, insights)
 
         _write_with_retry(args.db, _write)
         stored += 1
@@ -523,6 +651,13 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     print(f"analysed:        {stored} items stored in content_analysis")
     print(f"claims written:  {claims_written} (extractor llm:{model}; show-note "
           f"sources deliberately produce none -- see analyze.is_scoreable)")
+    print(f"insights written: {insights_written} (content_insight; observations, "
+          f"never scored -- nothing settles an observation)")
+    if insights_dropped:
+        from collections import Counter
+        why = Counter(reason for reason, _ in insights_dropped)
+        print("insights dropped rather than stored: "
+              + ", ".join(f"{n} {reason}" for reason, n in why.most_common()))
     if unresolved_names:
         uniq = sorted(set(unresolved_names))
         print(f"names dropped rather than guessed: {len(unresolved_names)} calls, "
@@ -1079,6 +1214,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--replace", action="store_true",
                    help="delete existing claims and outcomes first")
     p.set_defaults(func=cmd_reextract)
+
+    p = sub.add_parser(
+        "backfill-insights",
+        help="recover insights from analyses already stored (no model calls)")
+    p.set_defaults(func=cmd_backfill_insights)
 
     p = sub.add_parser("analyze", help="semantic read of stored text, resumable")
     p.add_argument("--limit", type=int, default=None, help="max items to queue")

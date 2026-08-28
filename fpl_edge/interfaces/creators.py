@@ -35,7 +35,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 STALE_AFTER = dt.timedelta(hours=36)
 REPORTS_DIR = Path.home() / "Documents/Github/fpl-reports"
 
@@ -198,7 +198,7 @@ def roster() -> dict[str, list[str]]:
 def _aliases(creator: str, keys: list[str]) -> set[str]:
     """Normalised forms a human might type for this creator."""
     out = {_norm(creator)}
-    stripped = re.sub(r"^the\s+", "", creator, flags=re.I)
+    stripped = re.sub(r"^the\s+", "", creator, flags=re.IGNORECASE)
     out.add(_norm(stripped))
     for k in keys:
         # yt_fplharry -> fplharry ; pod_fplwire -> fplwire
@@ -418,7 +418,7 @@ def _timed_transcript(video_id: str) -> list[tuple[float | None, str]]:
 #: "GW3", "gw 3", "Gameweek 12", "game week 12". Deliberately not "week 3":
 #: FPL people say gameweek, and "week 3" appears in prose about anything.
 _GW_IN_TEXT_RE = re.compile(r"\b(?:gw|gameweek|game\s?week)\s*[-:]?\s*(\d{1,2})\b",
-                            re.I)
+                            re.IGNORECASE)
 
 
 def gameweeks_in_text(text: str) -> tuple[int, ...]:
@@ -1116,7 +1116,7 @@ def ingest_link(wh, url: str) -> LinkFindings:
             # response, three fields, zero extra requests.
             watch = fetcher.get(f"https://www.youtube.com/watch?v={vid}")
             if watch.ok:
-                m = re.search(r"<title>(.*?)</title>", watch.text, re.S)
+                m = re.search(r"<title>(.*?)</title>", watch.text, re.DOTALL)
                 if m:
                     title = re.sub(r"\s*-\s*YouTube\s*$", "", m.group(1)).strip()
                 channel = channel_from_watch(watch.text)
@@ -1205,8 +1205,10 @@ def ingest_link(wh, url: str) -> LinkFindings:
         AnalysisUnavailable,
         analyze_transcript,
         claims_from_analysis,
+        insights_from_analysis,
         load_analysis,
         store_analysis,
+        store_insights,
     )
 
     analysis = load_analysis(wh, item.item_id)  # cached: never pay twice
@@ -1232,11 +1234,26 @@ def ingest_link(wh, url: str) -> LinkFindings:
         int(inferred[1]) if inferred else 1)
     season = gw.season or (inferred[0] if inferred else "2026-27")
 
+    insights = []
     if analysis is not None:
         claims, dropped = claims_from_analysis(
             analysis, item=item, resolver=resolver, default_gw=default_gw,
             season=season,
         )
+        # Observations from the same reading. `locate` is deliberately omitted:
+        # the quote->start_s index (TranscriptIndex) lives in the platform
+        # layer, which this module must not import, and the extractor's own
+        # rule is that a deep link to the wrong minute is worse than none. So
+        # start_s stays NULL here and the insight still carries its verbatim
+        # quote, which is the part that matters.
+        from fpl_edge.ingest.content.clubs import club_resolver
+        insights, ins_dropped = insights_from_analysis(
+            analysis, item=item, resolver=resolver, default_gw=default_gw,
+            season=season, text_source=item.text_source,
+            clubs=club_resolver(wh, season),
+        )
+        if ins_dropped:
+            dropped = list(dropped) + [d for _, d in ins_dropped]
         if dropped:
             analysis_note = ("Unresolved names (kept out of the scoreboard "
                              "rather than guessed): " + ", ".join(sorted(set(dropped))[:6]))
@@ -1245,6 +1262,8 @@ def ingest_link(wh, url: str) -> LinkFindings:
         claims = extract_from_item(item, resolver, calendar, stats)
 
     store.insert_claims(claims)
+    if insights:
+        store_insights(wh, insights)
     record_link_item(wh, item_id=item.item_id, url=url, creator=creator,
                      creator_basis=creator_basis, creator_reason=creator_reason,
                      channel_name=channel.name, tracked=tracked, gw=gw)

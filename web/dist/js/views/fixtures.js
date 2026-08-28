@@ -279,8 +279,12 @@ function flattenDetail(D) {
       }))
     : null;
 
-  const talk = D.creator_team_talk && D.creator_team_talk.available !== false
-    ? (D.creator_team_talk.rows || null) : null;
+  // `items`, which is what the panel publishes. It also accepts `rows` because
+  // the first draft of this adapter guessed that name and shipped a section
+  // that rendered its own "nothing here" message over live data -- the exact
+  // failure this file spent a day removing.
+  const tt = D.creator_team_talk || {};
+  const talk = tt.available !== false ? (tt.items || tt.rows || null) : null;
 
   const presser = D.intel && Array.isArray(D.intel.press_conference)
       && D.intel.press_conference.length ? D.intel.press_conference : null;
@@ -1546,23 +1550,34 @@ export default async function fixtures(host) {
       "No previous meetings in this payload.");
 
     section("Creator team-talk", D && D.creator_talk, rows => {
-      const box = el("div");
-      for (const q of rows.slice(0, 6)) {
-        const p = el("p", "sub");
-        p.appendChild(el("b", null, `“${q.quote || q.text || ""}” `));
-        p.appendChild(document.createTextNode(
-          [q.creator, q.published_at ? ageText(ageHours(q.published_at)) : null]
-            .filter(Boolean).join(" · ")));
-        box.appendChild(p);
+      /* Two clubs are on screen, so every line names the one it is about --
+         an unattributed opinion in a two-club drawer is worse than none. The
+         claim is the summary and the quote is the receipt under it. */
+      const box = el("div", "fx-talk");
+      for (const q of rows.slice(0, 8)) {
+        const row = el("div", "fx-talk-row");
+        const head = el("div", "fx-talk-head");
+        if (q.entity_name) head.appendChild(el("b", null, String(q.entity_name)));
+        if (q.topic)
+          head.appendChild(el("span", "tag", String(q.topic).replace(/_/g, " ")));
+        const meta = [q.creator,
+                      q.published_at ? ageText(ageHours(q.published_at)) : null]
+          .filter(Boolean).join(" · ");
+        if (meta) head.appendChild(el("span", "who", meta));
+        row.appendChild(head);
+        if (q.claim_text) row.appendChild(el("p", "fx-talk-claim", String(q.claim_text)));
+        const said = q.quote || q.text;
+        if (said) row.appendChild(el("p", "fx-talk-quote", `\u201C${said}\u201D`));
+        box.appendChild(row);
       }
       return box;
     }, gapText(
-      codeSpan("content_insight"), " is built and holds zero rows: the "
-      + "extraction step has no caller in the ingest pipeline, so team-level "
-      + "talk that has already been paid for is never written. This section is "
-      + "designed and wired; it is empty because the row is missing, not "
-      + "because nobody said anything."),
-      "Creator team-talk is extracted but never written.");
+      codeSpan("content_insight"), " carries team-level observations, and none "
+      + "of them is about either of these clubs at this instant. Insights are "
+      + "written by both analysis paths now; ",
+      codeSpan("fpl-content backfill-insights"),
+      " recovers them from analyses already stored, without a model call."),
+      "No creator has said anything about either club.");
 
     section("Press & scout links", D && D.press_conference, rows => {
       const box = el("div");

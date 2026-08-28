@@ -559,3 +559,43 @@ def test_store_analysis_writes_the_insights_key(tmp_path) -> None:
     assert payload["insights"][0]["quote"].startswith("Semenyo is playing")
     # The evidence block keeps its established shape; insights are a sibling.
     assert payload[analyze.EVIDENCE_KEY]["depth"] == "transcript"
+
+
+# ---------------------------------------------------------------------------
+# the wiring: every path that stores an analysis must also store its insights
+# ---------------------------------------------------------------------------
+
+
+def test_every_writer_of_an_analysis_also_writes_its_insights() -> None:
+    """`content_insight` held 0 rows for its whole existence.
+
+    Not because extraction was broken -- `insights_from_analysis`,
+    `store_insights` and `insights_visible_at` were all written and all tested
+    -- but because nothing ever called them. The two functions that persist an
+    analysis (`pipeline.cmd_analyze` for the bulk crawl, `interfaces.creators`
+    for a pasted link) each extracted claims and dropped the observations from
+    the same reading on the floor.
+
+    A table nobody writes to is indistinguishable from a table with nothing to
+    say, which is why this was invisible for so long: every consumer correctly
+    reported "no team-talk", and every one of them was right.
+    """
+    import inspect
+
+    import fpl_edge.ingest.content.pipeline as pipeline
+    from fpl_edge.interfaces import creators as creators_iface
+
+    for mod in (pipeline, creators_iface):
+        src = inspect.getsource(mod)
+        assert "store_analysis(" in src, (
+            f"{mod.__name__} no longer stores analyses; this test is checking "
+            "the wrong module"
+        )
+        assert "insights_from_analysis(" in src, (
+            f"{mod.__name__} stores an analysis but never extracts its "
+            "insights -- the observations in that reading are paid for and "
+            "then discarded"
+        )
+        assert "store_insights(" in src, (
+            f"{mod.__name__} extracts insights but never persists them"
+        )

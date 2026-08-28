@@ -2301,29 +2301,52 @@ def _team_talk_block(wh, season: str, codes: tuple[int, int], now: dt.datetime) 
     total = 0 if have.empty else int(have.iloc[0]["n"])
     if total == 0:
         return _gap(
-            "Creator team-talk is extracted but never written: content_insight "
-            "holds 0 rows because insights_from_analysis() in "
-            "ingest/content/analyze.py has no caller outside its own module, and "
-            "the table has no team_code column to join on even if it did. This is "
-            "a wiring gap with a name, not an absence of opinion.",
+            "content_insight holds 0 rows. The extraction is wired into both "
+            "writers now, so this means no analysed item has yet produced a "
+            "team-level observation -- run `fpl-content backfill-insights` to "
+            "recover them from analyses already on disk.",
             rows=0,
         )
+    # Filtered to THIS fixture's two clubs. It previously took `codes` and
+    # ignored them, returning every team-level insight in the season -- so an
+    # Arsenal v Villa drawer showed opinions about Hull and Everton under a
+    # heading that said they were about this match.
     rows, _ = _safe_q(wh, "content_insight", """
-        SELECT creator, topic, entity_kind, entity_name, claim_text, quote,
-               start_s, confidence, published_at, extractor
+        SELECT creator, topic, entity_kind, entity_name, team_code, claim_text,
+               quote, start_s, confidence, published_at, extractor
         FROM content_insight
         WHERE season = ? AND entity_kind = 'team' AND published_at <= ?
+          AND team_code IN (?, ?)
         ORDER BY published_at DESC LIMIT 40
+    """, (season, now, int(codes[0]), int(codes[1])))
+    # An unattributable insight is counted, never shown: the reader is told how
+    # much opinion exists that could not be tied to a club, rather than being
+    # left to assume the silence means nobody said anything.
+    unresolved, _ = _safe_q(wh, "content_insight", """
+        SELECT count(*) AS n FROM content_insight
+        WHERE season = ? AND entity_kind = 'team' AND published_at <= ?
+          AND team_code IS NULL
     """, (season, now))
+    n_unresolved = 0 if unresolved.empty else int(unresolved.iloc[0]["n"])
+    unresolved_note = (
+        f" {n_unresolved} team-level insight(s) this season name a club the "
+        f"resolver refused to guess at (ASR mangles club names -- this "
+        f"warehouse holds 'suddenland' and 'ipsswitch'); they are excluded "
+        f"here rather than attached to the nearest-looking club."
+        if n_unresolved else ""
+    )
     if rows.empty:
         return _gap(
-            f"content_insight holds {total} rows but none is a team-level insight "
-            f"for {season} at this instant.", rows=total)
+            f"content_insight holds {total} rows, none of them a team-level "
+            f"insight about either of these clubs for {season} at this "
+            f"instant.{unresolved_note}", rows=total)
     return {
         "available": True, "unavailable": None,
         "items": rows.to_dict("records"),
-        "note": "Team names in creator transcripts are ASR output and there is no "
-                "club resolver yet, so matching is by name and may miss items.",
+        "note": "Clubs are resolved once at write time by exact then "
+                "containment match, never by edit distance -- on this season's "
+                "twenty clubs nearest-match sends 'forester' to Brentford."
+                + unresolved_note,
     }
 
 
