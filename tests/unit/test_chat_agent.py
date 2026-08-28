@@ -81,16 +81,30 @@ def _agent(tmp_path: Path, cli: str, **kw) -> ChatAgent:
     return ChatAgent(root=tmp_path / "chat", claude_bin=cli, **kw)
 
 
-def _wait_done(agent: ChatAgent, conv_id: str, timeout: float = 10.0) -> list[dict]:
+def _wait_done(agent: ChatAgent, conv_id: str, timeout: float = 10.0,
+               *, turns: int = 1) -> list[dict]:
+    """Block until ``turns`` terminal events exist on this conversation.
+
+    ``turns``, not "any terminal event", because ``events()`` accumulates across
+    turns: on a second turn the list already holds the first turn's ``done``,
+    so an any() check returns instantly and waits for nothing. That is not
+    hypothetical -- it made
+    ``test_second_turn_resumes_with_the_stored_session_id`` pass only when the
+    50ms bookkeeping sleep happened to outrun the CLI subprocess, and it failed
+    under full-suite load with an IndexError on the argv log's missing second
+    line. A helper that waits for an event that has already happened is
+    indistinguishable from one that works.
+    """
     deadline = time.time() + timeout
     while time.time() < deadline:
         events = agent.events(conv_id)
-        if any(e["type"] in ("done", "error") for e in events):
+        if sum(e["type"] in ("done", "error") for e in events) >= turns:
             # let the runner thread finish its meta bookkeeping
             time.sleep(0.05)
             return agent.events(conv_id)
         time.sleep(0.05)
-    raise AssertionError(f"turn never finished; events: {agent.events(conv_id)}")
+    raise AssertionError(
+        f"turn {turns} never finished; events: {agent.events(conv_id)}")
 
 
 # -- persistence + replay ----------------------------------------------------
@@ -151,8 +165,15 @@ def test_second_turn_resumes_with_the_stored_session_id(tmp_path):
     fixture = tmp_path / "transcript.jsonl"
     fixture.write_text("\n".join(json.dumps(m) for m in TRANSCRIPT) + "\n")
     # one log line per invocation even though the system prompt is multiline
+    # The sleep is load-bearing, not padding. Without it this test passed 40/40
+    # with a broken _wait_done that returned before turn 2 had run at all -- it
+    # was measuring whether the subprocess beat a 50ms sleep, and under
+    # full-suite load it sometimes didn't (IndexError on lines[1], twice in four
+    # full runs). With it, the assertion below fails deterministically if the
+    # helper stops waiting. Do not delete it to save 0.4s.
     cli = _fake_cli(
         tmp_path,
+        'sleep 0.4\n'
         f'printf \'%s\' "$*" | tr \'\\n\' \' \' >> "{argv_log}"\n'
         f'printf \'\\n\' >> "{argv_log}"\n'
         f'cat "{fixture}"')
@@ -161,8 +182,11 @@ def test_second_turn_resumes_with_the_stored_session_id(tmp_path):
     agent.start_turn(conv, "first")
     _wait_done(agent, conv)
     agent.start_turn(conv, "second")
-    _wait_done(agent, conv)
+    _wait_done(agent, conv, turns=2)
     lines = argv_log.read_text().strip().split("\n")
+    assert len(lines) == 2, (
+        f"expected one argv line per invocation, got {lines!r} -- the second "
+        "turn had not run when the log was read")
     assert "--resume" not in lines[0]
     assert "--resume sess-abc123" in lines[1]
     # and the toolbelt is offered while Bash and file tools are denied
