@@ -6,7 +6,6 @@
     GET  /api/inbox                   deliveries, newest first
     POST /api/inbox/{id}/ack          acknowledge one
     GET  /api/monitors                monitor definitions
-    POST /api/chat                    QuestionRouter answer (text + images)
     POST /api/ingest/link             {url} -> {job_id, stages}
     GET  /api/ingest/link/{job_id}    {stage, pct, eta_s, done, error, item_id}
     POST /api/ingest/link/{job_id}/accept   transcribe it (the only GPU spend)
@@ -43,7 +42,6 @@ an unauthenticated SQL endpoint on the local network.
 
 from __future__ import annotations
 
-import base64
 import datetime as dt
 from pathlib import Path
 from typing import Any
@@ -53,6 +51,8 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+# Importing the scripts package is what registers the five panel scripts.
+import fpl_edge.platform.scripts  # noqa: F401
 from fpl_edge.platform import inbox as inbox_mod
 from fpl_edge.platform import link_jobs as link_jobs_mod
 from fpl_edge.platform import panels as panels_mod
@@ -61,16 +61,15 @@ from fpl_edge.platform.registry import (
     ParamsInvalid,
     ResultInvalid,
     ScriptError,
-    describe_all as describe_scripts,
     repo_sha,
     run_script,
 )
+from fpl_edge.platform.registry import (
+    describe_all as describe_scripts,
+)
 from fpl_edge.store.warehouse import DEFAULT_DB
 
-# Importing the scripts package is what registers the five panel scripts.
-import fpl_edge.platform.scripts  # noqa: F401
-
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 WEB_DIST = Path(__file__).resolve().parents[2] / "web" / "dist"
 
@@ -94,11 +93,6 @@ class QueryRequest(BaseModel):
     sql: str
     as_of: dt.datetime | None = None
     max_rows: int | None = None
-
-
-class ChatRequest(BaseModel):
-    text: str
-    season: str | None = None
 
 
 class TurnRequest(BaseModel):
@@ -223,7 +217,7 @@ def create_app(db: Path | str = DEFAULT_DB,
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except FileNotFoundError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
-        except Exception as exc:  # noqa: BLE001 - a SQL error is the user's answer
+        except Exception as exc:
             raise HTTPException(
                 status_code=400, detail=f"{type(exc).__name__}: {exc}"
             ) from exc
@@ -292,10 +286,6 @@ def create_app(db: Path | str = DEFAULT_DB,
     @app.get("/api/solve/plan")
     def get_solve_plan() -> JSONResponse:
         return JSONResponse(_solve_plan(db_path))
-
-    @app.post("/api/chat")
-    def post_chat(body: ChatRequest) -> JSONResponse:
-        return JSONResponse(_chat(body, db_path))
 
     # ---- paste a link (fpl_edge/platform/link_jobs.py) ----
     # The corpus-writing route on this server, and it writes exactly one way:
@@ -710,91 +700,9 @@ def _solve_diff_lines() -> list[str]:
     return []
 
 
-def _chat(body: ChatRequest, db_path: Path) -> dict[str, Any]:
-    """Route one message through the existing deterministic QuestionRouter.
-
-    The router is reused rather than reimplemented so that the web pane and the
-    Telegram bot give the *same* answer to the same question -- two chat
-    surfaces that disagree is worse than one chat surface.
-
-    It gets a :class:`LeasedWarehouse`, not a read copy, because a handful of
-    intents legitimately write (a shared link is transcribed and stored). The
-    lease connects on first use and is released here, so the lock is held for
-    the duration of one answer rather than the life of the server, which is
-    exactly the posture the bot already uses between polls.
-    """
-    from fpl_edge.interfaces.qa import SEASON_DEFAULT, QuestionRouter
-    from fpl_edge.store.warehouse import LeasedWarehouse
-
-    text = (body.text or "").strip()
-    if not text:
-        raise HTTPException(status_code=400, detail="text is required")
-    if not db_path.exists():
-        return {"routed": False, "intent": None,
-                "text": f"No warehouse at {db_path}; run `make ingest` first.",
-                "images": []}
-
-    lease = LeasedWarehouse(db_path)
-    try:
-        router = QuestionRouter(lease, season=body.season or SEASON_DEFAULT)
-        answer = router.route(text)
-    except Exception as exc:  # noqa: BLE001 - a failed answer must say so
-        return {"routed": False, "intent": None, "images": [],
-                "text": f"That answer failed: {type(exc).__name__}: {exc}"}
-    finally:
-        lease.release()
-
-    if answer is None:
-        return {
-            "routed": False,
-            "intent": None,
-            "images": [],
-            "text": (
-                "I don't have a deterministic answer for that. The router "
-                "matches a fixed set of question intents and does not guess at "
-                "the rest -- in Telegram this message would be filed as an idea. "
-                "Open the agent escalation (/api/chat/stream) for open-ended "
-                "questions about the warehouse or the codebase."
-            ),
-            "escalation_available": True,
-        }
-
-    return {
-        "routed": True,
-        "intent": _intent_for(text, db_path, body.season),
-        "text": answer.text,
-        "images": [
-            {"filename": name,
-             "mime": "image/png",
-             "base64": base64.b64encode(png).decode("ascii")}
-            for name, png in answer.images
-        ],
-        "provenance": {"repo_sha": repo_sha(),
-                       "generated_at": dt.datetime.now(UTC).isoformat()},
-    }
-
-
-def _intent_for(text: str, db_path: Path, season: str | None) -> str | None:
-    """Which intent matched, for the trace. Pattern matching only, no handlers."""
-    from fpl_edge.interfaces.qa import SEASON_DEFAULT, QuestionRouter
-
-    try:
-        router = QuestionRouter(None, season=season or SEASON_DEFAULT)
-        for intent in router.intents:
-            if intent.name == "creator_summary":
-                from fpl_edge.interfaces.creators import match_creators
-
-                if not match_creators(text):
-                    continue
-            if intent.pattern.search(text.strip()):
-                return intent.name
-    except Exception:  # noqa: BLE001 - the trace is a nicety, never a failure
-        return None
-    return None
-
-
-#: Module-level app for `uvicorn fpl_edge.platform.app:app`.
-app = create_app()
+# The deterministic QuestionRouter route is DELETED (CHAT_ARCHITECTURE §2
+# decision 1): one brain. Every message goes to the agent conversations; the
+# router's genuinely good answers live on as toolbelt tools the agent calls.
 
 
 def serve(host: str = "127.0.0.1", port: int = 8321,

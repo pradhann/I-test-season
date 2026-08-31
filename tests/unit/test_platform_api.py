@@ -7,7 +7,6 @@ because the live Telegram bot holds leases on it while these tests run.
 
 from __future__ import annotations
 
-import base64
 import datetime as dt
 
 import pandas as pd
@@ -20,7 +19,7 @@ from fpl_edge.platform import panels as panels_mod
 from fpl_edge.platform.app import create_app
 from fpl_edge.store.warehouse import Warehouse
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 
 @pytest.fixture()
@@ -263,50 +262,15 @@ def test_manual_monitor_run_is_refused_with_an_explanation(client):
 # -- POST /api/chat ----------------------------------------------------------
 
 
-def test_chat_routes_through_the_question_router(client, monkeypatch):
-    """The web pane and Telegram must answer the same question the same way,
-    so the route reuses QuestionRouter rather than reimplementing intents."""
-    from fpl_edge.interfaces.qa import Answer, QuestionRouter
-
-    png = b"\x89PNG\r\n\x1a\n-fake"
-    monkeypatch.setattr(
-        QuestionRouter, "route",
-        lambda self, text: Answer("top defenders: Gabriel", images=[("top.png", png)]),
-    )
-    body = client.post("/api/chat", json={"text": "which defenders have the highest xpoints"}).json()
-    assert body["routed"] is True
-    assert body["text"] == "top defenders: Gabriel"
-    assert body["intent"] == "top_by_position"
-    assert base64.b64decode(body["images"][0]["base64"]) == png
-    assert body["images"][0]["mime"] == "image/png"
-
-
-def test_chat_does_not_guess_at_an_unrouted_message(client, monkeypatch):
-    """A message the router does not understand gets an honest miss, not an
-    invented answer -- in Telegram this same message becomes an idea."""
-    from fpl_edge.interfaces.qa import QuestionRouter
-
-    monkeypatch.setattr(QuestionRouter, "route", lambda self, text: None)
-    body = client.post("/api/chat", json={"text": "I like Rashford"}).json()
-    assert body["routed"] is False
-    assert body["images"] == []
-    assert body["escalation_available"] is True
-
-
-def test_chat_reports_a_handler_failure_rather_than_crashing(client, monkeypatch):
-    from fpl_edge.interfaces.qa import QuestionRouter
-
-    def boom(self, text):
-        raise RuntimeError("warehouse went away")
-
-    monkeypatch.setattr(QuestionRouter, "route", boom)
-    body = client.post("/api/chat", json={"text": "review my team"}).json()
-    assert body["routed"] is False
-    assert "warehouse went away" in body["text"]
-
-
-def test_chat_requires_text(client):
-    assert client.post("/api/chat", json={"text": "  "}).status_code == 400
+def test_the_router_route_is_gone_and_stays_gone(client):
+    """One brain (CHAT_ARCHITECTURE §2 decision 1). POST /api/chat was the
+    deterministic QuestionRouter's surface; it is deleted, and a request to
+    it must 404 rather than quietly resurrect a second answering path. The
+    agent conversations under /api/conversations are the only chat."""
+    # 405, not 404: the static bundle mounted at "/" catches the path and
+    # serves only GET. Either way there is no POST handler -- both codes are
+    # "gone"; a 200 here would mean the second brain came back.
+    assert client.post("/api/chat", json={"text": "review my team"}).status_code in (404, 405)
 
 
 # -- static / health ---------------------------------------------------------
