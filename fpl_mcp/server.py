@@ -37,6 +37,7 @@ from fpl_mcp.tools import expert_tools  # noqa: F401
 # engine checkout degrades those tools to an explanatory message rather than
 # preventing this server from starting at all.
 from fpl_mcp.tools import edge_tools  # noqa: F401
+from fpl_mcp.tools import viz_tools  # noqa: F401 - python_viz (CHAT_ARCHITECTURE §4)
 
 # The semantic layer: six PIT-parameterised warehouse macros (sem_players,
 # sem_projections, sem_projection_consensus, sem_player_form, sem_ownership,

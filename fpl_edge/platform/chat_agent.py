@@ -97,7 +97,7 @@ def mcp_command(python: str, main: Path) -> list[str]:
 #: this list (no Bash, no file tools) is ever offered regardless.
 INTENT_TOOLS: tuple[str, ...] = (
     "query",
-    "make_chart",
+    "python_viz",
     "suggest_transfers",
     "save_analysis",
     "run_analysis",
@@ -138,8 +138,9 @@ DISALLOWED_TOOLS: tuple[str, ...] = (
 
 CHARTER = (
     "You are the FPL edge engine's analyst. Answer with data from your tools "
-    "only; embed [chart:<id>] markers where make_chart tells you; be direct; "
-    "state as-of instants."
+    "only. For any chart, use python_viz (real matplotlib under the house "
+    "theme) and embed each [chart:<id>] marker it returns on its own line "
+    "exactly where the figure belongs. Be direct; state as-of instants."
 )
 
 #: Tool families (CHAT_ARCHITECTURE §3.2): each maps to a one-line useWhen the
@@ -166,7 +167,7 @@ TOOL_FAMILIES: dict[str, tuple[str, tuple[str, ...]]] = {
               ("get_expert_teams_summary",)),
     "analysis": ("raw SQL over the point-in-time warehouse, charts, and the "
                  "transfer solver",
-                 ("query", "make_chart", "suggest_transfers")),
+                 ("query", "python_viz", "suggest_transfers")),
     "memory": ("watchlist, saved analyses, and the idea inbox",
                ("watchlist_add", "watchlist_list", "watchlist_remove",
                 "save_analysis", "run_analysis", "list_analyses",
@@ -586,11 +587,12 @@ class ChatAgent:
 
     # -- assets -------------------------------------------------------------
 
-    def asset_path(self, asset_id: str) -> Path | None:
-        """Path-safe asset lookup: uuid-hex (plus dashes) only, no traversal."""
-        if not _ASSET_ID.fullmatch(asset_id or ""):
+    def asset_path(self, asset_id: str, ext: str = "png") -> Path | None:
+        """Path-safe asset lookup: uuid-hex id, allowlisted extension, no
+        traversal. python_viz writes svg alongside png under one id."""
+        if not _ASSET_ID.fullmatch(asset_id or "") or ext not in ("png", "svg"):
             return None
-        path = (self.assets_dir / f"{asset_id}.png").resolve()
+        path = (self.assets_dir / f"{asset_id}.{ext}").resolve()
         if self.assets_dir.resolve() not in path.parents:
             return None
         return path if path.is_file() else None

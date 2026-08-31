@@ -21,7 +21,7 @@
     GET  /api/conversations/{id}/stream  SSE: replay > after, then live
     GET  /api/conversations/{id}/events  JSON page (non-SSE fallback)
     POST /api/conversations/{id}/stop kill the in-flight turn
-    GET  /api/chat/assets/{id}.png    charts the agent's make_chart produced
+    GET  /api/chat/assets/{id}.{png|svg}  charts the agent's python_viz produced
     /                                 the built web/ bundle, if present
 
 What is deliberately *absent* is as load-bearing as what is here: no route
@@ -474,14 +474,21 @@ def create_app(db: Path | str = DEFAULT_DB,
         except UnknownConversation as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    @app.get("/api/chat/assets/{asset_id}.png")
-    def get_chat_asset(asset_id: str):
+    @app.get("/api/chat/assets/{asset_id}.{ext}")
+    def get_chat_asset(asset_id: str, ext: str):
         from fastapi.responses import FileResponse
 
-        path = chat_agent.asset_path(asset_id)
+        # python_viz writes SVG alongside PNG; SVG is preferred by the chat
+        # sub-app (crisp at any zoom, themeable), PNG stays for the legacy
+        # pane and image fallbacks. Anything else 404s -- the extension is
+        # part of the allowlist, exactly like the hex id.
+        if ext not in ("png", "svg"):
+            raise HTTPException(status_code=404, detail="no such asset")
+        path = chat_agent.asset_path(asset_id, ext=ext)
         if path is None:
             raise HTTPException(status_code=404, detail="no such asset")
-        return FileResponse(path, media_type="image/png")
+        media = "image/png" if ext == "png" else "image/svg+xml"
+        return FileResponse(path, media_type=media)
 
     if WEB_DIST.is_dir():
         app.mount("/", StaticFiles(directory=str(WEB_DIST), html=True), name="web")
