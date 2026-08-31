@@ -127,6 +127,76 @@ def _rules_lines() -> list[str]:
     return [", ".join(out)] if out else []
 
 
+def _squad_lines(wh, now, season: str, entry: int) -> list[str]:
+    """The owner's live squad, as ambient context (CHAT_ARCHITECTURE §9.1).
+
+    Sourced from the last LOCKED gameweek's crawled picks -- the honest
+    warehouse truth, with its staleness stated: transfers made after that
+    deadline are invisible until the next crawl, and the context says so
+    rather than presenting a possibly-outdated fifteen as current.
+    """
+    try:
+        picks = wh.sql(
+            """
+            WITH mine AS (
+              SELECT gw, element_id, slot, multiplier, is_captain,
+                     row_number() OVER (
+                       PARTITION BY gw, element_id ORDER BY as_of DESC) rn
+              FROM fact_manager_pick
+              WHERE season = ? AND entry_id = ? AND as_of <= ?
+            ), latest AS (SELECT max(gw) g FROM mine WHERE rn = 1),
+            pl AS (
+              SELECT element_id, web_name, position,
+                     row_number() OVER (
+                       PARTITION BY element_id ORDER BY as_of DESC) rn
+              FROM dim_player WHERE season = ? AND as_of <= ?
+            )
+            SELECT m.gw, pl.web_name, pl.position, m.multiplier, m.slot,
+                   m.is_captain
+            FROM mine m JOIN latest ON m.gw = latest.g
+            LEFT JOIN pl ON pl.element_id = m.element_id AND pl.rn = 1
+            WHERE m.rn = 1 ORDER BY m.slot
+            """,
+            (season, entry, now, season, now),
+        )
+    except Exception as exc:  # noqa: BLE001 - a briefing without a squad beats no briefing
+        return [f"(squad unavailable: {type(exc).__name__})"]
+    if picks.empty:
+        return ["(no locked squad crawled yet for this entry this season)"]
+
+    gw = int(picks.iloc[0]["gw"])
+    POS = {1: "GKP", 2: "DEF", 3: "MID", 4: "FWD"}
+    starters, bench = [], []
+    for r in picks.itertuples(index=False):
+        name = str(r.web_name or "?")
+        tag = ""
+        if bool(r.is_captain):
+            tag = " (TC)" if int(r.multiplier or 1) >= 3 else " (C)"
+        line = f"{POS.get(int(r.position or 0), '?')} {name}{tag}"
+        # FPL slots: 1-11 start, 12-15 are the bench in order.
+        (starters if int(r.slot) <= 11 else bench).append(line)
+
+    chips: str = ""
+    try:
+        c = wh.sql(
+            "SELECT DISTINCT chip FROM fact_manager_chip "
+            "WHERE season = ? AND entry_id = ? AND as_of <= ?",
+            (season, entry, now),
+        )
+        if not c.empty:
+            chips = "chips already played: " + ", ".join(sorted(c["chip"].astype(str)))
+    except Exception:  # noqa: BLE001 - chips table is optional context
+        chips = ""
+
+    return [
+        f"## Your squad (as locked at the GW{gw} deadline -- transfers made "
+        f"since are NOT visible here; say so if asked about them)",
+        "XI: " + ", ".join(starters),
+        "Bench: " + ", ".join(bench) if bench else "",
+        chips,
+    ]
+
+
 def warehouse_briefing(
     db_path: Path | None = None,
     *,
@@ -139,6 +209,8 @@ def warehouse_briefing(
     try:
         macro_lines = _macro_lines(wh, now)
         coverage = _coverage_lines(wh, now, season)
+        squad = _squad_lines(wh, now, season,
+                             entry_id if entry_id is not None else 4490171)
         try:
             nxt = wh.sql(
                 "SELECT gw, deadline_utc FROM (SELECT *, row_number() OVER "
@@ -159,6 +231,8 @@ def warehouse_briefing(
         f"# Warehouse briefing (generated {now:%Y-%m-%d %H:%M}Z, season {season})",
         deadline,
         f"The user's FPL entry id is {entry}.",
+        "",
+        *squad,
         "",
         "## Query surface — DuckDB table macros, each takes an as-of TIMESTAMPTZ.",
         "Call them like: SELECT ... FROM sem_players(TIMESTAMPTZ '<now>') WHERE season='"

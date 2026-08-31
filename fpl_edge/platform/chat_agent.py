@@ -142,6 +142,47 @@ CHARTER = (
     "state as-of instants."
 )
 
+#: Tool families (CHAT_ARCHITECTURE §3.2): each maps to a one-line useWhen the
+#: system prompt carries, DERIVED from what is actually registered -- a family
+#: none of whose tools shipped simply does not appear in the prompt. Argus's
+#: rule: guidance only for capabilities that exist.
+TOOL_FAMILIES: dict[str, tuple[str, tuple[str, ...]]] = {
+    "squad": ("the owner's team, history and league context",
+              ("get_team_picks", "get_team_summary", "get_manager_history",
+               "get_manager_by_name")),
+    "market": ("prices, effective ownership, and what the field is doing",
+               ("ownership_eo", "get_expert_transfers")),
+    "players": ("one player deeply: form, projections, history, intel",
+                ("player_dossier", "player_form", "player_projections",
+                 "projection_disagreement", "xpts_aggregate",
+                 "get_player_history", "player_intel")),
+    "fixtures": ("who plays whom and how hard, split attack/defence",
+                 ("fixture_difficulty",)),
+    "creators": ("what tracked creators said, and their track records",
+                 ("fpl_creator_consensus", "fpl_player_claims",
+                  "fpl_creator_track_record", "summarise_fpl_youtube",
+                  "fetch_youtube_transcript")),
+    "elite": ("what the crawled elite cohort holds and moved",
+              ("get_expert_teams_summary",)),
+    "analysis": ("raw SQL over the point-in-time warehouse, charts, and the "
+                 "transfer solver",
+                 ("query", "make_chart", "suggest_transfers")),
+    "memory": ("watchlist, saved analyses, and the idea inbox",
+               ("watchlist_add", "watchlist_list", "watchlist_remove",
+                "save_analysis", "run_analysis", "list_analyses",
+                "submit_idea")),
+}
+
+
+def families_prompt(registered: set[str]) -> str:
+    """The tool-family guidance, derived from what actually registered."""
+    lines = ["## Your tool families (use the right family first)"]
+    for fam, (use_when, names) in TOOL_FAMILIES.items():
+        live = sorted(set(names) & registered)
+        if live:
+            lines.append(f"- **{fam}** -- {use_when}: {', '.join(live)}")
+    return "\n".join(lines)
+
 #: Wall-clock budget for one turn. A stuck CLI is killed, the transcript gets
 #: an honest error, and the conversation continues.
 #: A turn dies only when it goes QUIET, not merely long. A real analytical
@@ -274,69 +315,34 @@ def events_from_message(msg: Any) -> list[tuple[str, dict[str, Any]]]:
 # MCP tool enumeration (once per process; the allowlist is reality ∩ intent)
 # --------------------------------------------------------------------------
 
-def list_mcp_tools(python: str, main: Path, timeout: float = 25.0) -> list[str] | None:
-    """Ask the FPL MCP server, over stdio JSON-RPC, which tools exist.
+def list_mcp_tools(python: str = "", main: Path | None = None,
+                   timeout: float = 0.0) -> list[str] | None:
+    """The toolbelt's registered tool names, enumerated IN PROCESS.
 
-    Returns None on any failure -- the caller falls back to the full intent
-    list, which is safe because ``--allowedTools`` naming a tool that does
-    not exist merely allows nothing.
+    The subprocess JSON-RPC prober this replaces existed because the toolbelt
+    lived in another process. It no longer does: the FastMCP server is
+    imported and its registry read directly. The signature keeps its old
+    parameters (ignored) so callers did not all have to change in the same
+    commit; returns None on any failure, and the caller falls back to the
+    full intent list -- allowing a tool that does not exist allows nothing.
     """
-    if not Path(python).exists() or not main.exists():
-        return None
-    requests = [
-        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
-            "protocolVersion": "2024-11-05",
-            "capabilities": {},
-            "clientInfo": {"name": "fpl-edge-platform", "version": "1.0"},
-        }},
-        {"jsonrpc": "2.0", "method": "notifications/initialized"},
-        {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
-    ]
     try:
-        proc = subprocess.Popen(
-            mcp_command(python, main),
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL, cwd=str(main.parent.parent),
-            start_new_session=True, text=True,
-        )
-    except OSError:
+        from fpl_mcp.server import mcp as toolbelt
+        return [t.name for t in toolbelt._tool_manager.list_tools()]  # noqa: SLF001
+    except Exception:  # noqa: BLE001 - enumeration is an optimisation, never a dependency
         return None
 
-    found: list[str] | None = None
 
-    def _read() -> None:
-        nonlocal found
-        assert proc.stdout is not None
-        for raw in proc.stdout:
-            raw = raw.strip()
-            if not raw:
-                continue
-            try:
-                msg = json.loads(raw)
-            except json.JSONDecodeError:
-                continue  # the server prints a banner line before JSON-RPC
-            if msg.get("id") == 2 and "result" in msg:
-                tools = (msg["result"] or {}).get("tools") or []
-                found = [t.get("name") for t in tools if t.get("name")]
-                return
+def toolbelt_instance():
+    """The in-process MCP server the SDK serves to the CLI over memory.
 
-    try:
-        assert proc.stdin is not None
-        for req in requests:
-            proc.stdin.write(json.dumps(req) + "\n")
-        proc.stdin.flush()
-        reader = threading.Thread(target=_read, daemon=True)
-        reader.start()
-        reader.join(timeout)
-    except (OSError, ValueError):
-        pass
-    finally:
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        except (ProcessLookupError, PermissionError, OSError):
-            proc.kill()
-        proc.wait()
-    return found
+    ``McpSdkServerConfig.instance`` accepts any ``mcp.server.Server``;
+    FastMCP wraps exactly one. Importing here rather than at module top keeps
+    platform startup honest about where the ~1s toolbelt import is spent and
+    lets tests build a ChatAgent without the toolbelt present.
+    """
+    from fpl_mcp.server import mcp as toolbelt
+    return toolbelt._mcp_server  # noqa: SLF001 - the documented seam
 
 
 # --------------------------------------------------------------------------
@@ -694,14 +700,24 @@ class ChatAgent:
             disallowed_tools=list(DISALLOWED_TOOLS),
             system_prompt={
                 "type": "preset", "preset": "claude_code",
-                "append": self._briefing() + "\n\n" + CHARTER,
+                "append": self._briefing() + "\n\n" + CHARTER + "\n\n"
+                + families_prompt(set(self._tools_cache or [])
+                                  or set(INTENT_TOOLS)),
             },
+            # IN-PROCESS (CHAT_ARCHITECTURE §3.2): the SDK serves the FastMCP
+            # instance to the CLI over an in-memory transport. No spawned
+            # process, no stdio framing, and a tool call is a function call
+            # in this server. The per-conversation id the stdio config used
+            # to pass as child env is now set on our own environ per turn --
+            # save_analysis reads it for its commit message. Two turns in
+            # DIFFERENT conversations racing could momentarily cross those
+            # cosmetic attributions; a turn within one conversation is
+            # single-flight, and the commit content itself is unaffected.
             mcp_servers={
                 "fpl-server": {
-                    "type": "stdio",
-                    "command": self.mcp_python,
-                    "args": mcp_command(self.mcp_python, self.mcp_main)[1:],
-                    "env": {"ARGUS_CONV_ID": conv.path.name},
+                    "type": "sdk",
+                    "name": "fpl-server",
+                    "instance": toolbelt_instance(),
                 }
             },
             strict_mcp_config=True,
@@ -727,6 +743,7 @@ class ChatAgent:
             meta = {}
         session_id = meta.get("claude_session_id")
         self._scrub_environment()
+        os.environ["ARGUS_CONV_ID"] = conv.path.name
         try:
             asyncio.run(self._async_turn(conv, turn, session_id))
         except CLINotFoundError:

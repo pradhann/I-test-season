@@ -272,12 +272,42 @@ def test_options_pin_the_tool_posture_and_the_model(tmp_path):
     assert all(n.startswith("mcp__fpl-server__") for n in opts.allowed_tools)
     assert opts.model == "opus"
     assert opts.strict_mcp_config is True
-    assert "fpl-server" in opts.mcp_servers
+    # In-process: the toolbelt is served over the SDK's memory transport,
+    # never a spawned process. A regression to a stdio config would still
+    # pass a lazy "is fpl-server there" check, so pin the type and instance.
+    server = opts.mcp_servers["fpl-server"]
+    assert server["type"] == "sdk" and server.get("instance") is not None
     assert opts.include_partial_messages is True
     prompt = opts.system_prompt
     assert prompt["preset"] == "claude_code"
     assert "test briefing" in prompt["append"]
     assert "analyst" in prompt["append"]
+    # The family guidance is DERIVED from registered reality; at least the
+    # analysis family (query lives there) must be present and labelled.
+    assert "tool families" in prompt["append"]
+    assert "**analysis**" in prompt["append"]
+
+
+def test_family_prompt_is_derived_from_registered_reality():
+    """A family none of whose tools registered must not appear -- guidance
+    for a capability that does not exist is how agents hallucinate tools."""
+    from fpl_edge.platform.chat_agent import families_prompt
+    only_query = families_prompt({"query"})
+    assert "**analysis**" in only_query and "query" in only_query
+    assert "**creators**" not in only_query
+    assert "**fixtures**" not in only_query
+    full = families_prompt(set())
+    assert full.count("**") == 0, "no tools registered -> no family lines"
+
+
+def test_toolbelt_enumeration_is_in_process():
+    """36 tools, no subprocess: the enumeration is an import + registry
+    read, and its failure mode is None (fall back to intent), never a
+    crash."""
+    from fpl_edge.platform.chat_agent import list_mcp_tools
+    tools = list_mcp_tools()
+    assert tools is not None and len(tools) >= 30
+    assert "query" in tools
 
 
 # -- single flight -----------------------------------------------------------
