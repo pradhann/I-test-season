@@ -1,7 +1,9 @@
 # Chat — the architecture spec
 
-Status: SPEC CLOSED 2026-08-31 — every question settled with the owner.
-Ready to build in the §8 order.
+Status: BUILT 2026-08-31. Phases 1-4, 6, 7 shipped and live-verified the
+same day the spec closed; phase 5's surface half shipped (the router route
+is deleted and pinned gone) with the deep module untangling tracked as its
+own task. Commits: 0a3757a fb61c78 c9dc564 fc90f59 5d79fc6 ac9652c.
 
 The owner's framing: chat is the most important feature of the platform and
 needs the most work. The current implementation is two brains bolted together
