@@ -20,26 +20,29 @@ Honesty rules the rendering must keep (and tests hold):
 
 ``player`` is free text from a chat: it is passed to resolvers as data, bound
 as SQL parameters, never interpolated, never executed.
+
+NO ``from __future__ import annotations`` in this module, deliberately: the
+toolbelt registers in-process and FastMCP evaluates the tool's annotations at
+import, so a string annotation that fails to resolve at runtime takes the
+WHOLE toolbelt down (a live chat turn died with InvalidSignature over exactly
+that). Annotations here are plain runtime types, evaluated at def time, so a
+bad one fails this module's own tests instead of every tool at once.
 """
 
-from __future__ import annotations
-
 import datetime as dt
-from typing import Optional
 
 from fpl_mcp.server import mcp  # type: ignore
-
 from fpl_mcp.tools import edge_tools as _edge
 from fpl_mcp.tools import semantic_tools as _sem
 from fpl_mcp.tools.chat_tools import DEFAULT_SEASON, _resolve_player
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 
 def _run_panel(code: int, season: str) -> dict:
     """The panel is the read path; the tool never grows a second one."""
-    import fpl_edge.platform.scripts  # noqa: F401, PLC0415 - registration is the import
-    from fpl_edge.platform.registry import run_script  # noqa: PLC0415
+    import fpl_edge.platform.scripts  # noqa: F401 - registration is the import
+    from fpl_edge.platform.registry import run_script
 
     return run_script("player_profile", {"code": int(code), "season": season},
                       db=_edge._db_path()).result
@@ -97,7 +100,7 @@ def _render(result: dict, label: str, *, fetched_note: str | None) -> str:
 
 
 @mcp.tool()
-def player_profile(player: str, season: Optional[str] = None,
+def player_profile(player: str, season: str = "",
                    fetch_if_missing: bool = True) -> str:
     """One player's Understat season through the FPL lens.
 
@@ -127,7 +130,7 @@ def player_profile(player: str, season: Optional[str] = None,
     result = _run_panel(code, season)
     fetched_note = None
     if result.get("empty") and fetch_if_missing:
-        from fpl_edge.ingest import understat as understat_mod  # noqa: PLC0415
+        from fpl_edge.ingest import understat as understat_mod
 
         try:
             summary = understat_mod.fetch_player_profile(

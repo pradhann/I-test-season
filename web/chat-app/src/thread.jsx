@@ -1,64 +1,67 @@
-/* Thread rendering: prose blocks (streaming markdown + chart figures),
-   grouped tool-trace cards, turn footers, honest error blocks. */
+/* Thread rendering: prose blocks (streaming markdown + chart figures +
+   document cards), grouped tool-trace cards, turn footers, honest error
+   blocks. Charts/lightbox live in charts.jsx; document cards in doc.jsx. */
 
-import React, { useEffect, useState } from "react";
-import { Markdown } from "./markdown.jsx";
-import { assetUrl } from "./api.js";
+import React, { useState } from "react";
+import { RichText } from "./charts.jsx";
+import { DocumentCard } from "./doc.jsx";
 
-/* ---------------- charts ---------------- */
+export { Lightbox } from "./charts.jsx";
 
-// Marker ids are uuid-hex; the regex pins the charset so the constructed
-// asset URL cannot smuggle a path.
-const CHART_SPLIT = /\[chart:([0-9a-fA-F][0-9a-fA-F-]{7,63})\]/g;
+/* ---------------- prose, with ```doc fences as document cards ----------------
 
-function ChartFigure({ id, onOpen }) {
-  // SVG preferred (crisp in both themes); PNG fallback; then an honest note.
-  const [ext, setExt] = useState("svg");
-  const [dead, setDead] = useState(false);
-  if (dead) return <div className="chart-missing">chart {id} unavailable</div>;
-  const src = assetUrl(id, ext);
-  return (
-    <figure className="chart-fig">
-      <img
-        src={src}
-        alt="chart"
-        loading="lazy"
-        onError={() => (ext === "svg" ? setExt("png") : setDead(true))}
-        onClick={() => onOpen(src)}
-      />
-    </figure>
-  );
-}
+   A fenced block with language `doc` is a report, not code (phase 6
+   contract). Inner code fences inside the doc are tracked so a ```sql block
+   does not close the document; a bare ``` outside any inner fence does. An
+   unterminated doc fence mid-stream renders with what has arrived. */
 
-export function Lightbox({ src, onClose }) {
-  useEffect(() => {
-    const onKey = (e) => { if (e.key === "Escape") onClose(); };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
-  if (!src) return null;
-  return (
-    <div className="lightbox" onClick={onClose} role="dialog" aria-label="chart, full size">
-      <img src={src} alt="chart, full size" onClick={(e) => e.stopPropagation()} />
-    </div>
-  );
-}
+export function splitDocSegments(text) {
+  const lines = String(text ?? "").split("\n");
+  const segs = [];
+  let buf = [];
+  let mode = "md";       // md | doc
+  let mdFence = false;   // inside an ordinary fence in md mode
+  let innerFence = false; // inside a code fence within the doc
 
-/* ---------------- prose ---------------- */
+  const flush = (kind) => {
+    const chunk = buf.join("\n");
+    if (chunk.trim()) segs.push({ kind, text: chunk });
+    buf = [];
+  };
 
-export function Prose({ text, streaming, onOpenChart }) {
-  const parts = String(text ?? "").split(CHART_SPLIT);
-  const nodes = [];
-  for (let i = 0; i < parts.length; i++) {
-    if (i % 2 === 0) {
-      if (parts[i].trim()) nodes.push(<Markdown key={`t${i}`} text={parts[i]} />);
+  for (const line of lines) {
+    if (mode === "md") {
+      if (!mdFence && /^```doc\s*$/.test(line)) {
+        flush("md");
+        mode = "doc";
+        innerFence = false;
+        continue;
+      }
+      if (/^```/.test(line)) mdFence = !mdFence;
+      buf.push(line);
+    } else if (innerFence) {
+      if (/^```\s*$/.test(line)) innerFence = false;
+      buf.push(line);
+    } else if (/^```\s*$/.test(line)) {
+      flush("doc");
+      mode = "md";
     } else {
-      nodes.push(<ChartFigure key={`c${i}`} id={parts[i]} onOpen={onOpenChart} />);
+      if (/^```/.test(line)) innerFence = true;
+      buf.push(line);
     }
   }
+  flush(mode);
+  return segs;
+}
+
+export function Prose({ text, streaming, onOpenChart }) {
+  const segs = splitDocSegments(text);
   return (
     <div className={"prose" + (streaming ? " streaming" : "")}>
-      {nodes}
+      {segs.map((s, i) =>
+        s.kind === "doc"
+          ? <DocumentCard key={i} source={s.text} onOpenChart={onOpenChart} />
+          : <RichText key={i} text={s.text} onOpenChart={onOpenChart} />)}
       {streaming && <span className="caret" aria-hidden="true" />}
     </div>
   );

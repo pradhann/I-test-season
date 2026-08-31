@@ -56,7 +56,7 @@ from fpl_edge.ingest.http import Fetcher
 from fpl_edge.ingest.rivals.names import norm as _name_norm
 from fpl_edge.store.warehouse import DEFAULT_DB, Warehouse
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 UNDERSTAT_BASE = "https://understat.com"
 
@@ -240,23 +240,30 @@ def resolve_understat_player(
 
     1. **exact** -- a candidate whose normalised name equals our full name
        (``first second``), our ``second_name`` alone, or our ``web_name``.
-    2. **containment** -- one normalised token sequence written inside the
-       other ("Konsa" inside "Ezri Konsa"; "William Osula" containing
-       "Osula").
+    2. **containment** -- against our FULL name when we have one: either one
+       token sequence written inside the other ("Ezri Konsa" inside "Ezri
+       Konsa Ngoyo"), or same surname with given names in a prefix relation
+       ("Will"/"William" Osula) -- the exact rule ``_resolve_call_name``
+       settled on. Only when no multi-token full name exists (a missing
+       first name, a mononym) does a single-token name get containment.
+
+    The surname alone is deliberately NOT a fallback once a full name
+    disagrees: "Louie Barry" must never ride the token "Barry" into Thierno
+    Barry -- that is the analyzer's documented misattribution, reborn.
 
     There is no third tier. "Cristian" for "Cristhian" needs a typo forgiven
     and is refused -- an edit-distance pass would accept it, and the same pass
-    accepts "forester" -> Brentford. Refusal raises
-    :class:`UnresolvedPlayerError` carrying every candidate, so the caller can
-    show them instead of guessing.
+    accepts "forester" -> Brentford (clubs.py, measured on this repo's own
+    data). Refusal raises :class:`UnresolvedPlayerError` carrying every
+    candidate, so the caller can show them instead of guessing.
     """
-    ours: list[list[str]] = []
-    full = " ".join(x for x in [first_name or "", second_name or ""] if x).strip()
-    for name in (full, second_name or "", web_name):
+    full = _tokens(" ".join(x for x in [first_name or "", second_name or ""] if x))
+    exact_names: list[list[str]] = []
+    for name in (" ".join(full), second_name or "", web_name):
         toks = _tokens(name)
-        if toks and toks not in ours:
-            ours.append(toks)
-    if not ours:
+        if toks and toks not in exact_names:
+            exact_names.append(toks)
+    if not exact_names:
         raise UnresolvedPlayerError("our player has no usable name", candidates)
 
     def _refuse(why: str) -> UnresolvedPlayerError:
@@ -271,14 +278,25 @@ def resolve_understat_player(
 
     cand_tokens = [(c, _tokens(c["player"])) for c in candidates]
 
-    exact = [c for c, toks in cand_tokens if any(toks == o for o in ours)]
+    exact = [c for c, toks in cand_tokens if any(toks == o for o in exact_names)]
     if len(exact) == 1:
         c = exact[0]
         return ResolvedPlayer(int(c["id"]), c["player"], c["team"], "exact")
     if len(exact) > 1:
         raise _refuse(f"{len(exact)} candidates match exactly")
 
-    contained = [c for c, toks in cand_tokens if any(_contained(toks, o) for o in ours)]
+    def _contains(cand: list[str]) -> bool:
+        if len(full) >= 2:
+            if _contained(cand, full):
+                return True
+            # Same surname AND given names in a prefix relation, either way.
+            return (len(cand) >= 2 and cand[-1] == full[-1]
+                    and (cand[0].startswith(full[0]) or full[0].startswith(cand[0])))
+        # No multi-token full name to hold the line: single-token names
+        # (mononyms, a missing first name) may match by whole-token containment.
+        return any(_contained(cand, o) for o in exact_names)
+
+    contained = [c for c, toks in cand_tokens if _contains(toks)]
     if len(contained) == 1:
         c = contained[0]
         return ResolvedPlayer(int(c["id"]), c["player"], c["team"], "containment")
@@ -352,7 +370,7 @@ class UnderstatStore:
         keys = [*UNDERSTAT_KEYS[table], "as_of"]
         payload = [c for c in df.columns if c not in keys]
         self.wh.sql("SET TimeZone='UTC'")
-        con = self.wh._con  # noqa: SLF001 -- this class is the writer for these tables
+        con = self.wh._con  # this class is the sanctioned writer for these tables
         con.register("_incoming_us", df)
         try:
             on = " AND ".join(f"t.{k} IS NOT DISTINCT FROM i.{k}" for k in keys)
@@ -431,10 +449,13 @@ def _fetcher() -> Fetcher:
 def _player_names(db: Path, code: int, season: str) -> dict[str, Any]:
     wh = Warehouse.read_copy(db)
     try:
+        # Not QUALIFY: on this DuckDB a whole-relation window over zero rows
+        # yields one all-NULL row, and an unknown code must be EMPTY, not a
+        # player named None.
         df = wh.sql(
             "SELECT web_name, first_name, second_name FROM dim_player "
-            "WHERE season = ? AND code = ? "
-            "QUALIFY ROW_NUMBER() OVER (ORDER BY as_of DESC) = 1",
+            "WHERE season = ? AND code = ? AND web_name IS NOT NULL "
+            "ORDER BY as_of DESC LIMIT 1",
             [season, int(code)],
         )
     finally:
@@ -486,11 +507,23 @@ def fetch_player_profile(
     names = _player_names(db_path, code, season)
 
     # -- resolve (map cache first; the network is a last resort) -------------
+    # Read copies are read-only, so no UnderstatStore (whose constructor
+    # migrates) is built here; the table is checked for and read directly.
     wh = Warehouse.read_copy(db_path)
     try:
-        store_ro = UnderstatStore(wh)
-        cached = store_ro.as_of("understat_player_map", as_of,
-                                where="code = ?", params=[int(code)])
+        has_map = not wh.sql(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema = 'main' AND table_name = 'understat_player_map'"
+        ).empty
+        cached = wh.sql(
+            """
+            SELECT * EXCLUDE (rn) FROM (
+                SELECT *, ROW_NUMBER() OVER (PARTITION BY code ORDER BY as_of DESC) rn
+                FROM understat_player_map WHERE code = ? AND as_of <= ?
+            ) WHERE rn = 1
+            """,
+            [int(code), as_of],
+        ) if has_map else pd.DataFrame()
     finally:
         wh.close()
 

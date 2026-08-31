@@ -52,7 +52,7 @@ def _instant(as_of: str | None) -> dt.datetime | None:
     if as_of is None:
         return dt.datetime.now(UTC)
     try:
-        parsed = dt.datetime.fromisoformat(as_of.replace("Z", "+00:00"))
+        parsed = dt.datetime.fromisoformat(as_of)
     except ValueError:
         return None
     if parsed.tzinfo is None:
@@ -78,9 +78,13 @@ def player_profile(wh, code: int, season: str, as_of: str | None = None) -> dict
 
     # Who is this, in our own terms? A code dim_player has never seen gets a
     # refusal, not a profile of nobody.
+    # ORDER BY/LIMIT, not QUALIFY: a whole-relation window over zero rows
+    # yields one all-NULL row on this DuckDB, and an unknown code must read
+    # as ABSENT, not as a player named None.
     ident = q(wh,
-        "SELECT web_name FROM dim_player WHERE season = ? AND code = ? AND as_of <= ? "
-        "QUALIFY ROW_NUMBER() OVER (ORDER BY as_of DESC) = 1",
+        "SELECT web_name FROM dim_player "
+        "WHERE season = ? AND code = ? AND as_of <= ? AND web_name IS NOT NULL "
+        "ORDER BY as_of DESC LIMIT 1",
         (season, int(code), t))
     if ident.empty:
         return empty(f"No player with code {code} in dim_player for {season} "

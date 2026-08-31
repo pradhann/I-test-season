@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build --outDir ../dist/chat-app --emptyOutDir"
+    "build": "vite build --outDir ../dist/chat-app --emptyOutDir",
+    "test": "node test/run.mjs"
   },
   "dependencies": {
     "react": "^18.3.1",
