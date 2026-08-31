@@ -1,10 +1,16 @@
-"""The chat agent loop: conversations that drive a headless `claude -p`.
+"""The chat agent loop: conversations driven through the Claude Agent SDK.
 
-Argus discipline (docs/platform/argus_architecture.md §1.3), transposed:
+Argus discipline (docs/platform/argus_architecture.md §1.3), transposed --
+and, since the CHAT_ARCHITECTURE spec, running on ``claude-agent-sdk``
+instead of a hand-parsed ``claude -p`` subprocess. The SDK spawns and owns
+the same Max-plan CLI (its login is still the auth; this server still holds
+no API key), but gives this module a control channel: a graceful
+``interrupt()`` instead of a process-group SIGKILL, typed messages instead
+of stream-json line parsing, and options instead of argv assembly.
 
-- **A turn is a server-side job.** ``start_turn`` spawns the Max-plan
-  ``claude`` CLI detached from any HTTP request and reads its stream-json
-  output to completion whether or not a browser is watching.
+- **A turn is a server-side job.** ``start_turn`` runs the SDK session
+  detached from any HTTP request and reads its message stream to completion
+  whether or not a browser is watching.
 - **Persist THEN broadcast.** Every event is appended to the conversation's
   ``events.jsonl`` (flushed) before any live subscriber sees it, so a reload
   can replay from disk and re-attach mid-turn without a gap, and the
@@ -26,22 +32,38 @@ Storage layout (append-only, no warehouse writes)::
 
 from __future__ import annotations
 
+import asyncio
 import datetime as dt
 import json
 import os
 import re
-import shutil
 import signal
 import subprocess
 import sys
 import threading
 import time
 import uuid
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from queue import Empty, Queue
-from typing import Any, Callable, Iterator
+from typing import Any
 
-UTC = dt.timezone.utc
+from claude_agent_sdk import (
+    AssistantMessage,
+    ClaudeAgentOptions,
+    ClaudeSDKClient,
+    CLINotFoundError,
+    ProcessError,
+    ResultMessage,
+    StreamEvent,
+    SystemMessage,
+    TextBlock,
+    ToolResultBlock,
+    ToolUseBlock,
+    UserMessage,
+)
+
+UTC = dt.UTC
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -155,7 +177,7 @@ class TurnInFlight(ChatAgentError):
 
 
 # --------------------------------------------------------------------------
-# stream-json parsing (pure; the tests pin it against a canned transcript)
+# SDK message -> transcript events (pure; the tests pin it)
 # --------------------------------------------------------------------------
 
 def _compact(value: Any, limit: int) -> str:
@@ -186,72 +208,63 @@ def _result_text(content: Any) -> str:
     return "" if content is None else str(content)
 
 
-def parse_stream_json_line(line: str) -> list[tuple[str, dict[str, Any]]]:
-    """One CLI stream-json line -> zero or more (type, payload) events.
+def events_from_message(msg: Any) -> list[tuple[str, dict[str, Any]]]:
+    """One typed SDK message -> zero or more (type, payload) transcript events.
 
-    Unknown message shapes produce nothing rather than crashing the turn:
-    the CLI's format may grow fields, and a transcript with a gap beats a
-    dead loop. Non-JSON lines return nothing; the caller keeps them in the
-    stderr tail for the post-mortem.
+    The payload shapes are IDENTICAL to what the stream-json parser this
+    replaces produced -- the UI and the on-disk transcripts predate the SDK
+    and must not notice the engine change. Unknown message kinds produce
+    nothing rather than crashing the turn: the SDK's message union may grow,
+    and a transcript with a gap beats a dead loop.
     """
-    line = line.strip()
-    if not line:
-        return []
-    try:
-        obj = json.loads(line)
-    except json.JSONDecodeError:
-        return []
-    if not isinstance(obj, dict):
-        return []
-
-    kind = obj.get("type")
     events: list[tuple[str, dict[str, Any]]] = []
 
-    if kind == "system" and obj.get("subtype") == "init":
-        events.append(("init", {
-            "session_id": obj.get("session_id"),
-            "model": obj.get("model"),
-            "tools": len(obj.get("tools") or []),
-        }))
-    elif kind == "stream_event":
-        ev = obj.get("event") or {}
+    if isinstance(msg, SystemMessage):
+        if msg.subtype == "init":
+            data = msg.data or {}
+            events.append(("init", {
+                "session_id": data.get("session_id"),
+                "model": data.get("model"),
+                "tools": len(data.get("tools") or []),
+            }))
+    elif isinstance(msg, StreamEvent):
+        ev = msg.event or {}
         if ev.get("type") == "content_block_delta":
             delta = ev.get("delta") or {}
             if delta.get("type") == "text_delta" and delta.get("text"):
                 events.append(("delta", {"text": delta["text"]}))
-    elif kind == "assistant":
-        for block in (obj.get("message") or {}).get("content") or []:
-            if not isinstance(block, dict):
-                continue
-            if block.get("type") == "text" and (block.get("text") or "").strip():
-                events.append(("text", {"text": block["text"]}))
-            elif block.get("type") == "tool_use":
+    elif isinstance(msg, AssistantMessage):
+        for block in msg.content or []:
+            if isinstance(block, TextBlock) and (block.text or "").strip():
+                events.append(("text", {"text": block.text}))
+            elif isinstance(block, ToolUseBlock):
                 events.append(("tool_use", {
-                    "id": block.get("id"),
-                    "name": block.get("name"),
-                    "input_preview": _compact(block.get("input"), 300),
+                    "id": block.id,
+                    "name": block.name,
+                    "input_preview": _compact(block.input, 300),
                 }))
-    elif kind == "user":
-        for block in (obj.get("message") or {}).get("content") or []:
-            if isinstance(block, dict) and block.get("type") == "tool_result":
-                events.append(("tool_result", {
-                    "tool_use_id": block.get("tool_use_id"),
-                    "is_error": bool(block.get("is_error")),
-                    "preview": _compact(_result_text(block.get("content")), 500),
-                }))
-    elif kind == "result":
-        payload = {
-            "session_id": obj.get("session_id"),
-            "cost_usd": obj.get("total_cost_usd"),
-            "duration_ms": obj.get("duration_ms"),
-            "num_turns": obj.get("num_turns"),
+    elif isinstance(msg, UserMessage):
+        content = msg.content
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, ToolResultBlock):
+                    events.append(("tool_result", {
+                        "tool_use_id": block.tool_use_id,
+                        "is_error": bool(block.is_error),
+                        "preview": _compact(_result_text(block.content), 500),
+                    }))
+    elif isinstance(msg, ResultMessage):
+        payload: dict[str, Any] = {
+            "session_id": msg.session_id,
+            "cost_usd": msg.total_cost_usd,
+            "duration_ms": msg.duration_ms,
+            "num_turns": msg.num_turns,
         }
-        if obj.get("subtype") == "success" and not obj.get("is_error"):
+        if msg.subtype == "success" and not msg.is_error:
             events.append(("done", payload))
         else:
             payload["message"] = str(
-                obj.get("result") or obj.get("error") or obj.get("subtype")
-                or "the agent turn failed"
+                msg.result or msg.subtype or "the agent turn failed"
             )
             events.append(("error", payload))
     return events
@@ -342,7 +355,7 @@ class _Conv:
         self.lock = threading.Lock()          # guards seq + append + fan-out
         self.subscribers: set[Queue] = set()
         self.next_seq = self._last_seq() + 1
-        self.turn: "_Turn | None" = None
+        self.turn: _Turn | None = None
 
     @property
     def events_path(self) -> Path:
@@ -368,12 +381,16 @@ class _Conv:
 
 
 class _Turn:
-    """One in-flight CLI run. Alive until the runner thread finishes."""
+    """One in-flight SDK turn. Alive until the runner thread finishes.
+
+    ``stopped`` and ``timed_out`` are plain attribute writes read by the
+    async watchdog inside the turn's own event loop -- the GIL makes the
+    flag handoff safe, and nothing here ever touches the loop from outside.
+    """
 
     def __init__(self, text: str):
         self.text = text
         self.started = _now()
-        self.proc: subprocess.Popen | None = None
         self.finished = threading.Event()
         self.timed_out: str | bool = False
         self.last_activity = 0.0
@@ -414,6 +431,9 @@ class ChatAgent:
         self._registry_lock = threading.Lock()
         self._tools_cache: list[str] | None = None
         self._tools_cache_ready = False
+        #: Test seam: build a fake Transport from the turn's options instead
+        #: of letting the SDK spawn the real CLI. Production never sets it.
+        self._transport_factory: Callable[[ClaudeAgentOptions], Any] | None = None
 
     # -- conversation store -------------------------------------------------
 
@@ -595,23 +615,14 @@ class ChatAgent:
         turn = conv.turn
         if turn is None or not turn.alive():
             return {"stopped": False, "reason": "no turn in flight"}
+        # A flag, not a kill: the turn's own watchdog task sees it within
+        # 200ms, asks the SDK control channel to interrupt, and only cancels
+        # the stream (tearing down the CLI) if the interrupt is ignored for
+        # five seconds. The subprocess engine could only SIGKILL.
         turn.stopped = True
-        self._kill(turn)
         return {"stopped": True}
 
     # -- internals ----------------------------------------------------------
-
-    def _find_cli(self) -> str | None:
-        if self._claude_bin:
-            return self._claude_bin if Path(self._claude_bin).exists() else None
-        # The native install is preferred over whatever PATH finds: on this
-        # machine PATH resolves to an nvm shim whose Node 18 crashes cli.js
-        # ("TypeError: Object not disposable" -- the dispose polyfill needs a
-        # newer Node), while ~/.local/bin/claude is a self-contained binary.
-        native = Path.home() / ".local" / "bin" / "claude"
-        if native.exists():
-            return str(native)
-        return shutil.which("claude")
 
     def _briefing(self) -> str:
         if self._briefing_fn is not None:
@@ -638,49 +649,65 @@ class ChatAgent:
         )
         return [f"mcp__fpl-server__{n}" for n in names]
 
-    def _mcp_config(self, conv: _Conv) -> Path:
-        config = {
-            "mcpServers": {
+    def _scrub_environment(self) -> None:
+        """Remove auth/nesting variables the SDK child must never inherit.
+
+        The SDK composes the CLI's environment from ``os.environ`` and can add
+        but not remove, so the removal happens here, on the server's own
+        environment. That is safe because this server has no legitimate use
+        for any of these: the CLI's own login is the auth, and a leaked
+        ANTHROPIC_BASE_URL once sent the CLI's OAuth token to a dev proxy
+        that rejected it as revoked. CLAUDECODE itself is stripped by the SDK
+        (its issue #573); the rest are ours to clear.
+        """
+        for var in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
+                    "ANTHROPIC_BASE_URL", "ANTHROPIC_CUSTOM_HEADERS",
+                    "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT"):
+            os.environ.pop(var, None)
+
+    def build_options(self, conv: _Conv, session_id: str | None,
+                      stderr_cb: Callable[[str], None] | None = None,
+                      ) -> ClaudeAgentOptions:
+        """The SDK options for one turn. Pure given its inputs; the tests pin
+        that resume, the toolbelt, and the tool posture survive the engine
+        swap exactly.
+
+        - ``tools=[]`` disables EVERY built-in (Bash, Read, the lot): the
+          toolbelt is the agent's only hands. ``disallowed_tools`` stays as
+          belt-and-braces so the posture survives even if a future SDK
+          version grows the built-in set behind a preset.
+        - ``model="opus"`` -- the owner's decision is Opus always; the alias
+          tracks the CLI's newest Opus rather than pinning a dated id.
+        - The system prompt APPENDS to the claude_code preset, matching the
+          old ``--append-system-prompt`` exactly.
+        """
+        return ClaudeAgentOptions(
+            cwd=str(self.cwd),
+            model="opus",
+            # The old engine preferred ~/.local/bin/claude over PATH because
+            # an nvm shim's Node 18 crashes cli.js. The SDK does its own
+            # discovery, but an explicit binary from the caller still wins.
+            cli_path=self._claude_bin,
+            resume=session_id or None,
+            tools=[],
+            allowed_tools=self.allowed_tools(),
+            disallowed_tools=list(DISALLOWED_TOOLS),
+            system_prompt={
+                "type": "preset", "preset": "claude_code",
+                "append": self._briefing() + "\n\n" + CHARTER,
+            },
+            mcp_servers={
                 "fpl-server": {
+                    "type": "stdio",
                     "command": self.mcp_python,
                     "args": mcp_command(self.mcp_python, self.mcp_main)[1:],
                     "env": {"ARGUS_CONV_ID": conv.path.name},
                 }
-            }
-        }
-        path = conv.path / "mcp.json"
-        path.write_text(json.dumps(config, indent=2))
-        return path
-
-    def _build_command(self, conv: _Conv, turn: _Turn,
-                       binary: str, session_id: str | None) -> list[str]:
-        system_prompt = self._briefing() + "\n\n" + CHARTER
-        cmd = [
-            binary, "-p", turn.text,
-            "--output-format", "stream-json",
-            "--include-partial-messages",
-            "--verbose",  # -p + stream-json requires it
-            "--mcp-config", str(self._mcp_config(conv)),
-            "--strict-mcp-config",  # only OUR toolbelt, not ambient servers
-            "--append-system-prompt", system_prompt,
-            "--allowedTools", ",".join(self.allowed_tools()),
-            "--disallowedTools", ",".join(DISALLOWED_TOOLS),
-        ]
-        if session_id:
-            cmd += ["--resume", session_id]
-        return cmd
-
-    def _kill(self, turn: _Turn) -> None:
-        proc = turn.proc
-        if proc is None or proc.poll() is not None:
-            return
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        except (ProcessLookupError, PermissionError, OSError):
-            try:
-                proc.kill()
-            except OSError:
-                pass
+            },
+            strict_mcp_config=True,
+            include_partial_messages=True,
+            stderr=stderr_cb,
+        )
 
     def _run_turn(self, conv: _Conv, turn: _Turn) -> None:
         try:
@@ -694,96 +721,76 @@ class ChatAgent:
             self._update_meta(conv)
 
     def _run_turn_inner(self, conv: _Conv, turn: _Turn) -> None:
-        binary = self._find_cli()
-        if binary is None:
-            self._emit(conv, "error", {"message": (
-                "claude CLI not found on PATH (looked for `claude` and "
-                "~/.local/bin/claude). Install Claude Code and run "
-                "`claude login`; the deterministic router still works."
-            )})
-            return
-
         try:
             meta = json.loads(conv.meta_path.read_text())
         except (OSError, json.JSONDecodeError):
             meta = {}
         session_id = meta.get("claude_session_id")
-
-        env = dict(os.environ)
-        # The CLI's own login is the auth: no key, no proxy, no base-url
-        # override may leak in from whatever launched this server (a dev
-        # harness sets ANTHROPIC_BASE_URL, which sends the CLI's OAuth token
-        # to a proxy that rejects it as revoked).
-        for var in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
-                    "ANTHROPIC_BASE_URL", "ANTHROPIC_CUSTOM_HEADERS"):
-            env.pop(var, None)
-        # If the platform server was itself launched from inside a Claude
-        # Code session (dev previews), the child CLI would refuse to start
-        # ("cannot be launched inside another Claude Code session"). This
-        # headless -p child is the designed escalation path, not a nested
-        # interactive session; scrub the markers.
-        env.pop("CLAUDECODE", None)
-        env.pop("CLAUDE_CODE_ENTRYPOINT", None)
-        env.pop("CLAUDE_CODE_SSE_PORT", None)
-
-        cmd = self._build_command(conv, turn, binary, session_id)
+        self._scrub_environment()
         try:
-            proc = subprocess.Popen(
-                cmd,
-                stdin=subprocess.DEVNULL,  # -p reads a piped stdin to EOF;
-                                           # an inherited open pipe = hang
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                cwd=str(self.cwd), env=env, text=True,
-                start_new_session=True,
+            asyncio.run(self._async_turn(conv, turn, session_id))
+        except CLINotFoundError:
+            self._emit(conv, "error", {"message": (
+                "claude CLI not found (looked on PATH and in the SDK's known "
+                "locations). Install Claude Code and run `claude login`, "
+                "then ask again."
+            )})
+        except ProcessError as exc:
+            self._emit_process_error(conv, exc)
+
+    def _emit_process_error(self, conv: _Conv, exc: ProcessError) -> None:
+        """The CLI died without an answer. Same remediation the subprocess
+        engine gave: a lost session cache clears the stale id so the next
+        message starts fresh; an auth failure names `claude login`."""
+        detail = " ".join(str(part) for part in
+                          (exc, getattr(exc, "stderr", "") or "") if part)
+        message = f"the claude CLI exited without an answer: {_compact(detail, 600)}"
+        lower = detail.lower()
+        if "no conversation found with session id" in lower:
+            self._update_meta(conv, claude_session_id=None)
+            message += (
+                "\nThe CLI's session cache lost this conversation; the "
+                "stale session id was cleared and the next message starts "
+                "a fresh agent session (transcript here is unaffected)."
             )
-        except OSError as exc:
-            self._emit(conv, "error", {
-                "message": f"could not start the claude CLI: {exc}",
-            })
-            return
-        turn.proc = proc
-        if turn.stopped:  # stop() raced the spawn; honour it immediately
-            self._kill(turn)
+        elif ("log in" in lower or "login" in lower or "authent" in lower
+                or "oauth" in lower or "api key" in lower):
+            message += "\nRun `claude login` to authenticate the CLI."
+        self._emit(conv, "error", {"message": message})
+
+    async def _async_turn(self, conv: _Conv, turn: _Turn,
+                          session_id: str | None) -> None:
+        """One SDK turn: connect, ask, translate the stream, watch the clock.
+
+        The watchdog and the stop flag live INSIDE the event loop as a
+        sibling task, so `stop()` from any thread only ever sets a flag --
+        no cross-thread loop juggling. Interrupt is graceful-then-hard:
+        the SDK control channel first, task cancellation after a grace
+        period (the cancel tears down the transport, which kills the CLI).
+        """
+        stderr_tail: list[str] = []
+
+        def _tail(line: str) -> None:
+            stderr_tail.append(line.rstrip("\n"))
+            del stderr_tail[:-40]
+
+        options = self.build_options(conv, session_id, stderr_cb=_tail)
+        transport = (self._transport_factory(options)
+                     if self._transport_factory is not None else None)
+        client = ClaudeSDKClient(options, transport=transport)
 
         started = time.monotonic()
         turn.last_activity = started
-
-        idle_s = self.timeout_s                     # test-overridable
-        poll_s = max(0.1, min(10.0, idle_s / 3))
-
-        def _watchdog() -> None:
-            while proc.poll() is None:
-                time.sleep(poll_s)
-                now = time.monotonic()
-                if now - started > TURN_HARD_CAP_S:
-                    turn.timed_out = "hard"
-                    self._kill(turn)
-                    return
-                if now - turn.last_activity > idle_s:
-                    turn.timed_out = "idle"
-                    self._kill(turn)
-                    return
-
-        watchdog = threading.Thread(target=_watchdog, daemon=True)
-        watchdog.start()
-
-        stderr_tail: list[str] = []
-
-        def _drain_stderr() -> None:
-            assert proc.stderr is not None
-            for line in proc.stderr:
-                stderr_tail.append(line.rstrip("\n"))
-                del stderr_tail[:-40]
-
-        err_thread = threading.Thread(target=_drain_stderr, daemon=True)
-        err_thread.start()
-
+        idle_s = self.timeout_s
         saw_terminal = False
-        try:
-            assert proc.stdout is not None
-            for raw in proc.stdout:
+        interrupted_at: float | None = None
+        stream_error: BaseException | None = None
+
+        async def _consume() -> None:
+            nonlocal saw_terminal
+            async for msg in client.receive_response():
                 turn.last_activity = time.monotonic()
-                for type_, payload in parse_stream_json_line(raw):
+                for type_, payload in events_from_message(msg):
                     if type_ == "init":
                         sid = payload.get("session_id")
                         if sid:
@@ -794,53 +801,70 @@ class ChatAgent:
                         if sid:
                             self._update_meta(conv, claude_session_id=sid)
                         if type_ == "error":
-                            msg = payload.get("message", "")
-                            if ("authenticat" in msg.lower()
-                                    or "oauth" in msg.lower()):
+                            msg_text = payload.get("message", "")
+                            if ("authenticat" in msg_text.lower()
+                                    or "oauth" in msg_text.lower()):
                                 payload["message"] = (
-                                    msg + "\nThe claude CLI's login has "
+                                    msg_text + "\nThe claude CLI's login has "
                                     "expired or been revoked: run `claude "
                                     "login` in a terminal, then ask again."
                                 )
                     self._emit(conv, type_, payload)
+
+        try:
+            await client.connect()
+            await client.query(turn.text)
+            consumer = asyncio.ensure_future(_consume())
+            try:
+                while not consumer.done():
+                    await asyncio.wait([consumer], timeout=0.2)
+                    now = time.monotonic()
+                    hard = now - started > TURN_HARD_CAP_S
+                    idle = now - turn.last_activity > idle_s
+                    if hard or idle:
+                        turn.timed_out = "hard" if hard else "idle"
+                    if (turn.stopped or turn.timed_out) and interrupted_at is None:
+                        interrupted_at = now
+                        try:
+                            await client.interrupt()
+                        except Exception:  # noqa: BLE001 - grace path; the cancel below is the guarantee
+                            consumer.cancel()
+                    elif interrupted_at is not None and now - interrupted_at > 5.0:
+                        consumer.cancel()
+                await consumer
+            except asyncio.CancelledError:
+                pass
+            except Exception as exc:  # noqa: BLE001 - reported below, transcript over traceback
+                stream_error = exc
         finally:
-            proc.wait()
-            err_thread.join(timeout=5)
+            try:
+                await client.disconnect()
+            except Exception:  # noqa: BLE001, S110 - a failed teardown must not eat the post-mortem
+                pass
 
         if turn.timed_out == "idle":
             self._emit(conv, "error", {"message": (
                 f"the turn timed out after {int(idle_s)}s of silence (no "
-                "output, no tool activity) and was killed; the conversation "
-                "is still usable -- ask again or narrow the question."
+                "output, no tool activity) and was interrupted; the "
+                "conversation is still usable -- ask again or narrow the "
+                "question."
             )})
         elif turn.timed_out == "hard":
             self._emit(conv, "error", {"message": (
                 f"the turn timed out at the {TURN_HARD_CAP_S // 60}-minute "
-                "hard cap and was killed; the conversation is still usable "
-                "-- narrow the question or split it into steps."
+                "hard cap and was interrupted; the conversation is still "
+                "usable -- narrow the question or split it into steps."
             )})
         elif turn.stopped:
             self._emit(conv, "error", {"message": "stopped by user"})
-        elif proc.returncode != 0 and not saw_terminal:
+        elif stream_error is not None:
             tail = "\n".join(stderr_tail[-8:]).strip()
-            message = (
-                f"the claude CLI exited {proc.returncode} without an answer."
-                + (f"\n{tail}" if tail else "")
-            )
-            lower = tail.lower()
-            if "no conversation found with session id" in lower:
-                self._update_meta(conv, claude_session_id=None)
-                message += (
-                    "\nThe CLI's session cache lost this conversation; the "
-                    "stale session id was cleared and the next message starts "
-                    "a fresh agent session (transcript here is unaffected)."
-                )
-            elif "log in" in lower or "login" in lower or "authent" in lower \
-                    or "api key" in lower:
-                message += "\nRun `claude login` to authenticate the CLI."
-            self._emit(conv, "error", {"message": message})
+            self._emit(conv, "error", {"message": (
+                f"the agent stream failed: {type(stream_error).__name__}: "
+                f"{stream_error}" + (f"\n{tail}" if tail else "")
+            )})
         elif not saw_terminal:
             self._emit(conv, "error", {"message": (
-                "the claude CLI stream ended without a result event; the "
-                "answer above (if any) may be incomplete."
+                "the agent stream ended without a result event; the answer "
+                "above (if any) may be incomplete."
             )})

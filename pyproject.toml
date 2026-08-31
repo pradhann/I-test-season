@@ -36,6 +36,7 @@ dependencies = [
   # next `uv sync` if they were not declared here.
   "mlx-whisper>=0.4; sys_platform == 'darwin'",
   "av>=12",  # v2 renamed FastMCP->MCPServer; migration is its own change
+  "claude-agent-sdk>=0.2.149",
 ]
 
 [project.optional-dependencies]
