@@ -1,0 +1,50 @@
+/* crest: the badge-or-monogram club identity mark (components/clubmark.js).
+   The image and the monogram share one fixed box; a failed load flips one
+   class (`fall`) to reveal the monogram, so an offline page shows a ringed
+   club-coloured disc instead of a broken-image glyph, with no layout shift.
+
+   Three sizes only — s14 (verdict chips, torn-card rows), s20 (the board
+   rail and the League Shape marks), s34 (drawer mastheads) — because those
+   are the only five places a crest is allowed to appear. Never inside a grid
+   cell: a scatter mark stands for the entity, a cell is the data field. */
+.crest { position: relative; display: inline-grid; place-items: center;
+         width: 20px; height: 20px; flex: none; }
+.crest img { width: 100%; height: 100%; object-fit: contain; }
+.crest .mg { display: none; }
+.crest.fall img { display: none; }
+.crest.fall .mg {
+  display: grid; place-items: center; width: 100%; height: 100%;
+  border-radius: 50%;
+  background: var(--club, var(--raised));
+  color: var(--club-ink, var(--ink));
+  box-shadow: 0 0 0 1px var(--line);       /* ring survives both themes */
+  font: 700 8.5px/1 var(--mono); letter-spacing: .02em;
+}
+.crest.s14 { width: 14px; height: 14px; } .crest.s14 .mg { font-size: 7px; }
+.crest.s34 { width: 34px; height: 34px; } .crest.s34 .mg { font-size: 12px; }
+
+/* club identity constants — chrome, not data; confined to the disc.
+   Keys are payload team_codes; ink chosen per-disc for >=4.5:1. A kit colour
+   is a stable public fact about the club, not a warehouse measurement, so it
+   lives here the way the colour ramp lives in fixtures.css. */
+[data-club="1"]  { --club:#da291c; --club-ink:#fff; } /* MUN */
+[data-club="2"]  { --club:#ffcd00; --club-ink:#1a1d21; } /* LEE */
+[data-club="3"]  { --club:#ef0107; --club-ink:#fff; } /* ARS */
+[data-club="4"]  { --club:#241f20; --club-ink:#fff; } /* NEW */
+[data-club="6"]  { --club:#132257; --club-ink:#fff; } /* TOT */
+[data-club="7"]  { --club:#670e36; --club-ink:#fff; } /* AVL */
+[data-club="8"]  { --club:#034694; --club-ink:#fff; } /* CHE */
+[data-club="9"]  { --club:#78d0f3; --club-ink:#1a1d21; } /* COV */
+[data-club="11"] { --club:#003399; --club-ink:#fff; } /* EVE */
+[data-club="14"] { --club:#c8102e; --club-ink:#fff; } /* LIV */
+[data-club="17"] { --club:#dd0000; --club-ink:#fff; } /* NFO */
+[data-club="31"] { --club:#1b458f; --club-ink:#fff; } /* CRY */
+[data-club="36"] { --club:#0057b8; --club-ink:#fff; } /* BHA */
+[data-club="40"] { --club:#3a64a3; --club-ink:#fff; } /* IPS */
+[data-club="43"] { --club:#6cabdd; --club-ink:#1a1d21; } /* MCI */
+[data-club="54"] { --club:#1a1d21; --club-ink:#fff; } /* FUL */
+[data-club="56"] { --club:#eb172b; --club-ink:#fff; } /* SUN */
+[data-club="88"] { --club:#f18a01; --club-ink:#1a1d21; } /* HUL */
+[data-club="91"] { --club:#da291c; --club-ink:#fff; } /* BOU */
+[data-club="94"] { --club:#e30613; --club-ink:#fff; } /* BRE */
+/* unmapped code: falls to var(--raised)/var(--ink) automatically */

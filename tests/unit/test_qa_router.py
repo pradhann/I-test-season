@@ -271,17 +271,25 @@ def test_creator_summary_reads_the_real_claim_schema(tmp_path, monkeypatch) -> N
             benchmark VARCHAR, benchmark_points DOUBLE, hit BOOLEAN,
             unscoreable VARCHAR, resolved_utc TIMESTAMPTZ)
     """)
+    # published_at is RELATIVE to the clock, not a literal. The chip-talk
+    # answer filters to the last 10 days of content, so a hardcoded date is a
+    # time bomb: this test was seeded '2026-08-19', passed until 2026-08-29,
+    # and went red at the stroke of the window with no diff to explain it --
+    # the same failure field_fixtures had with its GW2 deadline. Two days ago
+    # is always inside a ten-day window.
+    import datetime as dt
+    recent = (dt.datetime.now(dt.UTC) - dt.timedelta(days=2)).isoformat()
     wh.sql("""
         INSERT INTO content_item VALUES
         ('i1','pod_fplwire','The FPL Wire','podcast','Ep 1','u',
-         '2026-08-19T12:00:00+00:00','we are on the bench boost train for gw1',
-         '2026-08-19T13:00:00+00:00','transcript')
-    """)
+         ?,'we are on the bench boost train for gw1',
+         ?,'transcript')
+    """, [recent, recent])
     wh.sql("""
         INSERT INTO content_claim VALUES
         ('c1','i1','The FPL Wire','pod_fplwire',101,'GKP0','gkp0','buy',
-         '2026-27',1,0.6,'r','u','2026-08-19T12:00:00+00:00',false)
-    """)
+         '2026-27',1,0.6,'r','u',?,false)
+    """, [recent])
     r = QuestionRouter(wh)
     import fpl_edge.interfaces.creators as cr
     monkeypatch.setattr(cr, "_refresh", lambda keys, **k: False)
