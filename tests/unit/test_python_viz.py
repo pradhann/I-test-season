@@ -73,7 +73,7 @@ def test_a_dataset_arrives_as_a_dataframe(tmp_path, monkeypatch):
     class FakeResult:
         rows = [{"web_name": "Salah", "own": 60.1},  # noqa: RUF012 - a test stub, not a model
                 {"web_name": "Haaland", "own": 55.0}]
-        columns = ["web_name", "own"]
+        columns = ["web_name", "own"]  # noqa: RUF012 - a test stub
         truncated = False
         row_count = 2
 
