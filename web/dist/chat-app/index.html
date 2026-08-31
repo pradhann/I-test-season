@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>chat (dev)</title>
+<!-- Dev-only shell. In production the platform shell (web/dist/index.html)
+     already loads /app.css and mounts the built bundle via js/views/chat.js;
+     this page exists so `npm run dev` shows the app with real tokens. -->
+<link rel="stylesheet" href="/app.css">
+  <script type="module" crossorigin src="/chat-app/assets/index.js"></script>
+  <link rel="stylesheet" crossorigin href="/chat-app/assets/index.css">
+</head>
+<body>
+<div id="chat-root" style="height:100vh"></div>
+</body>
+</html>

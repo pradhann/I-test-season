@@ -21,6 +21,8 @@
     GET  /api/conversations/{id}/events  JSON page (non-SSE fallback)
     POST /api/conversations/{id}/stop kill the in-flight turn
     GET  /api/chat/assets/{id}.{png|svg}  charts the agent's python_viz produced
+    POST /api/players/{code}/fetch_profile  start the on-demand Understat fetch (202)
+    GET  /api/players/{code}/fetch_profile  its state: idle|running|done|error
     /                                 the built web/ bundle, if present
 
 What is deliberately *absent* is as load-bearing as what is here: no route
@@ -43,6 +45,7 @@ an unauthenticated SQL endpoint on the local network.
 from __future__ import annotations
 
 import datetime as dt
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -118,6 +121,17 @@ class GameweekRequest(BaseModel):
 
     gameweek: int
     note: str = ""
+
+
+#: The season the profile-fetch route defaults to; one string, next to the
+#: request model that carries it, rather than a fourth copy of the literal.
+SEASON_DEFAULT = "2026-27"
+
+
+class FetchProfileRequest(BaseModel):
+    """Which season to fetch a player's Understat profile for."""
+
+    season: str = SEASON_DEFAULT
 
 
 def create_app(db: Path | str = DEFAULT_DB,
@@ -286,6 +300,60 @@ def create_app(db: Path | str = DEFAULT_DB,
     @app.get("/api/solve/plan")
     def get_solve_plan() -> JSONResponse:
         return JSONResponse(_solve_plan(db_path))
+
+    # ---- on-demand Understat profile fetch (CHAT_ARCHITECTURE §6) ----
+    # The async-on-click half of the player profile: the panel only ever READS
+    # the warehouse, so an absent profile is filled by this route calling the
+    # one sanctioned fetch path (fpl_edge/ingest/understat.py) in a background
+    # thread while the drawer polls the panel. State is in-process and honest:
+    # a fetch that failed says so with the ingest's own words (including the
+    # strict resolver's refusal listing its candidates), never a silent "idle".
+    app.state.profile_fetches = {}
+    profile_fetch_lock = threading.Lock()
+
+    def _profile_fetch_state(code: int) -> dict[str, Any]:
+        return dict(app.state.profile_fetches.get(int(code))
+                    or {"code": int(code), "state": "idle", "detail": None})
+
+    @app.post("/api/players/{code}/fetch_profile")
+    def post_fetch_profile(code: int,
+                           body: FetchProfileRequest | None = None) -> JSONResponse:
+        season = (body.season if body is not None else SEASON_DEFAULT).strip()
+
+        def _run() -> None:
+            # Imported here, not at module top: the route must exist even if
+            # the ingest module breaks, and tests monkeypatch this attribute.
+            try:
+                from fpl_edge.ingest import understat as understat_mod
+
+                summary = understat_mod.fetch_player_profile(
+                    int(code), season, db=db_path)
+                app.state.profile_fetches[int(code)] = {
+                    "code": int(code), "state": "done", "detail": None,
+                    "summary": summary,
+                }
+            except Exception as exc:  # noqa: BLE001 - reported verbatim to the poller
+                app.state.profile_fetches[int(code)] = {
+                    "code": int(code), "state": "error",
+                    "detail": f"{type(exc).__name__}: {exc}",
+                }
+
+        with profile_fetch_lock:
+            current = _profile_fetch_state(code)
+            if current["state"] == "running":
+                # Idempotent: the button being clicked twice is one fetch.
+                return JSONResponse(current, status_code=202)
+            app.state.profile_fetches[int(code)] = {
+                "code": int(code), "state": "running", "detail": None,
+                "started_utc": dt.datetime.now(UTC).isoformat(),
+            }
+            threading.Thread(target=_run, daemon=True,
+                             name=f"understat-fetch-{code}").start()
+        return JSONResponse(_profile_fetch_state(code), status_code=202)
+
+    @app.get("/api/players/{code}/fetch_profile")
+    def get_fetch_profile(code: int) -> JSONResponse:
+        return JSONResponse(_profile_fetch_state(code))
 
     # ---- paste a link (fpl_edge/platform/link_jobs.py) ----
     # The corpus-writing route on this server, and it writes exactly one way:

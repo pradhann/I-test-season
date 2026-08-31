@@ -64,6 +64,11 @@ from fpl_mcp.tools import content_tools  # noqa: F401
 # resolution; guarded the same way.
 from fpl_mcp.tools import chat_tools  # noqa: F401
 
+# Understat player profiles (CHAT_ARCHITECTURE §6): reads through the same
+# player_profile panel the xPoints drawer renders; owns the one sanctioned
+# on-demand fetch when the warehouse holds nothing for a player.
+from fpl_mcp.tools import profile_tools  # noqa: F401
+
 # Authentication and transfer tools
 # Authentication and transfer tools have been removed.  They were
 # experimental and are no longer part of this project.  To avoid

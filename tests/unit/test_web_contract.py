@@ -258,6 +258,25 @@ def test_sorting_rebuilds_the_tbody_not_the_panel() -> None:
     )
 
 
+def test_the_chat_subapp_is_built_and_the_view_mounts_it() -> None:
+    """The chat tab is the one built sub-app (CHAT_ARCHITECTURE §5): source in
+    web/chat-app/, committed build in web/dist/chat-app/ with fixed asset
+    names. A missing build would render an empty tab silently; fail loudly."""
+    bundle = WEB / "chat-app" / "assets" / "index.js"
+    css = WEB / "chat-app" / "assets" / "index.css"
+    assert bundle.is_file() and bundle.stat().st_size > 10_000, (
+        "web/dist/chat-app/assets/index.js is missing or empty — run "
+        "`npm run build` in web/chat-app/"
+    )
+    assert css.is_file(), (
+        "web/dist/chat-app/assets/index.css did not build; the pane would "
+        "mount unstyled"
+    )
+    assert "/chat-app/" in VIEWS["chat"], (
+        "the chat view must mount the built sub-app from /chat-app/"
+    )
+
+
 def test_no_raw_html_from_model_or_panel_output() -> None:
     """Chat and panels render server/model text; innerHTML on raw output is an
     injection seam. textContent/createTextNode only, except vetted literals."""

@@ -29,3 +29,6 @@ code_bases/
 # chat conversations and chart assets are runtime data, not source
 data/warehouse/chat/
 data/raw/content/
+
+# chat sub-app toolchain (web/chat-app builds into web/dist/chat-app)
+web/chat-app/node_modules/

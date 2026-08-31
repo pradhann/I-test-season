@@ -175,6 +175,18 @@ PANELS: tuple[Panel, ...] = (
             "drawers so the corpus is reachable wherever a player is in focus."
         ),
     ),
+    Panel(
+        id="player_profile",
+        title="Player profile (Understat)",
+        script="player_profile",
+        layout="list",
+        description=(
+            "One player's cached Understat season through the FPL lens: "
+            "per-match shots/xG/xA, finishing luck labelled as luck, and the "
+            "minutes pattern. Mounted in the xPoints drawer; reads only -- an "
+            "absent profile is fetched on demand via its own route."
+        ),
+    ),
 )
 
 
