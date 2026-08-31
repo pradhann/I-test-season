@@ -1,8 +1,7 @@
 # Chat — the architecture spec
 
-Status: SPEC UNDER DISCUSSION with the owner. No code until the open questions
-at the bottom are settled. Decisions marked DECIDED were confirmed by the owner
-on 2026-08-31.
+Status: SPEC CLOSED 2026-08-31 — every question settled with the owner.
+Ready to build in the §8 order.
 
 The owner's framing: chat is the most important feature of the platform and
 needs the most work. The current implementation is two brains bolted together
@@ -184,13 +183,15 @@ Rendering, Claude-Code/Cowork grade:
 6. Documents/artifacts + export.
 7. Understat ingest + player_profile panel (chat + xPoints drawer).
 
-## 9 · Open questions for the owner
+## 9 · Final decisions (closed with owner, 2026-08-31)
 
-1. **Ambient squad context**: should every conversation auto-load entry
-   4490171's current state (squad, bank, chips, deadline) so "should I sell
-   Watkins" needs no lookup — at the cost of tokens per turn?
-2. **Model policy**: default every turn to Opus, or Sonnet-by-default with
-   the agent escalating to Opus for solver/deep-analysis turns? (Cost is
-   Max-plan quota, not dollars.)
-3. **History migration**: keep old conversations readable in the new UI, or
-   archive and start clean?
+1. **Ambient squad context — always.** Every conversation carries entry
+   4490171's live state (current XV, bank, chips, next deadline) in its
+   system context, refreshed per turn. "Should I sell Watkins" needs zero
+   lookups. Implementation: one panel-backed context builder, cached per
+   deadline so the per-turn cost is a read, not a crawl.
+2. **Opus always.** Every turn on the strongest model; quota is the price
+   and chat is the platform's most important feature. No routing logic.
+3. **Start clean.** The old events.jsonl conversations are kept on disk
+   untouched, but the new sidebar starts empty — they were router-era
+   tests, not history worth carrying.
