@@ -36,7 +36,8 @@ RIVAL_PIT_KEYS: dict[str, tuple[str, ...]] = {
     "fact_manager_season": ("entry_id", "season"),
     "fact_manager_gw": ("entry_id", "season", "gw"),
     "fact_manager_pick": ("entry_id", "season", "gw", "element_id"),
-    "fact_manager_transfer": ("entry_id", "season", "gw", "element_in", "element_out"),
+    "fact_manager_transfer": ("entry_id", "season", "gw", "element_in",
+                              "element_out", "time_utc"),
     "fact_manager_chip": ("entry_id", "season", "gw"),
 }
 
@@ -141,9 +142,16 @@ CREATE TABLE IF NOT EXISTS fact_manager_transfer (
     element_in_cost   INTEGER,
     element_out       INTEGER NOT NULL,
     element_out_cost  INTEGER,
-    time_utc          TIMESTAMPTZ,
+    -- Click time is part of the ENTITY key, not payload: FPL's transfer log
+    -- legitimately contains the same (in, out) pair twice in one gameweek
+    -- (transfer, undo via the reverse, redo). Without time_utc in the key the
+    -- first real multi-transfer gameweek hit a PRIMARY KEY violation on entry
+    -- 46827 and the whole crawl step failed. NOT NULL because a key column
+    -- cannot be null; the ingest drops-and-counts the (never yet observed)
+    -- case of a transfer event FPL serves without a time.
+    time_utc          TIMESTAMPTZ NOT NULL,
     as_of             TIMESTAMPTZ NOT NULL,
-    PRIMARY KEY (entry_id, season, gw, element_in, element_out, as_of)
+    PRIMARY KEY (entry_id, season, gw, element_in, element_out, time_utc, as_of)
 );
 
 -- One chip per manager per gameweek (the rules forbid two), so the gameweek is

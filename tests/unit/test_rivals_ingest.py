@@ -11,6 +11,7 @@ worthless in a way that produces excellent-looking numbers.
 from __future__ import annotations
 
 import datetime as dt
+import pathlib
 import json
 import sys
 from pathlib import Path
@@ -171,6 +172,47 @@ def test_transfer_costs_survive_parsing():
     row = df[df["element_in"] == 305].iloc[0]
     assert row["element_in_cost"] == 75
     assert row["element_out_cost"] == 71
+
+
+def test_the_same_pair_twice_in_one_gameweek_is_two_rows_not_a_crash():
+    """FPL's transfer log legitimately repeats an (in, out) pair inside one
+    gameweek: transfer, undo via the reverse, redo. Both redo rows share every
+    old key column and the deadline as_of; only the click time differs. The
+    first real multi-transfer gameweek (entry 46827, GW2) hit a PRIMARY KEY
+    violation and killed the whole crawl step -- time_utc is part of the
+    entity key now, and this pins it."""
+    from fpl_edge.store.warehouse import Warehouse
+    body = [
+        {"event": 3, "element_in": 305, "element_in_cost": 75,
+         "element_out": 71, "element_out_cost": 71,
+         "time": "2026-09-05T08:00:00Z"},
+        {"event": 3, "element_in": 71, "element_in_cost": 71,
+         "element_out": 305, "element_out_cost": 75,
+         "time": "2026-09-05T08:10:00Z"},
+        {"event": 3, "element_in": 305, "element_in_cost": 75,
+         "element_out": 71, "element_out_cost": 71,
+         "time": "2026-09-05T08:20:00Z"},  # the redo: same pair, later click
+    ]
+    df = parse_transfers(46827, body, season="2026-27", deadlines=DEADLINES)
+    assert len(df) == 3
+    import tempfile
+    from fpl_edge.ingest.rivals.schema import migrate
+    with tempfile.TemporaryDirectory() as td:
+        wh = Warehouse(pathlib.Path(td) / "t.duckdb")
+        migrate(wh)
+        written = wh.append("fact_manager_transfer", df)
+        assert written == 3, "the repeated pair must be two facts, not one crash"
+        wh.close()
+
+
+def test_a_transfer_without_a_click_time_is_dropped_and_counted():
+    """A key column cannot be null, and a guessed time would be a fabricated
+    fact. FPL has never served a timeless transfer; if it ever does, the row
+    vanishes loudly in the drop count rather than silently keyed on a guess."""
+    body = [{"event": 3, "element_in": 1, "element_in_cost": 50,
+             "element_out": 2, "element_out_cost": 50, "time": None}]
+    df = parse_transfers(999, body, season="2026-27", deadlines=DEADLINES)
+    assert df.empty
 
 
 def test_empty_transfer_list_is_the_normal_preseason_answer():

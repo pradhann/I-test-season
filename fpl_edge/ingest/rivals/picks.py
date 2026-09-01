@@ -135,9 +135,18 @@ def parse_transfers(
     the exact trade this warehouse refuses to make elsewhere.
     """
     rows = []
+    dropped_untimed = 0
     for t in body or []:
         gw = t.get("event")
         if gw is None or gw not in deadlines:
+            continue
+        # time_utc is part of the entity key now (the same (in, out) pair can
+        # legitimately occur twice in one gameweek -- do, undo, redo). A
+        # transfer event without a time cannot be keyed; FPL has never served
+        # one, and if it ever does the row is dropped and counted rather than
+        # stamped with a guess.
+        if _ts(t.get("time")) is None:
+            dropped_untimed += 1
             continue
         rows.append({
             "entry_id": entry_id, "season": season, "gw": int(gw),
