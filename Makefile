@@ -56,21 +56,17 @@ clean:
 	rm -f data/warehouse/*.duckdb data/warehouse/*.wal
 
 .PHONY: deploy undeploy
-deploy:  ## Install the Telegram bot + nightly settlement as launchd services
+deploy:  ## Install the nightly settlement as a launchd service
 	mkdir -p data/warehouse/jobs ~/Library/LaunchAgents
-	cp deploy/com.fpledge.telegram.plist ~/Library/LaunchAgents/
 	cp deploy/com.fpledge.postgw.plist ~/Library/LaunchAgents/
-	launchctl unload ~/Library/LaunchAgents/com.fpledge.telegram.plist 2>/dev/null || true
 	launchctl unload ~/Library/LaunchAgents/com.fpledge.postgw.plist 2>/dev/null || true
-	launchctl load ~/Library/LaunchAgents/com.fpledge.telegram.plist
 	launchctl load ~/Library/LaunchAgents/com.fpledge.postgw.plist
-	@echo "bot: always on (KeepAlive). settlement: daily 03:00 local."
+	@echo "settlement: daily 03:00 local."
 	@echo "remove with: make undeploy"
 
-undeploy:  ## Remove the launchd services
-	launchctl unload ~/Library/LaunchAgents/com.fpledge.telegram.plist 2>/dev/null || true
+undeploy:  ## Remove the launchd service
 	launchctl unload ~/Library/LaunchAgents/com.fpledge.postgw.plist 2>/dev/null || true
-	rm -f ~/Library/LaunchAgents/com.fpledge.telegram.plist ~/Library/LaunchAgents/com.fpledge.postgw.plist
+	rm -f ~/Library/LaunchAgents/com.fpledge.postgw.plist
 
 .PHONY: deploy-dag undeploy-dag dag-tick dag-status
 deploy-dag:  ## Install the deadline DAG as a launchd service (10-minute tick)

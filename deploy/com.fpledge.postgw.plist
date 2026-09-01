@@ -9,8 +9,9 @@
     <string>/Users/nripeshpradhan/Documents/Github/i-test-season/.venv/bin/python</string>
     <string>-m</string><string>fpl_edge.jobs.post_gw</string>
   </array>
-  <!-- 10:00 UTC daily: FPL finalises points by 09:00 UK the morning after the
-       last match, so a daily 10:00Z run settles every finished gameweek at
+  <!-- Daily 03:00 LOCAL (launchd StartCalendarInterval is local-time only).
+       The intent is "after FPL finalises points at 09:00 UK": from a US
+       timezone, 03:00 local lands 10:00-11:00 UTC year-round, so the run
        most one day late and is a no-op otherwise (every step is idempotent). -->
   <key>StartCalendarInterval</key>
   <dict><key>Hour</key><integer>3</integer><key>Minute</key><integer>0</integer></dict>
