@@ -999,7 +999,7 @@ class OddsApiClient:
     #: * one refresh = 2 (featured h2h+totals, uk) + 1 per fixture priced.
     #:   Restricted to the fixtures before the next deadline that is **12** for
     #:   a 10-fixture gameweek, not the 22 an unfiltered ``/events`` list costs.
-    #: * the pre-deadline ladder fires 3 times a gameweek (T-36h, T-12h, T-3h)
+    #: * the pre-deadline ladder fires 3 times a gameweek (T-36h, T-12h, T-5h)
     #:   = 36 credits.
     #: * the nightly job tops up only when nothing has been fetched for 48h,
     #:   which outside a deadline window is about twice a week = 24 credits.

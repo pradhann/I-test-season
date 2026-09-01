@@ -2,9 +2,13 @@
 
 This module exposes a single tool, ``summarise_fpl_youtube``, that
 accepts a YouTube URL and returns a structured summary tailored for
-Fantasy Premier League (FPL) analysis.  The tool downloads the
-auto‑generated transcript of the video, extracts mentions of FPL
-players, and compiles a brief overview of the main talking points.
+Fantasy Premier League (FPL) analysis.  The transcript comes through
+``utils.video_transcript``, which delegates to the engine's sanctioned
+panel-captions route (:mod:`fpl_edge.ingest.content.youtube`): captions
+are fetched only for creators on the owner's curated panel, and any
+other video is refused with the reason and a pointer at the platform's
+paste-a-link preview flow.  A video with no transcript therefore comes
+back with WHY there is none, never a silent empty summary.
 
 The output contains:
 
@@ -266,25 +270,34 @@ def summarise_fpl_youtube(url: str) -> Dict[str, object]:  # type: ignore[overri
 
     Returns:
         A dictionary with the keys ``summary``, ``players``,
-        ``main_points`` and ``video_id``.  If the transcript cannot
-        be obtained, ``players`` and ``main_points`` will be empty and
-        ``summary`` will contain an error message.
+        ``main_points`` and ``video_id``.  If the transcript cannot be
+        obtained, ``players`` and ``main_points`` will be empty and both
+        ``summary`` and ``reason`` carry the actual reason -- off-panel
+        refusal (with the paste-a-link alternative), a source refusal, or
+        a video that publishes no captions -- never a generic failure.
     """
     video_id = extract_video_id(url)
     if not video_id:
         return {
             "summary": "Invalid YouTube URL. Please provide a standard watch or youtu.be link.",
             "players": [],
+            "main_points": [],
             "video_id": None,
+            "reason": "not a recognisable YouTube URL",
         }
-    transcript = get_transcript(video_id)
-    if not transcript:
+    result = get_transcript(video_id)
+    if not result.ok:
+        # The refusal reason, verbatim -- never a bare "not available" that
+        # hides whether the video was off-panel, declined by the source, or
+        # simply publishes no captions.
         return {
-            "summary": "Transcript not available or failed to download.",
+            "summary": result.reason or "No transcript is available.",
             "players": [],
             "main_points": [],
             "video_id": video_id,
+            "reason": result.reason,
         }
+    transcript = list(result.lines)
     # Generate the overall summary (approx. 600 characters)
     overall_summary = _summarise_overall(transcript)
     # Identify the top players and extract reasoning

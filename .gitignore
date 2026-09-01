@@ -11,6 +11,9 @@ data/raw/**/*.html
 data/raw/**/*.csv
 data/raw/**/*.bin
 !data/raw/**/.gitkeep
+# fpl_mcp's plain-JSON convenience cache (PIPELINES.md §6.5): mutable, safe to
+# delete, and deliberately OUTSIDE the data/raw provenance archive.
+data/cache/
 .env
 *.egg-info/
 dist/

@@ -1,66 +1,70 @@
-"""MCP tools for retrieving YouTube transcripts.
+"""MCP tool for retrieving YouTube transcripts, panel-scoped and honest.
 
-This module exposes a single tool, ``fetch_youtube_transcript``, that
-accepts a YouTube URL and returns the video's auto‑generated English
-transcript as plain text.  It uses the utilities in
-``utils.video_transcript`` to extract the video ID and download the
-transcript via YouTube's Innertube API.  No summarisation or
-post‑processing is performed here; the returned text can be passed to
-the language model for further analysis and summarisation.
+This module exposes a single tool, ``fetch_youtube_transcript``, that accepts
+a YouTube URL and returns the video's published English captions as plain
+text. It delegates to ``utils.video_transcript``, which routes through the
+engine's sanctioned caption path (:mod:`fpl_edge.ingest.content.youtube`):
+
+* captions are fetched only for creators on the owner's curated panel
+  (``PANEL_CREATORS``) -- the 2026-08-27 policy the engine enforces in code;
+* an off-panel video is refused with the reason and a pointer at the
+  platform's paste-a-link flow, which previews before transcribing;
+* a 403/429 from YouTube is reported as the source declining, never retried
+  and never collapsed into an empty string with no explanation.
 
 The tool output includes:
 
-* ``transcript`` – A single string containing the transcript lines
-  separated by newline characters.  If no transcript is available,
-  this value will be an empty string.
-* ``video_id`` – The extracted 11‑character YouTube video ID.  This
-  allows callers to reference or cache transcripts by ID.
-
-Example call:
-
-.. code-block:: json
-
-    {
-      "url": "https://www.youtube.com/watch?v=DFlm3_EIbko"
-    }
-
-The returned ``transcript`` can then be summarised by the language
-model using guidance provided in ``prompts.transcript_summary_guidance``.
+* ``transcript`` -- the caption lines joined by newlines, or ``""``;
+* ``video_id`` -- the extracted 11-character YouTube video ID;
+* ``route`` -- what mechanically happened ("innertube", "off_panel", ...);
+* ``reason`` -- ALWAYS present when ``transcript`` is empty: the honest
+  sentence saying why there is no transcript. Never an empty result with no
+  reason.
 """
 
 from __future__ import annotations
 
-from typing import Dict
+from typing import Dict, Optional
 
 from fpl_mcp.server import mcp  # Shared FastMCP instance
 from fpl_mcp.utils.video_transcript import extract_video_id, get_transcript
 
 
 @mcp.tool()
-def fetch_youtube_transcript(url: str) -> Dict[str, str]:  # type: ignore[override]
-    """Retrieve the auto‑generated English transcript for a YouTube video.
+def fetch_youtube_transcript(url: str) -> Dict[str, Optional[str]]:  # type: ignore[override]
+    """Retrieve the published English captions for a panel creator's video.
 
     Args:
-        url: The full YouTube URL (either ``youtu.be`` or
-            ``youtube.com/watch?v=`` format).
+        url: The full YouTube URL (``youtu.be`` or ``youtube.com/watch?v=``).
 
     Returns:
-        A dictionary with two keys:
-        ``transcript`` (str): The video's English transcript as plain
-        text, or an empty string if unavailable.
-        ``video_id`` (str): The extracted 11‑character video ID, or
-        ``None`` if the URL is invalid.
+        A dictionary with:
+        ``transcript`` (str): the caption text, newline-separated, or ``""``;
+        ``video_id`` (str | None): the 11-character video ID, or ``None`` if
+        the URL is invalid;
+        ``route`` (str): what happened mechanically;
+        ``reason`` (str | None): why the transcript is empty, when it is.
 
     Notes:
-        The transcript returned is unprocessed and may contain
-        time‑code markers and filler phrases.  Use the
-        ``transcript_summary_guidance`` prompt to instruct the
-        language model how to summarise this text for FPL analysis.
+        Captions are fetched only for creators on the owner's curated panel;
+        any other video is refused with the reason and the sanctioned
+        alternative (the platform's paste-a-link preview flow). The returned
+        transcript is unprocessed; use the ``transcript_summary_guidance``
+        prompt to summarise it for FPL analysis.
     """
     video_id = extract_video_id(url)
     if not video_id:
-        return {"transcript": "", "video_id": None}
-    lines = get_transcript(video_id)
-    # Join lines with newlines to preserve some structure for the LLM
-    transcript_text = "\n".join(lines)
-    return {"transcript": transcript_text, "video_id": video_id}
+        return {
+            "transcript": "",
+            "video_id": None,
+            "route": "invalid_url",
+            "reason": ("not a recognisable YouTube URL; paste a standard "
+                       "watch, youtu.be, shorts or live link."),
+        }
+    result = get_transcript(video_id)
+    return {
+        "transcript": result.text,
+        "video_id": video_id,
+        "route": result.route,
+        "reason": result.reason,
+    }

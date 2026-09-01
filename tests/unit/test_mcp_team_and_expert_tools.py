@@ -76,12 +76,19 @@ def elements(monkeypatch) -> pd.DataFrame:
 
 @pytest.fixture(autouse=True)
 def no_network(monkeypatch):
-    """Any real HTTP call in these tests is a test bug, not a slow test."""
+    """Any real fetch in these tests is a test bug, not a slow test.
+
+    The tools no longer import ``requests`` at all -- every live call funnels
+    through ``fpl_data.entry_json`` (the rivals client) or ``fpl_data._live_json``
+    (the engine's Fetcher) -- so those two seams, plus the warehouse read, are
+    the complete fence.
+    """
     def _boom(*a, **k):  # pragma: no cover - only fires on regression
         raise AssertionError("unit tests must not hit the FPL API")
 
-    monkeypatch.setattr(team_tools.requests, "get", _boom)
-    monkeypatch.setattr(expert_tools.requests, "get", _boom)
+    monkeypatch.setattr(team_tools.fpl_data, "entry_json", _boom)
+    monkeypatch.setattr(team_tools.fpl_data, "_live_json", _boom)
+    monkeypatch.setattr(team_tools.fpl_data, "_read_warehouse", lambda: None)
 
 
 @pytest.fixture(autouse=True)
@@ -536,3 +543,60 @@ def test_resolution_refuses_junk_without_fetching(monkeypatch, junk) -> None:
     manager, why = expert_tools._resolve_manager(junk)
     assert manager is None
     assert why
+
+
+# -- the fetch unification (PIPELINES.md §3 defect 2 / §6.5) ------------------
+
+
+def test_the_toolbelt_ships_no_second_fetch_stack() -> None:
+    """No bare ``requests`` anywhere: entry endpoints go through the rivals
+    client (``fpl_data.entry_json``) and everything else through the engine's
+    Fetcher or the warehouse. Checked structurally so it cannot quietly
+    return."""
+    for mod in (team_tools, expert_tools):
+        assert not hasattr(mod, "requests")
+        src = Path(mod.__file__).read_text(encoding="utf-8")
+        assert "import requests" not in src
+        assert "requests.get(" not in src
+
+
+def test_entry_fetches_route_through_the_rivals_client(monkeypatch, elements) -> None:
+    """The exact relative endpoints the rivals client budgets and caches on."""
+    seen: List[str] = []
+
+    def _fake(endpoint):
+        seen.append(endpoint)
+        return {"picks": []}
+
+    monkeypatch.setattr(team_tools.fpl_data, "entry_json", _fake)
+    team_tools.get_team_picks(5, team_id=42)
+    expert_tools._fetch_transfers(7)
+    expert_tools._fetch_manager_history(7)
+    assert seen == [
+        "entry/42/event/5/picks/",
+        "entry/7/transfers/",
+        "entry/7/history/",
+    ]
+
+
+def test_a_404_is_an_answer_not_a_retry_or_a_crash(monkeypatch, elements) -> None:
+    """The picks endpoint answers 404 until a deadline passes; the rivals
+    client returns body=None for it and the tools raise a sentence, never
+    retry."""
+    monkeypatch.setattr(team_tools.fpl_data, "entry_json", lambda ep: None)
+    with pytest.raises(LookupError) as exc:
+        team_tools._fetch_team_event_picks(42, 38)
+    assert "404" in str(exc.value) and "deadline" in str(exc.value)
+    with pytest.raises(LookupError):
+        expert_tools._fetch_team_picks(42, 38)
+    with pytest.raises(LookupError):
+        expert_tools._fetch_transfers(42)
+    with pytest.raises(LookupError):
+        expert_tools._fetch_manager_history(42)
+
+
+def test_current_gameweek_delegates_to_the_warehouse_backed_helper(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(expert_tools.fpl_data, "current_gameweek", lambda: 9)
+    assert expert_tools._get_current_gameweek() == 9

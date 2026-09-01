@@ -58,7 +58,7 @@ Restricted to the fixtures before the next deadline (``--horizon``, on by
 default) that is **12 credits** for a 10-fixture gameweek. Unrestricted it is
 22, because ``/events`` returns two gameweeks of fixtures.
 
-    3 ladder runs a gameweek (T-36h, T-12h, T-3h)      36
+    3 ladder runs a gameweek (T-36h, T-12h, T-5h)      36
     nightly top-up, only when >48h stale, ~2x a week   24
                                                        --
     per gameweek                                       60
@@ -214,7 +214,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
     The odds-api stage runs through :func:`refresh_odds_api`, which fetches
     with **no warehouse handle open** and takes the write lock only once every
-    body is in memory. Twelve HTTP round trips at T-3h must not sit on the lock
+    body is in memory. Twelve HTTP round trips at T-5h must not sit on the lock
     the solver and the Telegram bot are waiting for.
     """
     requested: list[str] = []

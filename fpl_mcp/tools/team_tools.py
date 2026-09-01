@@ -22,7 +22,6 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 
 import pandas as pd
-import requests
 
 # Absolute imports so that this module can be run from the project
 # root using uv or python without a package context.  Avoid leading
@@ -81,6 +80,12 @@ def _multiplier(pick: Dict[str, Any]) -> tuple[str, int]:
 def _fetch_team_event_picks(team_id: int, gw: int) -> Dict[str, Any]:
     """Fetch the picks for a team in a given gameweek.
 
+    Routed through :func:`fpl_mcp.utils.fpl_data.entry_json` -- the engine's
+    ``RivalsFetcher`` (politeness interval, TTL cache shared with the crawl,
+    archive, hard budget) rather than a bare HTTP call. A 404 is the API's
+    real answer ("that gameweek's deadline has not passed, or no such entry")
+    and is raised as such, not retried.
+
     Args:
         team_id: FPL entry/team identifier.
         gw: Gameweek number (1-38).
@@ -88,10 +93,14 @@ def _fetch_team_event_picks(team_id: int, gw: int) -> Dict[str, Any]:
     Returns:
         JSON dictionary containing picks and chip usage.
     """
-    endpoint = f"https://fantasy.premierleague.com/api/entry/{team_id}/event/{gw}/picks/"
-    resp = requests.get(endpoint)
-    resp.raise_for_status()
-    return resp.json()
+    body = fpl_data.entry_json(f"entry/{team_id}/event/{gw}/picks/")
+    if body is None:
+        raise LookupError(
+            f"the FPL API answered 404 for entry {team_id}, GW{gw} picks -- "
+            f"that gameweek's deadline has not passed yet, or the entry does "
+            f"not exist."
+        )
+    return body
 
 
 @mcp.tool()

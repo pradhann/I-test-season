@@ -32,6 +32,7 @@ import json
 import re
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -1101,6 +1102,8 @@ def ingest_link(wh, url: str) -> LinkFindings:
     channel = Channel(None, None, "not a youtube url")
     published_at, published_basis = now, ""
     host_creator = host_basis = host_reason = None
+    route = ""
+    transcript_wall_s = 0.0
     # For the user's OWN shared video the transcript routes are used directly:
     # both terminate at endpoints YouTube's robots.txt disallows for crawlers,
     # which is why the BULK pipeline keeps respect_robots on and stays
@@ -1135,7 +1138,9 @@ def ingest_link(wh, url: str) -> LinkFindings:
             else:
                 published_basis = ("the watch page could not be read, so the "
                                    "paste time is used")
+            _t0 = time.monotonic()
             lines, route = fetch_transcript(fetcher, vid, allow_disallowed_routes=True)
+            transcript_wall_s = time.monotonic() - _t0
             text = " ".join(lines)
             text_source = "transcript" if lines else f"unavailable ({route})"
             if not lines:
@@ -1192,13 +1197,60 @@ def ingest_link(wh, url: str) -> LinkFindings:
     store.insert_items([item])
 
     # Full transcript, timestamped, stored -- the queryable source of truth.
-    segments = _timed_transcript(yt.group(1)) if (yt and text_source == "transcript") else []
+    timed_route = None
+    segments = []
+    if yt and text_source == "transcript":
+        _t0 = time.monotonic()
+        segments = _timed_transcript(yt.group(1))
+        transcript_wall_s += time.monotonic() - _t0
+        if segments:
+            timed_route = "youtube_transcript_api"
     if not segments and text:
         segments = [(None, text)]
     wh.sql("DELETE FROM transcript_segment WHERE item_id = ?", [item.item_id])
     for seq, (start, seg_text) in enumerate(segments):
         wh.sql("INSERT INTO transcript_segment VALUES (?, ?, ?, ?)",
                [item.item_id, seq, start, seg_text])
+
+    if yt and text_source == "transcript":
+        # The provenance receipt (PIPELINES.md §3 defect 4). This was the one
+        # transcript path that wrote transcript_segment with no
+        # transcript_provenance row, so "how did this transcript come to be"
+        # was unanswerable for exactly the items the owner pasted by hand.
+        # Written through asr.store_provenance -- the same DDL and the same
+        # INSERT the pipeline's caption and ASR paths use, never a second
+        # schema. derivation='captions': this route reads published caption
+        # tracks only (there is no audio branch here, so 'asr' is impossible).
+        # audio_sha256/'bytes are empty and audio_seconds is None because no
+        # audio was ever downloaded or decoded -- the same honest NULLs
+        # transcription_from_captions records for the pipeline's caption path;
+        # covered_seconds IS measurable (the last cue's start) when the cues
+        # came back timed, and 0.0 when only untimed text was available.
+        from fpl_edge.ingest.content import asr
+        from fpl_edge.ingest.content.youtube import TimedLine
+
+        timed = [TimedLine(start_s=float(s), text=str(t))
+                 for s, t in segments if s is not None]
+        if timed:
+            transcription = asr.transcription_from_captions(
+                timed, video_id=yt.group(1),
+                route=timed_route or route or "captions",
+                wall_seconds=transcript_wall_s)
+        else:
+            transcription = asr.Transcription(
+                segments=(asr.Segment(seq=0, start_s=0.0, end_s=0.0, text=text),),
+                model=route or "captions", engine="youtube_captions",
+                language="en", audio_seconds=None, covered_seconds=0.0,
+                wall_seconds=transcript_wall_s, audio_sha256="",
+                audio_bytes=0,
+                audio_url=f"https://www.youtube.com/watch?v={yt.group(1)}",
+            )
+        # prior_* stay NULL: this item was inserted by this same call with the
+        # transcript already in place, so there was no earlier show-notes text
+        # being replaced -- unlike the pipeline path, which promotes text over
+        # a description and records what it displaced.
+        asr.store_provenance(wh, item.item_id, transcription,
+                             derivation="captions")
 
     # Semantic analysis first; keyword windows only as an admitted fallback.
     from fpl_edge.ingest.content.analyze import (

@@ -1,33 +1,50 @@
-"""Utility functions to download and process YouTube video transcripts.
+"""YouTube transcripts for the toolbelt, through fpl_edge's sanctioned route.
 
-This module provides a simple interface for fetching the auto‑generated
-English transcript for a YouTube video using the same Innertube API
-approach used by ``FPLWireSource``.  It also includes helpers to
-extract a video ID from a full YouTube URL.  These utilities can be
-used by tools that summarise videos for Fantasy Premier League (FPL)
-analysis.
+WHAT THIS MODULE USED TO BE, AND WHY IT CHANGED (PIPELINES.md §3 defect 2)
+--------------------------------------------------------------------------
+The first version of this file was a second, hand-rolled Innertube client:
+bare ``requests`` against ``/youtubei/v1/player`` and ``timedtext`` -- the
+exact endpoints ``youtube.com/robots.txt`` disallows and the exact route
+:mod:`fpl_edge.ingest.content.youtube` refuses by default -- with no robots
+check, a browserless-but-unidentified client, no archive, and every failure
+collapsed to ``[]`` so a refusal and an empty video were indistinguishable.
 
-We avoid external dependencies such as ``youtube_transcript_api`` to
-ensure the code can run without internet access to PyPI.
+It now delegates to the engine's one sanctioned caption path,
+:func:`fpl_edge.ingest.content.youtube.fetch_panel_captions`, and inherits its
+whole policy rather than restating it:
 
-Functions:
-    extract_video_id(url: str) -> Optional[str]:
-        Parse a YouTube URL and return the video ID if present.
+* **Panel creators only.** The 2026-08-27 owner decision permits caption
+  fetching for the named creators in ``PANEL_CREATORS`` and nobody else.
+  The check is the engine's (:class:`OffPanelRefused` is raised in code, not
+  by convention); this module surfaces it as an honest message instead of
+  an empty list.
+* **Off-panel videos are not fetched here at all.** The sanctioned way to
+  transcribe an arbitrary single video is the platform's paste-a-link flow
+  (POST ``/api/ingest/link``), which HALTS at a preview so a human decides
+  before anything is transcribed. The refusal message says so.
+* **Politeness is the engine's**: project User-Agent, ``PANEL_DELAY_S``
+  between requests, every body archived, and a 403/429 obeyed as the source
+  declining -- reported, never retried, never silently swallowed.
 
-    get_transcript(video_id: str) -> List[str]:
-        Fetch the English transcript for a given YouTube video ID.  If
-        no transcript is available or an error occurs, an empty list
-        is returned.
-
+Nothing here returns a bare ``[]`` any more: every empty transcript carries
+the reason it is empty, and the MCP tools pass that reason to the caller.
 """
 
 from __future__ import annotations
 
 import re
-import xml.etree.ElementTree as ET
-from typing import List, Optional
+from dataclasses import dataclass
+from typing import Optional
 
-import requests
+#: Where an off-panel video goes instead: the platform's preview-gated
+#: single-video route. Quoted in refusal messages so the caller is pointed at
+#: the sanctioned path rather than left with a dead end.
+PASTE_LINK_FLOW = (
+    "paste the link into the platform's Creators tab (POST /api/ingest/link): "
+    "that route fetches one page, shows a preview of who published it and what "
+    "it is about, and transcribes only after a human accepts."
+)
+
 
 def extract_video_id(url: str) -> Optional[str]:
     """Extract the YouTube video ID from a full or shortened URL.
@@ -36,7 +53,7 @@ def extract_video_id(url: str) -> Optional[str]:
         url: A string representing a YouTube watch URL or short URL.
 
     Returns:
-        The 11‑character video ID if found, otherwise ``None``.
+        The 11-character video ID if found, otherwise ``None``.
 
     Examples::
 
@@ -45,11 +62,11 @@ def extract_video_id(url: str) -> Optional[str]:
         >>> extract_video_id("https://youtu.be/abc123def45")
         'abc123def45'
     """
-    # Patterns to match typical YouTube URL formats
     patterns = [
         r"youtube\.com/watch\?v=([\w-]{11})",
         r"youtu\.be/([\w-]{11})",
         r"youtube\.com/embed/([\w-]{11})",
+        r"youtube\.com/(?:shorts|live)/([\w-]{11})",
     ]
     for pat in patterns:
         match = re.search(pat, url)
@@ -58,73 +75,118 @@ def extract_video_id(url: str) -> Optional[str]:
     return None
 
 
-def _get_innertube_api_key(video_id: str) -> Optional[str]:
-    """Retrieve the Innertube API key from the video watch page.
+@dataclass(frozen=True)
+class TranscriptResult:
+    """One transcript attempt, refusals included.
 
-    The API key is embedded in the page's JavaScript and used to
-    authenticate subsequent API calls.  If the key cannot be found,
-    ``None`` is returned.
+    ``lines`` empty always comes with a ``reason``: the caller can render the
+    refusal instead of pretending the video had nothing to say. ``route``
+    names what happened mechanically ("innertube", "off_panel",
+    "source_refused_403", ...) so the outcome is greppable.
     """
-    try:
-        html = requests.get(f"https://www.youtube.com/watch?v={video_id}", timeout=10).text
-        match = re.search(r'"INNERTUBE_API_KEY":"([^\"]+)"', html)
-        return match.group(1) if match else None
-    except Exception:
-        return None
+
+    video_id: str
+    lines: tuple[str, ...]
+    route: str
+    reason: Optional[str] = None
+    creator: Optional[str] = None
+    channel: Optional[str] = None
+
+    @property
+    def ok(self) -> bool:
+        return bool(self.lines)
+
+    @property
+    def text(self) -> str:
+        return "\n".join(self.lines)
 
 
-def get_transcript(video_id: str) -> List[str]:
-    """Download the English transcript for a YouTube video.
+def _refused(video_id: str, route: str, reason: str, *,
+             creator: str | None = None,
+             channel: str | None = None) -> TranscriptResult:
+    return TranscriptResult(video_id=video_id, lines=(), route=route,
+                            reason=reason, creator=creator, channel=channel)
 
-    Args:
-        video_id: The 11‑character YouTube video ID.
 
-    Returns:
-        A list of caption strings in chronological order.  If the
-        transcript is unavailable or an error occurs, an empty list
-        is returned.
+def get_transcript(video_id: str, *, fetcher=None) -> TranscriptResult:
+    """English captions for a panel creator's video, else an honest refusal.
+
+    Delegates entirely to :mod:`fpl_edge.ingest.content.youtube`: the watch
+    page identifies the channel, the channel resolves to a creator, and only a
+    creator on the owner's curated panel reaches the caption route. Everything
+    else comes back with the reason and a pointer at the paste-a-link flow.
+
+    ``fetcher`` is injectable for tests; by default the engine's
+    :func:`panel_fetcher` supplies the project UA, the doubled inter-request
+    delay and the archive. The identity read costs one watch-page fetch and
+    :func:`fetch_panel_captions` fetches the watch page again itself -- two
+    hits where one would do, accepted as the price of reusing the sanctioned
+    function unmodified rather than growing a second caption client here.
     """
-    api_key = _get_innertube_api_key(video_id)
-    if not api_key:
-        return []
-    url = f"https://www.youtube.com/youtubei/v1/player?key={api_key}"
-    body = {
-        "context": {
-            "client": {
-                "clientName": "ANDROID",
-                "clientVersion": "20.10.38",
-            }
-        },
-        "videoId": video_id,
-    }
-    try:
-        resp = requests.post(url, json=body, timeout=10)
-        data = resp.json()
-    except Exception:
-        return []
-    # Traverse the captions object to find the English track
-    captions = (
-        data
-        .get("captions", {})
-        .get("playerCaptionsTracklistRenderer", {})
-        .get("captionTracks", [])
+    from fpl_edge.ingest.content.youtube import (
+        WATCH_URL,
+        OffPanelRefused,
+        channel_from_watch,
+        creator_for_channel,
+        fetch_panel_captions,
+        panel_fetcher,
     )
-    track = None
-    for t in captions:
-        if t.get("languageCode") == "en":
-            track = t
-            break
-    if not track:
-        return []
-    base_url = track.get("baseUrl")
-    if not base_url:
-        return []
-    # Remove fmt parameter if present to get XML
-    base_url = re.sub(r"&fmt=\w+$", "", base_url)
+
+    own_fetcher = fetcher is None
+    if own_fetcher:
+        fetcher = panel_fetcher()
     try:
-        xml_text = requests.get(base_url, timeout=10).text
-        root = ET.fromstring(xml_text)
-        captions = [item.text or "" for item in root.findall("text")]
-        return captions
-    except Exception:
-        return []
+        watch = fetcher.get(WATCH_URL.format(vid=video_id), retries=0)
+        if watch.status in (403, 429):
+            return _refused(
+                video_id, f"source_refused_{watch.status}",
+                f"YouTube returned {watch.status} for this video. That is the "
+                f"source declining, and it is obeyed rather than retried.",
+            )
+        if not watch.ok:
+            detail = watch.status if watch.status is not None else watch.error
+            return _refused(
+                video_id, "watch_unreadable",
+                f"the watch page returned {detail}, so the video's channel "
+                f"cannot be identified and no transcript route can be chosen.",
+            )
+
+        channel = channel_from_watch(watch.text)
+        match = creator_for_channel(channel)
+        creator = match.creator or channel.name
+
+        try:
+            captions = fetch_panel_captions(fetcher, video_id,
+                                            creator=str(creator or ""))
+        except OffPanelRefused as exc:
+            # The engine's own refusal, verbatim, plus the sanctioned way out.
+            return _refused(
+                video_id, "off_panel",
+                f"{exc} For a one-off transcript of this video, "
+                f"{PASTE_LINK_FLOW}",
+                creator=creator, channel=channel.name,
+            )
+
+        if captions.refused:
+            return _refused(
+                video_id, captions.route,
+                f"YouTube declined ({captions.route}, HTTP {captions.status}). "
+                f"A refusal is obeyed, not retried.",
+                creator=creator, channel=channel.name,
+            )
+        if not captions.ok:
+            return _refused(
+                video_id, captions.route,
+                f"no English captions could be read for this video "
+                f"({captions.route}). Nothing was invented in their place.",
+                creator=creator, channel=channel.name,
+            )
+        return TranscriptResult(
+            video_id=video_id,
+            lines=tuple(line.text for line in captions.lines),
+            route=captions.route,
+            creator=creator, channel=channel.name,
+        )
+    finally:
+        if own_fetcher:
+            fetcher.close()

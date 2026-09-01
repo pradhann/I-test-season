@@ -1,13 +1,15 @@
 """
-Live-API team summary tool.
+Team summary tool.
 
 Historically this module carried a generic raw-table query interface
 (``query_fpl_data``) and a player-history tool over the live FPL API. Those
 are superseded by the semantic-layer tools in ``tools/semantic_tools.py``,
 which read the fpl-edge warehouse's point-in-time macros instead of the
 mutable live API. What remains here is the one genuinely distinct tool: a
-W/D/L summary of a club's recent results straight from the FPL fixtures
-endpoint.
+W/D/L summary of a club's recent results. Since the fetch unification
+(PIPELINES.md §6.5) the fixtures come from the warehouse's regularly ingested
+``fact_fixture`` (see ``fpl_mcp.utils.fpl_data.get_fixtures_df``), with a
+live fetch through the engine's Fetcher only when no warehouse exists.
 """
 
 from __future__ import annotations

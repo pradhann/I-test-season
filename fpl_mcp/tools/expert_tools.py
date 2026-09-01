@@ -5,7 +5,11 @@ Three tools live here: an ownership cross-tab across several managers
 (:func:`get_expert_teams_summary`), one manager's recent transfers
 (:func:`get_expert_transfers`) and one manager's season-by-season record
 (:func:`get_manager_history`). All three read only the public, unauthenticated
-endpoints of the official FPL API.
+endpoints of the official FPL API -- and since the fetch unification
+(PIPELINES.md §6.5) they read them through the engine's rivals client
+(:func:`fpl_mcp.utils.fpl_data.entry_json`): enforced politeness interval,
+TTL cache shared with the crawl, provenance archive, and a hard per-process
+request budget, instead of bare ``requests.get``.
 
 Why there is no name-to-id map in this file any more
 ----------------------------------------------------
@@ -53,7 +57,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
-import requests
 import pandas as pd
 
 from fpl_mcp.utils import fpl_data  # type: ignore
@@ -311,26 +314,26 @@ def _default_managers() -> List[_Manager]:
 
 
 # -----------------------------------------------------------------------------
-# Live API fetches
+# Live API fetches -- all through fpl_data.entry_json, which is the engine's
+# RivalsFetcher: enforced pacing, TTL cache shared with the crawl, archive,
+# transport-only retries and a hard per-process budget. No bare HTTP here.
 
 
 def _get_current_gameweek() -> int:
-    """Return the current gameweek number according to the bootstrap data.
+    """Return the current gameweek number.
 
-    If the current gameweek cannot be determined (e.g. off-season), returns 1.
+    Delegates to :func:`fpl_mcp.utils.fpl_data.current_gameweek`, which reads
+    the deadline calendar the warehouse already holds (``dim_event``) and only
+    falls back to a live bootstrap fetch on a warehouse-less checkout.
     """
-    data = fpl_data.get_bootstrap_data(force_refresh=False)
-    events = data.get("events", [])
-    # Look for the current event
-    for event in events:
-        if event.get("is_current"):
-            return int(event.get("id"))
-    # If no current event, use the next event
-    for event in events:
-        if event.get("is_next"):
-            return int(event.get("id"))
-    # Fall back to the first event
-    return 1
+    return fpl_data.current_gameweek()
+
+
+def _missing(manager_id: int, what: str) -> LookupError:
+    return LookupError(
+        f"the FPL API answered 404 for entry {manager_id} ({what}) -- the "
+        f"entry does not exist, or that data is not published yet."
+    )
 
 
 def _fetch_team_picks(manager_id: int, gw: int) -> Dict[str, object]:
@@ -343,10 +346,11 @@ def _fetch_team_picks(manager_id: int, gw: int) -> Dict[str, object]:
     Returns:
         A JSON dictionary with the picks and chip usage.
     """
-    url = f"https://fantasy.premierleague.com/api/entry/{manager_id}/event/{gw}/picks/"
-    resp = requests.get(url)
-    resp.raise_for_status()
-    return resp.json()
+    body = fpl_data.entry_json(f"entry/{manager_id}/event/{gw}/picks/")
+    if body is None:
+        raise _missing(manager_id, f"GW{gw} picks: the deadline has not "
+                                   f"passed, or no such entry")
+    return body
 
 
 def _fetch_transfers(manager_id: int) -> List[Dict[str, object]]:
@@ -359,10 +363,10 @@ def _fetch_transfers(manager_id: int) -> List[Dict[str, object]]:
         A list of transfer dicts, each containing keys such as
         ``element_in``, ``element_out``, ``event`` and ``time``.
     """
-    url = f"https://fantasy.premierleague.com/api/entry/{manager_id}/transfers/"
-    resp = requests.get(url)
-    resp.raise_for_status()
-    return resp.json()  # type: ignore[return-value]
+    body = fpl_data.entry_json(f"entry/{manager_id}/transfers/")
+    if body is None:
+        raise _missing(manager_id, "transfers")
+    return body  # type: ignore[return-value]
 
 
 def _fetch_manager_history(manager_id: int) -> Dict[str, object]:
@@ -374,10 +378,10 @@ def _fetch_manager_history(manager_id: int) -> Dict[str, object]:
     Returns:
         A JSON dictionary with keys such as ``current``, ``past`` and ``chips``.
     """
-    url = f"https://fantasy.premierleague.com/api/entry/{manager_id}/history/"
-    resp = requests.get(url)
-    resp.raise_for_status()
-    return resp.json()  # type: ignore[return-value]
+    body = fpl_data.entry_json(f"entry/{manager_id}/history/")
+    if body is None:
+        raise _missing(manager_id, "history")
+    return body  # type: ignore[return-value]
 
 
 # -----------------------------------------------------------------------------

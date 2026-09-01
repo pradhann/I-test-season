@@ -615,6 +615,43 @@ def ensure_schema(wh) -> None:
     wh.sql(PROVENANCE_DDL)
 
 
+def store_provenance(
+    wh,
+    item_id: str,
+    transcription: Transcription,
+    *,
+    derivation: str,
+    prior_text_source: str | None = None,
+    prior_text_sha256: str | None = None,
+) -> None:
+    """Write (replacing) THE provenance row for one item.
+
+    Extracted from :func:`store_transcription` so the owner-shared-link path
+    (:func:`fpl_edge.interfaces.creators.ingest_link`), which writes
+    ``transcript_segment`` itself, can record the same receipt through the
+    same insert instead of growing a second schema -- PIPELINES.md §3
+    defect 4: paste-a-link was the one transcript path with no provenance.
+    The column list and order are the DDL's above; this is the only INSERT
+    into ``transcript_provenance`` in the repo.
+    """
+    ensure_schema(wh)
+    wh.sql("DELETE FROM transcript_provenance WHERE item_id = ?", [item_id])
+    wh.sql(
+        "INSERT INTO transcript_provenance VALUES "
+        "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            item_id, derivation, transcription.engine, transcription.model,
+            transcription.language, transcription.audio_url,
+            transcription.audio_sha256, int(transcription.audio_bytes),
+            None if transcription.audio_seconds is None
+            else float(transcription.audio_seconds),
+            float(transcription.covered_seconds),
+            float(transcription.wall_seconds), len(transcription.segments),
+            prior_text_source, prior_text_sha256, transcription.created_utc,
+        ],
+    )
+
+
 def store_transcription(
     wh,
     item_id: str,
@@ -655,21 +692,9 @@ def store_transcription(
                 "INSERT INTO transcript_segment VALUES (?, ?, ?, ?)",
                 [item_id, seg.seq, seg.start_s, seg.text],
             )
-        wh.sql("DELETE FROM transcript_provenance WHERE item_id = ?", [item_id])
-        wh.sql(
-            "INSERT INTO transcript_provenance VALUES "
-            "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [
-                item_id, derivation, transcription.engine, transcription.model,
-                transcription.language, transcription.audio_url,
-                transcription.audio_sha256, int(transcription.audio_bytes),
-                None if transcription.audio_seconds is None
-                else float(transcription.audio_seconds),
-                float(transcription.covered_seconds),
-                float(transcription.wall_seconds), len(transcription.segments),
-                prior_source, prior_hash, transcription.created_utc,
-            ],
-        )
+        store_provenance(wh, item_id, transcription, derivation=derivation,
+                         prior_text_source=prior_source,
+                         prior_text_sha256=prior_hash)
         if promote_text:
             # text AND text_source move together. Setting text_source alone
             # would tell analyze.is_scoreable() to treat show notes as speech,

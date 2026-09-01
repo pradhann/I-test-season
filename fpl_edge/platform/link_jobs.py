@@ -80,13 +80,15 @@ lie as an invented ETA:
    ``analyse`` is entered on the way out of that call rather than when the
    analysis actually starts. The two stages are honest as an ordering and are
    not a measurement of where the time went.
-2. **``transcript_provenance`` is not this route's progress source.** That
-   table is written by :func:`fpl_edge.ingest.content.asr.store_transcription`,
-   which the owner-shared-link path does not call -- it writes
-   ``transcript_segment`` directly. So there is no ``covered_seconds`` /
-   ``audio_seconds`` row to divide, and the transcribe fraction is
-   elapsed-over-ETA instead: still derived from a measured rate and a measured
-   duration, but a projection rather than an observation.
+2. **``transcript_provenance`` is not this route's progress source.** The
+   owner-shared-link path now writes the provenance row (PIPELINES.md §3
+   defect 4 -- ``ingest_link`` records ``derivation='captions'`` through
+   :func:`fpl_edge.ingest.content.asr.store_provenance`), but it writes it
+   AFTER the transcript is complete, in the same persistence phase as the
+   segments. There is still no mid-flight ``covered_seconds`` /
+   ``audio_seconds`` row to divide while the work runs, so the transcribe
+   fraction is elapsed-over-ETA instead: still derived from a measured rate
+   and a measured duration, but a projection rather than an observation.
 3. **A pasted media file is refused, not transcribed.** ASR at 11.5x realtime
    is real and :mod:`fpl_edge.ingest.content.asr` implements it, but nothing in
    this engine downloads YouTube media and ``ingest_link`` has no audio branch

@@ -516,6 +516,103 @@ def _table_counts(db) -> dict[str, int]:
         wh.close()
 
 
+# ---------------------------------------------------------------------------
+# 1b. The provenance receipt (PIPELINES.md §3 defect 4).
+#
+# The paste-a-link route was the ONE transcript path that wrote
+# transcript_segment with no transcript_provenance row, so "how did this
+# transcript come to be" was unanswerable for exactly the items the owner
+# pasted by hand. These tests pin the receipt: same table, same DDL, same
+# insert as the pipeline's caption/ASR paths (asr.store_provenance).
+
+
+def _provenance(db, item_id: str) -> list[dict]:
+    wh = Warehouse(db, read_only=True)
+    try:
+        exists = int(wh.sql(
+            "SELECT count(*) AS n FROM information_schema.tables "
+            "WHERE table_name = 'transcript_provenance'").iloc[0]["n"])
+        if not exists:
+            return []
+        return wh.sql(
+            "SELECT derivation, engine, model, language, n_segments, "
+            "       covered_seconds, wall_seconds, audio_url, "
+            "       audio_seconds IS NULL AS audio_unmeasured, "
+            "       coalesce(audio_sha256, '') = '' AS no_audio_sha "
+            "FROM transcript_provenance WHERE item_id = ?", [item_id],
+        ).to_dict("records")
+    finally:
+        wh.close()
+
+
+def test_a_pasted_link_writes_the_transcript_provenance_receipt(
+    db, hermetic, monkeypatch,
+):
+    """Defect 4, pinned: the segments arrive WITH their receipt."""
+    findings, _ = ingest(db, RAPTOR_PAGE, monkeypatch=monkeypatch)
+    rows = _provenance(db, findings.item_id)
+    assert len(rows) == 1, "exactly one provenance row per item"
+    row = rows[0]
+    # This route reads published caption tracks only -- there is no audio
+    # branch in ingest_link, so 'asr' is impossible here.
+    assert row["derivation"] == "captions"
+    assert row["engine"] == "youtube_captions"
+    # hermetic patches _timed_transcript -> the library route's cues.
+    assert row["model"] == "youtube_transcript_api"
+    assert int(row["n_segments"]) == 1
+    # No audio was ever downloaded or decoded: the sha and duration stay
+    # honestly empty/NULL, exactly like the pipeline's caption provenance.
+    assert bool(row["audio_unmeasured"])
+    assert bool(row["no_audio_sha"])
+    assert VID in str(row["audio_url"])
+
+
+def test_provenance_segment_count_matches_what_was_stored(
+    db, hermetic, monkeypatch,
+):
+    findings, _ = ingest(db, RAPTOR_PAGE, monkeypatch=monkeypatch)
+    wh = Warehouse(db, read_only=True)
+    try:
+        stored = int(wh.sql(
+            "SELECT count(*) AS n FROM transcript_segment WHERE item_id = ?",
+            [findings.item_id]).iloc[0]["n"])
+        claimed = int(wh.sql(
+            "SELECT n_segments FROM transcript_provenance WHERE item_id = ?",
+            [findings.item_id]).iloc[0]["n_segments"])
+    finally:
+        wh.close()
+    assert stored == claimed == 1
+
+
+def test_an_untimed_transcript_still_gets_its_receipt(db, hermetic, monkeypatch):
+    """The fallback branch (library cues unavailable, untimed innertube text)
+    records the route it actually took and a covered_seconds it can defend
+    (0.0: with no cue times, coverage is unmeasurable and is not invented)."""
+    monkeypatch.setattr(ic, "_timed_transcript", lambda vid: [])
+    findings, _ = ingest(db, RAPTOR_PAGE, monkeypatch=monkeypatch)
+    rows = _provenance(db, findings.item_id)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["derivation"] == "captions"
+    assert row["model"] == "innertube"       # the route fetch_transcript reported
+    assert int(row["n_segments"]) == 1       # one untimed segment was stored
+    assert float(row["covered_seconds"]) == 0.0
+
+
+def test_an_article_paste_writes_segments_but_no_captions_receipt(
+    db, hermetic, monkeypatch,
+):
+    """An article's text is not a transcript: claiming derivation='captions'
+    for it would be a fabricated receipt, worse than none."""
+    from fpl_edge.ingest.content import loaders
+
+    monkeypatch.setattr(loaders, "_fetch_article",
+                        lambda fetcher, url: "a" * 500 + " haaland essay")
+    findings, _ = ingest(db, STRANGER_PAGE, monkeypatch=monkeypatch,
+                         url="https://example.com/fpl-essay")
+    assert _provenance(db, findings.item_id) == []
+
+
 
 
 # ---------------------------------------------------------------------------
