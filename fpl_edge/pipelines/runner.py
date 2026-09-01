@@ -105,6 +105,7 @@ def execute(
     fn=None,
     trigger: str = "scheduler",
     log_dir: Path | None = None,
+    run_id: str | None = None,
 ) -> RunOutcome:
     """Run one task, capturing everything. Never raises.
 
@@ -113,11 +114,17 @@ def execute(
     An exception inside the task becomes an ``error`` TaskResult with the
     traceback in both the detail and the log, exactly as the tick always
     treated it.
+
+    ``run_id`` lets a caller mint the ledger id BEFORE the work starts -- the
+    UI trigger route returns it in its 202 so the poller and the log file are
+    joinable from the first response. Omitted, the record names itself.
     """
     if trigger not in TRIGGERS:
         raise ValueError(f"trigger {trigger!r} not in {TRIGGERS}")
     fn = fn or registry.runner_for(task_id)
     rec = fetch_ledger.RunRecord(task_id, "deadline_dag")
+    if run_id is not None:
+        rec.run_id = run_id
     rec.trigger = trigger
 
     buf = io.StringIO()
@@ -186,6 +193,7 @@ def run_task(
     trigger: str = "cli",
     season: str = SEASON,
     now: dt.datetime | None = None,
+    run_id: str | None = None,
 ) -> RunOutcome:
     """Execute one registry task outside the scheduler, and record it.
 
@@ -219,7 +227,7 @@ def run_task(
         season=season, gw=registry.NO_GW, due_utc=now, deadline_utc=None,
         now=now, db_path=db,
     )
-    outcome = execute(task_id, ctx, trigger=trigger)
+    outcome = execute(task_id, ctx, trigger=trigger, run_id=run_id)
     if wh is not None:
         record(wh, outcome)
     else:

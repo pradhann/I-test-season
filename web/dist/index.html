@@ -11,6 +11,7 @@
 <link rel="stylesheet" href="/creators.css">
 <link rel="stylesheet" href="/template-tools.css">
 <link rel="stylesheet" href="/fixtures.css">
+<link rel="stylesheet" href="/pipelines.css">
 <!-- shared component, mounted from several views, so it links once here -->
 <link rel="stylesheet" href="/chatter.css">
 <link rel="stylesheet" href="/clubmark.css">
@@ -26,6 +27,7 @@
     <a href="#creators">Creators</a>
     <a href="#fixtures">Fixtures</a>
     <a href="#solver">Solver</a>
+    <a href="#pipelines">Pipelines</a>
     <a href="#chat">Chat</a>
     <div class="foot">panels are the only data path</div>
   </nav>
@@ -47,6 +49,7 @@ import xpoints from "/js/views/xpoints.js";
 import template from "/js/views/template.js";
 import fixtures from "/js/views/fixtures.js";
 import solver from "/js/views/solver.js";
+import pipelines from "/js/views/pipelines.js";
 import chat from "/js/views/chat.js";
 import creators from "/js/views/creators.js";
 
@@ -56,6 +59,7 @@ register("xpoints", "Projections", xpoints);
 register("template", "Template & effective ownership", template);
 register("fixtures", "Fixtures", fixtures);
 register("solver", "Solver", solver);
+register("pipelines", "Pipelines", pipelines);
 register("creators", "Content creators", creators);
 register("chat", "Chat", chat);
 start();

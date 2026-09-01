@@ -1,0 +1,150 @@
+/* Pipelines — control-room styling. Everything is a token from app.css; no
+   colour is defined here, only applied, so both themes hold by construction.
+   The one animation (the running badge's pulse) is defined ONLY under
+   prefers-reduced-motion: no-preference — reduced motion gets a static badge
+   rather than a stilled animation. */
+
+.pl-head { display: flex; align-items: center; gap: 10px; }
+.pl-head h2 { flex: 1; }
+.pl-refresh { font-size: 12px; }
+
+/* ---- summary strip: the four states + the credit meter ---- */
+.pl-summary { display: flex; gap: 10px; flex-wrap: wrap; margin: 10px 0 14px; }
+.pl-stat { background: var(--raised); border-radius: 9px; padding: 8px 14px;
+           min-width: 84px; border: 1px solid transparent; }
+.pl-stat .v { font: 600 17px/1.2 var(--mono); font-variant-numeric: tabular-nums; }
+.pl-stat .k { color: var(--faint); font-size: 10.5px; letter-spacing: .06em;
+              text-transform: uppercase; margin-top: 1px; }
+.pl-stat.good .v { color: var(--good); }
+.pl-stat.warn .v { color: var(--warn); }
+.pl-stat.bad .v { color: var(--bad); }
+.pl-stat.run .v { color: var(--s1); }
+.pl-stat.zero .v { color: var(--faint); }
+/* failing > 0: the one loud thing on the page */
+.pl-stat.alarm { border-color: color-mix(in oklab, var(--bad) 45%, var(--line));
+                 background: color-mix(in oklab, var(--bad) 10%, var(--surface)); }
+.pl-stat.credits .v { font-size: 15px; }
+.pl-stat.credits.warn { border-color: color-mix(in oklab, var(--warn) 45%, var(--line)); }
+
+/* ---- family sections ---- */
+.pl-famname { margin: 14px 0 4px; font-size: 11px; letter-spacing: .09em;
+              text-transform: uppercase; color: var(--faint); font-weight: 650; }
+.pl-family:first-child .pl-famname { margin-top: 2px; }
+
+/* ---- one pipeline, one row ---- */
+.pl-row {
+  display: grid;
+  grid-template-columns: minmax(170px, 1.3fr) minmax(180px, 1.6fr)
+                         110px minmax(130px, 1fr) 150px 64px 74px 76px;
+  gap: 4px 14px; align-items: center;
+  padding: 9px 12px; border: 1px solid var(--line); border-radius: 9px;
+  background: var(--surface); margin-bottom: 6px; cursor: pointer;
+}
+.pl-row:hover { background: var(--raised); }
+.pl-row:focus-visible { outline: 2px solid var(--s1); outline-offset: 1px; }
+.pl-row.failing { border-color: color-mix(in oklab, var(--bad) 40%, var(--line));
+                  background: color-mix(in oklab, var(--bad) 5%, var(--surface)); }
+.pl-row.disabled { opacity: .55; }
+
+.pl-name b { font-size: 12.5px; }
+.pl-desc { color: var(--faint); font-size: 11px; white-space: nowrap;
+           overflow: hidden; text-overflow: ellipsis; max-width: 30ch; }
+
+/* health: the dot NEVER travels without its words */
+.pl-hline { display: flex; align-items: center; gap: 6px; }
+.pl-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+          flex: none; vertical-align: 1px; }
+.pl-dot.good { background: var(--good); }
+.pl-dot.bad  { background: var(--bad); }
+.pl-dot.warn { background: var(--warn); }
+.pl-dot.run  { background: var(--s1); }
+.pl-dot.idle { background: var(--faint); }
+.pl-word { font-size: 11.5px; text-transform: uppercase; letter-spacing: .04em; }
+.pl-word.good { color: var(--good); }
+.pl-word.bad  { color: var(--bad); }
+.pl-word.warn { color: var(--warn); }
+.pl-word.run  { color: var(--s1); }
+.pl-word.idle { color: var(--muted); }
+.pl-reason { color: var(--muted); font-size: 11px; line-height: 1.35;
+             margin-top: 1px; }
+.pl-row.failing .pl-reason { color: var(--ink); }
+
+.pl-sched { color: var(--muted); font-size: 11.5px; }
+.pl-last { display: flex; flex-direction: column; font-size: 11.5px; }
+.pl-when { font-variant-numeric: tabular-nums; }
+.pl-rows { color: var(--faint); font-size: 10.5px; font-family: var(--mono); }
+.pl-never { color: var(--faint); font-style: italic; }
+.pl-mut { color: var(--faint); }
+
+/* duration: two thin segments, last above average */
+.pl-dur { display: flex; flex-direction: column; gap: 2px; }
+.pl-durbars { display: flex; flex-direction: column; gap: 2px; }
+.pl-durbar { height: 4px; border-radius: 2px; background: var(--s1); }
+.pl-durbar.avg { background: color-mix(in oklab, var(--s1) 35%, var(--line)); }
+.pl-durbar.last.over { background: var(--warn); }
+.pl-durtext { color: var(--faint); font-size: 10px; font-family: var(--mono);
+              font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* the sparkline: recessive micro-bars, error runs go --bad */
+.pl-spark { display: flex; align-items: flex-end; gap: 2px; height: 18px; }
+.pl-sbar { width: 3px; border-radius: 1px;
+           background: color-mix(in oklab, var(--s1) 55%, var(--surface)); }
+.pl-sbar.bad { background: var(--bad); }
+
+.pl-due { font-size: 11.5px; color: var(--muted);
+          font-variant-numeric: tabular-nums; }
+
+.pl-act { text-align: right; }
+.pl-run { font-size: 12px; padding: 4px 12px; }
+.pl-run.metered { border-color: color-mix(in oklab, var(--warn) 45%, var(--line)); }
+.pl-run.confirm { background: var(--accent); border-color: var(--accent);
+                  color: #fff; }
+.pl-cancel { font-size: 12px; padding: 4px 10px; margin-left: 6px; }
+
+.pl-running { display: inline-block; font: 650 10.5px/1 var(--mono);
+              letter-spacing: .06em; text-transform: uppercase;
+              color: var(--s1); padding: 5px 10px; border-radius: 999px;
+              background: color-mix(in oklab, var(--s1) 13%, var(--surface));
+              border: 1px solid color-mix(in oklab, var(--s1) 35%, var(--line)); }
+@media (prefers-reduced-motion: no-preference) {
+  .pl-running { animation: pl-pulse 1.6s ease-in-out infinite; }
+  @keyframes pl-pulse { 50% { opacity: .55; } }
+}
+
+/* inline confirm strip + row notes: full-width tails of the grid row */
+.pl-confirm, .pl-note { grid-column: 1 / -1; display: flex; gap: 10px;
+  align-items: center; padding: 7px 10px; border-radius: 7px; font-size: 12px; }
+.pl-confirm { background: color-mix(in oklab, var(--warn) 10%, var(--surface));
+  border: 1px solid color-mix(in oklab, var(--warn) 40%, var(--line)); }
+.pl-confirm b { color: var(--warn); }
+.pl-note { background: var(--raised); color: var(--muted); }
+.pl-note.bad { color: var(--bad);
+  background: color-mix(in oklab, var(--bad) 8%, var(--surface)); }
+
+/* ---- the drawer ---- */
+.pl-drawer h2 { font-size: 12px; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--muted); margin: 16px 0 6px; }
+.pl-dhead { display: flex; align-items: flex-start; gap: 12px;
+            margin-bottom: 8px; }
+.pl-dname { font-size: 16px; font-weight: 700; font-family: var(--mono); }
+.pl-dhead button { margin-left: auto; }
+.pl-runrow { cursor: pointer; }
+.pl-runrow.bad td:first-child { color: var(--bad); }
+.pl-logrow td { padding: 0 0 8px; }
+.pl-log { font-family: var(--mono); font-size: 11px; line-height: 1.5;
+  background: var(--raised); border: 1px solid var(--line); border-radius: 7px;
+  padding: 10px 12px; max-height: 320px; overflow: auto; white-space: pre-wrap;
+  overflow-wrap: anywhere; margin: 6px 0 0; }
+
+/* a named gap: same anatomy as the fixtures view's */
+.pl-gap { color: var(--muted); background: var(--raised);
+  border: 1px dashed var(--line); border-radius: 8px; padding: 10px 12px;
+  font-size: 12px; }
+.pl-gap b { color: var(--ink); display: block; margin-bottom: 2px; }
+
+/* ---- narrow screens: the grid folds into a card ---- */
+@media (max-width: 1080px) {
+  .pl-row { grid-template-columns: 1fr 1fr; }
+  .pl-act { text-align: left; }
+  .pl-spark { height: 14px; }
+}

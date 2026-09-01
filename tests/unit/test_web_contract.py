@@ -277,6 +277,72 @@ def test_the_chat_subapp_is_built_and_the_view_mounts_it() -> None:
     )
 
 
+def test_the_pipeline_row_model_reads_only_board_fields() -> None:
+    """`rowModel()` is the pipelines view's flatten(): the single place its
+    reads meet pipeline_board's row schema. A field it reads that the schema
+    does not carry silently becomes undefined -- the exact bug class the
+    fixtures adapter shipped once already."""
+    allowed = _schema_props("pipeline_board", "rows")
+    body = _strip_comments(_fn_body(VIEWS["pipelines"], "rowModel"))
+    used = set(re.findall(r"\br\.(\w+)", body))
+    unknown = used - allowed
+    assert not unknown, (
+        f"rowModel reads {sorted(unknown)}, which the pipeline_board row "
+        f"schema does not carry (it has {sorted(allowed)}); those render as "
+        f"undefined"
+    )
+    # The nested blocks are why the adapter exists at all.
+    for nested in ("health", "metered", "last_run", "runs"):
+        assert nested in allowed and f"r.{nested}" in body, (
+            f"rowModel must read r.{nested}; the board nests its contract "
+            "and a flat read would silently miss it"
+        )
+
+
+def test_the_pipeline_health_dot_never_travels_without_its_reason() -> None:
+    """The reason sentence is the product; a bare red dot is the failure this
+    panel exists to prevent. The one function that renders health must render
+    the reason string alongside the dot."""
+    body = _fn_body(VIEWS["pipelines"], "healthEl")
+    assert "pl-dot" in body and "reason" in body, (
+        "healthEl must render both the dot and md.reason; a dot without its "
+        "sentence is decoration"
+    )
+
+
+def test_the_metered_confirm_is_inline_never_a_browser_dialog() -> None:
+    """PIPELINES.md §5 decision 4: a metered trigger shows credits and month
+    spend BEFORE the click confirms. window.confirm() can quote neither, so
+    its presence would mean the cost gate was replaced with a speed bump."""
+    src = _strip_comments(VIEWS["pipelines"])
+    assert "needs_confirm" in src, (
+        "the view must handle the route's needs_confirm payload"
+    )
+    for field in ("credits_estimate", "month_spend"):
+        assert field in src, (
+            f"the confirm strip must render {field}; a confirmation that "
+            "quotes no cost is not a confirmation"
+        )
+    assert not re.search(r"(?<![.\w])confirm\s*\(", src) \
+        and "window.confirm" not in src, (
+        "a browser confirm() dialog is back; the confirm strip must live on "
+        "the row with the numbers in it"
+    )
+
+
+def test_pipeline_timestamps_are_relative_with_the_absolute_in_title() -> None:
+    """Every timestamp reads '12m ago' with the exact instant in its title.
+    Source scan, not a dataflow proof -- but both halves must at least exist
+    and be used together somewhere."""
+    src = _strip_comments(VIEWS["pipelines"])
+    assert re.search(r"function relTime\(", src), "the relative formatter left"
+    assert re.search(r"function absTime\(", src), "the absolute formatter left"
+    assert re.search(r"\.title\s*=[^;]*absTime\(", src), (
+        "no element carries the absolute instant in its title; a relative "
+        "time with no absolute anywhere is unverifiable"
+    )
+
+
 def test_no_raw_html_from_model_or_panel_output() -> None:
     """Chat and panels render server/model text; innerHTML on raw output is an
     injection seam. textContent/createTextNode only, except vetted literals."""

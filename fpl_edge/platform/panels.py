@@ -176,6 +176,27 @@ PANELS: tuple[Panel, ...] = (
         ),
     ),
     Panel(
+        id="pipeline_board",
+        title="Pipelines",
+        script="pipeline_board",
+        layout="board",
+        description=(
+            "Every registered pipeline: health with its reason, last run, "
+            "average time, next due, month credits, recent-run sparkline. "
+            "Reads only -- the trigger is POST /api/pipelines/{id}/run."
+        ),
+    ),
+    Panel(
+        id="pipeline_run_log",
+        title="One run's log",
+        script="pipeline_run_log",
+        layout="log",
+        description=(
+            "The tail of one pipeline run's captured log, keyed by the "
+            "ledger's run_id. Mounted inside the Pipelines drawer."
+        ),
+    ),
+    Panel(
         id="player_profile",
         title="Player profile (Understat)",
         script="player_profile",
