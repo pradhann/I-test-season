@@ -129,10 +129,17 @@ def ingest_bootstrap(wh: Warehouse, fetcher: Fetcher | None = None) -> dict[str,
         })
 
     written = {
-        "dim_event": wh.append("dim_event", events),
-        "dim_team": wh.append("dim_team", teams),
-        "dim_player": wh.append("dim_player", pd.DataFrame(players)),
-        "fact_player_state": wh.append("fact_player_state", pd.DataFrame(states)),
+        # change_dedup: these tables are re-fetched on every poll and mostly
+        # unchanged between polls (a player's status/news changes rarely, a
+        # team never). Only rows whose values moved are written; the poll
+        # itself is recorded in the fetch ledger by the caller, so "checked
+        # but unchanged" survives as a fact without 4k identical rows a day.
+        "dim_event": wh.append("dim_event", events, change_dedup=True),
+        "dim_team": wh.append("dim_team", teams, change_dedup=True),
+        "dim_player": wh.append("dim_player", pd.DataFrame(players),
+                                change_dedup=True),
+        "fact_player_state": wh.append("fact_player_state",
+                                       pd.DataFrame(states), change_dedup=True),
     }
     written["skipped_non_player_elements"] = skipped
     written["temporary_codes"] = len(temporary)
@@ -183,4 +190,5 @@ def ingest_fixtures(wh: Warehouse, fetcher: Fetcher | None = None,
         "as_of": as_of,
     } for f in got.body]
 
-    return {"fact_fixture": wh.append("fact_fixture", pd.DataFrame(rows))}
+    return {"fact_fixture": wh.append("fact_fixture", pd.DataFrame(rows),
+                                      change_dedup=True)}

@@ -124,7 +124,8 @@ def known_codes(warehouse: Warehouse, season: str, as_of: dt.datetime) -> set[in
 
 def ingest(season: str = SEASON, *, first_gw: int = 1, last_gw: int = 8,
            db: str | None = None, only: tuple[str, ...] = (),
-           verbose: bool = False) -> dict[str, StepResult]:
+           verbose: bool = False,
+           skip_if_fresh_h: float | None = None) -> dict[str, StepResult]:
     """Fetch every reachable provider and land it in the warehouse.
 
     Returns one :class:`StepResult` per provider attempted. Nothing raises out
@@ -146,16 +147,41 @@ def ingest(season: str = SEASON, *, first_gw: int = 1, last_gw: int = 8,
         if missing:
             raise SystemExit(f"unknown provider(s) {sorted(missing)}")
 
+    from fpl_edge.store import fetch_ledger
+
     results: dict[str, StepResult] = {}
     with Warehouse(db) if db else Warehouse() as warehouse:
+        # The "already latest" gate (PIPELINES.md §4.2): a successful pass
+        # inside the window means every provider was checked recently; skip
+        # the whole run and say so in the ledger. Error runs never satisfy
+        # the gate, so failures always retry.
+        if skip_if_fresh_h and fetch_ledger.checked_within(
+                warehouse, "ingest_projections", skip_if_fresh_h):
+            with fetch_ledger.record_run(warehouse, "ingest_projections") as rec:
+                rec.status = "skipped_fresh"
+                rec.note = f"last ok run younger than {skip_if_fresh_h}h"
+            print(f"skipped: providers checked within {skip_if_fresh_h}h")
+            return {}
+
         store = ProjectionStore(warehouse)
+        # Write-on-change for every provider in this run -- the projection
+        # tables are the measured bloat source (60k value-identical fplform
+        # rows over 13 pulls).
+        store.change_dedup_default = True
         if store.applied_migrations:
             print(f"applied migrations: {', '.join(store.applied_migrations)}")
 
         for name, step in steps:
+            store.unchanged_acc = 0
             try:
-                results[name] = step(warehouse, store, season,
-                                     first_gw=first_gw, last_gw=last_gw)
+                with fetch_ledger.record_run(
+                        warehouse, "ingest_projections", name) as rec:
+                    results[name] = step(warehouse, store, season,
+                                         first_gw=first_gw, last_gw=last_gw)
+                    rec.add(results[name].rows, store.unchanged_acc)
+                    if not results[name].ok:
+                        rec.status = "error"
+                        rec.note = results[name].error
             except Exception as exc:  # noqa: BLE001 -- isolation is the point
                 if verbose:
                     traceback.print_exc()
@@ -460,6 +486,10 @@ def main(argv: list[str] | None = None) -> int:
                         help="comma-separated provider keys; default is all")
     parser.add_argument("--verbose", action="store_true",
                         help="print a full traceback for each failed provider")
+    parser.add_argument("--skip-if-fresh", type=float, default=None,
+                        metavar="HOURS",
+                        help="skip the whole run when the last successful run "
+                             "finished within HOURS (fetch_run ledger gate)")
     args = parser.parse_args(argv)
     if args.command == "probe":
         probe()
@@ -471,6 +501,7 @@ def main(argv: list[str] | None = None) -> int:
         results = ingest(
             args.season, first_gw=args.first_gw, last_gw=args.last_gw, db=args.db,
             only=tuple(k for k in args.only.split(",") if k), verbose=args.verbose,
+            skip_if_fresh_h=args.skip_if_fresh,
         )
         # A provider failing is a reported fact, not a non-zero exit: the run
         # succeeded at the thing it exists to do, which is landing whatever was

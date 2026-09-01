@@ -493,7 +493,8 @@ class Warehouse:
 
     # -- writes --------------------------------------------------------------
 
-    def append(self, table: str, df: pd.DataFrame) -> int:
+    def append(self, table: str, df: pd.DataFrame,
+               *, change_dedup: bool = False) -> int:
         """Append rows, dropping exact duplicates already present.
 
         Ingestion is append-only and idempotent: re-running a fetch that
@@ -611,6 +612,15 @@ class Warehouse:
                     f"same as_of. Give the correction a later as_of instead of "
                     f"overwriting history.\n{sample}"
                 )
+        unchanged = 0
+        if change_dedup and payload:
+            # Write-on-change (fetch_ledger module docstring has the full
+            # contract): rows newer than the entity's latest stored row whose
+            # payload is identical are dropped and COUNTED, never written.
+            # Backfills and same-as_of rows pass through untouched.
+            from fpl_edge.store.fetch_ledger import drop_unchanged
+            unchanged = drop_unchanged(
+                self._con, table, list(PIT_KEYS[table]), payload, "_incoming")
         self._con.execute(
             f"""
             INSERT INTO {table} ({cols})
@@ -620,7 +630,21 @@ class Warehouse:
         )
         after = self._con.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
         self._con.unregister("_incoming")
+        self._last_unchanged = unchanged
         return after - before
+
+    def append_measured(self, table: str, df: pd.DataFrame,
+                        *, change_dedup: bool = False) -> tuple[int, int]:
+        """append(), returning (rows_written, rows_unchanged).
+
+        ``rows_unchanged`` is nonzero only with ``change_dedup=True``: it
+        counts incoming rows dropped because the entity's latest stored
+        payload was identical -- the "refetched, unchanged" fact the caller
+        records in the fetch ledger. Kept as a wrapper so the many existing
+        ``append()`` call sites keep their int return unchanged.
+        """
+        written = self.append(table, df, change_dedup=change_dedup)
+        return written, getattr(self, "_last_unchanged", 0)
 
     def next_fetch_id(self) -> int:
         return int(self._con.execute("SELECT nextval('seq_fetch_id')").fetchone()[0])

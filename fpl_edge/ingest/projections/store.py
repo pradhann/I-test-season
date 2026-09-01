@@ -74,6 +74,13 @@ class ProjectionStore:
         #: the run log would claim nothing happened on the run that built the
         #: schema.
         self.applied_migrations: list[str] = self.migrate()
+        #: When True, every append() change-dedups (the ingest CLI sets it so
+        #: all providers get write-on-change without threading a flag through
+        #: each step). Other constructors keep the historical behaviour.
+        self.change_dedup_default = False
+        #: Accumulates last_unchanged across appends; the CLI reads and resets
+        #: it per provider to fill the fetch ledger's rows_unchanged.
+        self.unchanged_acc = 0
 
     # -- schema --------------------------------------------------------------
 
@@ -107,8 +114,16 @@ class ProjectionStore:
 
     # -- writes --------------------------------------------------------------
 
-    def append(self, table: str, df: pd.DataFrame) -> int:
-        """Append rows, skipping exact duplicates, refusing contradictions."""
+    def append(self, table: str, df: pd.DataFrame,
+               *, change_dedup: bool = False) -> int:
+        """Append rows, skipping exact duplicates, refusing contradictions.
+
+        ``change_dedup=True`` additionally drops rows whose payload equals the
+        entity's latest stored row (fetch_ledger.drop_unchanged; backfills
+        exempt). The measured reason: 60k value-identical fplform rows over 13
+        daily pulls. The dropped count is on ``self.last_unchanged`` and in
+        :meth:`append_measured`'s return.
+        """
         if table not in PROJECTION_KEYS:
             raise KeyError(f"unknown projection table {table!r}")
         if df.empty:
@@ -148,6 +163,13 @@ class ProjectionStore:
                         f"the same as_of. A revised projection needs a later as_of.\n"
                         f"{sample}"
                     )
+            self.last_unchanged = 0
+            if (change_dedup or self.change_dedup_default) and payload:
+                from fpl_edge.store.fetch_ledger import drop_unchanged
+                self.last_unchanged = drop_unchanged(
+                    con, table, list(PROJECTION_KEYS[table]), payload,
+                    "_incoming_proj")
+                self.unchanged_acc += self.last_unchanged
             before = con.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
             cols = ", ".join(df.columns)
             con.execute(
@@ -158,6 +180,14 @@ class ProjectionStore:
         finally:
             con.unregister("_incoming_proj")
         return int(after - before)
+
+    def append_measured(self, table: str, df: pd.DataFrame,
+                        *, change_dedup: bool = True,
+                        ) -> tuple[int, int]:
+        """append() returning (written, unchanged). change_dedup defaults ON
+        here -- the projection tables are exactly the measured bloat source."""
+        written = self.append(table, df, change_dedup=change_dedup)
+        return written, getattr(self, "last_unchanged", 0)
 
     def record_weights(self, fit_id: str, rows: pd.DataFrame) -> int:
         """Store a weight fit. Re-running the same ``fit_id`` replaces it."""
