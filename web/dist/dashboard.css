@@ -1,0 +1,230 @@
+/* Dashboard rebuild (views/home.js) + the drawer pizza (components/radar.js).
+   Every colour is a token or a color-mix of tokens from app.css, so both
+   themes come free. Status hues (--good/--warn/--bad) are RESERVED for the
+   risk/availability channel; the projection ramp lives on the series pair.
+
+   THE pj- RAMP (documented here the way fixtures.css documents fx-):
+     statistic  consensus next-GW xPts per player (squad_overview)
+     anchor     median of the STARTING XI (printed in the pitch footer)
+     bins       delta vs anchor: ≤ −1.5 | −1.5..−0.5 | ±0.5 | +0.5..+1.5 | ≥ +1.5
+                -> pj-m2  pj-m1  pj-n0  pj-p1  pj-p2
+     hues       --s1 (blue) above, --s2 (orange) below, --raised at neutral —
+                neutral IS neutral. Absolute bins so a tier means the same in
+                GW3 and GW33. The number always prints on the chip. */
+
+/* ---- topbar + provenance banner ---- */
+.db-prov { color: var(--muted); font-size: 12px; margin: -6px 0 14px;
+           font-family: var(--mono); }
+.db-prov.warn { color: var(--ink); }
+.db-quiet { color: var(--muted); font-size: 12.5px; margin: 4px 0; }
+.db-emptykind { font-family: var(--mono); font-size: 11px; }
+.db-foot { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
+
+.cite { border: 0; cursor: pointer; font: 10.5px var(--mono); color: var(--faint);
+        background: var(--raised); border-radius: 999px; padding: 2px 8px; }
+.cite:hover { color: var(--ink); }
+
+/* ---- alert rows (P0 = bad rail, P1 = warn rail — the risk channel) ---- */
+.db-alerts { display: flex; flex-direction: column; gap: 8px; }
+.al { display: flex; align-items: baseline; gap: 10px; padding: 8px 12px;
+      background: var(--surface); border: 1px solid var(--line);
+      border-radius: 9px; font-size: 13px; }
+.al.drillable { cursor: pointer; }
+.al.drillable:hover { border-color: var(--muted); }
+.al.p0 { border-left: 3px solid var(--bad); }
+.al.p1 { border-left: 3px solid var(--warn); }
+.al-kind { flex: none; width: 84px; color: var(--faint); font-size: 10.5px;
+           letter-spacing: .08em; text-transform: uppercase; font-weight: 650; }
+.al .avatar { align-self: center; flex: none; }
+.al-claim { min-width: 0; }
+.al-claim code { font: 600 12.5px var(--mono); color: var(--ink); }
+.al-claim q { font-style: italic; }
+.al .cite { margin-left: auto; flex: none; }
+
+/* ---- pitch v2: 86px photo-first cards, clubmark-discipline fallback ---- */
+.pp { width: 86px; padding: 0 0 5px; position: relative;
+      background: var(--surface); border: 0; border-radius: 9px;
+      box-shadow: var(--shadow); cursor: pointer; overflow: hidden;
+      text-align: center; font: inherit; color: var(--ink); }
+.pp:focus-visible { outline: 2px solid var(--s1); outline-offset: 1px; }
+.pp-face { display: block; width: 100%; height: 64px; object-fit: cover;
+           object-position: top center; background: var(--raised); }
+/* fallback = one class flip; the box is CSS-sized before load, the monogram
+   sits underneath in the identical box: zero reflow, complete offline */
+.pp.fall .pp-face { visibility: hidden; }
+.pp-mg { display: none; }
+.pp.fall .pp-mg { display: grid; place-items: center; position: absolute;
+  inset: 0 0 auto; height: 64px; font: 800 18px/1 var(--mono);
+  color: var(--club-ink, var(--ink));
+  background: var(--club, var(--raised)); }  /* clubmark.css colour map */
+.pp-nm { display: block; font-weight: 650; font-size: 11.5px;
+         padding: 3px 4px 0; white-space: nowrap; overflow: hidden;
+         text-overflow: ellipsis; }
+.pp-sub { display: block; color: var(--muted); font-size: 10.5px;
+          font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.pp-chip { display: block; margin: 3px 4px 0; padding: 2px 0;
+           border-radius: 5px; font: 700 11px var(--mono);
+           font-variant-numeric: tabular-nums;
+           background: var(--raised); color: var(--ink); }
+.pp-chip i { font-style: normal; font-weight: 400; font-size: 9px;
+             color: var(--faint); margin-left: 2px; }
+.pj-p2 { background: color-mix(in oklab, var(--s1) 55%, var(--surface)); color: #fff; }
+.pj-p2 i { color: rgb(255 255 255 / .75); }
+.pj-p1 { background: color-mix(in oklab, var(--s1) 24%, var(--surface)); }
+.pj-n0 { background: var(--raised); color: var(--muted); } /* neutral IS neutral */
+.pj-m1 { background: color-mix(in oklab, var(--s2) 24%, var(--surface)); }
+.pj-m2 { background: color-mix(in oklab, var(--s2) 55%, var(--surface)); color: #fff; }
+.pj-m2 i { color: rgb(255 255 255 / .75); }
+/* risk badge — the SEPARATE channel on the reserved status hues.
+   i/s filled red; d filled amber; c (creator-only, FPL clean) amber OUTLINE
+   — two sources, two looks. One badge, worst severity wins. */
+.pp-risk { position: absolute; top: 3px; left: 3px; z-index: 2; width: 16px;
+           height: 16px; border-radius: 50%; font: 700 10px/16px var(--mono);
+           color: #fff; text-align: center; }
+.pp-risk.d { background: var(--warn); }
+.pp-risk.i, .pp-risk.s { background: var(--bad); }
+.pp-risk.c { background: var(--surface); color: var(--warn);
+             box-shadow: inset 0 0 0 1.5px var(--warn); }
+.pp .ribbon { position: absolute; top: 3px; right: 3px; width: 17px;
+              height: 17px; border-radius: 50%; font: 700 10px/17px var(--mono);
+              color: #fff; background: var(--warn); }
+.pp .ribbon.v { background: var(--faint); }
+.pp.cap { box-shadow: 0 0 0 2px var(--warn), var(--shadow); }
+/* the bench-inversion drill ring + pulse (motion gated) */
+.pp.flag-swap { box-shadow: inset 0 0 0 1.5px var(--s1), 0 0 0 2px var(--s1),
+                var(--shadow); }
+@media (prefers-reduced-motion: no-preference) {
+  .pp.flag-pulse { animation: db-pulse .6s ease-out 1; }
+  @keyframes db-pulse {
+    0% { transform: translateY(0); }
+    35% { transform: translateY(-4px); }
+    100% { transform: translateY(0); }
+  }
+}
+.bench .bn-slot { display: inline-flex; flex-direction: column;
+                  align-items: center; gap: 2px; }
+.bench .bn-i { font: 600 10px var(--mono); color: var(--faint);
+               font-style: normal; }
+.bench .pp { opacity: .92; }
+.db-legendnote { font-style: italic; }
+
+/* ---- solver card ---- */
+.solver .sub .chip { margin-left: 6px; }
+.sv-move { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+           padding: 10px 12px; background: var(--raised); border-radius: 9px;
+           margin-top: 8px; }
+.sv-strip { display: flex; align-items: center; gap: 8px; }
+.sv-side { display: flex; align-items: center; gap: 8px; position: relative; }
+.sv-face { width: 40px; height: 50px; object-fit: cover;
+           object-position: top center; border-radius: 7px;
+           background: var(--surface); }
+.sv-side .sv-mg { display: none; }
+.sv-side.fall .sv-face { visibility: hidden; }
+.sv-side.fall .sv-mg { display: grid; place-items: center; position: absolute;
+  left: 0; top: 0; width: 40px; height: 50px; border-radius: 7px;
+  font: 800 13px/1 var(--mono); color: var(--club-ink, var(--ink));
+  background: var(--club, var(--surface)); }
+.sv-side.out { opacity: .78; }
+.sv-side.out b { text-decoration: line-through
+                 color-mix(in oklab, var(--bad) 60%, transparent) 1.5px; }
+.sv-side i { font: 10.5px var(--mono); color: var(--muted); font-style: normal; }
+.sv-pd { font: 10.5px var(--mono); color: var(--faint); font-style: normal; }
+.sv-arrow { color: var(--faint); font-size: 17px; }
+.sv-gain { margin-left: auto; font: 700 15px var(--mono); color: var(--s1); }
+/* --s1, never --good: a model quantity on the model's own scale, not a verdict */
+.sv-gain.gap { color: var(--muted); font-weight: 600; font-size: 12.5px; }
+.sv-gain i { display: block; font: 400 10px/1.4 inherit; color: var(--faint);
+             font-style: normal; max-width: 300px; }
+.sv-lines { font-size: 12px; color: var(--muted); margin: 8px 0 0; }
+.sv-lines code { font: 600 12px var(--mono); color: var(--ink); }
+.sv-room { display: grid; grid-template-columns: 52px 1fr; gap: 6px 10px;
+           margin: 10px 0 0; border-top: 1px solid var(--line);
+           padding-top: 10px; }
+.sv-room dt { color: var(--faint); font-size: 10.5px; font-weight: 650;
+              letter-spacing: .08em; text-transform: uppercase;
+              padding-top: 2px; }
+.sv-room dd { margin: 0; font-size: 12.5px; }
+.sv-diff { border-top: 1px solid var(--line); padding-top: 8px;
+           margin: 10px 0 0; color: var(--muted); font-size: 12px; }
+.sv-notes { margin-top: 8px; }
+.sv-notes summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+.sv-notes p.mono { font: 11px var(--mono); color: var(--faint);
+                   white-space: pre-wrap; margin: 6px 0 0; }
+.sv-links { display: flex; gap: 8px; margin: 10px 0 0; }
+.sv-links .chip { text-decoration: none; }
+
+/* ---- briefing tiles ---- */
+.tiles { display: grid; gap: 10px;
+         grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+.tile { display: flex; flex-direction: column; gap: 5px; padding: 12px 14px;
+        background: var(--surface); border: 1px solid var(--line);
+        border-radius: 10px; text-decoration: none; color: var(--ink);
+        box-shadow: var(--shadow); }
+.tile:hover { border-color: var(--muted); }
+.t-claim { font-weight: 600; font-size: 13px; }
+.t-num { font: 700 17px var(--mono); font-variant-numeric: tabular-nums; }
+.t-num i { font: 400 10.5px/1 inherit; color: var(--faint); font-style: normal; }
+.t-imp { color: var(--muted); font-size: 12px; }
+.t-meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.t-gate { color: var(--faint); font-size: 10.5px; }
+
+/* ---- watch log ---- */
+table.db-watch td { border-bottom: 1px solid var(--line); }
+.db-watch .w-check { font-weight: 600; white-space: nowrap; }
+.db-watch .w-detail { color: var(--muted); }
+.db-watch .w-src { font-family: var(--mono); font-size: 11px;
+                   color: var(--faint); white-space: nowrap; }
+.db-watch .w-asof { font-family: var(--mono); font-size: 11px;
+                    color: var(--faint); }
+.db-watch tr.w-gap td { background:
+  color-mix(in oklab, var(--warn) 6%, var(--surface)); }
+
+/* ---- the pizza (drawer) ----
+   Colour = metric family only: --s1 threat / --s3 creation / --s2 defending
+   at 78% mix. Never a value ramp — the radius already encodes the value. */
+.pz-box { margin-top: 14px; border-top: 1px solid var(--line);
+          padding-top: 10px; }
+.pz-hd { display: flex; align-items: center; gap: 10px; }
+.pz-hd h2 { flex: 1; }
+.pz-compare[disabled] { opacity: .5; cursor: not-allowed; }
+.pz-wrap { margin: 4px 0; }
+.pz-svg { display: block; width: 100%; max-width: 320px; margin: 0 auto; }
+.pz-wrap.pz-belowfloor .pz-svg { opacity: .45; }
+.pz-ring { fill: none; stroke: var(--line); stroke-width: 1; }
+.pz-ring50 { stroke: var(--muted); stroke-width: 1.2; }  /* the median ring */
+.pz-rim { stroke: var(--line); }
+.pz-slice { stroke: var(--surface); stroke-width: 1; }
+.pz-threat   { fill: color-mix(in oklab, var(--s1) 78%, var(--surface)); }
+.pz-creation { fill: color-mix(in oklab, var(--s3) 78%, var(--surface)); }
+.pz-defending{ fill: color-mix(in oklab, var(--s2) 78%, var(--surface)); }
+.pz-tied { stroke: var(--muted); stroke-width: 1; }      /* hatched ≠ short */
+.pz-hatchline { stroke: var(--muted); stroke-width: 1.6; }
+.pz-num { font: 700 10px var(--mono); fill: var(--ink); }
+.pz-lab { font: 9.5px -apple-system, sans-serif; fill: var(--muted); }
+.pz-span { fill: none; stroke-width: 2.5; opacity: .8; }
+.pz-span-threat    { stroke: var(--s1); }
+.pz-span-creation  { stroke: var(--s3); }
+.pz-span-defending { stroke: var(--s2); }
+/* overlay layer: player B is an OUTLINE with vertex dots, never a 2nd fill */
+.pz-cmp path, .pz-cmp polygon { fill: none; stroke: var(--s4);
+                                stroke-width: 2; }
+.pz-cmp circle { fill: var(--s4); }
+.pz-legend { display: flex; gap: 10px; justify-content: center;
+             margin: 2px 0 6px; }
+.pz-key { display: inline-flex; align-items: center; gap: 5px;
+          font-size: 11px; color: var(--muted); }
+.pz-key i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+.pz-key-threat i    { background: color-mix(in oklab, var(--s1) 78%, var(--surface)); }
+.pz-key-creation i  { background: color-mix(in oklab, var(--s3) 78%, var(--surface)); }
+.pz-key-defending i { background: color-mix(in oklab, var(--s2) 78%, var(--surface)); }
+.pz-floorbanner { background: color-mix(in oklab, var(--warn) 14%, var(--surface));
+                  border: 1px solid color-mix(in oklab, var(--warn) 40%, var(--line));
+                  color: var(--ink); border-radius: 8px; padding: 8px 10px;
+                  font-size: 12px; margin: 6px 0; }
+.pz-how summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+
+/* mobile: 4 × 86px cards + gaps = 374px — exact fit on a 375px pane */
+@media (max-width: 480px) {
+  .pitch .row, .bench { gap: 8px; }
+  .al-kind { width: 64px; }
+}

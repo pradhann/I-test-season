@@ -104,21 +104,54 @@ def test_the_pitch_reads_only_fields_the_squad_schema_carries() -> None:
     )
 
 
-def test_the_movers_renderer_reads_what_the_price_schema_declares() -> None:
-    props = _schema_props("price_radar")
-    body = _fn_body(VIEWS["home"], "renderMovers")
-    for key in ("risers", "fallers"):
-        assert key in props and f"res.{key}" in body
-    assert "res.rows" not in body, (
-        "the price schema forbids `rows`; reading it is the original bug"
-    )
-    row_props = _schema_props("price_radar", "risers")
-    used = set(re.findall(r"\br\.(\w+)", body))
-    unknown = used - row_props
+def _nested_fn_body(src: str, name: str) -> str:
+    """A function defined INSIDE the view's default export (two-space indent).
+
+    ``_fn_body``'s first-``\\n}`` heuristic would run to the end of the file
+    for these and scan unrelated code into the subset check.
+    """
+    m = re.search(rf"^  function {name}\([^)]*\)\s*\{{(.*?)\n  \}}",
+                  src, re.DOTALL | re.MULTILINE)
+    assert m, f"nested function {name} not found"
+    return m.group(1)
+
+
+def test_the_alert_rows_read_only_fields_the_brief_schema_carries() -> None:
+    """The dashboard's alert templates are its flatten(): the one place the
+    view meets dashboard_brief's alert contract. A field read that the schema
+    does not carry silently renders undefined — the fixtures-adapter bug
+    class, pinned here for the rebuilt front page."""
+    allowed = _schema_props("dashboard_brief", "alerts")
+    src = _strip_comments(VIEWS["home"])
+    body = (_nested_fn_body(src, "alertRow")
+            + _nested_fn_body(src, "claimFor"))
+    used = set(re.findall(r"\ba\.(\w+)", body))
+    unknown = used - allowed
     assert not unknown, (
-        f"renderMovers reads {sorted(unknown)} which riser rows do not carry "
-        f"(they have {sorted(row_props)})"
+        f"the alert renderer reads {sorted(unknown)}, which the brief's "
+        f"alert schema does not carry (it has {sorted(allowed)})"
     )
+    # decision-typing and sourcing are the row's anatomy
+    for field in ("kind", "numbers", "source_panel"):
+        assert field in used, f"alert rows must render a.{field}"
+
+
+def test_the_tiles_read_only_fields_the_brief_schema_carries() -> None:
+    allowed = _schema_props("dashboard_brief", "tiles")
+    src = _strip_comments(VIEWS["home"])
+    body = (_nested_fn_body(src, "tileEl")
+            + _nested_fn_body(src, "tileText"))
+    used = set(re.findall(r"\bt\.(\w+)", body))
+    unknown = used - allowed
+    assert not unknown, (
+        f"the tile renderer reads {sorted(unknown)}, which the brief's tile "
+        f"schema does not carry (it has {sorted(allowed)})"
+    )
+    for field in ("number", "gate", "source_panel"):
+        assert field in used, f"tiles must render t.{field}"
+    # the required-args contract: a tile missing a leg throws in the renderer
+    # rather than rendering a number without its source
+    assert "throw new Error" in _nested_fn_body(src, "tileEl")
 
 
 def test_the_fixture_adapter_reads_only_fields_fixture_board_publishes() -> None:
@@ -173,11 +206,62 @@ def test_the_fixture_grid_reads_the_split_the_panel_actually_names() -> None:
         assert field in body, f"flatten() must surface {field}"
 
 
-def test_idea_chips_speak_the_panel_vocabulary() -> None:
-    """The panel emits hit/miss (its hit_rate counts exactly those); the JS
-    once tested only the CLI's correct/incorrect, so no chip ever coloured."""
-    body = _fn_body(VIEWS["home"], "renderIdeas")
-    assert '"hit"' in body and '"miss"' in body
+def test_the_solver_objective_is_never_relabelled_as_xpts() -> None:
+    """The no-silent-blend rule (FINAL_SPEC Kill 3): the solver optimises
+    rank_mv, and the view must never print the string "xPts" adjacent to the
+    solver objective value. The consensus delta for the swapped players is a
+    separate, labelled quantity — so no source line may carry both words."""
+    src = _strip_comments(VIEWS["home"])
+    assert "rank_mv" not in src, (
+        "the solver's unit must come from the payload's objective_mode, "
+        "never be hardcoded — a hardcoded label survives an objective change"
+    )
+    assert "objective_mode" in src, (
+        "the view must print the objective in the payload's own unit"
+    )
+    for ln in src.splitlines():
+        if "objective" in ln:
+            assert "xPts" not in ln, (
+                f"solver objective rendered adjacent to 'xPts' — the silent "
+                f"blend: {ln.strip()[:90]}"
+            )
+    # and the derived consensus line must confess whose voice it is
+    assert "not the solver objective" in src
+
+
+def test_the_pitch_fallback_is_the_clubmark_discipline() -> None:
+    """Photo 404 → ONE class flip reveals a club-coloured monogram in the
+    identical CSS-sized box: zero reflow, complete offline. Structural scan:
+    the flip, the monogram element, and the CSS that keeps the box."""
+    body = _nested_fn_body(_strip_comments(VIEWS["home"]), "pcard")
+    assert 'classList.add("fall")' in body, "the error handler must flip one class"
+    assert "pp-mg" in body, "the monogram element must exist under the photo"
+    assert "dataset.club" in _strip_comments(VIEWS["home"]), (
+        "club colours key off data-club (clubmark.css map)"
+    )
+    css = (WEB / "dashboard.css").read_text()
+    assert re.search(r"\.pp-face\s*\{[^}]*height:\s*64px", css), (
+        "the photo box must be CSS-sized before load"
+    )
+    assert re.search(r"\.pp\.fall \.pp-face\s*\{[^}]*visibility:\s*hidden", css), (
+        "the failed photo hides via visibility, never display — display:none "
+        "would reflow"
+    )
+    assert re.search(r"\.pp\.fall \.pp-mg\s*\{[^}]*position:\s*absolute", css), (
+        "the monogram overlays the same box; it must not push content"
+    )
+
+
+def test_the_dashboard_hardcodes_no_gate_thresholds() -> None:
+    """The brief echoes its thresholds; the view renders the served `gate`
+    strings and threshold fields, never its own constants. Pin the two
+    magic numbers most likely to be re-hardcoded."""
+    src = _strip_comments(VIEWS["home"])
+    assert "thresholds" in src, "the view must read the brief's threshold echo"
+    assert not re.search(r"[^\d.]0\.5\b.*xPts", src), (
+        "the bench margin lives in the brief's thresholds, not the view"
+    )
+    assert "t.gate" in src, "tiles must print the served gate string"
 
 
 def test_the_deadline_is_fetched_never_hardcoded() -> None:

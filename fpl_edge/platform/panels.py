@@ -57,6 +57,28 @@ PANELS: tuple[Panel, ...] = (
         description="Your 15, priced and flagged, with where the squad was read from.",
     ),
     Panel(
+        id="brief",
+        title="Dashboard brief",
+        script="dashboard_brief",
+        layout="brief",
+        description=(
+            "The dashboard's aggregator: alerts, gated tiles, watch log and "
+            "the solve state — selected from the source panels under the "
+            "anti-drift contract, thresholds echoed in the payload."
+        ),
+    ),
+    Panel(
+        id="player_radar",
+        title="Player radar",
+        script="player_radar",
+        layout="radar",
+        description=(
+            "One player's per-90 percentiles vs same-position peers "
+            "(mid-rank, minutes floor). Mounted in the shared player drawer "
+            "as the pizza chart."
+        ),
+    ),
+    Panel(
         id="projections",
         title="Projections",
         script="projection_table",
@@ -75,28 +97,13 @@ PANELS: tuple[Panel, ...] = (
             "how easy it is to keep clean. Blanks and doubles are explicit."
         ),
     ),
-    Panel(
-        id="prices",
-        title="Price radar",
-        script="price_radar",
-        default_params={"limit": 20},
-        # Not "table": the result is {risers, fallers, window}, and the table
-        # renderer reads `rows` -- a key this script's schema FORBIDS. Pinned
-        # to table, the panel rendered "No data." over real data forever.
-        layout="movers",
-        width="half",
-        description="Observed transfer velocity between the two most recent ingests.",
-    ),
-    Panel(
-        id="market",
-        title="Market watch",
-        script="market_watch",
-        default_params={"limit": 20},
-        layout="table",
-        width="half",
-        description="Bookmaker-derived clean-sheet probabilities (with "
-                    "cross-method spread) and player xG shares.",
-    ),
+    # price_radar, market_watch and idea_registry lost their front-page
+    # tables in the dashboard rebuild (FINAL_SPEC cut list #1–#3): price flow
+    # now reaches the page only through dashboard_brief's alerts/tiles/rails,
+    # and the bookmaker table and idea list have no rendering surface. The
+    # SCRIPTS stay registered — they are dashboard_brief's sources and the
+    # contract test reads them — but a Panel nobody renders is dead weight
+    # wearing a schema, so their Panel declarations are retired with them.
     Panel(
         id="planner",
         title="Transfer planner",
@@ -112,14 +119,6 @@ PANELS: tuple[Panel, ...] = (
         default_params={"limit": 50},
         layout="table",
         description="What the field owns: template, differentials, effective ownership.",
-    ),
-    Panel(
-        id="ideas",
-        title="Idea registry",
-        script="idea_registry",
-        default_params={"limit": 50},
-        layout="list",
-        description="Your theses, the engine's verdict, and how they actually resolved.",
     ),
     Panel(
         id="fixture_detail",

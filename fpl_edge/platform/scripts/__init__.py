@@ -10,9 +10,10 @@ obvious one-line registry change in code review").
 from __future__ import annotations
 
 from fpl_edge.platform.scripts import (
-    creators, fixtures, ideas, market, ownership, pipelines_panel, planner,
-    player_profile, prices, projections, squad,
+    brief, creators, fixtures, ideas, market, ownership, pipelines_panel,
+    planner, player_profile, prices, projections, radar, squad,
 )
 
-__all__ = ["creators", "fixtures", "ideas", "market", "pipelines_panel",
-           "player_profile", "prices", "projections", "squad"]
+__all__ = ["brief", "creators", "fixtures", "ideas", "market",
+           "pipelines_panel", "player_profile", "prices", "projections",
+           "radar", "squad"]

@@ -1,0 +1,1190 @@
+"""dashboard_brief — the dashboard's aggregator, under the anti-drift contract.
+
+THE CONTRACT (the ledger's "reader of the definition, never a second
+implementation"): this panel only *selects and thresholds* numbers computed by
+the same shared code its source panels use. Concretely, it CALLS the source
+panel functions (``squad_overview``, ``price_radar``, ``ownership_eo``,
+``fixture_board``, ``idea_registry``) and the shared semantic views
+(``sem_projection_consensus``, ``sem_players``) — it re-implements no metric,
+no squad read, no flow window, no EO definition. Every item carries
+``source_panel`` + ``source_as_of`` so drift is auditable, and a contract test
+asserts the brief's numbers equal the source panel's numbers for the same key.
+
+Thresholds are echoed in the payload — the view contains no magic numbers.
+There is NO free-text recommendation field: wording lives in view templates
+keyed by ``rule``/``kind``, so blended prose cannot be smuggled in
+warehouse-side. Strings this panel does carry are either verbatim source
+fields (FPL ``news``), threshold echoes (``gate``), or measured facts
+(``watch_log[].detail``).
+
+The solve block implements the READ-SIDE derivation the stored plan lacks
+(no ``transfers[]``, no ``hold_baseline``): it diffs the plan's target squad
+against the current 15, resolves in/out pairs per position, and quotes the
+consensus-xPts delta over the plan's horizon — labelled as exactly that. The
+solver's own objective stays in its own currency (``rank_mv``) and is never
+relabelled or summed with consensus numbers. A plan generated before the most
+recent deadline is a named gap (state ``stale``), never a recommendation.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import json
+import statistics
+from pathlib import Path
+from typing import Any
+
+from fpl_edge.config import USER
+from fpl_edge.platform.registry import register_script
+from fpl_edge.platform.scripts.common import (
+    POSITION_NAME,
+    UTC,
+    empty,
+    next_gw,
+    q,
+    season_param,
+    source_dir,
+)
+from fpl_edge.platform.scripts.fixtures import fixture_board
+from fpl_edge.platform.scripts.ideas import idea_registry
+from fpl_edge.platform.scripts.ownership import ownership_eo
+from fpl_edge.platform.scripts.prices import price_radar
+from fpl_edge.platform.scripts.squad import squad_overview
+
+PLAN_NAME = "gw1_plan.json"
+
+#: Every gate the brief applies, echoed verbatim into the payload. The view
+#: renders these; it hardcodes none of them.
+THRESHOLDS: dict[str, float | int] = {
+    "bench_margin_xpts": 0.5,
+    "own_fall_net_hr": -1500,
+    "target_rise_net_hr": 2500,
+    "template_own_pct": 40,
+    "diff_own_pct": 10,
+    "diff_xpts_margin": 1.0,
+    "standout_margin_xpts": 3.0,
+    "standout_horizon_gws": 4,
+    "fixture_rank_move": 6,
+    "solve_fresh_window_h": 4,
+    "tile_cap": 6,
+}
+
+PARAMS: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "season": season_param(),
+        "entry_id": {"type": ["integer", "null"], "default": None},
+    },
+}
+
+_PLAYER_REF = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["code", "name"],
+    "properties": {
+        "code": {"type": "integer"},
+        "name": {"type": "string"},
+        "pos": {"type": ["string", "null"]},
+        "team": {"type": ["string", "null"]},
+        "team_code": {"type": ["integer", "null"]},
+        "price": {"type": ["number", "null"]},
+        "own_pct": {"type": ["number", "null"]},
+    },
+}
+
+_DRILL = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "focus": {"type": "string"},
+        "codes": {"type": "array", "items": {"type": "integer"}},
+        "drawer": {"type": "integer"},
+        "tab": {"type": "string"},
+    },
+}
+
+_ALERT = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["rule", "kind", "priority", "codes", "numbers",
+                 "source_panel", "source_as_of"],
+    "properties": {
+        "rule": {"type": "string"},
+        "kind": {"type": "string",
+                 "enum": ["AVAILABILITY", "BENCH", "CAPTAIN", "MARKET",
+                          "SOLVER", "GAP"]},
+        "priority": {"type": "integer", "minimum": 0, "maximum": 1},
+        "codes": {"type": "array", "items": {"type": "integer"}},
+        "players": {"type": "array", "items": _PLAYER_REF},
+        "numbers": {"type": "object",
+                    "additionalProperties": {"type": ["number", "null"]}},
+        "news": {"type": ["string", "null"]},   # verbatim FPL news, availability only
+        "status": {"type": ["string", "null"]},  # verbatim FPL status letter
+        "reason": {"type": ["string", "null"]},  # source panel's own reason, GAP only
+        "source_panel": {"type": "string"},
+        "source_as_of": {"type": ["string", "null"]},
+        "drill": _DRILL,
+    },
+}
+
+_TILE = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["kind", "priority", "number", "gate",
+                 "source_panel", "source_as_of"],
+    "properties": {
+        "kind": {"type": "string",
+                 "enum": ["xpts_standout", "template_gap", "differential",
+                          "fixture_turn", "price_rise_target",
+                          "creator_shift", "idea_due"]},
+        "priority": {"type": "integer", "minimum": 3, "maximum": 4},
+        "code": {"type": ["integer", "null"]},
+        "player": {"anyOf": [_PLAYER_REF, {"type": "null"}]},
+        "team_code": {"type": ["integer", "null"]},
+        "team": {"type": ["string", "null"]},
+        "number": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["value", "unit"],
+            "properties": {
+                "value": {"type": "number"},
+                "unit": {"type": "string"},
+                "window_h": {"type": ["number", "null"]},
+            },
+        },
+        # The threshold echo (which gate cleared, with the numbers in it) —
+        # never advice, never a forecast.
+        "gate": {"type": "string"},
+        "context": {"type": "object",
+                    "additionalProperties": {"type": ["number", "string", "null"]}},
+        "source_panel": {"type": "string"},
+        "source_as_of": {"type": ["string", "null"]},
+        "sources": {"type": "array", "items": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["panel"],
+            "properties": {"panel": {"type": "string"},
+                           "as_of": {"type": ["string", "null"]}},
+        }},
+        "drill": _DRILL,
+    },
+}
+
+_WATCH = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["check", "status", "detail", "source_panel", "as_of"],
+    "properties": {
+        "check": {"type": "string"},
+        "status": {"type": "string", "enum": ["clear", "firing", "gap"]},
+        "detail": {"type": "string"},
+        "source_panel": {"type": "string"},
+        "as_of": {"type": ["string", "null"]},
+    },
+}
+
+_FLOW = {
+    "type": ["object", "null"],
+    "additionalProperties": False,
+    "required": ["net_per_hour", "window_h"],
+    "properties": {
+        "net_per_hour": {"type": "number"},
+        "window_h": {"type": ["number", "null"]},
+    },
+}
+
+_TRANSFER = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["out", "in"],
+    "properties": {
+        "out": _PLAYER_REF,
+        "in": _PLAYER_REF,
+        "price_delta": {"type": ["number", "null"]},
+        # price_radar's observed flow for the two names, when the window
+        # carries them — the solver card's PRICE rail; never a prediction.
+        "out_flow": _FLOW,
+        "in_flow": _FLOW,
+    },
+}
+
+_SOLVE = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["state"],
+    "properties": {
+        "state": {"type": "string",
+                  "enum": ["fresh", "aging", "stale", "missing"]},
+        "reason": {"type": ["string", "null"]},
+        "generated_at": {"type": ["string", "null"]},
+        "snapshot_as_of": {"type": ["string", "null"]},
+        "age_hours": {"type": ["number", "null"]},
+        "last_deadline_utc": {"type": ["string", "null"]},
+        "next_deadline_utc": {"type": ["string", "null"]},
+        "horizon_gws": {"type": "array", "items": {"type": "integer"}},
+        # The solver's own currency, never relabelled.
+        "objective": {"type": ["number", "null"]},
+        "objective_mode": {"type": ["string", "null"]},
+        "n_sims": {"type": ["integer", "null"]},
+        "solver": {"type": ["string", "null"]},
+        "chip": {"type": ["string", "null"]},
+        "chip_gw": {"type": ["integer", "null"]},
+        "captain": {"anyOf": [_PLAYER_REF, {"type": "null"}]},
+        "your_captain": {"anyOf": [_PLAYER_REF, {"type": "null"}]},
+        # hold_baseline is a named gap until the solve artefact stores one.
+        "hold_baseline": {"type": ["number", "null"]},
+        "derived": {
+            "type": ["object", "null"],
+            "additionalProperties": False,
+            "required": ["transfers", "method"],
+            "properties": {
+                "method": {"type": "string"},
+                "transfers": {"type": "array", "items": _TRANSFER},
+                # Consensus xPts over the labelled gameweeks for the swapped
+                # players — a model quantity from the projection consensus,
+                # NOT the solver's objective and never blended with it.
+                "consensus_gws": {"type": "array", "items": {"type": "integer"}},
+                "consensus_xpts_in": {"type": ["number", "null"]},
+                "consensus_xpts_out": {"type": ["number", "null"]},
+                "consensus_xpts_delta": {"type": ["number", "null"]},
+                "consensus_label": {"type": ["string", "null"]},
+                "uncovered_codes": {"type": "array", "items": {"type": "integer"}},
+            },
+        },
+    },
+}
+
+RESULT: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["season", "gw", "entry_id", "as_of", "sources_as_of",
+                 "thresholds", "alerts", "tiles", "suppressed_counts",
+                 "empty_kinds", "watch_log", "solve"],
+    "properties": {
+        "season": {"type": "string"},
+        "gw": {"type": ["integer", "null"]},
+        "entry_id": {"type": "integer"},
+        "as_of": {"type": ["string", "null"]},
+        "sources_as_of": {"type": "object",
+                          "additionalProperties": {"type": ["string", "null"]}},
+        "deadline_utc": {"type": ["string", "null"]},
+        "xi_median_xpts": {"type": ["number", "null"]},
+        "thresholds": {"type": "object",
+                       "additionalProperties": {"type": "number"}},
+        "alerts": {"type": "array", "items": _ALERT},
+        "tiles": {"type": "array", "items": _TILE},
+        "suppressed_counts": {"type": "object",
+                              "additionalProperties": {"type": "integer"}},
+        "empty_kinds": {"type": "array", "items": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["kind", "reason"],
+            "properties": {"kind": {"type": "string"},
+                           "reason": {"type": "string"}},
+        }},
+        "watch_log": {"type": "array", "items": _WATCH},
+        "solve": _SOLVE,
+        "notes": {"type": "array", "items": {"type": "string"}},
+    },
+}
+
+
+def _iso(v: Any) -> str | None:
+    if v is None:
+        return None
+    return str(v).replace(" ", "T")
+
+
+def _parse_ts(s: Any) -> dt.datetime | None:
+    if s is None:
+        return None
+    try:
+        d = dt.datetime.fromisoformat(str(s).replace(" ", "T"))
+    except ValueError:
+        return None
+    if d.tzinfo is None:
+        d = d.replace(tzinfo=UTC)
+    return d.astimezone(UTC)
+
+
+def _ref(p: dict[str, Any]) -> dict[str, Any]:
+    """A player reference built from a source panel's own row — data, not prose."""
+    return {
+        "code": int(p["code"]),
+        "name": str(p.get("name") or p["code"]),
+        "pos": p.get("pos"),
+        "team": p.get("team"),
+        "team_code": p.get("team_code"),
+        "price": p.get("price"),
+        "own_pct": p.get("own_pct"),
+    }
+
+
+def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str, Any]:
+    """Select-and-threshold over the source panels; one payload, one clock set."""
+    now = dt.datetime.now(UTC)
+    eid = int(entry_id) if entry_id is not None else int(USER.entry_id)
+
+    sources_as_of: dict[str, str | None] = {}
+    alerts: list[dict[str, Any]] = []
+    tiles: list[tuple[float, dict[str, Any]]] = []   # (gate margin, tile)
+    watch: list[dict[str, Any]] = []
+    empties: list[dict[str, Any]] = []
+    notes: list[str] = []
+
+    # ---- calendar --------------------------------------------------------
+    g_next = next_gw(wh, season, now)
+    deadlines = q(
+        wh,
+        "SELECT gw, deadline_utc FROM ("
+        "  SELECT *, row_number() OVER (PARTITION BY season, gw ORDER BY as_of DESC) rn"
+        "  FROM dim_event WHERE season = ?"
+        ") WHERE rn = 1 ORDER BY deadline_utc",
+        (season,),
+    )
+    if deadlines.empty:
+        return empty(
+            f"No {season} events in the warehouse — without deadlines the "
+            f"brief cannot date a single claim. Run `make ingest` first."
+        )
+    next_deadline = None
+    last_deadline = None
+    for _, r in deadlines.iterrows():
+        d = _parse_ts(r["deadline_utc"])
+        if d is None:
+            continue
+        if d > now and next_deadline is None:
+            next_deadline = d
+        if d <= now:
+            last_deadline = d
+
+    # ---- source panels (each failure degrades its checks, never the page) --
+    def call(name, fn, **kw):
+        try:
+            res = fn(wh, season=season, **kw)
+        except Exception as exc:  # noqa: BLE001 - a brief reports, it does not crash
+            res = {"empty": True,
+                   "reason": f"{name} raised {type(exc).__name__}: {exc}"}
+        if not res.get("empty"):
+            sources_as_of[name] = _iso(res.get("as_of"))
+        return res
+
+    sq = call("squad_overview", squad_overview, entry_id=eid)
+    pr = call("price_radar", price_radar, limit=200)
+    own = call("ownership_eo", ownership_eo)
+    ideas = call("idea_registry", idea_registry, status="open")
+
+    def gap_alert(panel: str, reason: str) -> None:
+        alerts.append({
+            "rule": "source_gap", "kind": "GAP", "priority": 0,
+            "codes": [], "players": [], "numbers": {},
+            "news": None, "status": None, "reason": reason,
+            "source_panel": panel, "source_as_of": None,
+            "drill": {"tab": "pipelines"},
+        })
+
+    # ---- squad-derived checks -------------------------------------------
+    xi_median = None
+    starters: list[dict[str, Any]] = []
+    bench: list[dict[str, Any]] = []
+    squad15: list[dict[str, Any]] = []
+    if sq.get("empty"):
+        gap_alert("squad_overview", str(sq.get("reason")))
+        for check in ("squad_flags", "bench_order", "captaincy"):
+            watch.append({"check": check, "status": "gap",
+                          "detail": str(sq.get("reason"))[:200],
+                          "source_panel": "squad_overview", "as_of": None})
+    else:
+        starters = list(sq.get("starters") or [])
+        bench = list(sq.get("bench") or [])
+        squad15 = starters + bench
+        sq_as_of = _iso(sq.get("as_of"))
+        xi_x = [p["xpts"] for p in starters if p.get("xpts") is not None]
+        if len(xi_x) >= 6:
+            xi_median = round(statistics.median(xi_x), 3)
+
+        # availability: my squad's own flags, FPL status/news verbatim
+        flagged = [p for p in squad15 if p.get("status") in ("i", "s", "d", "u")]
+        for p in flagged:
+            alerts.append({
+                "rule": "availability", "kind": "AVAILABILITY", "priority": 0,
+                "codes": [p["code"]], "players": [_ref(p)],
+                "numbers": {}, "news": p.get("news") or None,
+                "status": p.get("status"), "reason": None,
+                "source_panel": "squad_overview", "source_as_of": sq_as_of,
+                "drill": {"drawer": p["code"]},
+            })
+        watch.append({
+            "check": "squad_flags",
+            "status": "firing" if flagged else "clear",
+            "detail": f"{len(flagged)} of {len(squad15)} flagged",
+            "source_panel": "squad_overview", "as_of": sq_as_of,
+        })
+
+        # bench inversion: best bench vs weakest same-position starter.
+        # Same-position swaps are always formation-legal.
+        inversions = 0
+        margin = float(THRESHOLDS["bench_margin_xpts"])
+        for b in bench:
+            if b.get("xpts") is None:
+                continue
+            same = [s for s in starters
+                    if s.get("pos") == b.get("pos") and s.get("xpts") is not None]
+            if not same:
+                continue
+            weakest = min(same, key=lambda s: s["xpts"])
+            swing = round(float(b["xpts"]) - float(weakest["xpts"]), 3)
+            if swing >= margin:
+                inversions += 1
+                alerts.append({
+                    "rule": "bench_inversion", "kind": "BENCH", "priority": 1,
+                    "codes": [b["code"], weakest["code"]],
+                    "players": [_ref(b), _ref(weakest)],
+                    "numbers": {"bench_xpts": b["xpts"],
+                                "starter_xpts": weakest["xpts"],
+                                "swing": swing},
+                    "news": None, "status": None, "reason": None,
+                    "source_panel": "squad_overview", "source_as_of": sq_as_of,
+                    "drill": {"focus": "pitch",
+                              "codes": [b["code"], weakest["code"]]},
+                })
+        best_swing = max((a["numbers"]["swing"] for a in alerts
+                          if a["rule"] == "bench_inversion"), default=None)
+        watch.append({
+            "check": "bench_order",
+            "status": "firing" if inversions else "clear",
+            "detail": (f"{inversions} inversion(s), best swing +{best_swing}"
+                       if inversions else
+                       f"no bench player beats his starter by ≥ {margin} xPts"),
+            "source_panel": "squad_overview", "as_of": sq_as_of,
+        })
+
+        # captaincy: two measures, both printed, never blended. The alert
+        # fires when the measures disagree with each other or with the armband.
+        cap = next((p for p in squad15 if p.get("is_captain")), None)
+        with_ph = [p for p in starters if p.get("p_haul") is not None]
+        with_x = [p for p in starters if p.get("xpts") is not None]
+        if cap and with_ph and with_x:
+            by_haul = max(with_ph, key=lambda p: p["p_haul"])
+            by_mean = max(with_x, key=lambda p: p["xpts"])
+            agree = by_haul["code"] == by_mean["code"] == cap["code"]
+            if not agree:
+                codes = []
+                for p in (by_haul, by_mean, cap):
+                    if p["code"] not in codes:
+                        codes.append(p["code"])
+                alerts.append({
+                    "rule": "captain_divergence", "kind": "CAPTAIN",
+                    "priority": 1, "codes": codes,
+                    "players": [_ref(by_haul), _ref(by_mean), _ref(cap)],
+                    "numbers": {
+                        "haul_pick_p_haul": by_haul["p_haul"],
+                        "haul_pick_xpts": by_haul.get("xpts"),
+                        "mean_pick_xpts": by_mean["xpts"],
+                        "mean_pick_p_haul": by_mean.get("p_haul"),
+                        "captain_xpts": cap.get("xpts"),
+                        "captain_p_haul": cap.get("p_haul"),
+                    },
+                    "news": None, "status": None, "reason": None,
+                    "source_panel": "squad_overview", "source_as_of": sq_as_of,
+                    "drill": {"focus": "pitch", "codes": codes},
+                })
+            watch.append({
+                "check": "captaincy",
+                "status": "clear" if agree else "firing",
+                "detail": (f"both measures name {cap['name']}" if agree else
+                           f"haul odds: {by_haul['name']} · mean: "
+                           f"{by_mean['name']} · armband: {cap['name']}"),
+                "source_panel": "squad_overview", "as_of": sq_as_of,
+            })
+        else:
+            watch.append({
+                "check": "captaincy", "status": "gap",
+                "detail": "no projection artefact cached — p_haul and xPts "
+                          "are null (run `make solve`)",
+                "source_panel": "squad_overview", "as_of": sq_as_of,
+            })
+
+    squad_codes = {p["code"] for p in squad15}
+    squad_team_codes = {p.get("team_code") for p in squad15
+                       if p.get("team_code") is not None}
+
+    # ---- price flow (owned falls = alerts; named-target rises = tiles) ----
+    watch_targets: set[int] = set()
+    try:
+        wl = q(wh, "SELECT DISTINCT code FROM watchlist "
+                   "WHERE season = ? AND NOT resolved", (season,))
+        watch_targets = {int(c) for c in wl["code"]} if not wl.empty else set()
+    except Exception:  # noqa: BLE001 - watchlist may not exist in a fresh db
+        watch_targets = set()
+
+    plan_codes: set[int] = set()
+    plan_path = Path(source_dir(wh)) / PLAN_NAME
+    plan: dict[str, Any] | None = None
+    if plan_path.exists():
+        try:
+            plan = json.loads(plan_path.read_text())
+            plan_codes = {int(c) for c in (plan.get("gw1") or {}).get("squad", [])}
+        except (OSError, json.JSONDecodeError) as exc:
+            notes.append(f"plan artefact unreadable: {type(exc).__name__}: {exc}")
+            plan = None
+
+    if pr.get("empty"):
+        gap_alert("price_radar", str(pr.get("reason")))
+        for check in ("owned_price_flow", "price_targets"):
+            watch.append({"check": check, "status": "gap",
+                          "detail": str(pr.get("reason"))[:200],
+                          "source_panel": "price_radar", "as_of": None})
+    else:
+        pr_as_of = _iso(pr.get("as_of"))
+        window_h = float((pr.get("window") or {}).get("hours") or 0)
+        fall_thr = float(THRESHOLDS["own_fall_net_hr"])
+        rise_thr = float(THRESHOLDS["target_rise_net_hr"])
+
+        owned_falls = [r for r in pr.get("fallers", [])
+                       if r["code"] in squad_codes and r["net_per_hour"] <= fall_thr]
+        for r in owned_falls:
+            alerts.append({
+                "rule": "own_price_fall", "kind": "MARKET", "priority": 1,
+                "codes": [r["code"]], "players": [_ref(r)],
+                "numbers": {"net": r["net"], "net_per_hour": r["net_per_hour"],
+                            "window_h": window_h},
+                "news": None, "status": None, "reason": None,
+                "source_panel": "price_radar", "source_as_of": pr_as_of,
+                "drill": {"drawer": r["code"]},
+            })
+        watch.append({
+            "check": "owned_price_flow",
+            "status": "firing" if owned_falls else "clear",
+            "detail": (" · ".join(f"{r['name']} {r['net_per_hour']:+,.0f}/hr"
+                                  for r in owned_falls)
+                       if owned_falls else
+                       f"no owned player past {fall_thr:+,.0f}/hr in the "
+                       f"{window_h}h window"),
+            "source_panel": "price_radar", "as_of": pr_as_of,
+        })
+
+        named = watch_targets | plan_codes
+        target_rises = [r for r in pr.get("risers", [])
+                        if r["code"] in named and r["code"] not in squad_codes
+                        and r["net_per_hour"] >= rise_thr]
+        for r in target_rises:
+            tiles.append((3, r["net_per_hour"] - rise_thr, {
+                "kind": "price_rise_target", "priority": 3,
+                "code": r["code"], "player": _ref(r),
+                "team_code": None, "team": r.get("team"),
+                "number": {"value": r["net_per_hour"], "unit": "net/hr",
+                           "window_h": window_h},
+                "gate": f"watchlist/solver-named ≥ {rise_thr:+,.0f}/hr "
+                        f"(observed flow, not a predicted change)",
+                "context": {"net": r["net"]},
+                "source_panel": "price_radar", "source_as_of": pr_as_of,
+                "sources": [{"panel": "price_radar", "as_of": pr_as_of}],
+                "drill": {"drawer": r["code"]},
+            }))
+        watch.append({
+            "check": "price_targets",
+            "status": "firing" if target_rises else "clear",
+            "detail": (f"{len(target_rises)} named target(s) past "
+                       f"{rise_thr:+,.0f}/hr"
+                       if target_rises else
+                       f"no watchlist/solver-named player past "
+                       f"{rise_thr:+,.0f}/hr ({len(named)} names watched)"),
+            "source_panel": "price_radar", "as_of": pr_as_of,
+        })
+
+    # ---- ownership gates (template gap, differential) --------------------
+    if own.get("empty"):
+        gap_alert("ownership_eo", str(own.get("reason")))
+        for check in ("template_gaps", "differentials"):
+            watch.append({"check": check, "status": "gap",
+                          "detail": str(own.get("reason"))[:200],
+                          "source_panel": "ownership_eo", "as_of": None})
+    else:
+        own_as_of = _iso(own.get("as_of"))
+        t_thr = float(THRESHOLDS["template_own_pct"])
+        d_thr = float(THRESHOLDS["diff_own_pct"])
+        d_margin = float(THRESHOLDS["diff_xpts_margin"])
+        bank = (sq.get("bank_tenths") or 0) / 10.0 if not sq.get("empty") else None
+
+        def affordable(row) -> bool:
+            """Within bank + one same-position sale — sale at current price,
+            the same simplification the planner states."""
+            if bank is None or row.get("price") is None:
+                return True   # squad unreadable: affordability cannot gate
+            same = [p.get("price") or 0.0 for p in squad15
+                    if p.get("pos") == row.get("pos")]
+            return bool(same) and (bank + max(same)) >= float(row["price"])
+
+        gaps_found = []
+        for r in own.get("rows", []):
+            if (r.get("own_pct") is not None and r["own_pct"] >= t_thr
+                    and r.get("in_squad") is False and affordable(r)):
+                gaps_found.append(r)
+        for r in gaps_found:
+            tiles.append((3, float(r["own_pct"]) - t_thr, {
+                "kind": "template_gap", "priority": 3,
+                "code": r["code"], "player": _ref(r),
+                "team_code": r.get("team_code"), "team": r.get("team"),
+                "number": {"value": r["own_pct"], "unit": "own%",
+                           "window_h": None},
+                "gate": f"own% ≥ {t_thr:.0f}, unowned, affordable within "
+                        f"bank + one same-position sale",
+                "context": {"price": r.get("price"), "xpts": r.get("xpts")},
+                "source_panel": "ownership_eo", "source_as_of": own_as_of,
+                "sources": [{"panel": "ownership_eo", "as_of": own_as_of}],
+                "drill": {"tab": "template"},
+            }))
+        watch.append({
+            "check": "template_gaps",
+            "status": "firing" if gaps_found else "clear",
+            "detail": (f"{len(gaps_found)} unowned player(s) ≥ {t_thr:.0f}% owned"
+                       if gaps_found else f"none ≥ {t_thr:.0f}% threshold"),
+            "source_panel": "ownership_eo", "as_of": own_as_of,
+        })
+
+        diffs_found = []
+        if xi_median is not None:
+            pool = {r["code"]: r for r in own.get("differentials", [])}
+            for r in own.get("rows", []):
+                pool.setdefault(r["code"], r)
+            for r in pool.values():
+                if (r.get("own_pct") is not None and r["own_pct"] <= d_thr
+                        and r.get("xpts") is not None
+                        and r["xpts"] >= xi_median + d_margin
+                        and r["code"] not in squad_codes):
+                    diffs_found.append(r)
+            for r in diffs_found:
+                tiles.append((3, float(r["xpts"]) - (xi_median + d_margin), {
+                    "kind": "differential", "priority": 3,
+                    "code": r["code"], "player": _ref(r),
+                    "team_code": r.get("team_code"), "team": r.get("team"),
+                    "number": {"value": r["xpts"], "unit": "xPts next GW",
+                               "window_h": None},
+                    "gate": f"own% ≤ {d_thr:.0f} and next-GW xPts ≥ XI median "
+                            f"{xi_median} + {d_margin} — two gates, two "
+                            f"sources, numbers never combined",
+                    "context": {"own_pct": r.get("own_pct"),
+                                "xi_median": xi_median},
+                    "source_panel": "ownership_eo", "source_as_of": own_as_of,
+                    "sources": [
+                        {"panel": "ownership_eo", "as_of": own_as_of},
+                        {"panel": "squad_overview",
+                         "as_of": sources_as_of.get("squad_overview")},
+                    ],
+                    "drill": {"drawer": r["code"]},
+                }))
+            watch.append({
+                "check": "differentials",
+                "status": "firing" if diffs_found else "clear",
+                "detail": (f"{len(diffs_found)} cleared both gates"
+                           if diffs_found else
+                           f"none ≤ {d_thr:.0f}% owned with xPts ≥ XI median "
+                           f"+ {d_margin}"),
+                "source_panel": "ownership_eo", "as_of": own_as_of,
+            })
+        else:
+            watch.append({
+                "check": "differentials", "status": "gap",
+                "detail": "XI median unavailable (squad or projections "
+                          "missing) — the xPts gate cannot be evaluated",
+                "source_panel": "ownership_eo", "as_of": own_as_of,
+            })
+
+    # ---- consensus standouts (projection semantic view) ------------------
+    standout_count = 0
+    cons_as_of = None
+    if not sq.get("empty") and g_next is not None:
+        try:
+            gws4 = list(range(g_next, g_next + int(THRESHOLDS["standout_horizon_gws"])))
+            cons = q(
+                wh,
+                "SELECT code, gw, xpts_mean FROM sem_projection_consensus(?) "
+                "WHERE season = ? AND gw >= ? AND gw <= ?",
+                (now, season, gws4[0], gws4[-1]),
+            )
+        except Exception as exc:  # noqa: BLE001
+            cons = None
+            watch.append({"check": "xpts_standouts", "status": "gap",
+                          "detail": f"sem_projection_consensus: "
+                                    f"{type(exc).__name__}: {exc}"[:200],
+                          "source_panel": "projection_table", "as_of": None})
+        if cons is not None and not cons.empty:
+            cons_as_of = sources_as_of.get("squad_overview")
+            covered = sorted(int(g) for g in cons["gw"].unique())
+            sums = cons.groupby("code")["xpts_mean"].sum().to_dict()
+            m_thr = float(THRESHOLDS["standout_margin_xpts"])
+            players_df = q(
+                wh,
+                "SELECT code, web_name, position, team, team_code, price "
+                "FROM sem_players(?) WHERE season = ?",
+                (now, season),
+            )
+            pinfo = {int(r["code"]): r for _, r in players_df.iterrows()}
+            weakest_by_pos: dict[str, tuple[dict[str, Any], float]] = {}
+            for pos in ("GKP", "DEF", "MID", "FWD"):
+                same = [s for s in starters if s.get("pos") == pos
+                        and s["code"] in sums]
+                if not same:
+                    continue
+                w = min(same, key=lambda s: sums[s["code"]])
+                weakest_by_pos[pos] = (w, float(sums[w["code"]]))
+            for code_, total in sorted(sums.items(), key=lambda kv: -kv[1]):
+                code_ = int(code_)
+                if code_ in squad_codes or code_ not in pinfo:
+                    continue
+                row = pinfo[code_]
+                pos = POSITION_NAME.get(
+                    int(row["position"]) if row["position"] == row["position"] else 0, "?")
+                if pos not in weakest_by_pos:
+                    continue
+                weak, weak_sum = weakest_by_pos[pos]
+                if float(total) >= weak_sum + m_thr:
+                    standout_count += 1
+                    tiles.append((3, float(total) - (weak_sum + m_thr), {
+                        "kind": "xpts_standout", "priority": 3,
+                        "code": code_,
+                        "player": {"code": code_,
+                                   "name": str(row["web_name"]),
+                                   "pos": pos,
+                                   "team": None if row["team"] is None else str(row["team"]),
+                                   "team_code": None if row["team_code"] != row["team_code"]
+                                                else int(row["team_code"]),
+                                   "price": None if row["price"] != row["price"]
+                                            else float(row["price"]),
+                                   "own_pct": None},
+                        "team_code": None, "team": None,
+                        "number": {"value": round(float(total), 2),
+                                   "unit": f"xPts GW{covered[0]}–{covered[-1]}",
+                                   "window_h": None},
+                        "gate": f"consensus Σ GW{covered[0]}–{covered[-1]} ≥ "
+                                f"weakest {pos} starter ({weak['name']} "
+                                f"{weak_sum:.1f}) + {m_thr:.1f}",
+                        "context": {"weakest_starter_sum": round(weak_sum, 2),
+                                    "weakest_starter": weak["name"]},
+                        "source_panel": "projection_table",
+                        "source_as_of": cons_as_of,
+                        "sources": [{"panel": "projection_table",
+                                     "as_of": cons_as_of}],
+                        "drill": {"drawer": code_},
+                    }))
+            watch.append({
+                "check": "xpts_standouts",
+                "status": "firing" if standout_count else "clear",
+                "detail": (f"{standout_count} non-owned player(s) ≥ weakest "
+                           f"same-position starter + "
+                           f"{THRESHOLDS['standout_margin_xpts']}"
+                           if standout_count else
+                           "no non-owned player clears the +3.0 margin"),
+                "source_panel": "projection_table", "as_of": cons_as_of,
+            })
+        elif cons is not None:
+            watch.append({
+                "check": "xpts_standouts", "status": "gap",
+                "detail": f"no consensus projections for GW{g_next}+ in the "
+                          f"warehouse — ingest projections",
+                "source_panel": "projection_table", "as_of": None,
+            })
+
+    # ---- fixture turns (split board, two windows, its own fields only) ----
+    try:
+        near = fixture_board(wh, season=season, horizon=3, from_gw=g_next,
+                             include_form=False, include_calibration=False)
+        far = fixture_board(wh, season=season, horizon=3,
+                            from_gw=(g_next + 3) if g_next else None,
+                            include_form=False, include_calibration=False)
+    except Exception as exc:  # noqa: BLE001
+        near = {"empty": True,
+                "reason": f"fixture_board raised {type(exc).__name__}: {exc}"}
+        far = near
+    if near.get("empty") or far.get("empty"):
+        reason = str(near.get("reason") or far.get("reason"))
+        watch.append({"check": "fixture_turns", "status": "gap",
+                      "detail": reason[:200],
+                      "source_panel": "fixture_board", "as_of": None})
+    else:
+        fb_as_of = _iso(near.get("as_of"))
+        sources_as_of.setdefault("fixture_board", fb_as_of)
+        move_thr = int(THRESHOLDS["fixture_rank_move"])
+        top_eo_teams = set()
+        if not own.get("empty"):
+            for r in (own.get("rows") or [])[:10]:
+                if r.get("team_code") is not None:
+                    top_eo_teams.add(r["team_code"])
+        relevant = squad_team_codes | top_eo_teams
+        far_by = {t.get("team_code"): t for t in far.get("teams", [])}
+        turns = 0
+        near_gws = near.get("gws") or []
+        far_gws = far.get("gws") or []
+        for t in near.get("teams", []):
+            tc = t.get("team_code")
+            if tc not in relevant or tc not in far_by:
+                continue
+            h1 = t.get("horizon") or {}
+            h2 = far_by[tc].get("horizon") or {}
+            for axis in ("attack_rank", "defence_rank"):
+                r1, r2 = h1.get(axis), h2.get(axis)
+                if r1 is None or r2 is None:
+                    continue
+                move = int(r1) - int(r2)
+                if abs(move) >= move_thr:
+                    turns += 1
+                    tiles.append((4, abs(move) - move_thr, {
+                        "kind": "fixture_turn", "priority": 4,
+                        "code": None, "player": None,
+                        "team_code": tc, "team": t.get("short_name"),
+                        "number": {"value": move, "unit": "places",
+                                   "window_h": None},
+                        "gate": f"{axis.replace('_', ' ')} moves ≥ {move_thr} "
+                                f"places: {r1} (GW{near_gws[0]}–{near_gws[-1]})"
+                                f" → {r2} (GW{far_gws[0]}–{far_gws[-1]}) — "
+                                f"split panel's own ranks, never a blended "
+                                f"difficulty",
+                        "context": {"axis": axis, "rank_near": r1,
+                                    "rank_far": r2},
+                        "source_panel": "fixture_board",
+                        "source_as_of": fb_as_of,
+                        "sources": [{"panel": "fixture_board",
+                                     "as_of": fb_as_of}],
+                        "drill": {"tab": "fixtures"},
+                    }))
+        watch.append({
+            "check": "fixture_turns",
+            "status": "firing" if turns else "clear",
+            "detail": (f"{turns} run(s) turning ≥ {move_thr} places among "
+                       f"your/top-EO clubs"
+                       if turns else
+                       f"no horizon rank move ≥ {move_thr} places among "
+                       f"{len(relevant)} relevant club(s)"),
+            "source_panel": "fixture_board", "as_of": fb_as_of,
+        })
+
+    # ---- idea_due --------------------------------------------------------
+    if ideas.get("empty"):
+        watch.append({"check": "idea_due", "status": "gap",
+                      "detail": str(ideas.get("reason"))[:200],
+                      "source_panel": "idea_registry", "as_of": None})
+    else:
+        id_as_of = _iso(ideas.get("as_of"))
+        sources_as_of.setdefault("idea_registry", id_as_of)
+        due = []
+        open_rows = [r for r in ideas.get("rows", [])
+                     if (r.get("status") or "open") == "open"]
+        if open_rows and g_next is not None:
+            try:
+                fx = q(
+                    wh,
+                    "SELECT DISTINCT p.web_name FROM sem_players(?) p "
+                    "JOIN (SELECT home_team_code AS tc FROM fact_fixture "
+                    "      WHERE season = ? AND gw = ? "
+                    "      UNION SELECT away_team_code FROM fact_fixture "
+                    "      WHERE season = ? AND gw = ?) f "
+                    "ON f.tc = p.team_code WHERE p.season = ?",
+                    (now, season, g_next, season, g_next, season),
+                )
+                playing = {str(n).lower() for n in fx["web_name"]} if not fx.empty else set()
+            except Exception:  # noqa: BLE001
+                playing = set()
+            for r in open_rows:
+                subj = (r.get("subject_name") or "").lower()
+                if subj and subj in playing:
+                    due.append(r)
+        for r in due:
+            tiles.append((3, 0.0, {
+                "kind": "idea_due", "priority": 3,
+                "code": None, "player": None,
+                "team_code": None, "team": None,
+                "number": {"value": float(g_next), "unit": "gw",
+                           "window_h": None},
+                "gate": f"open idea whose subject "
+                        f"({r.get('subject_name')}) plays GW{g_next}",
+                "context": {"idea_id": r.get("idea_id"),
+                            "subject": r.get("subject_name")},
+                "source_panel": "idea_registry", "source_as_of": id_as_of,
+                "sources": [{"panel": "idea_registry", "as_of": id_as_of}],
+                "drill": {"tab": "chat"},
+            }))
+        watch.append({
+            "check": "idea_due",
+            "status": "firing" if due else "clear",
+            "detail": (f"{len(due)} open idea(s) with the subject playing "
+                       f"GW{g_next}" if due else
+                       f"{len(open_rows)} open idea(s), none with a resolvable "
+                       f"subject playing GW{g_next}"),
+            "source_panel": "idea_registry", "as_of": id_as_of,
+        })
+
+    # ---- creator_shift: a named gap, not a silent absence ----------------
+    # creator_board publishes takes and ownership, not a formation/predicted-XI
+    # *change* signal. Deriving one here would be a second implementation of a
+    # definition no panel owns — the exact drift the contract forbids.
+    empties.append({
+        "kind": "creator_shift",
+        "reason": "creator_board serves no formation/predicted-XI change "
+                  "delta; the gate cannot be evaluated without a second "
+                  "implementation. The Creators tab has the corpus.",
+    })
+    watch.append({"check": "creator_shift", "status": "gap",
+                  "detail": "no served change signal — see empty_kinds",
+                  "source_panel": "creator_board", "as_of": None})
+
+    # ---- the solve block -------------------------------------------------
+    solve: dict[str, Any] = {"state": "missing", "reason": None,
+                             "generated_at": None, "snapshot_as_of": None,
+                             "age_hours": None,
+                             "last_deadline_utc": _iso(last_deadline),
+                             "next_deadline_utc": _iso(next_deadline),
+                             "horizon_gws": [], "objective": None,
+                             "objective_mode": None, "n_sims": None,
+                             "solver": None, "chip": None, "chip_gw": None,
+                             "captain": None, "your_captain": None,
+                             "hold_baseline": None, "derived": None}
+    if plan is None:
+        solve["reason"] = (f"no plan artefact at {PLAN_NAME}; the pipeline "
+                           f"writes one T-4h before each deadline.")
+        watch.append({"check": "solver", "status": "gap",
+                      "detail": solve["reason"],
+                      "source_panel": "solve_plan", "as_of": None})
+        alerts.append({
+            "rule": "solve_missing", "kind": "SOLVER", "priority": 0,
+            "codes": [], "players": [], "numbers": {},
+            "news": None, "status": None, "reason": solve["reason"],
+            "source_panel": "solve_plan", "source_as_of": None,
+            "drill": {"tab": "pipelines"},
+        })
+    else:
+        gen = _parse_ts(plan.get("generated_at"))
+        solve.update({
+            "generated_at": _iso(plan.get("generated_at")),
+            "snapshot_as_of": _iso(plan.get("snapshot_as_of")),
+            "age_hours": (round((now - gen).total_seconds() / 3600.0, 1)
+                          if gen else None),
+            "horizon_gws": [int(g) for g in plan.get("horizon_gws", [])],
+            "objective": plan.get("objective"),
+            "objective_mode": plan.get("objective_mode"),
+            "n_sims": plan.get("n_sims"),
+            "solver": plan.get("solver"),
+            "chip": (plan.get("gw1") or {}).get("chip"),
+            "chip_gw": (int(plan["horizon_gws"][0])
+                        if plan.get("horizon_gws") else None),
+        })
+        sources_as_of.setdefault("solve_plan", solve["generated_at"])
+        cap_code = (plan.get("gw1") or {}).get("captain")
+        pinfo_needed = set(plan_codes) | ({int(cap_code)} if cap_code else set())
+        pdf = q(
+            wh,
+            "SELECT code, web_name, position, team, team_code, price, "
+            "selected_by_pct FROM sem_players(?) WHERE season = ?",
+            (now, season),
+        )
+        prow = {int(r["code"]): r for _, r in pdf.iterrows()
+                if int(r["code"]) in pinfo_needed}
+
+        def plan_ref(c: int) -> dict[str, Any]:
+            r = prow.get(int(c))
+            if r is None:
+                return {"code": int(c), "name": str(c), "pos": None,
+                        "team": None, "team_code": None, "price": None,
+                        "own_pct": None}
+            return {
+                "code": int(c), "name": str(r["web_name"]),
+                "pos": POSITION_NAME.get(
+                    int(r["position"]) if r["position"] == r["position"] else 0, "?"),
+                "team": None if r["team"] is None else str(r["team"]),
+                "team_code": None if r["team_code"] != r["team_code"] else int(r["team_code"]),
+                "price": None if r["price"] != r["price"] else float(r["price"]),
+                "own_pct": None if r["selected_by_pct"] != r["selected_by_pct"]
+                           else float(r["selected_by_pct"]),
+            }
+
+        if cap_code:
+            solve["captain"] = plan_ref(int(cap_code))
+        my_cap = next((p for p in squad15 if p.get("is_captain")), None)
+        if my_cap:
+            solve["your_captain"] = _ref(my_cap)
+
+        if gen is not None and last_deadline is not None and gen < last_deadline:
+            solve["state"] = "stale"
+            solve["reason"] = (
+                f"plan generated {gen.date().isoformat()} for "
+                f"GW{solve['horizon_gws'][0] if solve['horizon_gws'] else '?'}–"
+                f"{solve['horizon_gws'][-1] if solve['horizon_gws'] else '?'}; "
+                f"a deadline has passed since — its moves were priced against "
+                f"a squad you no longer have."
+            )
+            alerts.append({
+                "rule": "solve_stale", "kind": "SOLVER", "priority": 0,
+                "codes": [], "players": [],
+                "numbers": {"age_hours": solve["age_hours"]},
+                "news": None, "status": None, "reason": solve["reason"],
+                "source_panel": "solve_plan",
+                "source_as_of": solve["generated_at"],
+                "drill": {"tab": "pipelines"},
+            })
+            watch.append({"check": "solver", "status": "gap",
+                          "detail": f"plan predates "
+                                    f"GW{g_next if g_next else '?'} — "
+                                    f"generated {gen.date().isoformat()}",
+                          "source_panel": "solve_plan",
+                          "as_of": solve["generated_at"]})
+        else:
+            fresh_h = float(THRESHOLDS["solve_fresh_window_h"])
+            if (gen is not None and next_deadline is not None
+                    and gen >= next_deadline - dt.timedelta(hours=fresh_h)):
+                solve["state"] = "fresh"
+            else:
+                solve["state"] = "aging"
+            watch.append({"check": "solver", "status": "clear",
+                          "detail": f"plan {solve['state']}, "
+                                    f"{solve['age_hours']}h old",
+                          "source_panel": "solve_plan",
+                          "as_of": solve["generated_at"]})
+
+            # READ-SIDE DERIVATION (the stored plan carries no transfers[]):
+            # plan squad vs your current 15, in/out paired per position.
+            if squad15 and plan_codes:
+                outs = sorted(squad_codes - plan_codes)
+                ins = sorted(plan_codes - squad_codes)
+                sq_by_code = {p["code"]: p for p in squad15}
+                by_pos_out: dict[str, list[dict[str, Any]]] = {}
+                by_pos_in: dict[str, list[dict[str, Any]]] = {}
+                for c in outs:
+                    r = _ref(sq_by_code[c])
+                    by_pos_out.setdefault(r["pos"] or "?", []).append(r)
+                for c in ins:
+                    r = plan_ref(c)
+                    by_pos_in.setdefault(r["pos"] or "?", []).append(r)
+                flow_by_code: dict[int, dict[str, Any]] = {}
+                if not pr.get("empty"):
+                    w_h = (pr.get("window") or {}).get("hours")
+                    for r in list(pr.get("risers", [])) + list(pr.get("fallers", [])):
+                        flow_by_code[r["code"]] = {
+                            "net_per_hour": r["net_per_hour"], "window_h": w_h}
+                transfers = []
+                for pos in sorted(set(by_pos_out) | set(by_pos_in)):
+                    o_list = sorted(by_pos_out.get(pos, []),
+                                    key=lambda r: -(r["price"] or 0))
+                    i_list = sorted(by_pos_in.get(pos, []),
+                                    key=lambda r: -(r["price"] or 0))
+                    for o, i in zip(o_list, i_list):
+                        transfers.append({
+                            "out": o, "in": i,
+                            "price_delta": (round(i["price"] - o["price"], 1)
+                                            if i["price"] is not None
+                                            and o["price"] is not None else None),
+                            "out_flow": flow_by_code.get(o["code"]),
+                            "in_flow": flow_by_code.get(i["code"]),
+                        })
+                # Consensus xPts over the plan's horizon for the swapped
+                # players — the projection consensus voice, labelled as such.
+                h_gws = solve["horizon_gws"]
+                cons_gws: list[int] = []
+                x_in = x_out = None
+                uncovered: list[int] = []
+                if h_gws:
+                    cdf = q(
+                        wh,
+                        "SELECT code, gw, xpts_mean FROM "
+                        "sem_projection_consensus(?) WHERE season = ? "
+                        "AND gw >= ? AND gw <= ?",
+                        (now, season, min(h_gws), max(h_gws)),
+                    )
+                    if not cdf.empty:
+                        cons_gws = sorted(int(g) for g in cdf["gw"].unique()
+                                          if int(g) in set(h_gws))
+                        csum = cdf[cdf["gw"].isin(cons_gws)] \
+                            .groupby("code")["xpts_mean"].sum().to_dict()
+                        moved_in = [t["in"]["code"] for t in transfers]
+                        moved_out = [t["out"]["code"] for t in transfers]
+                        for c in moved_in + moved_out:
+                            if c not in csum:
+                                uncovered.append(c)
+                        x_in = round(sum(float(csum.get(c, 0.0))
+                                         for c in moved_in), 2)
+                        x_out = round(sum(float(csum.get(c, 0.0))
+                                          for c in moved_out), 2)
+                label = (f"consensus xPts over GW{cons_gws[0]}–{cons_gws[-1]} "
+                         f"for the swapped players"
+                         if cons_gws else None)
+                solve["derived"] = {
+                    "method": "plan squad for its first horizon GW diffed "
+                              "against your current 15; in/out paired within "
+                              "position by price (derived — the artefact "
+                              "stores no transfers[])",
+                    "transfers": transfers,
+                    "consensus_gws": cons_gws,
+                    "consensus_xpts_in": x_in,
+                    "consensus_xpts_out": x_out,
+                    "consensus_xpts_delta": (round(x_in - x_out, 2)
+                                             if x_in is not None
+                                             and x_out is not None else None),
+                    "consensus_label": label,
+                    "uncovered_codes": uncovered,
+                }
+
+    # ---- assemble --------------------------------------------------------
+    alerts.sort(key=lambda a: (
+        a["priority"],
+        -max([abs(v) for v in a["numbers"].values() if v is not None] or [0.0]),
+    ))
+
+    # Rank: priority class first, then gate magnitude WITHIN a kind, kinds
+    # interleaved — one flooding kind (31 xPts standouts on a normal Monday)
+    # must not evict the rest of the catalogue from all six slots; that is the
+    # squeeze the alert/tile split exists to prevent, applied inside the tiles.
+    within: dict[str, int] = {}
+    ranked: list[tuple[tuple[int, int, float], dict[str, Any]]] = []
+    for prio, margin, tile in sorted(tiles, key=lambda t: (t[0], -t[1])):
+        idx = within.get(tile["kind"], 0)
+        within[tile["kind"]] = idx + 1
+        ranked.append(((prio, idx, -margin), tile))
+    ranked.sort(key=lambda r: r[0])
+    cap_n = int(THRESHOLDS["tile_cap"])
+    kept = [t for _, t in ranked[:cap_n]]
+    suppressed: dict[str, int] = {}
+    for _, t in ranked[cap_n:]:
+        suppressed[t["kind"]] = suppressed.get(t["kind"], 0) + 1
+
+    # Oldest load-bearing contributing clock. The solve artefact's clock is
+    # excluded: both of its clocks print on the solver card itself, and a
+    # stale plan is a named gap, not a contributor to the alerts' age.
+    load_bearing = [v for k, v in sources_as_of.items()
+                    if v and k != "solve_plan"]
+    as_of = min(load_bearing) if load_bearing else None
+
+    deadline_utc = None
+    if g_next is not None:
+        row = deadlines[deadlines["gw"] == g_next]
+        if not row.empty and row.iloc[0]["deadline_utc"] is not None:
+            deadline_utc = str(row.iloc[0]["deadline_utc"]).replace(" ", "T")
+
+    return {
+        "season": season,
+        "gw": g_next,
+        "entry_id": eid,
+        "as_of": as_of,
+        "sources_as_of": sources_as_of,
+        "deadline_utc": deadline_utc,
+        "xi_median_xpts": xi_median,
+        "thresholds": {k: float(v) for k, v in THRESHOLDS.items()},
+        "alerts": alerts,
+        "tiles": kept,
+        "suppressed_counts": suppressed,
+        "empty_kinds": empties,
+        "watch_log": watch,
+        "solve": solve,
+        "notes": notes,
+    }
+
+
+register_script(
+    "dashboard_brief",
+    dashboard_brief,
+    params_schema=PARAMS,
+    result_schema=RESULT,
+    title="Dashboard brief",
+    description="Alerts, gated tiles, watch log and the solve state — "
+                "selected and thresholded from the source panels, never "
+                "recomputed. Thresholds echoed; every item cites its source.",
+)
