@@ -9,8 +9,14 @@ ledger), and health-scored ({ok, failing, stale, running, never_ran,
 disabled} with a reason, consecutive-failure counts, avg duration over the
 last 20 ok runs); one `pipeline_status()` payload feeding a control-panel UI
 with per-pipeline health, last run, average time, next due, and
-trigger-with-confirm for metered tasks. Building in the §6 order with §6.4
-promoted to flagship.
+trigger-with-confirm for metered tasks. BUILT 2026-09-01: all six phases
+shipped and live-verified the day after the spec closed. Commits: 6bbd4eb
+(ledger + write-on-change) · d843416 (pipelines package + scheduler + new
+schedules) · b8cd61e (control panel) · 8f64520 (one fetch discipline +
+receipts). Collateral fixes from the GW2 investigation: b0943ca (transfer
+entity key), ee16f16 (paid-means-kept). Open by design: the post_gw parity
+window (retirement procedure in the plist) and the deep router/Telegram
+untangling (its own task chip).
 
 ---
 
