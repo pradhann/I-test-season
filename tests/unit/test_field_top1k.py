@@ -361,11 +361,17 @@ def test_a_starved_transfer_stage_is_never_silently_absent():
     # Picks got through; transfers did not.
     assert summary["stages"]["picks"] == "ok"
     assert "fact_manager_pick" in frames
-    assert "fact_manager_transfer" not in frames
-
-    # ...and that absence is LOUD, not implied by a missing key.
+    # Since the fetched-means-kept fix (picks.py ingest_transfers), a starved
+    # stage RETURNS whatever it paid for before the budget died -- 270 paid
+    # requests were once discarded by the old unwind. The partial frame is
+    # therefore allowed (and expected when anything was fetched); what must
+    # never change is that the shortfall stays LOUD:
     assert summary["stages"]["transfers"] != "ok"
     assert "transfers" in _incomplete(summary["stages"])
+    fetched = summary["transfers"].get("requested", 0)
+    if fetched and "fact_manager_transfer" in frames:
+        # every row present belongs to an entry the budget actually covered
+        assert len(set(frames["fact_manager_transfer"]["entry_id"])) <= fetched
 
 
 def test_a_transfer_stage_that_never_ran_at_all_counts_as_incomplete():

@@ -2,6 +2,15 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+  <!-- PARITY (PIPELINES.md §6.2, 2026-08-31): the settlement chain this job
+       runs is now ALSO executed by the deadline-DAG tick as the
+       post_gw_settlement registry task (fpl_edge/pipelines/registry.py,
+       Calendar 10:30 UTC), iterating the same post_gw.settlement_steps list.
+       This plist stays loaded during the parity window; every step is
+       idempotent so the doubled daily run is safe. Retire it ONLY after the
+       owner has watched a few days of matching outcomes (compare this job's
+       post_gw_*.json reports against dag_firing/fetch_run rows for
+       task='post_gw_settlement'). -->
   <key>Label</key><string>com.fpledge.postgw</string>
   <key>WorkingDirectory</key><string>/Users/nripeshpradhan/Documents/Github/i-test-season</string>
   <key>ProgramArguments</key>

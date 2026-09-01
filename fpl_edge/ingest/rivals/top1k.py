@@ -283,6 +283,13 @@ def collect(
             summary["transfers"] = tstats
             if not t.empty:
                 frames["fact_manager_transfer"] = t
+            # Same rule as crawl.py: ingest_transfers absorbs its own budget
+            # death and returns the partial frame (fetched means kept). Save
+            # the frame FIRST, then re-raise so the stage still reads
+            # incomplete -- a receipt that says ok about a stage the budget
+            # cut short would hide the shortfall this crawl exists to avoid.
+            if tstats.get("budget_exhausted"):
+                raise BudgetExhausted(tstats["budget_exhausted"])
     return frames, summary
 
 

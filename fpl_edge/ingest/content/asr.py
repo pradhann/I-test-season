@@ -802,3 +802,112 @@ def enclosures_from_feed(fetcher, source) -> tuple[dict[str, str], int | None]:
             continue
         out[ContentItem.make_id(source.key, identity)] = url
     return out, resp.status
+
+
+# ---------------------------------------------------------------------------
+# Audio retention (PIPELINES.md §3 defect 3, §4.4)
+#
+# The cache exists so a failed batch never re-downloads; once an item's
+# transcript is STORED, the audio has done its work and the file is pure
+# growth (episodes are 20-400MB). The deletion rule is deliberately narrow:
+# a file may go only when its item holds (a) transcript segments, (b) the
+# promoted transcript text, and (c) a transcript_provenance row whose
+# audio_sha256 is non-empty -- the hash outlives the file, so "what exactly
+# was transcribed" stays answerable forever. A file matched by NO such row
+# is NEVER deleted, whatever it is: an undeciphered download, a failed run's
+# leftovers, or audio for an item transcribed before provenance existed
+# (those rows are caption-derived and carry no sha; their audio, if any, is
+# not provably done).
+
+
+@dataclass(frozen=True, slots=True)
+class RetentionSweep:
+    """What one cache sweep found and (unless dry_run) did."""
+
+    #: Files deleted (or, on a dry run, that WOULD be deleted).
+    deleted: tuple[Path, ...]
+    bytes_freed: int
+    #: Files in the cache matched by no qualifying provenance row. Kept.
+    kept_unmatched: int
+    #: Qualifying provenance rows whose cached file is already gone.
+    matched_missing: int
+    dry_run: bool
+    note: str = ""
+
+    def summary(self) -> str:
+        verb = "would delete" if self.dry_run else "deleted"
+        line = (f"{verb} {len(self.deleted)} file(s), "
+                f"{self.bytes_freed / 1_048_576:.1f} MB; "
+                f"kept {self.kept_unmatched} without provenance; "
+                f"{self.matched_missing} already gone")
+        return f"{line}; {self.note}" if self.note else line
+
+    def render(self) -> str:
+        lines = [self.summary()]
+        for path in self.deleted:
+            lines.append(f"  {'DRY ' if self.dry_run else ''}delete {path}")
+        return "\n".join(lines)
+
+
+def _retention_tables_present(wh) -> bool:
+    needed = {"transcript_provenance", "transcript_segment", "content_item"}
+    have = set(wh.sql(
+        "SELECT table_name FROM information_schema.tables"
+    )["table_name"].astype(str))
+    return needed <= have
+
+
+def sweep_audio_cache(
+    wh, *, dry_run: bool = False, cache_dir: Path | str | None = None
+) -> RetentionSweep:
+    """Delete cached audio whose transcript is stored with full provenance.
+
+    Never deletes a file no qualifying provenance row points at -- absence of
+    provenance is absence of proof, not permission. Safe on a warehouse that
+    has never transcribed anything (missing tables -> nothing is deletable).
+    ``wh`` may be a read-only copy: the only writes are file deletions.
+    """
+    cache = Path(cache_dir) if cache_dir is not None else AUDIO_CACHE
+    files = (sorted(p for p in cache.glob("*") if p.is_file())
+             if cache.exists() else [])
+
+    if not _retention_tables_present(wh):
+        return RetentionSweep(
+            deleted=(), bytes_freed=0, kept_unmatched=len(files),
+            matched_missing=0, dry_run=dry_run,
+            note="no transcript provenance in this warehouse; nothing is deletable",
+        )
+
+    rows = wh.sql(
+        "SELECT p.audio_url FROM transcript_provenance p "
+        "JOIN content_item i ON i.item_id = p.item_id "
+        "WHERE coalesce(p.audio_sha256, '') <> '' "
+        "  AND coalesce(p.audio_url, '') <> '' "
+        "  AND i.text_source = 'transcript' "
+        "  AND EXISTS (SELECT 1 FROM transcript_segment t "
+        "              WHERE t.item_id = p.item_id)"
+    )
+
+    deletable: set[Path] = set()
+    matched_missing = 0
+    for url in rows["audio_url"].astype(str):
+        digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:24]
+        found = [p for p in cache.glob(digest + ".*") if p.is_file()]
+        if found:
+            deletable.update(found)
+        else:
+            matched_missing += 1
+
+    deleted: list[Path] = []
+    freed = 0
+    for path in sorted(deletable):
+        freed += path.stat().st_size
+        if not dry_run:
+            path.unlink()
+        deleted.append(path)
+
+    kept = len([p for p in files if p not in deletable])
+    return RetentionSweep(
+        deleted=tuple(deleted), bytes_freed=freed, kept_unmatched=kept,
+        matched_missing=matched_missing, dry_run=dry_run,
+    )

@@ -694,6 +694,110 @@ CREATE TABLE IF NOT EXISTS content_transcribe_skip (
 """
 
 
+# ---------------------------------------------------------------------------
+# The transcription relevance gate (PIPELINES.md §4.4, §5 decision 3).
+#
+# GPU minutes follow worth: before an episode is downloaded and decoded, its
+# STORED title+description is scored deterministically, and a below-threshold
+# item stays description-only with the score recorded in
+# content_transcribe_skip as ``relevance:<score>`` -- a named reason, never
+# silence. No LLM anywhere in the gate: every point is auditable arithmetic
+# (an LLM pass is an explicitly deferred v2 refinement).
+
+#: Points per DISTINCT player the strict resolver matches in the text. The
+#: resolver refuses ambiguity and risky single tokens, so these are the
+#: highest-precision signal available from a description.
+RELEVANCE_PLAYER_PTS = 1.0
+
+#: Points per FPL term CATEGORY present (not per occurrence -- a description
+#: that says "transfer" nine times is not nine times more relevant).
+RELEVANCE_TERM_PTS = 1.0
+
+#: Panel creators earn transcription benefit-of-the-doubt: their captions are
+#: near-free and the owner curated them by name.
+RELEVANCE_PANEL_PTS = 2.0
+
+#: A take on the gameweek not yet played is worth more than an archive read.
+RELEVANCE_RECENT_PTS = 1.0
+RELEVANCE_RECENT_DAYS = 7
+
+#: The default bar. Passing examples: panel + recent alone (2+1); any recent
+#: item naming two players (2+1); a GW/transfer/captain episode naming one
+#: player. Failing: a generic non-FPL episode (0), an off-panel archive item
+#: with one term (1). Configurable with ``transcribe --min-relevance``; 0
+#: disables the gate (every score is >= 0).
+RELEVANCE_THRESHOLD = 3.0
+
+import re as _re
+
+_RELEVANCE_TERMS: tuple[tuple[str, _re.Pattern[str]], ...] = tuple(
+    (name, _re.compile(pattern, _re.IGNORECASE))
+    for name, pattern in (
+        ("gameweek", (r"\b(?:gw\s*\d+|gameweek|game\s+week|double\s+gameweek|"
+                      r"blank\s+gameweek|dgw|bgw)\b")),
+        ("transfer", r"\btransfers?\b"),
+        ("captain", r"\bcaptain(?:cy|s)?\b|\btriple\s+captain\b"),
+        ("chip", r"\bwildcard\b|\bfree\s+hit\b|\bbench\s+boost\b"),
+        ("fpl", (r"\bfpl\b|\bfantasy\s+premier\s+league\b|\bdifferentials?\b|"
+                 r"\bprice\s+(?:rise|fall|change)s?\b")),
+    )
+)
+
+
+def relevance_score(
+    *,
+    title: str,
+    text: str,
+    resolver=None,
+    creator: str | None = None,
+    published_at=None,
+    now: dt.datetime | None = None,
+) -> tuple[float, str]:
+    """(score, breakdown) for one queued item. Deterministic and auditable.
+
+    ``resolver`` is a :class:`~fpl_edge.ingest.content.resolve.
+    SeasonResolvers` (or a bare PlayerResolver, or None when the warehouse
+    has no players -- name points simply contribute nothing then, stated in
+    the breakdown rather than guessed around).
+    """
+    corpus = f"{title or ''}\n{text or ''}"
+    parts: list[str] = []
+    score = 0.0
+
+    if resolver is not None:
+        res = resolver.for_season(None) if hasattr(resolver, "for_season") else resolver
+        mentions = res.find_mentions(corpus)
+        codes = {int(m.code) for m in mentions if m.reason == "ok" and m.code is not None}
+        if codes:
+            score += RELEVANCE_PLAYER_PTS * len(codes)
+            parts.append(f"players:{len(codes)}")
+    else:
+        parts.append("players:unavailable")
+
+    hits = [name for name, pattern in _RELEVANCE_TERMS if pattern.search(corpus)]
+    if hits:
+        score += RELEVANCE_TERM_PTS * len(hits)
+        parts.append("terms:" + ",".join(hits))
+
+    if creator:
+        from fpl_edge.ingest.content.youtube import is_panel_creator
+
+        if is_panel_creator(creator):
+            score += RELEVANCE_PANEL_PTS
+            parts.append("panel")
+
+    if published_at is not None:
+        published = pd.Timestamp(published_at)
+        if published.tzinfo is None:
+            published = published.tz_localize(UTC)
+        now = now or _now()
+        if (now - published.to_pydatetime()) <= dt.timedelta(days=RELEVANCE_RECENT_DAYS):
+            score += RELEVANCE_RECENT_PTS
+            parts.append("recent")
+
+    return score, " ".join(parts) or "nothing matched"
+
+
 def _asr_fetcher(delay: float):
     """The HTTP client the transcription step uses. Politeness lives here.
 
@@ -780,7 +884,7 @@ def cmd_transcribe(args: argparse.Namespace) -> int:
             "WHERE table_name = 'content_transcribe_skip'"
         ).iloc[0]["c"]) > 0
         cols = ("i.item_id, i.source_key, i.creator, i.kind, i.title, i.url, "
-                "i.published_at, i.text_source")
+                "i.published_at, i.text_source, i.text")
         where = ["i.text_source <> 'transcript'",
                  f"i.kind IN ({', '.join('?' * len(kinds))})",
                  "t.item_id IS NULL"]
@@ -811,6 +915,14 @@ def cmd_transcribe(args: argparse.Namespace) -> int:
         # The curated roster (panel.py) may have moved ahead of the caption
         # ceiling in youtube.PANEL_CREATORS. Say so; do not quietly widen.
         drift = divergence_from_roster(wh)
+        # The strict player index the relevance gate scores against. A
+        # warehouse with no dim_player yet (content-only test dbs) is not an
+        # error: the gate then scores on terms/panel/recency alone and the
+        # breakdown says "players:unavailable" rather than guessing.
+        try:
+            gate_resolver = build_resolver(wh)
+        except Exception:  # noqa: BLE001 - absence of players, not a failure
+            gate_resolver = None
 
     col_note = (f"{enclosure_origin} ({len(stored_enclosures)} urls)"
                 if enclosure_origin != "none" else
@@ -825,10 +937,51 @@ def cmd_transcribe(args: argparse.Namespace) -> int:
               f"and an edit to that constant.")
     print(f"queued:               {len(queue)} items"
           + (f", newest {str(queue.iloc[0]['published_at'])[:10]}" if len(queue) else ""))
+
+    # The relevance gate, BEFORE --limit so the budget is spent on the items
+    # worth it. Below-threshold items are recorded (not on --dry-run, which
+    # writes nothing) in content_transcribe_skip as ``relevance:<score>``
+    # with the point breakdown -- a named reason, never silence.
+    gated: list[tuple[str, str, str]] = []
+    # getattr, because tests drive this command with hand-built Namespaces
+    # that predate the gate; absent means "the default bar", not "off".
+    min_relevance = float(getattr(args, "min_relevance", RELEVANCE_THRESHOLD))
+    if min_relevance > 0 and len(queue):
+        scoring_now = _now()
+        keep: list[int] = []
+        for pos, row in enumerate(queue.itertuples(index=False)):
+            score, why = relevance_score(
+                title=str(row.title or ""), text=str(row.text or ""),
+                resolver=gate_resolver, creator=str(row.creator or ""),
+                published_at=row.published_at, now=scoring_now,
+            )
+            if score >= min_relevance:
+                keep.append(pos)
+            else:
+                gated.append((str(row.item_id), f"relevance:{score:g}",
+                              f"below threshold {min_relevance:g}: {why}"))
+        queue = queue.iloc[keep].reset_index(drop=True)
+        print(f"relevance gate:       {len(gated)} below {min_relevance:g}, "
+              f"{len(queue)} pass (deterministic; scores recorded)")
+
     if args.limit:
         queue = queue.head(args.limit)
         print(f"limited to:           {len(queue)}")
     if queue.empty:
+        if gated and not args.dry_run:
+            # The gate's verdicts are still worth their ledger rows: without
+            # them every below-threshold item would be re-scored forever.
+            now = _now()
+            rows = [(i, r, d, now) for i, r, d in gated]
+
+            def _write_gated(wh):
+                wh.sql(_TRANSCRIBE_SKIP_DDL)
+                for r in rows:
+                    wh.sql("INSERT OR REPLACE INTO content_transcribe_skip "
+                           "VALUES (?, ?, ?, ?)", list(r))
+
+            _write_with_retry(args.db, _write_gated)
+            print(f"recorded {len(gated)} relevance skips")
         print("\nnothing to do")
         return 0
 
@@ -882,7 +1035,9 @@ def cmd_transcribe(args: argparse.Namespace) -> int:
     segments_written = 0
     stale_dropped = 0
     refused: str | None = None
-    skips: list[tuple[str, str, str]] = []
+    # The gate's below-threshold verdicts ride the same skip-ledger write as
+    # the loop's own skips (the finally block below).
+    skips: list[tuple[str, str, str]] = list(gated)
 
     def out_of_time() -> bool:
         return deadline is not None and time.monotonic() >= deadline
@@ -1020,6 +1175,20 @@ def cmd_transcribe(args: argparse.Namespace) -> int:
         print("A 403 or 429 is the source declining. It is recorded and obeyed; "
               "the run stops rather than routing around it.")
         return 1
+    return 0
+
+
+def cmd_retention(args: argparse.Namespace) -> int:
+    """Sweep the ASR audio cache. Deletes ONLY files whose item has a stored
+    transcript AND a transcript_provenance row carrying audio_sha256 -- the
+    hash outlives the file. Everything else is kept, always."""
+    from fpl_edge.ingest.content import asr
+
+    with Warehouse(args.db, read_only=True) as wh:
+        sweep = asr.sweep_audio_cache(wh, dry_run=args.dry_run)
+    print(sweep.render())
+    if args.dry_run:
+        print("\n--dry-run: nothing deleted")
     return 0
 
 
@@ -1258,10 +1427,22 @@ def main(argv: list[str] | None = None) -> int:
                         "off-panel creators: the scale limit is the policy.")
     p.add_argument("--model", default=None,
                    help="MLX-Whisper weights id")
+    p.add_argument("--min-relevance", type=float, default=RELEVANCE_THRESHOLD,
+                   help="deterministic relevance-score threshold; queued items "
+                        "scoring below it are recorded in "
+                        "content_transcribe_skip as relevance:<score> and stay "
+                        "description-only. 0 disables the gate.")
     p.add_argument("--dry-run", action="store_true",
                    help="print the queue and which items have audio; fetch and "
                         "transcribe nothing")
     p.set_defaults(func=cmd_transcribe)
+
+    p = sub.add_parser("retention",
+                       help="delete cached audio whose transcript is stored "
+                            "with full provenance (sha256 outlives the file)")
+    p.add_argument("--dry-run", action="store_true",
+                   help="report what would be deleted; delete nothing")
+    p.set_defaults(func=cmd_retention)
 
     p = sub.add_parser("link-identities",
                        help="link creators to verified FPL entries; never guess")

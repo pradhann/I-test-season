@@ -149,6 +149,9 @@ class Task:
     scheduled_by_dag: bool = False
     #: Wall-clock budget metadata for the panel, where the task has one.
     budget_s: float | None = None
+    #: Grouping for the control panel, following PIPELINES.md §1's map:
+    #: core / odds / settlement / results / content / maintenance.
+    family: str = "core"
 
 
 # --------------------------------------------------------------------------
@@ -214,7 +217,7 @@ def due_instants(
     Calendar/Interval firings carry :data:`NO_GW` and no deadline; a
     DeadlineRelative task gets one instant per offset per deadline, exactly
     the arithmetic ``deadline_dag.due_tasks`` performs for the legacy tasks
-    (the parity test in tests/unit/test_jobs_registry.py holds the two equal).
+    (the parity test in tests/unit/test_pipelines_registry.py holds the two equal).
     """
     now = now.astimezone(UTC)
     due = task.due
@@ -279,12 +282,12 @@ def stale_window_of(task_id: str) -> dt.timedelta | None:
 
 def validate(tasks: Sequence[Task]) -> None:
     """The registry invariant: ids are unique, non-empty, and every row is a
-    Task. Raises ValueError -- at import for the real registry, so a
-    duplicated id cannot reach a tick."""
+    Task. Raises at import for the real registry, so a duplicated id cannot
+    reach a tick."""
     seen: set[str] = set()
     for task in tasks:
         if not isinstance(task, Task):
-            raise ValueError(f"registry rows must be Task, got {type(task).__name__}")
+            raise TypeError(f"registry rows must be Task, got {type(task).__name__}")
         if not task.id or not task.id.strip():
             raise ValueError("a registry task has an empty id")
         if task.id in seen:
@@ -498,6 +501,7 @@ TASKS: tuple[Task, ...] = (
         credits_estimate=12.0,
         confirm_required=True,
         scheduled_by_dag=True,
+        family="odds",
     ),
     # ---- post_gw folded in (PIPELINES.md §6.2) ----------------------------
     # 10:30 UTC lands in the plist's intended slot ("after FPL finalises
@@ -511,6 +515,7 @@ TASKS: tuple[Task, ...] = (
         due=Calendar(hour_utc=10, minute=30),
         stale_window=dt.timedelta(hours=12),
         run=run_post_gw_settlement,
+        family="settlement",
     ),
     # ---- the previously-manual pipelines (PIPELINES.md §6.3) --------------
     Task(
@@ -519,6 +524,7 @@ TASKS: tuple[Task, ...] = (
         due=Calendar(hour_utc=11, minute=30),
         stale_window=dt.timedelta(hours=12),
         run=run_fpl_core_insights,
+        family="results",
     ),
     Task(
         id="content_transcribe",
@@ -528,6 +534,7 @@ TASKS: tuple[Task, ...] = (
         stale_window=dt.timedelta(hours=6),
         run=run_transcribe_nightly,
         budget_s=TRANSCRIBE_BUDGET_S,
+        family="content",
     ),
     Task(
         id="content_fast_rss",
@@ -538,6 +545,7 @@ TASKS: tuple[Task, ...] = (
         # rule: a slept-through rung is dropped and the next one does the work.
         stale_window=dt.timedelta(hours=3),
         run=run_fast_rss,
+        family="content",
     ),
     Task(
         id="audio_retention",
@@ -546,6 +554,7 @@ TASKS: tuple[Task, ...] = (
         due=Interval(hours=24 * 7),
         stale_window=dt.timedelta(hours=24),
         run=run_audio_retention,
+        family="maintenance",
     ),
 )
 

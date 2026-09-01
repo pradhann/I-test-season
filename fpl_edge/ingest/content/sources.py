@@ -233,6 +233,29 @@ def fetchable() -> tuple[Source, ...]:
     return tuple(s for s in ALL_SOURCES if s.policy is AccessPolicy.OPEN)
 
 
+#: Content tiers (PIPELINES.md §5 decision 3). "fast" sources are polled on
+#: the 4-hourly registry task (fpl_edge/pipelines/registry.py,
+#: ``content_fast_rss``); everything else rides the nightly full ingest.
+FAST_TIER = "fast"
+NIGHTLY_TIER = "nightly"
+
+
+def content_tier(source: Source) -> str:
+    """Which cadence a source has earned. Derived from the curated panel
+    (:data:`fpl_edge.ingest.content.youtube.PANEL_CREATORS`) rather than
+    stored per row, so the tier can never drift from the panel the owner
+    actually curates -- one membership list, two consumers. The import is
+    lazy because youtube.py imports this module."""
+    from fpl_edge.ingest.content.youtube import PANEL_CREATORS
+
+    return FAST_TIER if source.creator in PANEL_CREATORS else NIGHTLY_TIER
+
+
+def fast_tier() -> tuple[Source, ...]:
+    """The fetchable fast-tier sources: the panel creators' feeds."""
+    return tuple(s for s in fetchable() if content_tier(s) == FAST_TIER)
+
+
 def creators() -> tuple[str, ...]:
     return tuple(sorted({s.creator for s in ALL_SOURCES}))
 

@@ -52,7 +52,8 @@ CREATE TABLE IF NOT EXISTS fetch_run (
     rows_unchanged INTEGER,
     http_status    INTEGER,
     credits_spent  DOUBLE,
-    note           VARCHAR
+    note           VARCHAR,
+    "trigger"      VARCHAR
 )
 """
 
@@ -61,15 +62,22 @@ CREATE TABLE IF NOT EXISTS fetch_run (
 #: happened" everywhere.
 STATUSES = ("ok", "error", "refused", "skipped_fresh", "no_source")
 
+#: Who asked for a run. "scheduler" is a DAG-tick firing; "ui"/"cli" are
+#: manual triggers through fpl_edge.pipelines.runner.run_task.
+TRIGGERS = ("scheduler", "ui", "cli")
+
 
 def ensure_table(wh) -> None:
     wh.sql(_DDL)
+    # Tables created before the trigger column existed are upgraded in
+    # place; DuckDB's IF NOT EXISTS makes this a no-op afterwards.
+    wh.sql('ALTER TABLE fetch_run ADD COLUMN IF NOT EXISTS "trigger" VARCHAR')
 
 
 class RunRecord:
     """Mutable per-run accumulator the ``record_run`` context hands out."""
 
-    def __init__(self, pipeline: str, source: str | None):
+    def __init__(self, pipeline: str, source: str | None = None):
         self.run_id = uuid.uuid4().hex
         self.pipeline = pipeline
         self.source = source
@@ -82,6 +90,11 @@ class RunRecord:
         #: Set to a non-"ok" STATUSES value for a run that completed without
         #: raising but did not fetch: "skipped_fresh", "refused", "no_source".
         self.status: str | None = None
+        #: Who asked (see TRIGGERS). The pipelines runner sets this.
+        self.trigger: str = "scheduler"
+        #: Honest end-of-work stamp, set by runners that finish the work
+        #: before they can reach the write lock. None means "stamp at insert".
+        self.finished: dt.datetime | None = None
 
     def add(self, written: int, unchanged: int = 0) -> None:
         self.written += int(written)
@@ -125,10 +138,13 @@ def record_finished(wh, rec: RunRecord, *, status: str,
 
 def _insert(wh, rec: RunRecord, *, status: str, note: str | None) -> None:
     wh.sql(
-        "INSERT INTO fetch_run VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        'INSERT INTO fetch_run (run_id, pipeline, source, started_utc, '
+        'finished_utc, status, rows_written, rows_unchanged, http_status, '
+        'credits_spent, note, "trigger") '
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (rec.run_id, rec.pipeline, rec.source, rec.started,
-         dt.datetime.now(UTC), status, rec.written, rec.unchanged,
-         rec.http_status, rec.credits, note),
+         rec.finished or dt.datetime.now(UTC), status, rec.written,
+         rec.unchanged, rec.http_status, rec.credits, note, rec.trigger),
     )
 
 

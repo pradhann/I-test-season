@@ -61,7 +61,6 @@ from zoneinfo import ZoneInfo
 
 from fpl_edge.jobs import outbox
 from fpl_edge.store import DEFAULT_DB, Warehouse
-from fpl_edge.store import fetch_ledger
 
 log = logging.getLogger("fpl_edge.jobs.deadline_dag")
 
@@ -172,14 +171,14 @@ STALE_WINDOW = dt.timedelta(hours=2)
 def stale_window_for(task: str) -> dt.timedelta:
     """The staleness budget for one task. See :data:`STALE_WINDOWS`.
 
-    Registry tasks (fpl_edge/jobs/registry.py) declare their own window on
+    Registry tasks (fpl_edge/pipelines/registry.py) declare their own window on
     their Task row; this lookup consults it so there is ONE staleness answer
     per task everywhere -- the tick, the tests, and the panel. The import is
     lazy because registry imports this module for its building blocks.
     """
     if task in STALE_WINDOWS:
         return STALE_WINDOWS[task]
-    from fpl_edge.jobs import registry
+    from fpl_edge.pipelines import registry
 
     window = registry.stale_window_of(task)
     return window if window is not None else STALE_WINDOW
@@ -1243,16 +1242,6 @@ TASKS: dict[str, Callable[[TaskContext], TaskResult]] = {
 # The tick
 # --------------------------------------------------------------------------
 
-#: dag_firing outcomes -> fetch_run statuses. Deliberately a surjection onto
-#: the ledger's smaller vocabulary: delivered and quiet are both runs that
-#: ran ("ok"); the honest gaps map to themselves.
-_LEDGER_STATUS: dict[str, str] = {
-    "delivered": "ok",
-    "quiet": "ok",
-    "no_source": "no_source",
-    "error": "error",
-}
-
 
 @dataclass
 class Fired:
@@ -1312,9 +1301,10 @@ def tick(
     report.next_due = [(t, d.isoformat()) for t, d in next_due(deadlines, now)]
 
     # The DAG's own five tasks, plus every registry task the DAG does not
-    # schedule itself (calendar/interval rows in fpl_edge/jobs/registry.py).
+    # schedule itself (calendar/interval rows in fpl_edge/pipelines/registry.py).
     # One owed list, one claim loop, one firing table -- the §5 decision.
-    from fpl_edge.jobs import registry
+    from fpl_edge.pipelines import registry
+    from fpl_edge.pipelines import runner as pipeline_runner
 
     owed = sorted(
         due_tasks(deadlines, now, season=season)
@@ -1349,25 +1339,24 @@ def tick(
             else:
                 report.skipped_overlap.append(f"{due.task}@{due.due_utc.isoformat()}")
 
-    # Phase 2 -- run each claimed task with the lock free. Runner lookup
-    # prefers this module's TASKS dict (the legacy five; tests monkeypatch
-    # it) and falls back to the registry for everything else. Every executed
-    # task also gets a fetch_run ledger row (pipeline = task id), so the
-    # ledger is uniform across scheduled and hand-run pipelines alike.
+    # Phase 2 -- run each claimed task with the lock free, through the ONE
+    # execution path (fpl_edge/pipelines/runner.py): ledger record, timings,
+    # captured logs. Runner lookup prefers this module's TASKS dict (the
+    # legacy five; tests monkeypatch it) and falls back to the registry for
+    # everything else.
     for due in claimed:
         ctx = TaskContext(
             season=season, gw=due.gw, due_utc=due.due_utc,
             deadline_utc=due.deadline_utc, now=now, db_path=db_path,
         )
-        ledger_rec = fetch_ledger.RunRecord(due.task, "deadline_dag")
-        try:
-            runner = TASKS.get(due.task) or registry.runner_for(due.task)
-            if runner is None:
-                raise KeyError(f"no runner registered for task {due.task!r}")
-            result = runner(ctx)
-        except Exception:
-            result = TaskResult(outcome="error", detail=traceback.format_exc()[-600:])
-            log.exception("task %s failed", due.task)
+        run_outcome = pipeline_runner.execute(
+            due.task, ctx,
+            fn=TASKS.get(due.task) or registry.runner_for(due.task),
+            trigger="scheduler",
+        )
+        result = run_outcome.result
+        if result.outcome == "error" and "Traceback" in (result.detail or ""):
+            log.error("task %s failed: %s", due.task, result.detail[-200:])
 
         if result.delivers and polish:
             result.title, result.body = polish_copy(result.title, result.body)
@@ -1386,16 +1375,10 @@ def tick(
                 )
             else:
                 wh.sql(finish[0], finish[1])
-            # The uniform ledger row (PIPELINES.md §4.2): outcome mapped onto
-            # the ledger's vocabulary, task counts carried through. Stale
-            # skips never reach here -- a skip is not a run.
-            ledger_rec.add(result.ledger_written, result.ledger_unchanged)
-            fetch_ledger.record_finished(
-                wh, ledger_rec,
-                status=_LEDGER_STATUS.get(result.outcome, "ok"),
-                note=(f"{result.outcome}: {result.detail}"[:500]
-                      if result.detail else result.outcome),
-            )
+            # The uniform ledger row (PIPELINES.md §4.2): every executed task
+            # lands a fetch_run row with timings, counts and its log tail.
+            # Stale skips never reach here -- a skip is not a run.
+            pipeline_runner.record(wh, run_outcome)
         report.fired.append(
             Fired(task=due.task, gw=due.gw, due_utc=due.due_utc,
                   outcome=result.outcome, detail=result.detail[:300])

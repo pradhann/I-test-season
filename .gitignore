@@ -20,6 +20,7 @@ dist/
 !web/dist/**
 .DS_Store
 data/warehouse/jobs/
+data/warehouse/pipeline_logs/
 data/odds_expansion_ledger.json
 code_bases/
 
