@@ -215,6 +215,38 @@ def test_a_transfer_without_a_click_time_is_dropped_and_counted():
     assert df.empty
 
 
+def test_budget_death_mid_transfers_keeps_what_was_paid_for():
+    """270 requests were once paid and then discarded because the exhaustion
+    unwound past the frame assignment. The loop now absorbs BudgetExhausted,
+    returns the partial frame, and reports the truth in stats -- fetched
+    means kept."""
+    from fpl_edge.ingest.rivals.client import BudgetExhausted
+    from fpl_edge.ingest.rivals.picks import ingest_transfers
+
+    class DyingFetcher:
+        def __init__(self, die_after):
+            self.calls = 0
+            self.die_after = die_after
+
+        def get_json(self, path):
+            self.calls += 1
+            if self.calls > self.die_after:
+                raise BudgetExhausted("request budget of 2 exhausted")
+            eid = int(path.split("/")[1])
+            class Got:
+                body = [{"event": 3, "element_in": eid, "element_in_cost": 50,
+                         "element_out": 999, "element_out_cost": 50,
+                         "time": "2026-09-01T08:00:00Z"}]
+            return Got()
+
+    frame, stats = ingest_transfers(
+        DyingFetcher(die_after=2), [11, 22, 33, 44],
+        season="2026-27", deadlines=DEADLINES)
+    assert len(frame) == 2, "the two paid-for entries must survive"
+    assert sorted(frame["entry_id"]) == [11, 22]
+    assert "budget_exhausted" in stats
+
+
 def test_empty_transfer_list_is_the_normal_preseason_answer():
     df = parse_transfers(999, [], season="2026-27", deadlines=DEADLINES)
     assert df.empty

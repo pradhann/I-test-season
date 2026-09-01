@@ -219,11 +219,25 @@ def ingest_transfers(
     season: str,
     deadlines: dict[int, dt.datetime],
 ) -> tuple[pd.DataFrame, dict[str, int]]:
-    """One request per manager for the whole season's transfers."""
+    """One request per manager for the whole season's transfers.
+
+    Budget exhaustion mid-loop RETURNS the partial frame instead of raising
+    through it. The first GW2 run proved why: 270 transfer requests were paid
+    for, the stage's sub-budget died on request 271, the exception unwound
+    past the frame assignment, and every fetched transfer was discarded --
+    zero rows written from 270 paid calls, on the endpoint whose 3h cache TTL
+    makes a re-run a real re-spend. ``stats["budget_exhausted"]`` carries the
+    truth; the caller marks the stage incomplete from it.
+    """
+    from fpl_edge.ingest.rivals.client import BudgetExhausted
     frames: list[pd.DataFrame] = []
     stats = {"requested": 0, "ok": 0, "not_found": 0, "empty": 0}
     for eid in entry_ids:
-        got = fetcher.get_json(f"entry/{eid}/transfers/")
+        try:
+            got = fetcher.get_json(f"entry/{eid}/transfers/")
+        except BudgetExhausted as exc:
+            stats["budget_exhausted"] = str(exc)
+            break
         stats["requested"] += 1
         if got.body is None:
             stats["not_found"] += 1

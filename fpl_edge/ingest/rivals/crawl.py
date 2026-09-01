@@ -372,6 +372,12 @@ def run(
                     )
                     summary["transfers"] = tstats
                     frames["fact_manager_transfer"] = t
+                    # ingest_transfers absorbs its own BudgetExhausted and
+                    # returns the partial frame (its docstring has the 270-
+                    # requests-discarded incident). The stage status must
+                    # still say incomplete, so raise AFTER the frame is safe.
+                    if tstats.get("budget_exhausted"):
+                        raise BudgetExhausted(tstats["budget_exhausted"])
 
             with _stage(budget, "history", stages, STAGE_SHARE["history"]):
                 past, current, chips, missing = history_mod.ingest_histories(
