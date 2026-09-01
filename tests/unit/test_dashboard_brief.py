@@ -140,6 +140,8 @@ def _seed(tmp_path):
 
 
 def _fake_state():
+    from fpl_edge.myteam.state import ChipStatus
+
     picks = []
     for c in SQUAD_CODES:
         picks.append(SimpleNamespace(
@@ -147,11 +149,18 @@ def _fake_state():
             is_captain=c == 120, is_vice=c == 121,
             multiplier=2 if c == 120 else (1 if c in STARTERS else 0),
         ))
+    chips = (
+        ChipStatus(chip="3xc", windows=((1, 19), (20, 38)), played=()),
+        ChipStatus(chip="bboost", windows=((1, 19), (20, 38)), played=(1,)),
+        ChipStatus(chip="freehit", windows=((2, 19), (20, 38)), played=()),
+        ChipStatus(chip="wildcard", windows=((2, 19), (20, 38)), played=()),
+    )
     return SimpleNamespace(
         picks=picks, gw=3,
         bank=SimpleNamespace(tenths=15), bank_tenths=15,
         provenance=SimpleNamespace(name="PUBLIC_PICKS"),
         free_transfers=1,
+        chip_status=lambda: chips,
     )
 
 
@@ -212,45 +221,83 @@ def test_the_brief_carries_no_free_text_recommendation_field():
     node = script("dashboard_brief").result_schema["oneOf"][0]
     alert_props = set(node["properties"]["alerts"]["items"]["properties"])
     tile_props = set(node["properties"]["tiles"]["items"]["properties"])
+    move_props = set(node["properties"]["moves"]["items"]["properties"])
+    sug_props = set(node["properties"]["suggested_xi"]["properties"])
     for banned in ("recommendation", "advice", "verdict", "claim", "text",
-                   "message", "headline"):
+                   "message", "headline", "because", "sentence"):
         assert banned not in alert_props
         assert banned not in tile_props
+        assert banned not in move_props, (
+            "a move card is rule id + numbers; the because-sentence lives "
+            "in the view's templates"
+        )
+        assert banned not in sug_props
 
 
 # ---------------------------------------------------- the anti-drift contract
 
 
-def test_bench_inversion_numbers_equal_squad_overview_numbers(db):
+def test_bench_and_captain_are_fixed_in_the_squad_not_argued_in_prose(db):
+    """The owner's rule: bench/captain fixes happen IN the squad. The alert
+    kinds are gone from the payload AND from the schema's enum."""
+    brief = run_script("dashboard_brief", {}, db=db).result
+    assert not [a for a in brief["alerts"]
+                if a["kind"] in ("BENCH", "CAPTAIN")]
+    node = script("dashboard_brief").result_schema["oneOf"][0]
+    kinds = node["properties"]["alerts"]["items"]["properties"]["kind"]["enum"]
+    assert "BENCH" not in kinds and "CAPTAIN" not in kinds
+
+
+def test_suggested_xi_swaps_equal_squad_overview_numbers(db):
+    """ANTI-DRIFT: the suggested swaps are squad_overview's own xPts applied,
+    number for number — never a second computation."""
     sq = run_script("squad_overview", {}, db=db).result
     brief = run_script("dashboard_brief", {}, db=db).result
-    rows = [a for a in brief["alerts"] if a["rule"] == "bench_inversion"]
-    assert rows, "the seeded GK inversion (3.6 vs 2.0) must fire"
+    s = brief["suggested_xi"]
+    assert s is not None
+    assert s["swaps"], "the seeded GK inversion (3.6 vs 2.0) must swap"
     by_code = {p["code"]: p for p in sq["starters"] + sq["bench"]}
-    for a in rows:
-        bench_code, starter_code = a["codes"]
-        assert a["numbers"]["bench_xpts"] == by_code[bench_code]["xpts"]
-        assert a["numbers"]["starter_xpts"] == by_code[starter_code]["xpts"]
-        assert a["numbers"]["swing"] == pytest.approx(
-            round(by_code[bench_code]["xpts"] - by_code[starter_code]["xpts"], 3))
-        assert a["source_panel"] == "squad_overview"
-        assert a["source_as_of"] == sq["as_of"].replace(" ", "T")
+    total = 0.0
+    for sw in s["swaps"]:
+        assert sw["numbers"]["bench_xpts"] == by_code[sw["in"]["code"]]["xpts"]
+        assert sw["numbers"]["starter_xpts"] == by_code[sw["out"]["code"]]["xpts"]
+        assert sw["numbers"]["swing"] == pytest.approx(round(
+            by_code[sw["in"]["code"]]["xpts"]
+            - by_code[sw["out"]["code"]]["xpts"], 3))
+        total += sw["numbers"]["swing"]
+    assert s["swap_delta_xpts"] == pytest.approx(round(total, 2))
+    assert s["source_panel"] == "squad_overview"
+    assert s["source_as_of"] == sq["as_of"].replace(" ", "T")
+    # the GK inversion specifically: BenchGK in, StartGK out
+    moves = {(sw["out"]["code"], sw["in"]["code"]) for sw in s["swaps"]}
+    assert (100, 101) in moves
+    # and the lineup composes: swapped-in on the pitch, swapped-out benched
+    assert 101 in s["xi_codes"] and 100 not in s["xi_codes"]
+    assert 100 in s["bench_codes"] and 101 not in s["bench_codes"]
+    assert len(s["xi_codes"]) == 11 and len(s["bench_codes"]) == 4
+    assert s["n_changes"] == len(s["swaps"])
 
 
-def test_captain_divergence_prints_both_measures_verbatim(db):
+def test_suggested_captain_prints_both_measures_never_blended(db):
     sq = run_script("squad_overview", {}, db=db).result
     brief = run_script("dashboard_brief", {}, db=db).result
-    rows = [a for a in brief["alerts"] if a["rule"] == "captain_divergence"]
-    assert rows, "seeded: armband on Mid1 (mean pick) but Mid2 has haul odds"
-    a = rows[0]
-    haul_pick = max((p for p in sq["starters"] if p["p_haul"] is not None),
+    s = brief["suggested_xi"]
+    xi = set(s["xi_codes"])
+    pool = [p for p in sq["starters"] + sq["bench"] if p["code"] in xi]
+    haul_pick = max((p for p in pool if p["p_haul"] is not None),
                     key=lambda p: p["p_haul"])
-    mean_pick = max((p for p in sq["starters"] if p["xpts"] is not None),
+    mean_pick = max((p for p in pool if p["xpts"] is not None),
                     key=lambda p: p["xpts"])
-    assert a["numbers"]["haul_pick_p_haul"] == haul_pick["p_haul"]
-    assert a["numbers"]["mean_pick_xpts"] == mean_pick["xpts"]
-    # two measures, never blended: no combined/composite number exists
-    assert not any("combined" in k or "score" in k for k in a["numbers"])
+    assert s["captain_by_haul"]["code"] == haul_pick["code"]
+    assert s["captain_by_mean"]["code"] == mean_pick["code"]
+    # the suggestion is the mean pick — the pitch's own currency — with the
+    # haul measure printed beside it, never averaged in
+    assert s["captain"]["code"] == mean_pick["code"]
+    assert s["your_captain"]["code"] == 120, "armband is on Mid1"
+    n = s["captain_numbers"]
+    assert n["haul_pick_p_haul"] == haul_pick["p_haul"]
+    assert n["mean_pick_xpts"] == mean_pick["xpts"]
+    assert not any("combined" in k or "score" in k for k in n)
 
 
 def test_owned_price_fall_quotes_price_radar_rows_exactly(db):
@@ -353,6 +400,252 @@ def test_a_live_plan_derives_transfers_and_labels_the_consensus_delta(db, tmp_pa
         "no hold baseline is stored; the gain slot is a named gap until the "
         "solve_plan extension ships"
     )
+
+
+# ------------------------------------------------------- chips + moves rules
+
+
+def test_squad_overview_serves_the_chip_ledger(db):
+    res = run_script("squad_overview", {}, db=db).result
+    chips = {c["chip"]: c for c in res["chips"]}
+    assert set(chips) == {"3xc", "bboost", "freehit", "wildcard"}
+    assert chips["bboost"]["played"] == [1]
+    assert chips["bboost"]["windows"] == [[1, 19], [20, 38]]
+    assert chips["wildcard"]["windows"][0] == [2, 19], "WC locked in GW1"
+    assert chips["3xc"]["played"] == []
+
+
+def test_moves_are_a_named_gap_when_no_consensus_exists(db):
+    """The default seed has no provider projections: the rules must say so
+    rather than serving nothing silently."""
+    brief = run_script("dashboard_brief", {}, db=db).result
+    assert brief["moves"] == []
+    gap = [e for e in brief["empty_kinds"] if e["kind"] == "moves"]
+    assert gap and "consensus" in gap[0]["reason"]
+    statuses = {w["check"]: w["status"] for w in brief["watch_log"]}
+    assert statuses["move_rules"] == "gap"
+
+
+#: Enriched seed for the move rules: a third club (Gamma) with the easiest
+#: attacking run that the squad does not cover, provider projections at GW3,
+#: and two settled gameweeks of returns.
+def _seed_moves(db, tmp_path, *, gapman_returns: bool = True):
+    import numpy as np
+
+    wh = Warehouse(db)
+    wh.append("dim_team", pd.DataFrame([
+        {"season": SEASON, "team_code": 3, "team_id": 3, "name": "Gamma",
+         "short_name": "GAM", "as_of": T1},
+    ]))
+    wh.append("dim_player", pd.DataFrame([
+        {"season": SEASON, "code": 203, "element_id": 203,
+         "web_name": "GapMan", "first_name": "Gap", "second_name": "Man",
+         "position": 3, "team_code": 3, "as_of": T1},
+    ]))
+    wh.append("fact_player_state", pd.DataFrame([
+        {"season": SEASON, "code": 203, "element_id": 203,
+         "price_tenths": 75, "selected_by_pct": 4.0, "status": "a",
+         "news": "", "news_added": None,
+         "chance_of_playing_next_round": None,
+         "transfers_in_event": 0, "transfers_out_event": 0,
+         "cost_change_start": 0, "as_of": T1,
+         "can_select": True, "can_transact": True, "removed": False},
+    ]))
+    # schedule: GW1-2 settled, GW3-5 the near board's window. Gamma's run is
+    # the easiest attack (twice vs leaky Beta) by construction.
+    fx = []
+
+    def fixt(fid, gw, home, away, day, finished):
+        fx.append({"season": SEASON, "fixture_id": fid, "gw": gw,
+                   "kickoff_utc": pd.Timestamp(day, tz="UTC"),
+                   "home_team_code": home, "away_team_code": away,
+                   "finished": finished,
+                   "home_score": 1 if finished else None,
+                   "away_score": 1 if finished else None,
+                   "as_of": T1})
+    fixt(101, 1, 1, 2, "2026-08-22", True)
+    fixt(102, 1, 3, 2, "2026-08-22", True)
+    fixt(201, 2, 2, 3, "2026-08-29", True)
+    fixt(202, 2, 1, 3, "2026-08-29", True)
+    fixt(301, 3, 3, 2, "2027-09-06", False)
+    fixt(401, 4, 1, 3, "2027-09-13", False)
+    fixt(501, 5, 2, 3, "2027-09-20", False)
+    wh.append("fact_fixture", pd.DataFrame(fx))
+
+    # settled returns (sem_player_form): GapMan scored twice; TemplateMan has
+    # 2G+1A; every squad player blanks.
+    pf = []
+
+    def played(code, fid, gw, goals=0, assists=0):
+        pf.append({"season": SEASON, "code": code, "fixture_id": fid,
+                   "gw": gw, "minutes": 90, "goals_scored": goals,
+                   "assists": assists, "starts": 1, "total_points": 2,
+                   "was_home": None, "as_of": T1})
+    if gapman_returns:
+        played(203, 102, 1, goals=1)
+        played(203, 201, 2, goals=1)
+    else:
+        played(203, 102, 1)
+        played(203, 201, 2)
+    played(201, 101, 1, goals=2, assists=1)
+    for c in (120, 121, 122, 123, 124):
+        played(c, 101 if c % 2 == 0 else 102, 1)
+    wh.append("fact_player_fixture", pd.DataFrame(pf))
+
+    # provider projections at GW3 (p_appear served, xmins not — today's
+    # regime) for the mids involved on both sides of every rule. Written
+    # through the ProjectionStore, the same path the ingest uses.
+    from fpl_edge.ingest.projections.store import ProjectionStore
+
+    rows = []
+    for code, xp in ((120, 6.0), (121, 5.0), (122, 4.2), (123, 4.0),
+                     (124, 3.0), (203, 5.5), (201, 5.8)):
+        rows.append({"provider": "s1", "season": SEASON, "gw": 3,
+                     "code": code, "xp": xp, "xp_if_appears": xp,
+                     "p_appear": 0.9, "xmins": None, "as_of": T1})
+    frame = pd.DataFrame(rows)
+    for col in ("xp", "xp_if_appears", "p_appear", "xmins"):
+        frame[col] = pd.to_numeric(frame[col], errors="coerce").astype("float64")
+    ProjectionStore(wh).append("fact_projection", frame)
+    wh.close()
+
+    # the fitted-split artefact the fixture board reads (never fits itself):
+    # Beta leaky (defence +0.5), Alpha tight (-0.3), Gamma average.
+    atk = {1: 0.2, 2: 0.0, 3: 0.3}
+    dfn = {1: -0.3, 2: 0.5, 3: 0.0}
+    codes = [1, 2, 3]
+    ratings = pd.DataFrame({
+        "season": SEASON, "team_code": codes,
+        "attack": [atk[c] for c in codes],
+        "defence": [dfn[c] for c in codes],
+        "is_promoted": False, "matches_seen": 2,
+        "intercept": 0.1, "home_adv": 0.2, "rho": -0.05,
+        "mean_attack": float(np.mean(list(atk.values()))),
+        "mean_defence": float(np.mean(list(dfn.values()))),
+        "half_life_days": 180.0, "n_matches": 6, "effective_n": 5.0,
+        "converged": True,
+        "fitted_at": pd.Timestamp("2026-08-30 12:30", tz="UTC"),
+        "snapshot_as_of": T1,
+    })
+    ratings.to_parquet(tmp_path / "fixture_ratings.parquet")
+
+
+def test_coverage_gap_names_the_uncovered_easy_run(db, tmp_path):
+    _seed_moves(db, tmp_path)
+    brief = run_script("dashboard_brief", {}, db=db).result
+    cov = [m for m in brief["moves"] if m["rule"] == "coverage_gap"]
+    assert cov, "Gamma's run is rank-1 attack and the squad holds nobody"
+    m = cov[0]
+    assert m["team"] == "GAM" and m["numbers"]["attack_rank"] == 1
+    assert m["numbers"]["held_count"] == 0
+    assert m["in"]["code"] == 203, "GapMan: top consensus xPts with returns"
+    assert m["numbers"]["cand_returns"] == 2
+    assert m["out"]["code"] == 124, ("MidBench: lowest consensus xPts "
+                                     "affordable within bank + sale")
+    # price maths from the payload, never recomputed client-side
+    assert m["numbers"]["in_price"] == 7.5
+    assert m["numbers"]["out_price"] == 6.0
+    assert m["numbers"]["bank"] == 1.5
+    assert m["gws"] == [1, 2]
+    panels = {s["panel"] for s in m["sources"]}
+    assert {"projection_table", "squad_overview",
+            "fixture_board"} <= panels
+    # the fixture ranks come from fixture_board's own horizon block
+    tf = {t["team_code"]: t for t in brief["team_fixtures"]}
+    assert tf[3]["horizon_attack_rank"] == 1
+    # and the same rank the card quotes
+    assert m["numbers"]["attack_rank"] == tf[3]["horizon_attack_rank"]
+
+
+def test_coverage_candidate_xpts_equals_the_projection_panels_number(db, tmp_path):
+    """ANTI-DRIFT: the card's xPts is the projection panel's number for the
+    same (code, gw) — same semantic view, same rounding."""
+    _seed_moves(db, tmp_path)
+    brief = run_script("dashboard_brief", {}, db=db).result
+    proj = run_script("projection_table", {"gw": 3}, db=db).result
+    by_code = {r["code"]: r for r in proj["rows"]}
+    for m in brief["moves"]:
+        assert m["numbers"]["cand_xpts"] == by_code[m["in"]["code"]]["xpts"]
+        assert m["numbers"]["out_xpts"] == by_code[m["out"]["code"]]["xpts"]
+
+
+def test_coverage_gap_stays_quiet_when_no_candidate_has_returns(db, tmp_path):
+    """The no-gap day: the run is still rank-1 but no Gamma attacker has a
+    recent return, so no coverage card — and the absence is measured, not
+    silent (watch still reports)."""
+    _seed_moves(db, tmp_path, gapman_returns=False)
+    brief = run_script("dashboard_brief", {}, db=db).result
+    assert not [m for m in brief["moves"] if m["rule"] == "coverage_gap"]
+    statuses = {w["check"]: w["status"] for w in brief["watch_log"]}
+    assert statuses["move_rules"] in ("clear", "firing")   # measured, not gap
+
+
+def test_form_upgrade_fires_on_both_gates_and_cites_thresholds(db, tmp_path):
+    _seed_moves(db, tmp_path)
+    brief = run_script("dashboard_brief", {}, db=db).result
+    form = [m for m in brief["moves"] if m["rule"] == "form_upgrade"]
+    assert form, "TemplateMan beats a squad mid on returns AND xPts"
+    m = form[0]
+    assert m["in"]["code"] == 201
+    n = m["numbers"]
+    thr = brief["thresholds"]
+    assert n["cand_returns"] >= n["out_returns"] + thr["form_returns_margin"]
+    assert n["cand_xpts"] >= n["out_xpts"] + thr["form_xpts_margin"]
+    assert n["bank"] + n["out_price"] >= n["in_price"]
+    # thresholds echoed so the view renders the gates from the payload
+    for key in ("form_returns_margin", "form_xpts_margin", "move_cap",
+                "coverage_attack_rank_top", "coverage_max_held",
+                "recent_returns_min", "recent_gws"):
+        assert key in thr
+
+
+def test_moves_cap_is_enforced_and_disclosed(db, tmp_path):
+    _seed_moves(db, tmp_path)
+    brief = run_script("dashboard_brief", {}, db=db).result
+    assert len(brief["moves"]) <= brief["thresholds"]["move_cap"]
+    assert brief["moves_suppressed"] >= 0
+
+
+def test_squad_projection_serves_p_appear_and_labels_xmins_absent(db, tmp_path):
+    """Today's regime: p_appear covered, xmins not — the payload serves what
+    exists and nulls what does not; nothing is fabricated."""
+    _seed_moves(db, tmp_path)
+    brief = run_script("dashboard_brief", {}, db=db).result
+    rows = {r["code"]: r for r in brief["squad_projection"]}
+    assert rows[120]["p_appear"] == pytest.approx(0.9)
+    assert rows[120]["xmins"] is None
+    assert brief["projection_gw"] == 3
+    # squad players with no provider row carry nulls, not zeros
+    assert rows[100]["p_appear"] is None and rows[100]["xmins"] is None
+
+
+def test_team_fixtures_copies_the_boards_opponent_only_lens(db, tmp_path):
+    """ANTI-DRIFT: team_fixtures is fixture_board's opponent_only lens copied
+    field-for-field for the next fixture — labels CAPS home / lower away."""
+    _seed_moves(db, tmp_path)
+    brief = run_script("dashboard_brief", {}, db=db).result
+    fb = run_script("fixture_board",
+                    {"horizon": 3, "from_gw": 3, "include_form": False,
+                     "include_calibration": False}, db=db).result
+    fb_by = {t["team_code"]: t for t in fb["teams"]}
+    for tf in brief["team_fixtures"]:
+        src_team = fb_by[tf["team_code"]]
+        first = next((o for slot in src_team["fixtures"]
+                      for o in slot["opponents"]
+                      if slot["gw"] == fb["gws"][0]), None)
+        if first is None:
+            assert tf["next"] is None
+            continue
+        assert tf["next"]["label"] == first["label"]
+        oo = first["opponent_only"]
+        assert tf["next"]["attack_ease"] == oo["attack_ease"]
+        assert tf["next"]["defence_ease"] == oo["defence_ease"]
+        assert tf["next"]["attack_rank"] == oo["attack_rank"]
+    # home fixture labels are CAPS, away lower — the fixtures-tab convention
+    gam = next(t for t in brief["team_fixtures"] if t["team_code"] == 3)
+    assert gam["next"]["is_home"] and gam["next"]["label"].isupper()
+    beta = next(t for t in brief["team_fixtures"] if t["team_code"] == 2)
+    assert not beta["next"]["is_home"] and beta["next"]["label"].islower()
 
 
 # ------------------------------------------------------------- player_radar

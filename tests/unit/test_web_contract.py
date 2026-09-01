@@ -207,24 +207,32 @@ def test_the_fixture_grid_reads_the_split_the_panel_actually_names() -> None:
 
 
 def test_the_solver_objective_is_never_relabelled_as_xpts() -> None:
-    """The no-silent-blend rule (FINAL_SPEC Kill 3): the solver optimises
-    rank_mv, and the view must never print the string "xPts" adjacent to the
-    solver objective value. The consensus delta for the swapped players is a
-    separate, labelled quantity — so no source line may carry both words."""
+    """The no-silent-blend rule (FINAL_SPEC Kill 3), updated for the minimal
+    solver card: the DASHBOARD no longer renders the solver's objective at
+    all — the one gain line is the derived consensus delta, labelled as
+    derived, and the objective lives on the Solver tab in its own currency.
+    So: no hardcoded unit, no objective value on the dashboard, and no line
+    anywhere in either view carrying the objective adjacent to "xPts"."""
     src = _strip_comments(VIEWS["home"])
     assert "rank_mv" not in src, (
         "the solver's unit must come from the payload's objective_mode, "
         "never be hardcoded — a hardcoded label survives an objective change"
     )
-    assert "objective_mode" in src, (
-        "the view must print the objective in the payload's own unit"
+    assert "plan.objective" not in src, (
+        "the dashboard's minimal solver card renders no objective; the "
+        "Solver tab is where the solver speaks in its own currency"
     )
-    for ln in src.splitlines():
-        if "objective" in ln:
-            assert "xPts" not in ln, (
-                f"solver objective rendered adjacent to 'xPts' — the silent "
-                f"blend: {ln.strip()[:90]}"
-            )
+    solver_src = _strip_comments(VIEWS["solver"])
+    assert "objective_mode" in solver_src, (
+        "the Solver tab must print the objective in the payload's own unit"
+    )
+    for name in ("home", "solver"):
+        for ln in _strip_comments(VIEWS[name]).splitlines():
+            if "objective" in ln:
+                assert "xPts" not in ln, (
+                    f"solver objective rendered adjacent to 'xPts' — the "
+                    f"silent blend ({name}): {ln.strip()[:90]}"
+                )
     # and the derived consensus line must confess whose voice it is
     assert "not the solver objective" in src
 

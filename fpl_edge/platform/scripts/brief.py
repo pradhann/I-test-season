@@ -17,6 +17,21 @@ warehouse-side. Strings this panel does carry are either verbatim source
 fields (FPL ``news``), threshold echoes (``gate``), or measured facts
 (``watch_log[].detail``).
 
+Four blocks serve the pitch and the move cards, all under the same contract:
+
+* ``suggested_xi`` — the bench_inversion rule's pairwise swaps APPLIED as a
+  renderable lineup plus the captain measures (both printed, never blended);
+  every number is squad_overview's own. Bench/captain alert rows are gone:
+  the fix happens in the squad, not in prose above it.
+* ``team_fixtures`` / ``fixtures_scale`` — fixture_board's opponent_only lens
+  and scale copied verbatim per club for the pitch's opponent chips.
+* ``squad_projection`` — xmins/p_appear per squad player from the provider
+  consensus (same semantic views and rounding as projection_table); nulls
+  where no provider serves the column, never a fabricated minute.
+* ``moves`` — the deterministic move rules (``coverage_gap``,
+  ``form_upgrade``): rule ids + numbers only, thresholds echoed, capped and
+  suppression-disclosed. No free text — templates live in the view.
+
 The solve block implements the READ-SIDE derivation the stored plan lacks
 (no ``transfers[]``, no ``hold_baseline``): it diffs the plan's target squad
 against the current 15, resolves in/out pairs per position, and quotes the
@@ -30,6 +45,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import math
 import statistics
 from pathlib import Path
 from typing import Any
@@ -40,6 +56,7 @@ from fpl_edge.platform.scripts.common import (
     POSITION_NAME,
     UTC,
     empty,
+    latest_as_of,
     next_gw,
     q,
     season_param,
@@ -67,6 +84,15 @@ THRESHOLDS: dict[str, float | int] = {
     "fixture_rank_move": 6,
     "solve_fresh_window_h": 4,
     "tile_cap": 6,
+    # "Moves to consider" — deterministic rules, every gate echoed here.
+    "move_cap": 3,
+    "coverage_attack_rank_top": 3,
+    "coverage_max_held": 1,
+    "coverage_min_xpts_gain": 0.0,
+    "recent_gws": 2,
+    "recent_returns_min": 1,
+    "form_returns_margin": 2,
+    "form_xpts_margin": 1.0,
 }
 
 PARAMS: dict[str, Any] = {
@@ -111,9 +137,11 @@ _ALERT = {
                  "source_panel", "source_as_of"],
     "properties": {
         "rule": {"type": "string"},
+        # BENCH and CAPTAIN are gone from this enum on purpose: bench order
+        # and captaincy are fixed IN the squad via `suggested_xi`, not argued
+        # about in a prose row above it.
         "kind": {"type": "string",
-                 "enum": ["AVAILABILITY", "BENCH", "CAPTAIN", "MARKET",
-                          "SOLVER", "GAP"]},
+                 "enum": ["AVAILABILITY", "MARKET", "SOLVER", "GAP"]},
         "priority": {"type": "integer", "minimum": 0, "maximum": 1},
         "codes": {"type": "array", "items": {"type": "integer"}},
         "players": {"type": "array", "items": _PLAYER_REF},
@@ -255,12 +283,134 @@ _SOLVE = {
     },
 }
 
+_NUMBERS = {"type": "object",
+            "additionalProperties": {"type": ["number", "null"]}}
+
+_SWAP = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["in", "out", "numbers"],
+    "properties": {
+        "in": _PLAYER_REF,      # the bench player who starts
+        "out": _PLAYER_REF,     # the starter who sits
+        "numbers": _NUMBERS,    # bench_xpts / starter_xpts / swing, verbatim
+    },
+}
+
+#: The bench_inversion + captain rules APPLIED, server-side: the same pairwise
+#: swaps the old alert named, plus the captain measures, as a lineup the pitch
+#: can render. Numbers are squad_overview's own — never recomputed.
+_SUGGESTED = {
+    "type": ["object", "null"],
+    "additionalProperties": False,
+    "required": ["swaps", "n_changes", "xi_codes", "bench_codes",
+                 "captain", "your_captain", "source_panel", "source_as_of"],
+    "properties": {
+        "reason": {"type": ["string", "null"]},   # why swaps/captain are absent
+        "swaps": {"type": "array", "items": _SWAP},
+        "n_changes": {"type": "integer"},
+        "xi_codes": {"type": "array", "items": {"type": "integer"}},
+        "bench_codes": {"type": "array", "items": {"type": "integer"}},
+        "captain": {"anyOf": [_PLAYER_REF, {"type": "null"}]},
+        "captain_by_haul": {"anyOf": [_PLAYER_REF, {"type": "null"}]},
+        "captain_by_mean": {"anyOf": [_PLAYER_REF, {"type": "null"}]},
+        "captain_numbers": _NUMBERS,   # both measures printed, never blended
+        "your_captain": {"anyOf": [_PLAYER_REF, {"type": "null"}]},
+        "swap_delta_xpts": {"type": ["number", "null"]},
+        "captain_delta_xpts": {"type": ["number", "null"]},
+        "total_delta_xpts": {"type": ["number", "null"]},
+        "source_panel": {"type": "string"},
+        "source_as_of": {"type": ["string", "null"]},
+    },
+}
+
+#: One club's next fixture + horizon ranks, copied field-for-field from
+#: fixture_board's opponent_only lens — the pitch's opponent chips and the
+#: solver card's why-line read this, never a re-derived difficulty.
+_NEXT_FIX = {
+    "type": ["object", "null"],
+    "additionalProperties": False,
+    "required": ["gw", "label", "opponent", "opponent_code", "is_home"],
+    "properties": {
+        "gw": {"type": "integer"},
+        "label": {"type": "string"},          # CAPS home / lower away
+        "opponent": {"type": "string"},
+        "opponent_code": {"type": "integer"},
+        "is_home": {"type": "boolean"},
+        "kickoff_utc": {"type": ["string", "null"]},
+        "attack_ease": {"type": ["number", "null"]},
+        "defence_ease": {"type": ["number", "null"]},
+        "attack_rank": {"type": ["integer", "null"]},
+        "defence_rank": {"type": ["integer", "null"]},
+        "unavailable": {"type": ["string", "null"]},
+    },
+}
+
+_TEAMFIX = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["team_code", "short_name", "next"],
+    "properties": {
+        "team_code": {"type": "integer"},
+        "short_name": {"type": "string"},
+        "next": _NEXT_FIX,                    # null = blank next gameweek
+        "next_gw_labels": {"type": "array", "items": {"type": "string"}},
+        "labels": {"type": "array", "items": {"type": "string"}},
+        "horizon_attack_rank": {"type": ["integer", "null"]},
+        "horizon_defence_rank": {"type": ["integer", "null"]},
+    },
+}
+
+#: Per-squad-player minutes columns from the provider consensus at the next
+#: GW: xmins when any source serves it, p_appear alongside. Both nullable —
+#: the view labels whichever exists and never fabricates minutes.
+_SQPROJ = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["code"],
+    "properties": {
+        "code": {"type": "integer"},
+        "xmins": {"type": ["number", "null"]},
+        "p_appear": {"type": ["number", "null"]},
+        "n_sources": {"type": ["integer", "null"]},
+    },
+}
+
+_SOURCE_CHIP = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["panel"],
+    "properties": {"panel": {"type": "string"},
+                   "as_of": {"type": ["string", "null"]}},
+}
+
+#: A rule-based move suggestion. NO free text: rule id + numbers; wording
+#: lives in the view's templates. Every number is a shared-helper quantity.
+_MOVE = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["rule", "in", "out", "numbers", "sources"],
+    "properties": {
+        "rule": {"type": "string", "enum": ["coverage_gap", "form_upgrade"]},
+        "in": _PLAYER_REF,
+        "out": _PLAYER_REF,
+        "team": {"type": ["string", "null"]},
+        "team_code": {"type": ["integer", "null"]},
+        "numbers": _NUMBERS,
+        "gws": {"type": "array", "items": {"type": "integer"}},
+        "sources": {"type": "array", "items": _SOURCE_CHIP},
+        "drill": _DRILL,
+    },
+}
+
 RESULT: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "required": ["season", "gw", "entry_id", "as_of", "sources_as_of",
                  "thresholds", "alerts", "tiles", "suppressed_counts",
-                 "empty_kinds", "watch_log", "solve"],
+                 "empty_kinds", "watch_log", "solve", "suggested_xi",
+                 "team_fixtures", "squad_projection", "moves",
+                 "moves_suppressed", "fixtures_scale"],
     "properties": {
         "season": {"type": "string"},
         "gw": {"type": ["integer", "null"]},
@@ -285,6 +435,23 @@ RESULT: dict[str, Any] = {
         }},
         "watch_log": {"type": "array", "items": _WATCH},
         "solve": _SOLVE,
+        "suggested_xi": _SUGGESTED,
+        "team_fixtures": {"type": "array", "items": _TEAMFIX},
+        "squad_projection": {"type": "array", "items": _SQPROJ},
+        "projection_gw": {"type": ["integer", "null"]},
+        "moves": {"type": "array", "items": _MOVE},
+        "moves_suppressed": {"type": "integer"},
+        "fixtures_scale": {
+            "type": ["object", "null"],
+            "additionalProperties": False,
+            "required": ["available"],
+            "properties": {
+                "available": {"type": "boolean"},
+                "domain": {"type": ["array", "null"],
+                           "items": {"type": "number"}},
+                "unit": {"type": ["string", "null"]},
+            },
+        },
         "notes": {"type": "array", "items": {"type": "string"}},
     },
 }
@@ -389,6 +556,7 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
     starters: list[dict[str, Any]] = []
     bench: list[dict[str, Any]] = []
     squad15: list[dict[str, Any]] = []
+    suggested_xi: dict[str, Any] | None = None
     if sq.get("empty"):
         gap_alert("squad_overview", str(sq.get("reason")))
         for check in ("squad_flags", "bench_order", "captaincy"):
@@ -422,74 +590,75 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
             "source_panel": "squad_overview", "as_of": sq_as_of,
         })
 
-        # bench inversion: best bench vs weakest same-position starter.
-        # Same-position swaps are always formation-legal.
+        # bench inversion: best bench vs weakest same-position starter,
+        # APPLIED as suggested swaps rather than argued as an alert row.
+        # Same-position swaps are always formation-legal. A starter already
+        # swapped out cannot be swapped out twice, so the pairs compose into
+        # one renderable lineup.
         inversions = 0
         margin = float(THRESHOLDS["bench_margin_xpts"])
+        swaps: list[dict[str, Any]] = []
+        swapped_out: set[int] = set()
         for b in bench:
             if b.get("xpts") is None:
                 continue
             same = [s for s in starters
-                    if s.get("pos") == b.get("pos") and s.get("xpts") is not None]
+                    if s.get("pos") == b.get("pos") and s.get("xpts") is not None
+                    and s["code"] not in swapped_out]
             if not same:
                 continue
             weakest = min(same, key=lambda s: s["xpts"])
             swing = round(float(b["xpts"]) - float(weakest["xpts"]), 3)
             if swing >= margin:
                 inversions += 1
-                alerts.append({
-                    "rule": "bench_inversion", "kind": "BENCH", "priority": 1,
-                    "codes": [b["code"], weakest["code"]],
-                    "players": [_ref(b), _ref(weakest)],
+                swapped_out.add(weakest["code"])
+                swaps.append({
+                    "in": _ref(b), "out": _ref(weakest),
                     "numbers": {"bench_xpts": b["xpts"],
                                 "starter_xpts": weakest["xpts"],
                                 "swing": swing},
-                    "news": None, "status": None, "reason": None,
-                    "source_panel": "squad_overview", "source_as_of": sq_as_of,
-                    "drill": {"focus": "pitch",
-                              "codes": [b["code"], weakest["code"]]},
                 })
-        best_swing = max((a["numbers"]["swing"] for a in alerts
-                          if a["rule"] == "bench_inversion"), default=None)
+        best_swing = max((s["numbers"]["swing"] for s in swaps), default=None)
         watch.append({
             "check": "bench_order",
             "status": "firing" if inversions else "clear",
-            "detail": (f"{inversions} inversion(s), best swing +{best_swing}"
+            "detail": (f"{inversions} inversion(s), best swing +{best_swing} "
+                       f"— applied in the suggested XI"
                        if inversions else
                        f"no bench player beats his starter by ≥ {margin} xPts"),
             "source_panel": "squad_overview", "as_of": sq_as_of,
         })
 
-        # captaincy: two measures, both printed, never blended. The alert
-        # fires when the measures disagree with each other or with the armband.
+        # the suggested lineup: the swaps above applied in place
+        by_out_code = {s["out"]["code"]: s["in"]["code"] for s in swaps}
+        by_in_code = {s["in"]["code"]: s["out"]["code"] for s in swaps}
+        xi_codes = [by_out_code.get(p["code"], p["code"]) for p in starters]
+        bench_codes = [by_in_code.get(p["code"], p["code"]) for p in bench]
+        sq_by_code_all = {p["code"]: p for p in squad15}
+        xi_players = [sq_by_code_all[c] for c in xi_codes]
+
+        # captaincy: two measures over the SUGGESTED XI, both printed, never
+        # blended. The suggestion takes the mean-xPts pick (the pitch's own
+        # currency); the haul-odds pick is served beside it, disagreement
+        # visible, not averaged away.
         cap = next((p for p in squad15 if p.get("is_captain")), None)
-        with_ph = [p for p in starters if p.get("p_haul") is not None]
-        with_x = [p for p in starters if p.get("xpts") is not None]
+        with_ph = [p for p in xi_players if p.get("p_haul") is not None]
+        with_x = [p for p in xi_players if p.get("xpts") is not None]
+        sug_cap = by_haul = by_mean = None
+        cap_numbers: dict[str, Any] = {}
         if cap and with_ph and with_x:
             by_haul = max(with_ph, key=lambda p: p["p_haul"])
             by_mean = max(with_x, key=lambda p: p["xpts"])
             agree = by_haul["code"] == by_mean["code"] == cap["code"]
-            if not agree:
-                codes = []
-                for p in (by_haul, by_mean, cap):
-                    if p["code"] not in codes:
-                        codes.append(p["code"])
-                alerts.append({
-                    "rule": "captain_divergence", "kind": "CAPTAIN",
-                    "priority": 1, "codes": codes,
-                    "players": [_ref(by_haul), _ref(by_mean), _ref(cap)],
-                    "numbers": {
-                        "haul_pick_p_haul": by_haul["p_haul"],
-                        "haul_pick_xpts": by_haul.get("xpts"),
-                        "mean_pick_xpts": by_mean["xpts"],
-                        "mean_pick_p_haul": by_mean.get("p_haul"),
-                        "captain_xpts": cap.get("xpts"),
-                        "captain_p_haul": cap.get("p_haul"),
-                    },
-                    "news": None, "status": None, "reason": None,
-                    "source_panel": "squad_overview", "source_as_of": sq_as_of,
-                    "drill": {"focus": "pitch", "codes": codes},
-                })
+            sug_cap = by_mean
+            cap_numbers = {
+                "haul_pick_p_haul": by_haul["p_haul"],
+                "haul_pick_xpts": by_haul.get("xpts"),
+                "mean_pick_xpts": by_mean["xpts"],
+                "mean_pick_p_haul": by_mean.get("p_haul"),
+                "captain_xpts": cap.get("xpts"),
+                "captain_p_haul": cap.get("p_haul"),
+            }
             watch.append({
                 "check": "captaincy",
                 "status": "clear" if agree else "firing",
@@ -505,6 +674,36 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
                           "are null (run `make solve`)",
                 "source_panel": "squad_overview", "as_of": sq_as_of,
             })
+
+        swap_delta = (round(sum(float(s["numbers"]["swing"]) for s in swaps), 2)
+                      if swaps else 0.0)
+        cap_delta = None
+        if sug_cap is not None and cap is not None:
+            cap_delta = (0.0 if sug_cap["code"] == cap["code"]
+                         else (round(float(sug_cap["xpts"])
+                                     - float(cap["xpts"]), 2)
+                               if cap.get("xpts") is not None else None))
+        suggested_xi = {
+            "reason": ("no projection artefact cached — the bench and "
+                       "captain rules cannot rank players (run `make solve`)"
+                       if all(p.get("xpts") is None for p in squad15)
+                       else None),
+            "swaps": swaps,
+            "n_changes": len(swaps),
+            "xi_codes": xi_codes,
+            "bench_codes": bench_codes,
+            "captain": _ref(sug_cap) if sug_cap else None,
+            "captain_by_haul": _ref(by_haul) if by_haul else None,
+            "captain_by_mean": _ref(by_mean) if by_mean else None,
+            "captain_numbers": cap_numbers,
+            "your_captain": _ref(cap) if cap else None,
+            "swap_delta_xpts": swap_delta,
+            "captain_delta_xpts": cap_delta,
+            "total_delta_xpts": (round(swap_delta + (cap_delta or 0.0), 2)
+                                 if swap_delta is not None else None),
+            "source_panel": "squad_overview",
+            "source_as_of": sq_as_of,
+        }
 
     squad_codes = {p["code"] for p in squad15}
     squad_team_codes = {p.get("team_code") for p in squad15
@@ -788,6 +987,9 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
             })
 
     # ---- fixture turns (split board, two windows, its own fields only) ----
+    team_fixtures: list[dict[str, Any]] = []
+    fixtures_scale: dict[str, Any] = {"available": False, "domain": None,
+                                      "unit": None}
     try:
         near = fixture_board(wh, season=season, horizon=3, from_gw=g_next,
                              include_form=False, include_calibration=False)
@@ -798,67 +1000,416 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
         near = {"empty": True,
                 "reason": f"fixture_board raised {type(exc).__name__}: {exc}"}
         far = near
-    if near.get("empty") or far.get("empty"):
-        reason = str(near.get("reason") or far.get("reason"))
+    if near.get("empty"):
         watch.append({"check": "fixture_turns", "status": "gap",
-                      "detail": reason[:200],
+                      "detail": str(near.get("reason"))[:200],
                       "source_panel": "fixture_board", "as_of": None})
     else:
         fb_as_of = _iso(near.get("as_of"))
         sources_as_of.setdefault("fixture_board", fb_as_of)
-        move_thr = int(THRESHOLDS["fixture_rank_move"])
-        top_eo_teams = set()
-        if not own.get("empty"):
-            for r in (own.get("rows") or [])[:10]:
-                if r.get("team_code") is not None:
-                    top_eo_teams.add(r["team_code"])
-        relevant = squad_team_codes | top_eo_teams
-        far_by = {t.get("team_code"): t for t in far.get("teams", [])}
-        turns = 0
-        near_gws = near.get("gws") or []
-        far_gws = far.get("gws") or []
+
+        # team_fixtures: the near board's opponent_only lens, copied verbatim
+        # per club — the pitch's opponent chips and the solver why-line render
+        # from this; no ease is ever re-derived here.
+        sc = near.get("scale") or {}
+        fixtures_scale = {
+            "available": bool(sc.get("available")),
+            "domain": ([float(x) for x in sc["domain"]]
+                       if sc.get("domain") else None),
+            "unit": sc.get("unit"),
+        }
+        first_gw = (near.get("gws") or [None])[0]
         for t in near.get("teams", []):
-            tc = t.get("team_code")
-            if tc not in relevant or tc not in far_by:
-                continue
-            h1 = t.get("horizon") or {}
-            h2 = far_by[tc].get("horizon") or {}
-            for axis in ("attack_rank", "defence_rank"):
-                r1, r2 = h1.get(axis), h2.get(axis)
-                if r1 is None or r2 is None:
+            nxt = None
+            next_labels: list[str] = []
+            all_labels: list[str] = []
+            for slot in t.get("fixtures", []):
+                for o in slot.get("opponents", []):
+                    all_labels.append(str(o["label"]))
+                    if first_gw is not None and int(slot["gw"]) == int(first_gw):
+                        next_labels.append(str(o["label"]))
+                        if nxt is None:
+                            oo = o.get("opponent_only") or {}
+                            nxt = {
+                                "gw": int(slot["gw"]),
+                                "label": str(o["label"]),
+                                "opponent": str(o["opponent"]),
+                                "opponent_code": int(o["opponent_code"]),
+                                "is_home": bool(o["is_home"]),
+                                "kickoff_utc": o.get("kickoff_utc"),
+                                "attack_ease": oo.get("attack_ease"),
+                                "defence_ease": oo.get("defence_ease"),
+                                "attack_rank": oo.get("attack_rank"),
+                                "defence_rank": oo.get("defence_rank"),
+                                "unavailable": oo.get("unavailable"),
+                            }
+            h = t.get("horizon") or {}
+            team_fixtures.append({
+                "team_code": int(t["team_code"]),
+                "short_name": str(t["short_name"]),
+                "next": nxt,
+                "next_gw_labels": next_labels,
+                "labels": all_labels,
+                "horizon_attack_rank": h.get("attack_rank"),
+                "horizon_defence_rank": h.get("defence_rank"),
+            })
+
+        if far.get("empty"):
+            # the near window still feeds team_fixtures and the pitch; only
+            # the near-vs-far turn comparison is a gap
+            watch.append({"check": "fixture_turns", "status": "gap",
+                          "detail": ("far window empty: "
+                                     + str(far.get("reason")))[:200],
+                          "source_panel": "fixture_board",
+                          "as_of": fb_as_of})
+        else:
+            move_thr = int(THRESHOLDS["fixture_rank_move"])
+            top_eo_teams = set()
+            if not own.get("empty"):
+                for r in (own.get("rows") or [])[:10]:
+                    if r.get("team_code") is not None:
+                        top_eo_teams.add(r["team_code"])
+            relevant = squad_team_codes | top_eo_teams
+            far_by = {t.get("team_code"): t for t in far.get("teams", [])}
+            turns = 0
+            near_gws = near.get("gws") or []
+            far_gws = far.get("gws") or []
+            for t in near.get("teams", []):
+                tc = t.get("team_code")
+                if tc not in relevant or tc not in far_by:
                     continue
-                move = int(r1) - int(r2)
-                if abs(move) >= move_thr:
-                    turns += 1
-                    tiles.append((4, abs(move) - move_thr, {
-                        "kind": "fixture_turn", "priority": 4,
-                        "code": None, "player": None,
-                        "team_code": tc, "team": t.get("short_name"),
-                        "number": {"value": move, "unit": "places",
-                                   "window_h": None},
-                        "gate": f"{axis.replace('_', ' ')} moves ≥ {move_thr} "
-                                f"places: {r1} (GW{near_gws[0]}–{near_gws[-1]})"
-                                f" → {r2} (GW{far_gws[0]}–{far_gws[-1]}) — "
-                                f"split panel's own ranks, never a blended "
-                                f"difficulty",
-                        "context": {"axis": axis, "rank_near": r1,
-                                    "rank_far": r2},
-                        "source_panel": "fixture_board",
-                        "source_as_of": fb_as_of,
-                        "sources": [{"panel": "fixture_board",
-                                     "as_of": fb_as_of}],
-                        "drill": {"tab": "fixtures"},
-                    }))
-        watch.append({
-            "check": "fixture_turns",
-            "status": "firing" if turns else "clear",
-            "detail": (f"{turns} run(s) turning ≥ {move_thr} places among "
-                       f"your/top-EO clubs"
-                       if turns else
-                       f"no horizon rank move ≥ {move_thr} places among "
-                       f"{len(relevant)} relevant club(s)"),
-            "source_panel": "fixture_board", "as_of": fb_as_of,
-        })
+                h1 = t.get("horizon") or {}
+                h2 = far_by[tc].get("horizon") or {}
+                for axis in ("attack_rank", "defence_rank"):
+                    r1, r2 = h1.get(axis), h2.get(axis)
+                    if r1 is None or r2 is None:
+                        continue
+                    move = int(r1) - int(r2)
+                    if abs(move) >= move_thr:
+                        turns += 1
+                        tiles.append((4, abs(move) - move_thr, {
+                            "kind": "fixture_turn", "priority": 4,
+                            "code": None, "player": None,
+                            "team_code": tc, "team": t.get("short_name"),
+                            "number": {"value": move, "unit": "places",
+                                       "window_h": None},
+                            "gate": f"{axis.replace('_', ' ')} moves ≥ {move_thr} "
+                                    f"places: {r1} (GW{near_gws[0]}–{near_gws[-1]})"
+                                    f" → {r2} (GW{far_gws[0]}–{far_gws[-1]}) — "
+                                    f"split panel's own ranks, never a blended "
+                                    f"difficulty",
+                            "context": {"axis": axis, "rank_near": r1,
+                                        "rank_far": r2},
+                            "source_panel": "fixture_board",
+                            "source_as_of": fb_as_of,
+                            "sources": [{"panel": "fixture_board",
+                                         "as_of": fb_as_of}],
+                            "drill": {"tab": "fixtures"},
+                        }))
+            watch.append({
+                "check": "fixture_turns",
+                "status": "firing" if turns else "clear",
+                "detail": (f"{turns} run(s) turning ≥ {move_thr} places among "
+                           f"your/top-EO clubs"
+                           if turns else
+                           f"no horizon rank move ≥ {move_thr} places among "
+                           f"{len(relevant)} relevant club(s)"),
+                "source_panel": "fixture_board", "as_of": fb_as_of,
+            })
+
+    # ---- squad minutes columns (provider consensus, next GW) -------------
+    # xmins when any provider serves it, p_appear beside it — the same
+    # semantic views and the same rounding projection_table uses, so the
+    # pitch's minutes chip equals the projections tab's column exactly.
+    squad_projection: list[dict[str, Any]] = []
+    proj_as_of: str | None = None
+    cons_next: dict[int, dict[str, Any]] = {}
+    if g_next is not None:
+        cdf = adf = None
+        try:
+            cdf = q(
+                wh,
+                "SELECT code, xpts_mean, xmins_mean, n_sources "
+                "FROM sem_projection_consensus(?) WHERE season = ? AND gw = ?",
+                (now, season, g_next),
+            )
+            adf = q(
+                wh,
+                "SELECT code, AVG(p_appear) AS p_appear, "
+                "MAX(fetched_at) AS fetched FROM sem_projections(?) "
+                "WHERE season = ? AND gw = ? AND xpts IS NOT NULL "
+                "GROUP BY code",
+                (now, season, g_next),
+            )
+        except Exception as exc:  # noqa: BLE001
+            notes.append(f"provider consensus unreadable: "
+                         f"{type(exc).__name__}: {exc}")
+        if cdf is not None and not cdf.empty:
+            pap: dict[int, Any] = {}
+            if adf is not None and not adf.empty:
+                pap = {int(r["code"]): r for _, r in adf.iterrows()}
+                fmax = adf["fetched"].max()
+                if fmax is not None:
+                    proj_as_of = _iso(fmax)
+
+            def _f(v) -> float | None:
+                if v is None:
+                    return None
+                fv = float(v)
+                return None if math.isnan(fv) else fv
+
+            for _, r in cdf.iterrows():
+                code_ = int(r["code"])
+                a = pap.get(code_)
+                cons_next[code_] = {
+                    "xpts": _f(r["xpts_mean"]),
+                    "xmins": _f(r["xmins_mean"]),
+                    "n_sources": (int(r["n_sources"])
+                                  if r["n_sources"] == r["n_sources"] else None),
+                    "p_appear": _f(a["p_appear"]) if a is not None else None,
+                }
+            if proj_as_of:
+                sources_as_of.setdefault("projection_table", proj_as_of)
+            for p in squad15:
+                c = cons_next.get(p["code"])
+                squad_projection.append({
+                    "code": p["code"],
+                    "xmins": (round(c["xmins"], 1)
+                              if c and c["xmins"] is not None else None),
+                    "p_appear": (round(c["p_appear"], 3)
+                                 if c and c["p_appear"] is not None else None),
+                    "n_sources": c["n_sources"] if c else None,
+                })
+
+    # ---- moves to consider: deterministic rules, no free text ------------
+    # coverage_gap: a top-ranked easy attacking run the squad barely holds,
+    # answered by that club's best consensus attacker with recent returns.
+    # form_upgrade: a same-position candidate beating a squad player on BOTH
+    # last-2-GW returns and next-GW consensus xPts by the echoed margins.
+    # Every number is a shared-helper quantity: fixture_board ranks,
+    # sem_projection_consensus xPts, sem_player_form returns, squad prices.
+    moves: list[dict[str, Any]] = []
+    moves_suppressed = 0
+    moves_gap_reason: str | None = None
+    settled_gws: list[int] = []
+    if sq.get("empty"):
+        moves_gap_reason = "squad unreadable — no out-leg can be priced"
+    elif g_next is None:
+        moves_gap_reason = "no future deadline known"
+    elif not cons_next:
+        moves_gap_reason = (f"no consensus projections for GW{g_next} in the "
+                            f"warehouse — the rules cannot price a candidate")
+    else:
+        try:
+            sg = q(
+                wh,
+                "SELECT DISTINCT gw FROM sem_player_form(?) "
+                "WHERE season = ? AND gw < ? ORDER BY gw DESC LIMIT ?",
+                (now, season, g_next, int(THRESHOLDS["recent_gws"])),
+            )
+            settled_gws = sorted(int(g) for g in sg["gw"]) if not sg.empty else []
+        except Exception as exc:  # noqa: BLE001
+            settled_gws = []
+            notes.append(f"sem_player_form unreadable: "
+                         f"{type(exc).__name__}: {exc}")
+        returns: dict[int, tuple[int, int]] = {}
+        pf_as_of = None
+        if settled_gws:
+            ph = ", ".join("?" for _ in settled_gws)
+            rdf = q(
+                wh,
+                f"SELECT code, SUM(goals_scored) AS g, SUM(assists) AS a "
+                f"FROM sem_player_form(?) WHERE season = ? AND gw IN ({ph}) "
+                f"GROUP BY code",
+                (now, season, *settled_gws),
+            )
+            returns = {int(r["code"]): (int(r["g"] or 0), int(r["a"] or 0))
+                       for _, r in rdf.iterrows()}
+            pf_as_of = latest_as_of(wh, "fact_player_fixture", season)
+        mdf = q(
+            wh,
+            "SELECT code, web_name, position, team, team_code, price, "
+            "selected_by_pct FROM sem_players(?) WHERE season = ?",
+            (now, season),
+        )
+        meta: dict[int, dict[str, Any]] = {}
+        for _, r in mdf.iterrows():
+            meta[int(r["code"])] = {
+                "code": int(r["code"]),
+                "name": str(r["web_name"]),
+                "pos": POSITION_NAME.get(
+                    int(r["position"]) if r["position"] == r["position"]
+                    else 0, "?"),
+                "team": None if r["team"] is None else str(r["team"]),
+                "team_code": (None if r["team_code"] != r["team_code"]
+                              else int(r["team_code"])),
+                "price": (None if r["price"] != r["price"]
+                          else float(r["price"])),
+                "own_pct": (None if r["selected_by_pct"] != r["selected_by_pct"]
+                            else float(r["selected_by_pct"])),
+            }
+        bank_m = ((sq.get("bank_tenths") or 0) / 10.0
+                  if sq.get("bank_tenths") is not None else 0.0)
+        move_sources = [
+            {"panel": "projection_table", "as_of": proj_as_of},
+            {"panel": "squad_overview",
+             "as_of": sources_as_of.get("squad_overview")},
+        ]
+        if pf_as_of:
+            move_sources.append({"panel": "fact_player_fixture",
+                                 "as_of": _iso(pf_as_of)})
+        used_in: set[int] = set()
+        used_out: set[int] = set()
+        r_top = int(THRESHOLDS["coverage_attack_rank_top"])
+        max_held = int(THRESHOLDS["coverage_max_held"])
+        ret_min = int(THRESHOLDS["recent_returns_min"])
+
+        def cons_xpts(code: int) -> float | None:
+            c = cons_next.get(code)
+            if c is None or c["xpts"] is None:
+                return None
+            return round(float(c["xpts"]), 3)   # projection_table's rounding
+
+        # -- coverage_gap ------------------------------------------------
+        if not near.get("empty") and settled_gws:
+            ranked_teams = sorted(
+                (t for t in team_fixtures
+                 if t.get("horizon_attack_rank") is not None),
+                key=lambda t: t["horizon_attack_rank"])
+            for t in ranked_teams:
+                rank = int(t["horizon_attack_rank"])
+                if rank > r_top:
+                    break
+                tc = t["team_code"]
+                held = [p for p in squad15 if p.get("team_code") == tc]
+                if len(held) > max_held:
+                    continue
+                cands = sorted(
+                    (m for c_, m in meta.items()
+                     if m["team_code"] == tc and m["pos"] in ("MID", "FWD")
+                     and c_ not in squad_codes and c_ not in used_in
+                     and cons_xpts(c_) is not None),
+                    key=lambda m: -(cons_xpts(m["code"]) or 0.0))
+                min_gain = float(THRESHOLDS["coverage_min_xpts_gain"])
+                for cand in cands:
+                    g_, a_ = returns.get(cand["code"], (0, 0))
+                    if g_ + a_ < ret_min:
+                        continue
+                    cand_x = cons_xpts(cand["code"]) or 0.0
+                    # out-leg ranked in the SAME voice (consensus xPts); a
+                    # squad player the consensus does not cover cannot be
+                    # ranked and is not guessed at.
+                    outs = [p for p in squad15
+                            if p.get("pos") == cand["pos"]
+                            and p["code"] not in used_out
+                            and p.get("price") is not None
+                            and cand["price"] is not None
+                            and cons_xpts(p["code"]) is not None
+                            and bank_m + float(p["price"]) >= float(cand["price"])]
+                    outs = [p for p in outs
+                            if cand_x >= (cons_xpts(p["code"]) or 0.0) + min_gain]
+                    if not outs:
+                        continue
+                    out = min(outs, key=lambda p: cons_xpts(p["code"]) or 0.0)
+                    used_in.add(cand["code"])
+                    used_out.add(out["code"])
+                    moves.append({
+                        "rule": "coverage_gap",
+                        "in": cand, "out": _ref(out),
+                        "team": t["short_name"], "team_code": tc,
+                        "numbers": {
+                            "attack_rank": rank,
+                            "held_count": len(held),
+                            "cand_xpts": cons_xpts(cand["code"]),
+                            "cand_goals": g_, "cand_assists": a_,
+                            "cand_returns": g_ + a_,
+                            "out_xpts": cons_xpts(out["code"]),
+                            "in_price": cand["price"],
+                            "out_price": out.get("price"),
+                            "bank": round(bank_m, 1),
+                            "next_gw": g_next,
+                        },
+                        "gws": settled_gws,
+                        "sources": move_sources + [
+                            {"panel": "fixture_board",
+                             "as_of": sources_as_of.get("fixture_board")}],
+                        "drill": {"drawer": cand["code"]},
+                    })
+                    break
+
+        # -- form_upgrade ------------------------------------------------
+        if settled_gws:
+            f_ret = int(THRESHOLDS["form_returns_margin"])
+            f_x = float(THRESHOLDS["form_xpts_margin"])
+            form_cards: list[tuple[float, dict[str, Any]]] = []
+            for c_, cand in meta.items():
+                if (c_ in squad_codes or c_ in used_in
+                        or cand["pos"] not in ("DEF", "MID", "FWD")):
+                    continue
+                cx = cons_xpts(c_)
+                if cx is None or cand["price"] is None:
+                    continue
+                cg, ca = returns.get(c_, (0, 0))
+                best = None
+                for s in squad15:
+                    if (s.get("pos") != cand["pos"] or s["code"] in used_out
+                            or s.get("price") is None):
+                        continue
+                    sx = cons_xpts(s["code"])
+                    if sx is None:
+                        continue
+                    sg_, sa_ = returns.get(s["code"], (0, 0))
+                    if (cg + ca >= sg_ + sa_ + f_ret and cx >= sx + f_x
+                            and bank_m + float(s["price"]) >= float(cand["price"])
+                            and (best is None or sx < best[0])):
+                        best = (sx, s, sg_ + sa_)
+                if best is None:
+                    continue
+                sx, s, s_ret = best
+                form_cards.append((cx - sx, {
+                    "rule": "form_upgrade",
+                    "in": cand, "out": _ref(s),
+                    "team": cand["team"], "team_code": cand["team_code"],
+                    "numbers": {
+                        "cand_xpts": cx, "out_xpts": sx,
+                        "cand_returns": cg + ca, "cand_goals": cg,
+                        "cand_assists": ca, "out_returns": s_ret,
+                        "in_price": cand["price"], "out_price": s.get("price"),
+                        "bank": round(bank_m, 1),
+                        "next_gw": g_next,
+                    },
+                    "gws": settled_gws,
+                    "sources": list(move_sources),
+                    "drill": {"drawer": c_},
+                }))
+            for _, card_ in sorted(form_cards, key=lambda kv: -kv[0]):
+                if card_["in"]["code"] in used_in or \
+                        card_["out"]["code"] in used_out:
+                    continue
+                used_in.add(card_["in"]["code"])
+                used_out.add(card_["out"]["code"])
+                moves.append(card_)
+        elif not moves_gap_reason:
+            moves_gap_reason = ("no settled gameweek in fact_player_fixture — "
+                                "the recent-returns gate cannot be evaluated")
+
+    cap_moves = int(THRESHOLDS["move_cap"])
+    moves_suppressed = max(0, len(moves) - cap_moves)
+    moves = moves[:cap_moves]
+    watch.append({
+        "check": "move_rules",
+        "status": ("gap" if moves_gap_reason
+                   else ("firing" if moves else "clear")),
+        "detail": (moves_gap_reason if moves_gap_reason else
+                   (f"{len(moves)} move(s) cleared the gates"
+                    f"{f', {moves_suppressed} suppressed' if moves_suppressed else ''}"
+                    if moves else
+                    "no candidate cleared the coverage or form gates")),
+        "source_panel": "dashboard_brief",
+        "as_of": proj_as_of,
+    })
+    if moves_gap_reason:
+        empties.append({"kind": "moves", "reason": moves_gap_reason})
 
     # ---- idea_due --------------------------------------------------------
     if ideas.get("empty"):
@@ -1174,6 +1725,13 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
         "empty_kinds": empties,
         "watch_log": watch,
         "solve": solve,
+        "suggested_xi": suggested_xi,
+        "team_fixtures": team_fixtures,
+        "squad_projection": squad_projection,
+        "projection_gw": g_next,
+        "moves": moves,
+        "moves_suppressed": moves_suppressed,
+        "fixtures_scale": fixtures_scale,
         "notes": notes,
     }
 

@@ -80,6 +80,24 @@ RESULT: dict[str, Any] = {
         "vice": {"type": ["string", "null"]},
         "starters": {"type": "array", "items": _PLAYER},
         "bench": {"type": "array", "items": _PLAYER},
+        # Chip ledger from MyTeamState.chip_status() — the rules registry's
+        # windows and the entry's played chips, reused, never re-derived.
+        # Empty when the squad source cannot say (e.g. manual entry).
+        "chips": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["chip", "windows", "played"],
+                "properties": {
+                    "chip": {"type": "string"},
+                    "windows": {"type": "array",
+                                "items": {"type": "array",
+                                          "items": {"type": "integer"}}},
+                    "played": {"type": "array", "items": {"type": "integer"}},
+                },
+            },
+        },
         "flags": {"type": "array", "items": {"type": "string"}},
         "as_of": {"type": ["string", "null"]},
         "notes": {"type": "array", "items": {"type": "string"}},
@@ -205,6 +223,24 @@ def squad_overview(wh, *, season: str, entry_id: int | None = None) -> dict[str,
     vice = next((c["name"] for c in starters + bench if c["is_vice"]), None)
     value = sum(int(round(c["price"] * 10)) for c in starters + bench)
 
+    # Chip ledger: reuse the state's own chip_status() (rules-registry
+    # windows + played chips). A source that cannot say serves [] plus a note
+    # rather than a guessed "all available".
+    chips: list[dict[str, Any]] = []
+    try:
+        for cs in (state.chip_status() if hasattr(state, "chip_status") else ()):
+            chips.append({
+                "chip": str(cs.chip),
+                "windows": [[int(a), int(b)] for a, b in cs.windows],
+                "played": [int(g) for g in cs.played],
+            })
+    except Exception as exc:  # noqa: BLE001 - chips are context, not the squad
+        chips = []
+        notes.append(f"chip status unavailable: {type(exc).__name__}: {exc}")
+    if not chips:
+        notes.append("chip ledger not served by this squad source — "
+                     "used/available chips are unknown, not all-available.")
+
     source = getattr(state.provenance, "name", str(state.provenance))
     return {
         "season": season,
@@ -219,6 +255,7 @@ def squad_overview(wh, *, season: str, entry_id: int | None = None) -> dict[str,
         "vice": vice,
         "starters": starters,
         "bench": bench,
+        "chips": chips,
         "flags": flags,
         "as_of": latest_as_of(wh, "fact_player_state", season),
         "notes": notes,

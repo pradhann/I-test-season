@@ -13,6 +13,16 @@
                 GW3 and GW33. The number always prints on the chip. */
 
 /* ---- topbar + provenance banner ---- */
+/* chip ledger: BB/TC/WC/FH per half, from squad_overview's chips block —
+   a used chip mutes, it never disappears (used ≠ unavailable-forever) */
+.db-chipledger { display: flex; gap: 8px; align-items: center;
+                 margin: -4px 0 10px; flex-wrap: wrap; }
+.db-chiplbl { font: 10.5px var(--mono); color: var(--faint);
+              text-transform: uppercase; letter-spacing: .08em; }
+.db-chipitem { font: 600 11px var(--mono); background: var(--raised);
+               border-radius: 999px; padding: 3px 10px; color: var(--ink); }
+.db-chipitem.used { color: var(--muted); background: transparent;
+                    box-shadow: inset 0 0 0 1px var(--line); }
 .db-prov { color: var(--muted); font-size: 12px; margin: -6px 0 14px;
            font-family: var(--mono); }
 .db-prov.warn { color: var(--ink); }
@@ -108,6 +118,82 @@
 .bench .pp { opacity: .92; }
 .db-legendnote { font-style: italic; }
 
+/* ---- pitch v3: fplreview grammar ----
+   card = photo → name plate → ONE info row of three chips
+   [xPts on the pj- ramp] [OPPONENT on the fixtures tab's fx- ramp, CAPS
+   home / lower away] [MINUTES: xmins if served, else p_appear, labelled] */
+.pp-row { display: flex; gap: 2px; margin: 3px 3px 0; }
+.pp-row .pp-chip { flex: 1 1 0; min-width: 0; margin: 0; padding: 2px 0 1px;
+                   font: 700 10px var(--mono); border-radius: 5px;
+                   overflow: hidden; }
+.pp-row .pp-chip i { display: block; font-style: normal; font-weight: 400;
+                     font-size: 7.5px; line-height: 1.2; margin: 0;
+                     color: var(--faint); }
+.pp-opp { background: var(--raised); color: var(--fx-cell-ink, var(--ink));
+          letter-spacing: .02em; }
+/* this sheet loads after fixtures.css, so the ease classes need the extra
+   specificity here or the neutral background above would always win */
+.pp-opp.fx-e3 { background: var(--fx-e3); }
+.pp-opp.fx-e2 { background: var(--fx-e2); }
+.pp-opp.fx-e1 { background: var(--fx-e1); }
+.pp-opp.fx-n0 { background: var(--fx-n); }
+.pp-opp.fx-h1 { background: var(--fx-h1); }
+.pp-opp.fx-h2 { background: var(--fx-h2); }
+.pp-opp.fx-h3 { background: var(--fx-h3); }
+.pp-opp i, .pp-min i { color: inherit; opacity: .6; }
+.pp-min { background: var(--raised); color: var(--muted); }
+/* the suggested-change marker: "⇄ for Kinsky" */
+.pp-mark { display: block; margin: 3px 3px 0; padding: 1px 3px;
+           border-radius: 4px; font: 600 9px var(--mono); color: #fff;
+           background: color-mix(in oklab, var(--s1) 72%, #000);
+           white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* pitch markings: boundary, halfway line, centre circle — a decoration
+   layer that never intercepts a click */
+.pitch.db-pitch2 { position: relative; padding: 30px 14px 24px; gap: 28px; }
+.pitch.db-pitch2::before { content: ""; position: absolute; inset: 12px;
+  border: 1.5px solid rgb(255 255 255 / .18); border-radius: 8px;
+  background: linear-gradient(180deg,
+    transparent calc(50% - 1px), rgb(255 255 255 / .16) calc(50% - 1px),
+    rgb(255 255 255 / .16) calc(50% + .5px), transparent calc(50% + .5px));
+  pointer-events: none; }
+.pitch.db-pitch2::after { content: ""; position: absolute; left: 50%;
+  top: 50%; width: 120px; height: 120px; margin: -60px 0 0 -60px;
+  border: 1.5px solid rgb(255 255 255 / .15); border-radius: 50%;
+  pointer-events: none; }
+.pitch.db-pitch2 .row { position: relative; z-index: 1; }
+
+/* the header strip above the pitch: changes headline + the mode toggle */
+.db-pitchhead { display: flex; align-items: center; gap: 10px;
+                justify-content: space-between; flex-wrap: wrap;
+                margin: 0 0 10px; }
+.db-pitchdelta { font-weight: 650; font-size: 13px; }
+.db-toggle { display: inline-flex; border: 1px solid var(--line);
+             border-radius: 999px; overflow: hidden; }
+.db-tog { border: 0; background: var(--surface); color: var(--muted);
+          font: 600 11.5px var(--mono); padding: 4px 12px; cursor: pointer; }
+.db-tog.on { background: var(--raised); color: var(--ink); }
+.db-armband { font-family: var(--mono); }
+
+/* the bench: a visually distinct dark tray below the pitch */
+.bench.db-benchtray { margin-top: 14px; padding: 12px 12px 10px;
+  border-radius: 10px; position: relative;
+  background: color-mix(in oklab, var(--pitch) 26%, #12161c);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / .07); }
+.db-benchlbl { position: absolute; top: 4px; left: 12px;
+  font: 650 9.5px var(--mono); letter-spacing: .14em;
+  text-transform: uppercase; color: rgb(255 255 255 / .45); }
+.bench.db-benchtray .bn-i { color: rgb(255 255 255 / .55); }
+
+/* ---- moves to consider (rule cards, never the solver) ---- */
+.db-move { display: flex; flex-direction: column; gap: 6px;
+           padding: 10px 12px; background: var(--surface);
+           border: 1px solid var(--line); border-radius: 10px;
+           margin-top: 8px; cursor: pointer; }
+.db-move:hover { border-color: var(--muted); }
+.db-movewhy { margin: 0; font-size: 13px; }
+.db-movemath { margin: 0; font: 11.5px var(--mono); color: var(--muted); }
+
 /* ---- solver card ---- */
 .solver .sub .chip { margin-left: 6px; }
 .sv-move { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
@@ -137,6 +223,13 @@
              font-style: normal; max-width: 300px; }
 .sv-lines { font-size: 12px; color: var(--muted); margin: 8px 0 0; }
 .sv-lines code { font: 600 12px var(--mono); color: var(--ink); }
+/* the minimal card's three lines: gain, why, stale */
+.sv-gainline { margin: 8px 0 0; font-size: 12.5px; color: var(--muted); }
+.sv-gainline b { font: 700 15px var(--mono); color: var(--s1); }
+/* --s1, never --good: a model quantity on the model's own scale, not a verdict */
+.sv-why { margin: 6px 0 0; color: var(--muted); font-size: 12px; }
+.sv-stale { font-size: 13px; margin: 8px 0 0; }
+.sv-stale .chip { margin-left: 6px; }
 .sv-room { display: grid; grid-template-columns: 52px 1fr; gap: 6px 10px;
            margin: 10px 0 0; border-top: 1px solid var(--line);
            padding-top: 10px; }
@@ -168,7 +261,11 @@
 .t-meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .t-gate { color: var(--faint); font-size: 10.5px; }
 
-/* ---- watch log ---- */
+/* ---- watch log: one collapsed line, the table behind the click ---- */
+.db-watchfold summary { cursor: pointer; font: 12px var(--mono);
+                        color: var(--muted); }
+.db-watchfold summary:hover { color: var(--ink); }
+.db-watchfold[open] summary { margin-bottom: 8px; }
 table.db-watch td { border-bottom: 1px solid var(--line); }
 .db-watch .w-check { font-weight: 600; white-space: nowrap; }
 .db-watch .w-detail { color: var(--muted); }
