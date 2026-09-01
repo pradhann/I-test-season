@@ -108,6 +108,21 @@ def record_run(wh, pipeline: str, source: str | None = None,
     _insert(wh, rec, status=rec.status or "ok", note=rec.note)
 
 
+def record_finished(wh, rec: RunRecord, *, status: str,
+                    note: str | None = None) -> None:
+    """Write one already-finished run in a single statement.
+
+    For runners that cannot hold the warehouse open across the work -- the
+    deadline-DAG tick claims, closes, runs the task with the lock free, and
+    reopens to record. It builds the :class:`RunRecord` before the task (so
+    ``started_utc`` is honest) and lands it here in the outcome burst.
+    """
+    if status not in STATUSES:
+        raise ValueError(f"status {status!r} not in {STATUSES}")
+    ensure_table(wh)
+    _insert(wh, rec, status=status, note=note)
+
+
 def _insert(wh, rec: RunRecord, *, status: str, note: str | None) -> None:
     wh.sql(
         "INSERT INTO fetch_run VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",

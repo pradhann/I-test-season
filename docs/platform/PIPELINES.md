@@ -1,7 +1,16 @@
 # Data pipelines — the map, the facts, and the plan
 
-Status: SPEC CLOSED 2026-08-31 — all four questions settled with the owner.
-Ready to build in the §6 order.
+Status: SPEC CLOSED 2026-08-31; SCOPE ELEVATED 2026-09-01 — the owner's
+direction: "pipelines are the most important thing here... take this as the
+main product, pipelines is the edge, organize it properly, best in class."
+Concretely: a first-class `fpl_edge/pipelines/` package (registry, runner,
+health) where every run is timed, logged (per-run log files with tails in the
+ledger), and health-scored ({ok, failing, stale, running, never_ran,
+disabled} with a reason, consecutive-failure counts, avg duration over the
+last 20 ok runs); one `pipeline_status()` payload feeding a control-panel UI
+with per-pipeline health, last run, average time, next due, and
+trigger-with-confirm for metered tasks. Building in the §6 order with §6.4
+promoted to flagship.
 
 ---
 
