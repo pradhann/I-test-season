@@ -1,9 +1,7 @@
 # Data pipelines — the map, the facts, and the plan
 
-Status: SPEC UNDER DISCUSSION with the owner (2026-08-31). Inventory and
-factual answers are settled (verified against code and the live warehouse);
-the design section carries the open questions. No pipeline code changes until
-they close.
+Status: SPEC CLOSED 2026-08-31 — all four questions settled with the owner.
+Ready to build in the §6 order.
 
 ---
 
@@ -205,11 +203,43 @@ with refusal-before-spend, honest outcome rows.
 
 ---
 
-## 5 · Open questions for the owner
+## 5 · Decisions (closed with owner, 2026-08-31)
 
-1. Scheduler home: extend deadline_dag into the one scheduler, or keep
-   post_gw separate as today?
-2. Change detection: write-only-on-change + fetch ledger, or keep writing
-   every pull (pure PIT, bigger tables)?
-3. Top-creator RSS cadence and transcription budget/policy?
-4. UI triggering: everything, or free-only with metered pipelines gated?
+1. **One scheduler.** deadline_dag becomes THE scheduler with an explicit
+   task registry — calendar tasks (post_gw's steps fold in), deadline-relative
+   tasks (the ladders stay), on-demand tasks. The postgw plist retires once
+   parity is proven; launchd's only job is waking the tick.
+2. **Fetch ledger + write-on-change.** `fetch_run` records every pull;
+   appends write only changed rows; "refetched, unchanged" becomes a
+   first-class fact and the skip gate reads the ledger.
+3. **4h top-creator RSS + nightly budgeted ASR.** Panel captions
+   auto-transcribe on arrival; podcast ASR under a nightly wall-clock budget,
+   queue ordered by a deterministic relevance score on the description;
+   below-threshold stays description-only with the score recorded.
+4. **All pipelines UI-triggerable; metered ones confirm-gated** with credit
+   cost and month-to-date spend shown before the click.
+
+## 6 · Build order (each step shippable)
+
+1. **fetch_run ledger + write-on-change** in the three append paths
+   (Warehouse.append, ProjectionStore, UnderstatStore) behind one helper.
+   The PIT contract note: an entity's absent new as_of now means "no change
+   observed OR not fetched", and the ledger is the disambiguator — every
+   consumer that cares reads fetch_run. Tests must pin: unchanged rows not
+   written but counted; changed rows written; the skip gate honours
+   ledger+freshness; contradiction refusal unchanged.
+2. **Scheduler registry.** Task dataclass + registry module; post_gw steps
+   become calendar tasks executed by the DAG tick with the same firing
+   ledger; parity run (both paths side by side, outcomes compared) before
+   the postgw plist is retired.
+3. **Schedule the missing**: transcribe (nightly budget, captions-first,
+   relevance gate), fpl_core_insights (daily post-kickoff), top-creator RSS
+   at 4h (a `content_tier` on sources), audio retention sweep (delete after
+   stored transcript+provenance; sha survives in provenance).
+4. **Pipelines panel + trigger routes** + the unified freshness module
+   replacing the four disjoint registries; metered confirm flow shows
+   credits and month spend.
+5. **fpl_mcp fetch unification**: kill the youtubei route and bare requests;
+   route through fpl_edge fetchers/archive.
+6. **Small repairs**: paste-a-link writes transcript_provenance; T-3h prose
+   corrected to T-5h.
