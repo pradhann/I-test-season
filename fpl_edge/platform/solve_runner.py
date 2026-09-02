@@ -38,7 +38,7 @@ UTC = dt.timezone.utc
 REPO_ROOT = Path(__file__).resolve().parents[2]
 JOBS_DIR = REPO_ROOT / "data" / "warehouse" / "jobs"
 
-MODES = ("both", "rank", "points")
+MODES = ("both", "rank", "points", "transfers")
 LOG_TAIL_LINES = 30
 
 
@@ -146,6 +146,10 @@ def status(*, jobs_dir: Path = JOBS_DIR) -> dict[str, Any]:
 
 
 def _default_command(mode: str) -> str:
+    # "transfers" is `fpl recommend`: the current-squad transfer plan, not the
+    # from-scratch ideal-squad solve. Same runner, same single-flight rules.
+    if mode == "transfers":
+        return "uv run fpl recommend --commit"
     return f"uv run fpl solve --mode {shlex.quote(mode)}"
 
 

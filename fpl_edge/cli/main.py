@@ -584,6 +584,13 @@ from fpl_edge.cli import solve as _solve_cmd  # noqa: E402
 _solve_cmd.register(app)
 
 
+# -- fpl recommend -----------------------------------------------------------
+
+from fpl_edge.cli import recommend as _recommend_cmd  # noqa: E402
+
+_recommend_cmd.register(app)
+
+
 # -- fpl platform ------------------------------------------------------------
 #
 # The web platform (fpl_edge/platform/). Imported inside the command rather than

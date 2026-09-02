@@ -1,63 +1,63 @@
 {
-  "generated_at": "2026-08-24T23:47:23.461007+00:00",
-  "snapshot_as_of": "2026-08-28T17:30:00+00:00",
+  "generated_at": "2026-09-02T01:23:11.355331+00:00",
+  "snapshot_as_of": "2026-09-04T17:30:00+00:00",
   "season": "2026-27",
   "horizon_gws": [
-    2,
     3,
     4,
     5,
-    6
+    6,
+    7
   ],
   "objective_mode": "rank_mv",
-  "objective": 311.54609151318556,
+  "objective": 346.2114381310354,
   "n_sims": 1000,
-  "solver": "status=Time limit reached gap=0.12231633742494591",
+  "solver": "status=Time limit reached gap=0.11186477212268613",
   "notes": [
-    "ownership: FPL selected_by_pct at the GW2 snapshot (mean 0.0290, max 0.6900, sums to 14.87 across 513 players)",
-    "captaincy share: no external EO feed for GW2; every share is zero, which prices the armband as a pure differential. Read the RANK_MV captain with that in mind.",
-    "deficit NOT MEASURED (no top-10k pace series yet); assuming level with the pace at GW2. Pass --deficit to assert your real position."
+    "ownership: FPL selected_by_pct at the GW3 snapshot (mean 0.0287, max 0.7010, sums to 14.83 across 516 players)",
+    "captaincy share: no external EO feed for GW3; every share is zero, which prices the armband as a pure differential. Read the RANK_MV captain with that in mind.",
+    "deficit NOT MEASURED (no top-10k pace series yet); assuming level with the pace at GW3. Pass --deficit to assert your real position."
   ],
   "gw1": {
     "squad": [
-      60307,
+      146426,
       154561,
-      169593,
       177815,
-      178301,
-      215379,
+      209036,
+      215413,
+      219168,
+      222531,
       223094,
-      223827,
-      243298,
+      232351,
       424876,
-      446008,
       465642,
-      472769,
-      494521,
-      607464
+      466525,
+      473284,
+      477424,
+      514254
     ],
     "starting_xi": [
-      154561,
-      177815,
-      178301,
-      215379,
+      146426,
+      209036,
+      219168,
+      222531,
       223094,
-      223827,
-      243298,
       424876,
-      446008,
-      472769,
-      494521
+      465642,
+      466525,
+      473284,
+      477424,
+      514254
     ],
     "bench": [
-      169593,
-      465642,
-      60307,
-      607464
+      154561,
+      232351,
+      177815,
+      215413
     ],
     "captain": 223094,
-    "vice_captain": 154561,
+    "vice_captain": 477424,
     "chip": "3xc",
-    "bank_after": 0
+    "bank_after": 19
   }
 }

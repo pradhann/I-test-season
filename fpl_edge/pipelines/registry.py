@@ -431,6 +431,36 @@ def run_fast_rss(ctx: TaskContext) -> TaskResult:
     return TaskResult(outcome=outcome, detail=detail, steps=steps)
 
 
+def run_briefing_intel(ctx: TaskContext) -> TaskResult:
+    """The model-authored salience pass over the panels (briefing_intel.py).
+
+    One in-process call: assemble the panel context, ask the Max-plan CLI
+    once through claude-agent-sdk, validate every item against the inputs,
+    write the sibling artefact atomically. The panels only read the local
+    warehouse, but the model call itself leaves the machine, so the
+    kill-switch gates this task exactly like the fetching ones — a gated
+    unit-test tick must never spawn the CLI. A failure raises out of
+    ``generate`` and the runner records the ledger row as ``error`` with the
+    reason — the failure-honesty contract. Kept items ride to the ledger as
+    ``rows_written``.
+    """
+    if _network_disabled():
+        return _GATED
+    from fpl_edge.platform import briefing_intel
+
+    artefact = briefing_intel.generate(ctx.db_path, season=ctx.season,
+                                       now=ctx.now)
+    kept = len(artefact.get("items") or [])
+    rejected = int(artefact.get("rejected_n") or 0)
+    return TaskResult(
+        outcome="quiet",
+        detail=(f"{kept} item(s) kept, {rejected} rejected, "
+                f"meta_prompt {artefact.get('meta_prompt_hash')}, "
+                f"{artefact.get('duration_s')}s"),
+        ledger_written=kept,
+    )
+
+
 def run_audio_retention(ctx: TaskContext) -> TaskResult:
     """Weekly sweep of the ASR audio cache (PIPELINES.md §3 defect 3).
 
@@ -546,6 +576,19 @@ TASKS: tuple[Task, ...] = (
         stale_window=dt.timedelta(hours=3),
         run=run_fast_rss,
         family="content",
+    ),
+    Task(
+        id="briefing_intel",
+        # The registry admits ONE due shape per task, so this rides Calendar
+        # (07:40 local, after the morning fetches); on-demand triggering is
+        # the runner's existing manual seam — POST /api/pipelines/
+        # briefing_intel/run calls runner.run_task exactly like any task.
+        description="Model-authored salience pass over the panels; artefact "
+                    "clearly labelled, never merged into dashboard_brief.",
+        due=Calendar(hour_local=7, minute=40, tz="Europe/London"),
+        stale_window=dt.timedelta(hours=12),
+        run=run_briefing_intel,
+        family="core",
     ),
     Task(
         id="audio_retention",

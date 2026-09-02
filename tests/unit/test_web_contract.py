@@ -237,6 +237,40 @@ def test_the_solver_objective_is_never_relabelled_as_xpts() -> None:
     assert "not the solver objective" in src
 
 
+def test_the_solve_plan_gain_travels_with_its_currency_label() -> None:
+    """The no-silent-blend rule extended to the transfer plan: the brief's
+    solve block now serves `plan` — the transfer_plan.json artefact rendered —
+    and its gain_over_roll is the SOLVER'S OWN forecast, labelled by
+    objective_mode in the same payload. The old read-side ideal-squad diff
+    (`derived`, consensus_xpts_*) is gone from the schema entirely, so a view
+    can no longer quote a consensus delta as if the solver said it."""
+    solve = _schema_props("dashboard_brief", "solve")
+    assert "plan" in solve, "the solve block must carry the transfer plan"
+    assert "derived" not in solve, (
+        "the ideal-squad diff block is cut; the plan's own moves are the card"
+    )
+    for gone in ("objective", "hold_baseline", "n_sims", "solver", "chip_gw"):
+        assert gone not in solve, f"stale gw1_plan field {gone} survives"
+    plan = _schema_props("dashboard_brief", "solve", "plan")
+    assert {"objective_mode", "gain_over_roll", "moves", "is_roll",
+            "captain", "your_captain", "alternatives",
+            "hit_verdict"} <= plan, (
+        "the plan payload must label its currency (objective_mode) beside "
+        "the gain, and a roll must be a flagged recommendation"
+    )
+    assert not {k for k in plan if k.startswith("consensus")}, (
+        "no consensus number may live inside the solver's plan payload"
+    )
+
+
+def test_idea_due_left_the_tile_vocabulary() -> None:
+    """The idea registry is out of briefings: the tile kind enum must not
+    offer it, so no view can render a tile the brief will never serve."""
+    node = get_script("dashboard_brief").result_schema["oneOf"][0]
+    kinds = node["properties"]["tiles"]["items"]["properties"]["kind"]["enum"]
+    assert "idea_due" not in kinds
+
+
 def test_the_pitch_fallback_is_the_clubmark_discipline() -> None:
     """Photo 404 → ONE class flip reveals a club-coloured monogram in the
     identical CSS-sized box: zero reflow, complete offline. Structural scan:

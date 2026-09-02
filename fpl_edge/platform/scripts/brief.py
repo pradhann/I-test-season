@@ -4,7 +4,7 @@ THE CONTRACT (the ledger's "reader of the definition, never a second
 implementation"): this panel only *selects and thresholds* numbers computed by
 the same shared code its source panels use. Concretely, it CALLS the source
 panel functions (``squad_overview``, ``price_radar``, ``ownership_eo``,
-``fixture_board``, ``idea_registry``) and the shared semantic views
+``fixture_board``) and the shared semantic views
 (``sem_projection_consensus``, ``sem_players``) — it re-implements no metric,
 no squad read, no flow window, no EO definition. Every item carries
 ``source_panel`` + ``source_as_of`` so drift is auditable, and a contract test
@@ -32,13 +32,16 @@ Four blocks serve the pitch and the move cards, all under the same contract:
   ``form_upgrade``): rule ids + numbers only, thresholds echoed, capped and
   suppression-disclosed. No free text — templates live in the view.
 
-The solve block implements the READ-SIDE derivation the stored plan lacks
-(no ``transfers[]``, no ``hold_baseline``): it diffs the plan's target squad
-against the current 15, resolves in/out pairs per position, and quotes the
-consensus-xPts delta over the plan's horizon — labelled as exactly that. The
-solver's own objective stays in its own currency (``rank_mv``) and is never
-relabelled or summed with consensus numbers. A plan generated before the most
-recent deadline is a named gap (state ``stale``), never a recommendation.
+The solve block renders ``transfer_plan.json`` — the artefact ``fpl
+recommend`` commits: the real transfer recommendation for the CURRENT 15
+(free optimum vs roll vs screened candidate moves, one MILP and one
+objective). Every number in it is the solver's own, in the currency
+``objective_mode`` names (``expected_points`` surrogate today), and
+``gain_over_roll`` is never summed or blended with consensus or market
+numbers. A plan generated before the most recent deadline is a named gap
+(state ``stale`` — priced against a squad you no longer have), never a
+recommendation; a roll (zero transfers) IS a recommendation, flagged
+``is_roll``, not an empty state.
 """
 
 from __future__ import annotations
@@ -63,12 +66,11 @@ from fpl_edge.platform.scripts.common import (
     source_dir,
 )
 from fpl_edge.platform.scripts.fixtures import fixture_board
-from fpl_edge.platform.scripts.ideas import idea_registry
 from fpl_edge.platform.scripts.ownership import ownership_eo
 from fpl_edge.platform.scripts.prices import price_radar
 from fpl_edge.platform.scripts.squad import squad_overview
 
-PLAN_NAME = "gw1_plan.json"
+TRANSFER_PLAN_NAME = "transfer_plan.json"
 
 #: Every gate the brief applies, echoed verbatim into the payload. The view
 #: renders these; it hardcodes none of them.
@@ -165,7 +167,7 @@ _TILE = {
         "kind": {"type": "string",
                  "enum": ["xpts_standout", "template_gap", "differential",
                           "fixture_turn", "price_rise_target",
-                          "creator_shift", "idea_due"]},
+                          "creator_shift"]},
         "priority": {"type": "integer", "minimum": 3, "maximum": 4},
         "code": {"type": ["integer", "null"]},
         "player": {"anyOf": [_PLAYER_REF, {"type": "null"}]},
@@ -237,6 +239,69 @@ _TRANSFER = {
     },
 }
 
+#: One losing alternative, summarised: names only in the label, numbers in the
+#: solver's own currency. The full ranked table lives in transfer_plan.json.
+_ALTERNATIVE = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["summary", "objective", "hits"],
+    "properties": {
+        "summary": {"type": "string"},   # names built from sem_players, no advice
+        "objective": {"type": ["number", "null"]},
+        "hits": {"type": ["integer", "null"]},
+    },
+}
+
+#: The chosen move's §5 hit verdict, copied verbatim from the artefact when
+#: the recommendation was solved rank-aware; null otherwise (the surrogate
+#: mode carries no rank state, and making one up would be worse than nothing).
+_HIT_VERDICT = {
+    "type": ["object", "null"],
+    "additionalProperties": False,
+    "properties": {
+        "label": {"type": ["string", "null"]},
+        "hits": {"type": ["integer", "null"]},
+        "hit_points": {"type": ["integer", "null"]},
+        "expected_gain": {"type": ["number", "null"]},
+        "breakeven_gain": {"type": ["number", "null"]},
+        "justified": {"type": ["boolean", "null"]},
+    },
+}
+
+#: The transfer plan `fpl recommend` committed, rendered for the solver card.
+#: Every number is the solver's own; the currency is named by objective_mode
+#: (the expected_points surrogate today) and gain_over_roll is quoted vs the
+#: solved roll in THAT currency — never summed with consensus/market numbers.
+_PLAN = {
+    "type": ["object", "null"],
+    "additionalProperties": False,
+    "required": ["generated_at", "gw", "horizon_gws", "objective_mode",
+                 "moves", "is_roll"],
+    "properties": {
+        "generated_at": {"type": ["string", "null"]},
+        "age_hours": {"type": ["number", "null"]},
+        "gw": {"type": ["integer", "null"]},
+        "horizon_gws": {"type": "array", "items": {"type": "integer"}},
+        "objective_mode": {"type": ["string", "null"]},
+        "free_transfers": {"type": ["integer", "null"]},
+        "unlimited_transfers": {"type": ["boolean", "null"]},
+        "gain_over_roll": {"type": ["number", "null"]},
+        "hits": {"type": ["integer", "null"]},
+        "hit_points": {"type": ["integer", "null"]},
+        "chip": {"type": ["string", "null"]},
+        "notes": {"type": "array", "items": {"type": "string"}},
+        "bounds": {"type": ["string", "null"]},
+        "solve_seconds": {"type": ["number", "null"]},
+        # n_transfers == 0: banking the transfer IS the recommendation.
+        "is_roll": {"type": "boolean"},
+        "moves": {"type": "array", "items": _TRANSFER},
+        "captain": {"anyOf": [_PLAYER_REF, {"type": "null"}]},
+        "your_captain": {"anyOf": [_PLAYER_REF, {"type": "null"}]},
+        "alternatives": {"type": "array", "items": _ALTERNATIVE},
+        "hit_verdict": _HIT_VERDICT,
+    },
+}
+
 _SOLVE = {
     "type": "object",
     "additionalProperties": False,
@@ -246,40 +311,13 @@ _SOLVE = {
                   "enum": ["fresh", "aging", "stale", "missing"]},
         "reason": {"type": ["string", "null"]},
         "generated_at": {"type": ["string", "null"]},
-        "snapshot_as_of": {"type": ["string", "null"]},
         "age_hours": {"type": ["number", "null"]},
         "last_deadline_utc": {"type": ["string", "null"]},
         "next_deadline_utc": {"type": ["string", "null"]},
-        "horizon_gws": {"type": "array", "items": {"type": "integer"}},
-        # The solver's own currency, never relabelled.
-        "objective": {"type": ["number", "null"]},
-        "objective_mode": {"type": ["string", "null"]},
-        "n_sims": {"type": ["integer", "null"]},
-        "solver": {"type": ["string", "null"]},
-        "chip": {"type": ["string", "null"]},
-        "chip_gw": {"type": ["integer", "null"]},
-        "captain": {"anyOf": [_PLAYER_REF, {"type": "null"}]},
-        "your_captain": {"anyOf": [_PLAYER_REF, {"type": "null"}]},
-        # hold_baseline is a named gap until the solve artefact stores one.
-        "hold_baseline": {"type": ["number", "null"]},
-        "derived": {
-            "type": ["object", "null"],
-            "additionalProperties": False,
-            "required": ["transfers", "method"],
-            "properties": {
-                "method": {"type": "string"},
-                "transfers": {"type": "array", "items": _TRANSFER},
-                # Consensus xPts over the labelled gameweeks for the swapped
-                # players — a model quantity from the projection consensus,
-                # NOT the solver's objective and never blended with it.
-                "consensus_gws": {"type": "array", "items": {"type": "integer"}},
-                "consensus_xpts_in": {"type": ["number", "null"]},
-                "consensus_xpts_out": {"type": ["number", "null"]},
-                "consensus_xpts_delta": {"type": ["number", "null"]},
-                "consensus_label": {"type": ["string", "null"]},
-                "uncovered_codes": {"type": "array", "items": {"type": "integer"}},
-            },
-        },
+        # Null unless the plan is renderable (fresh/aging): a stale plan's
+        # moves were priced against a squad you no longer have and must not
+        # render as a recommendation.
+        "plan": _PLAN,
     },
 }
 
@@ -540,7 +578,6 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
     sq = call("squad_overview", squad_overview, entry_id=eid)
     pr = call("price_radar", price_radar, limit=200)
     own = call("ownership_eo", ownership_eo)
-    ideas = call("idea_registry", idea_registry, status="open")
 
     def gap_alert(panel: str, reason: str) -> None:
         alerts.append({
@@ -718,16 +755,23 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
     except Exception:  # noqa: BLE001 - watchlist may not exist in a fresh db
         watch_targets = set()
 
-    plan_codes: set[int] = set()
-    plan_path = Path(source_dir(wh)) / PLAN_NAME
-    plan: dict[str, Any] | None = None
-    if plan_path.exists():
+    # The transfer plan `fpl recommend` committed — the solver card's artefact
+    # AND the source of the price radar's solver-named targets (the chosen
+    # buys plus every alternative's buys).
+    tplan_named: set[int] = set()
+    tplan_path = Path(source_dir(wh)) / TRANSFER_PLAN_NAME
+    tplan: dict[str, Any] | None = None
+    if tplan_path.exists():
         try:
-            plan = json.loads(plan_path.read_text())
-            plan_codes = {int(c) for c in (plan.get("gw1") or {}).get("squad", [])}
+            tplan = json.loads(tplan_path.read_text())
+            tplan_named = {int(c)
+                           for c in (tplan.get("chosen") or {}).get("in", [])}
+            for alt in tplan.get("alternatives") or []:
+                tplan_named |= {int(c) for c in alt.get("in", [])}
         except (OSError, json.JSONDecodeError) as exc:
-            notes.append(f"plan artefact unreadable: {type(exc).__name__}: {exc}")
-            plan = None
+            notes.append(f"transfer plan artefact unreadable: "
+                         f"{type(exc).__name__}: {exc}")
+            tplan = None
 
     if pr.get("empty"):
         gap_alert("price_radar", str(pr.get("reason")))
@@ -764,7 +808,7 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
             "source_panel": "price_radar", "as_of": pr_as_of,
         })
 
-        named = watch_targets | plan_codes
+        named = watch_targets | tplan_named
         target_rises = [r for r in pr.get("risers", [])
                         if r["code"] in named and r["code"] not in squad_codes
                         and r["net_per_hour"] >= rise_thr]
@@ -1411,60 +1455,8 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
     if moves_gap_reason:
         empties.append({"kind": "moves", "reason": moves_gap_reason})
 
-    # ---- idea_due --------------------------------------------------------
-    if ideas.get("empty"):
-        watch.append({"check": "idea_due", "status": "gap",
-                      "detail": str(ideas.get("reason"))[:200],
-                      "source_panel": "idea_registry", "as_of": None})
-    else:
-        id_as_of = _iso(ideas.get("as_of"))
-        sources_as_of.setdefault("idea_registry", id_as_of)
-        due = []
-        open_rows = [r for r in ideas.get("rows", [])
-                     if (r.get("status") or "open") == "open"]
-        if open_rows and g_next is not None:
-            try:
-                fx = q(
-                    wh,
-                    "SELECT DISTINCT p.web_name FROM sem_players(?) p "
-                    "JOIN (SELECT home_team_code AS tc FROM fact_fixture "
-                    "      WHERE season = ? AND gw = ? "
-                    "      UNION SELECT away_team_code FROM fact_fixture "
-                    "      WHERE season = ? AND gw = ?) f "
-                    "ON f.tc = p.team_code WHERE p.season = ?",
-                    (now, season, g_next, season, g_next, season),
-                )
-                playing = {str(n).lower() for n in fx["web_name"]} if not fx.empty else set()
-            except Exception:  # noqa: BLE001
-                playing = set()
-            for r in open_rows:
-                subj = (r.get("subject_name") or "").lower()
-                if subj and subj in playing:
-                    due.append(r)
-        for r in due:
-            tiles.append((3, 0.0, {
-                "kind": "idea_due", "priority": 3,
-                "code": None, "player": None,
-                "team_code": None, "team": None,
-                "number": {"value": float(g_next), "unit": "gw",
-                           "window_h": None},
-                "gate": f"open idea whose subject "
-                        f"({r.get('subject_name')}) plays GW{g_next}",
-                "context": {"idea_id": r.get("idea_id"),
-                            "subject": r.get("subject_name")},
-                "source_panel": "idea_registry", "source_as_of": id_as_of,
-                "sources": [{"panel": "idea_registry", "as_of": id_as_of}],
-                "drill": {"tab": "chat"},
-            }))
-        watch.append({
-            "check": "idea_due",
-            "status": "firing" if due else "clear",
-            "detail": (f"{len(due)} open idea(s) with the subject playing "
-                       f"GW{g_next}" if due else
-                       f"{len(open_rows)} open idea(s), none with a resolvable "
-                       f"subject playing GW{g_next}"),
-            "source_panel": "idea_registry", "as_of": id_as_of,
-        })
+    # idea_due is GONE on purpose (owner's call: the idea registry is useless
+    # in briefings) — no tile kind, no watch check, no idea_registry read.
 
     # ---- creator_shift: a named gap, not a silent absence ----------------
     # creator_board publishes takes and ownership, not a formation/predicted-XI
@@ -1482,18 +1474,16 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
 
     # ---- the solve block -------------------------------------------------
     solve: dict[str, Any] = {"state": "missing", "reason": None,
-                             "generated_at": None, "snapshot_as_of": None,
-                             "age_hours": None,
+                             "generated_at": None, "age_hours": None,
                              "last_deadline_utc": _iso(last_deadline),
                              "next_deadline_utc": _iso(next_deadline),
-                             "horizon_gws": [], "objective": None,
-                             "objective_mode": None, "n_sims": None,
-                             "solver": None, "chip": None, "chip_gw": None,
-                             "captain": None, "your_captain": None,
-                             "hold_baseline": None, "derived": None}
-    if plan is None:
-        solve["reason"] = (f"no plan artefact at {PLAN_NAME}; the pipeline "
-                           f"writes one T-4h before each deadline.")
+                             "plan": None}
+    if tplan is None:
+        solve["reason"] = (
+            f"no transfer plan artefact at {TRANSFER_PLAN_NAME}; "
+            f"POST /api/solve mode=transfers (the dashboard's solve button) "
+            f"runs `fpl recommend` against your current 15 and commits one."
+        )
         watch.append({"check": "solver", "status": "gap",
                       "detail": solve["reason"],
                       "source_panel": "solve_plan", "as_of": None})
@@ -1505,64 +1495,26 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
             "drill": {"tab": "pipelines"},
         })
     else:
-        gen = _parse_ts(plan.get("generated_at"))
-        solve.update({
-            "generated_at": _iso(plan.get("generated_at")),
-            "snapshot_as_of": _iso(plan.get("snapshot_as_of")),
-            "age_hours": (round((now - gen).total_seconds() / 3600.0, 1)
-                          if gen else None),
-            "horizon_gws": [int(g) for g in plan.get("horizon_gws", [])],
-            "objective": plan.get("objective"),
-            "objective_mode": plan.get("objective_mode"),
-            "n_sims": plan.get("n_sims"),
-            "solver": plan.get("solver"),
-            "chip": (plan.get("gw1") or {}).get("chip"),
-            "chip_gw": (int(plan["horizon_gws"][0])
-                        if plan.get("horizon_gws") else None),
-        })
+        gen = _parse_ts(tplan.get("generated_at"))
+        solve["generated_at"] = _iso(tplan.get("generated_at"))
+        solve["age_hours"] = (round((now - gen).total_seconds() / 3600.0, 1)
+                              if gen else None)
         sources_as_of.setdefault("solve_plan", solve["generated_at"])
-        cap_code = (plan.get("gw1") or {}).get("captain")
-        pinfo_needed = set(plan_codes) | ({int(cap_code)} if cap_code else set())
-        pdf = q(
-            wh,
-            "SELECT code, web_name, position, team, team_code, price, "
-            "selected_by_pct FROM sem_players(?) WHERE season = ?",
-            (now, season),
-        )
-        prow = {int(r["code"]): r for _, r in pdf.iterrows()
-                if int(r["code"]) in pinfo_needed}
-
-        def plan_ref(c: int) -> dict[str, Any]:
-            r = prow.get(int(c))
-            if r is None:
-                return {"code": int(c), "name": str(c), "pos": None,
-                        "team": None, "team_code": None, "price": None,
-                        "own_pct": None}
-            return {
-                "code": int(c), "name": str(r["web_name"]),
-                "pos": POSITION_NAME.get(
-                    int(r["position"]) if r["position"] == r["position"] else 0, "?"),
-                "team": None if r["team"] is None else str(r["team"]),
-                "team_code": None if r["team_code"] != r["team_code"] else int(r["team_code"]),
-                "price": None if r["price"] != r["price"] else float(r["price"]),
-                "own_pct": None if r["selected_by_pct"] != r["selected_by_pct"]
-                           else float(r["selected_by_pct"]),
-            }
-
-        if cap_code:
-            solve["captain"] = plan_ref(int(cap_code))
-        my_cap = next((p for p in squad15 if p.get("is_captain")), None)
-        if my_cap:
-            solve["your_captain"] = _ref(my_cap)
+        h_gws = [int(g) for g in tplan.get("horizon_gws", [])]
+        chosen = tplan.get("chosen") or {}
+        alt_rows = list(tplan.get("alternatives") or [])
+        out_codes = [int(c) for c in chosen.get("out", [])]
+        in_codes = [int(c) for c in chosen.get("in", [])]
+        cap_code = chosen.get("captain")
 
         if gen is not None and last_deadline is not None and gen < last_deadline:
             solve["state"] = "stale"
             solve["reason"] = (
-                f"plan generated {gen.date().isoformat()} for "
-                f"GW{solve['horizon_gws'][0] if solve['horizon_gws'] else '?'}–"
-                f"{solve['horizon_gws'][-1] if solve['horizon_gws'] else '?'}; "
-                f"a deadline has passed since — its moves were priced against "
-                f"a squad you no longer have."
+                f"transfer plan generated {gen.date().isoformat()} for "
+                f"GW{h_gws[0] if h_gws else '?'}\u2013"
+                f"{h_gws[-1] if h_gws else '?'}; a deadline has passed since "
+                f"\u2014 its moves were priced against a squad you no longer "
+                f"have."
             )
             alerts.append({
                 "rule": "solve_stale", "kind": "SOLVER", "priority": 0,
@@ -1574,8 +1526,8 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
                 "drill": {"tab": "pipelines"},
             })
             watch.append({"check": "solver", "status": "gap",
-                          "detail": f"plan predates "
-                                    f"GW{g_next if g_next else '?'} — "
+                          "detail": f"transfer plan predates "
+                                    f"GW{g_next if g_next else '?'} \u2014 "
                                     f"generated {gen.date().isoformat()}",
                           "source_panel": "solve_plan",
                           "as_of": solve["generated_at"]})
@@ -1587,92 +1539,150 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
             else:
                 solve["state"] = "aging"
             watch.append({"check": "solver", "status": "clear",
-                          "detail": f"plan {solve['state']}, "
+                          "detail": f"transfer plan {solve['state']}, "
                                     f"{solve['age_hours']}h old",
                           "source_panel": "solve_plan",
                           "as_of": solve["generated_at"]})
 
-            # READ-SIDE DERIVATION (the stored plan carries no transfers[]):
-            # plan squad vs your current 15, in/out paired per position.
-            if squad15 and plan_codes:
-                outs = sorted(squad_codes - plan_codes)
-                ins = sorted(plan_codes - squad_codes)
-                sq_by_code = {p["code"]: p for p in squad15}
-                by_pos_out: dict[str, list[dict[str, Any]]] = {}
-                by_pos_in: dict[str, list[dict[str, Any]]] = {}
-                for c in outs:
-                    r = _ref(sq_by_code[c])
-                    by_pos_out.setdefault(r["pos"] or "?", []).append(r)
-                for c in ins:
-                    r = plan_ref(c)
-                    by_pos_in.setdefault(r["pos"] or "?", []).append(r)
-                flow_by_code: dict[int, dict[str, Any]] = {}
-                if not pr.get("empty"):
-                    w_h = (pr.get("window") or {}).get("hours")
-                    for r in list(pr.get("risers", [])) + list(pr.get("fallers", [])):
-                        flow_by_code[r["code"]] = {
-                            "net_per_hour": r["net_per_hour"], "window_h": w_h}
-                transfers = []
-                for pos in sorted(set(by_pos_out) | set(by_pos_in)):
-                    o_list = sorted(by_pos_out.get(pos, []),
-                                    key=lambda r: -(r["price"] or 0))
-                    i_list = sorted(by_pos_in.get(pos, []),
-                                    key=lambda r: -(r["price"] or 0))
-                    for o, i in zip(o_list, i_list):
-                        transfers.append({
-                            "out": o, "in": i,
-                            "price_delta": (round(i["price"] - o["price"], 1)
-                                            if i["price"] is not None
-                                            and o["price"] is not None else None),
-                            "out_flow": flow_by_code.get(o["code"]),
-                            "in_flow": flow_by_code.get(i["code"]),
-                        })
-                # Consensus xPts over the plan's horizon for the swapped
-                # players — the projection consensus voice, labelled as such.
-                h_gws = solve["horizon_gws"]
-                cons_gws: list[int] = []
-                x_in = x_out = None
-                uncovered: list[int] = []
-                if h_gws:
-                    cdf = q(
-                        wh,
-                        "SELECT code, gw, xpts_mean FROM "
-                        "sem_projection_consensus(?) WHERE season = ? "
-                        "AND gw >= ? AND gw <= ?",
-                        (now, season, min(h_gws), max(h_gws)),
-                    )
-                    if not cdf.empty:
-                        cons_gws = sorted(int(g) for g in cdf["gw"].unique()
-                                          if int(g) in set(h_gws))
-                        csum = cdf[cdf["gw"].isin(cons_gws)] \
-                            .groupby("code")["xpts_mean"].sum().to_dict()
-                        moved_in = [t["in"]["code"] for t in transfers]
-                        moved_out = [t["out"]["code"] for t in transfers]
-                        for c in moved_in + moved_out:
-                            if c not in csum:
-                                uncovered.append(c)
-                        x_in = round(sum(float(csum.get(c, 0.0))
-                                         for c in moved_in), 2)
-                        x_out = round(sum(float(csum.get(c, 0.0))
-                                          for c in moved_out), 2)
-                label = (f"consensus xPts over GW{cons_gws[0]}–{cons_gws[-1]} "
-                         f"for the swapped players"
-                         if cons_gws else None)
-                solve["derived"] = {
-                    "method": "plan squad for its first horizon GW diffed "
-                              "against your current 15; in/out paired within "
-                              "position by price (derived — the artefact "
-                              "stores no transfers[])",
-                    "transfers": transfers,
-                    "consensus_gws": cons_gws,
-                    "consensus_xpts_in": x_in,
-                    "consensus_xpts_out": x_out,
-                    "consensus_xpts_delta": (round(x_in - x_out, 2)
-                                             if x_in is not None
-                                             and x_out is not None else None),
-                    "consensus_label": label,
-                    "uncovered_codes": uncovered,
+            # Resolve every code the card renders through sem_players \u2014
+            # the shared view, never a second name table.
+            pinfo_needed = set(out_codes) | set(in_codes) | set(tplan_named)
+            if cap_code:
+                pinfo_needed.add(int(cap_code))
+            for a in alt_rows:
+                pinfo_needed |= {int(c) for c in a.get("out", [])}
+                pinfo_needed |= {int(c) for c in a.get("in", [])}
+            pdf = q(
+                wh,
+                "SELECT code, web_name, position, team, team_code, price, "
+                "selected_by_pct FROM sem_players(?) WHERE season = ?",
+                (now, season),
+            )
+            prow = {int(r["code"]): r for _, r in pdf.iterrows()
+                    if int(r["code"]) in pinfo_needed}
+
+            def plan_ref(c: int) -> dict[str, Any]:
+                r = prow.get(int(c))
+                if r is None:
+                    return {"code": int(c), "name": str(c), "pos": None,
+                            "team": None, "team_code": None, "price": None,
+                            "own_pct": None}
+                return {
+                    "code": int(c), "name": str(r["web_name"]),
+                    "pos": POSITION_NAME.get(
+                        int(r["position"]) if r["position"] == r["position"] else 0, "?"),
+                    "team": None if r["team"] is None else str(r["team"]),
+                    "team_code": None if r["team_code"] != r["team_code"] else int(r["team_code"]),
+                    "price": None if r["price"] != r["price"] else float(r["price"]),
+                    "own_pct": None if r["selected_by_pct"] != r["selected_by_pct"]
+                               else float(r["selected_by_pct"]),
                 }
+
+            sq_by_code = {p["code"]: p for p in squad15}
+
+            def any_ref(c: int) -> dict[str, Any]:
+                # An outgoing player is in the current 15: squad_overview's own
+                # row when available, sem_players otherwise.
+                return (_ref(sq_by_code[int(c)]) if int(c) in sq_by_code
+                        else plan_ref(int(c)))
+
+            flow_by_code: dict[int, dict[str, Any]] = {}
+            if not pr.get("empty"):
+                w_h = (pr.get("window") or {}).get("hours")
+                for r in list(pr.get("risers", [])) + list(pr.get("fallers", [])):
+                    flow_by_code[r["code"]] = {
+                        "net_per_hour": r["net_per_hour"], "window_h": w_h}
+
+            # The chosen move's out/in lists, paired within position by price
+            # (the artefact stores the sets; single moves pair trivially).
+            by_pos_out: dict[str, list[dict[str, Any]]] = {}
+            by_pos_in: dict[str, list[dict[str, Any]]] = {}
+            for c in out_codes:
+                r = any_ref(c)
+                by_pos_out.setdefault(r["pos"] or "?", []).append(r)
+            for c in in_codes:
+                r = plan_ref(c)
+                by_pos_in.setdefault(r["pos"] or "?", []).append(r)
+            plan_moves: list[dict[str, Any]] = []
+            for pos in sorted(set(by_pos_out) | set(by_pos_in)):
+                o_list = sorted(by_pos_out.get(pos, []),
+                                key=lambda r: -(r["price"] or 0))
+                i_list = sorted(by_pos_in.get(pos, []),
+                                key=lambda r: -(r["price"] or 0))
+                for o, i in zip(o_list, i_list):
+                    plan_moves.append({
+                        "out": o, "in": i,
+                        "price_delta": (round(i["price"] - o["price"], 1)
+                                        if i["price"] is not None
+                                        and o["price"] is not None else None),
+                        "out_flow": flow_by_code.get(o["code"]),
+                        "in_flow": flow_by_code.get(i["code"]),
+                    })
+
+            def _alt_summary(a: dict[str, Any]) -> str:
+                a_out = sorted(int(c) for c in a.get("out", []))
+                a_in = sorted(int(c) for c in a.get("in", []))
+                if not a_in:
+                    return "roll (no move)"
+                return ", ".join(
+                    f"{any_ref(o)['name']} \u2192 {plan_ref(i)['name']}"
+                    for o, i in zip(a_out, a_in))
+
+            alternatives = [{
+                "summary": _alt_summary(a),
+                "objective": (float(a["objective"])
+                              if a.get("objective") is not None else None),
+                "hits": (int(a["hits"]) if a.get("hits") is not None else None),
+            } for a in alt_rows[:3]]
+
+            # The chosen move's \u00a75 verdict, verbatim from the artefact.
+            # Empty under the expected_points surrogate (no rank state), and
+            # only relevant when the chosen move actually costs points.
+            hit_verdict = None
+            verdicts = list(tplan.get("hit_verdicts") or [])
+            if verdicts and int(chosen.get("hits") or 0) > 0:
+                v = verdicts[0]
+                hit_verdict = {k: v.get(k) for k in
+                               ("label", "hits", "hit_points", "expected_gain",
+                                "breakeven_gain", "justified")}
+
+            my_cap = next((p for p in squad15 if p.get("is_captain")), None)
+            solve["plan"] = {
+                "generated_at": solve["generated_at"],
+                "age_hours": solve["age_hours"],
+                "gw": (int(tplan["gw"]) if tplan.get("gw") is not None else None),
+                "horizon_gws": h_gws,
+                # The currency of every objective number below \u2014 the
+                # expected_points surrogate today. gain_over_roll is the
+                # solver's own forecast vs the solved roll in that currency,
+                # never summed or blended with consensus numbers.
+                "objective_mode": tplan.get("objective_mode"),
+                "free_transfers": (int(tplan["free_transfers"])
+                                   if tplan.get("free_transfers") is not None
+                                   else None),
+                "unlimited_transfers": tplan.get("unlimited_transfers"),
+                "gain_over_roll": (float(tplan["gain_over_roll"])
+                                   if tplan.get("gain_over_roll") is not None
+                                   else None),
+                "hits": (int(chosen["hits"])
+                         if chosen.get("hits") is not None else None),
+                "hit_points": (int(chosen["hit_points"])
+                               if chosen.get("hit_points") is not None else None),
+                "chip": chosen.get("chip") or None,
+                "notes": [str(n) for n in tplan.get("notes") or []],
+                "bounds": tplan.get("bounds"),
+                "solve_seconds": (float(tplan["solve_seconds"])
+                                  if tplan.get("solve_seconds") is not None
+                                  else None),
+                # Zero transfers is the ROLL recommendation \u2014 bank the
+                # transfer \u2014 not an empty state.
+                "is_roll": not in_codes,
+                "moves": plan_moves,
+                "captain": plan_ref(int(cap_code)) if cap_code else None,
+                "your_captain": _ref(my_cap) if my_cap else None,
+                "alternatives": alternatives,
+                "hit_verdict": hit_verdict,
+            }
 
     # ---- assemble --------------------------------------------------------
     alerts.sort(key=lambda a: (

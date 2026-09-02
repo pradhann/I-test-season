@@ -173,25 +173,44 @@ def db(tmp_path, monkeypatch):
     return path
 
 
-def _write_plan(tmp_path, generated_at, horizon=(3, 4, 5)):
-    plan_squad = [c for c in SQUAD_CODES if c != 131] + [202]  # Fwd2 -> PlanIn
+def _write_transfer_plan(tmp_path, generated_at, *, out=(131,), into=(202,),
+                         horizon=(3, 4, 5), gain=3.3, alternatives=None,
+                         hit_verdicts=(), chosen_hits=0):
+    """The artefact `fpl recommend --commit` writes — Fwd2 -> PlanIn by
+    default, with a losing alternative and the solved roll on the table."""
+    if alternatives is None:
+        alternatives = [
+            {"out": [121], "in": [201], "n_transfers": 1, "hits": 0,
+             "hit_points": 0, "objective": 122.0, "chip": "", "label": ""},
+            {"out": [], "in": [], "n_transfers": 0, "hits": 0,
+             "hit_points": 0, "objective": 120.1, "chip": "", "label": "roll"},
+        ]
     plan = {
         "generated_at": generated_at,
-        "snapshot_as_of": generated_at,
         "season": SEASON,
+        "gw": int(horizon[0]),
         "horizon_gws": list(horizon),
-        "objective_mode": "rank_mv",
-        "objective": 123.456,
-        "n_sims": 100,
-        "solver": "status=Optimal gap=0.0",
-        "notes": ["a solver note, verbatim"],
-        "gw1": {"squad": plan_squad,
-                "starting_xi": plan_squad[:11],
-                "bench": plan_squad[11:],
-                "captain": 120, "vice_captain": 121,
-                "chip": "3xc", "bank_after": 0},
+        "objective_mode": "expected_points",
+        "free_transfers": 2,
+        "unlimited_transfers": False,
+        "chosen": {"out": list(out), "in": list(into),
+                   "n_transfers": len(into), "hits": chosen_hits,
+                   "hit_points": chosen_hits * 4, "bank_after_tenths": 5,
+                   "chip": "", "objective": 123.4, "label": "",
+                   "captain": 120, "vice_captain": 121,
+                   "starting_xi": list(STARTERS)},
+        "roll": {"objective": 120.1},
+        "gain_over_roll": gain,
+        "alternatives": list(alternatives),
+        "hit_verdicts": list(hit_verdicts),
+        "notes": ["EXPECTED_POINTS is a surrogate."],
+        "n_candidates_screened": 8,
+        "n_candidates_solved": 8,
+        "solve_seconds": 42.0,
+        "bounds": "candidates capped at 25/position, 60s per MILP; a capped "
+                  "solve is best-found, not a proven optimum",
     }
-    (tmp_path / "gw1_plan.json").write_text(json.dumps(plan))
+    (tmp_path / "transfer_plan.json").write_text(json.dumps(plan))
 
 
 # ---------------------------------------------------------------- registry --
@@ -360,46 +379,94 @@ def test_the_watch_log_distinguishes_clear_from_gap(db):
 # ------------------------------------------------------------- solve states
 
 
-def test_a_stale_plan_is_a_named_gap_with_a_p0_mirror_and_no_derivation(db, tmp_path):
-    _write_plan(tmp_path, "2026-08-20T00:00:00+00:00", horizon=(2, 3, 4))
+def test_a_stale_transfer_plan_is_a_named_gap_and_renders_no_move(db, tmp_path):
+    _write_transfer_plan(tmp_path, "2026-08-20T00:00:00+00:00", horizon=(2, 3, 4))
     brief = run_script("dashboard_brief", {}, db=db).result
     s = brief["solve"]
     assert s["state"] == "stale"
-    assert s["derived"] is None, "a stale plan must not render a move"
-    assert s["chip"] == "3xc", "the chip line survives even in the gap state"
-    assert s["reason"]
+    assert s["plan"] is None, "a stale plan must not render a recommendation"
+    assert "no longer have" in (s["reason"] or ""), (
+        "the stale reason must say the moves were priced against a squad "
+        "you no longer have"
+    )
     mirrors = [a for a in brief["alerts"] if a["rule"] == "solve_stale"]
     assert mirrors and mirrors[0]["priority"] == 0
+    statuses = {w["check"]: w["status"] for w in brief["watch_log"]}
+    assert statuses["solver"] == "gap"
 
 
-def test_a_missing_plan_is_the_missing_state_with_a_pipeline_pointer(db):
+def test_a_missing_transfer_plan_is_the_missing_state_with_the_runner_pointer(db):
     brief = run_script("dashboard_brief", {}, db=db).result
     s = brief["solve"]
     assert s["state"] == "missing"
-    assert "plan artefact" in (s["reason"] or "")
+    assert s["plan"] is None
+    assert "transfer plan artefact" in (s["reason"] or "")
+    assert "mode=transfers" in (s["reason"] or ""), (
+        "the fix must be named: POST /api/solve mode=transfers"
+    )
     rows = [a for a in brief["alerts"] if a["rule"] == "solve_missing"]
     assert rows and rows[0]["drill"].get("tab") == "pipelines"
+    statuses = {w["check"]: w["status"] for w in brief["watch_log"]}
+    assert statuses["solver"] == "gap"
 
 
-def test_a_live_plan_derives_transfers_and_labels_the_consensus_delta(db, tmp_path):
-    _write_plan(tmp_path, dt.datetime.now(UTC).isoformat(), horizon=(3, 4, 5))
+def test_a_fresh_transfer_plan_serves_named_moves_in_the_solvers_currency(db, tmp_path):
+    # generated inside the T-4h window before the (seeded 2099) deadline
+    _write_transfer_plan(tmp_path, "2099-09-05T15:00:00+00:00")
+    brief = run_script("dashboard_brief", {}, db=db).result
+    s = brief["solve"]
+    assert s["state"] == "fresh"
+    p = s["plan"]
+    assert p is not None
+    moves = {(m["out"]["code"], m["in"]["code"]) for m in p["moves"]}
+    assert moves == {(131, 202)}, "the chosen move: Fwd2 -> PlanIn"
+    m = p["moves"][0]
+    assert m["out"]["name"] == "Fwd2" and m["in"]["name"] == "PlanIn", (
+        "playerRefs resolve through sem_players, never raw codes"
+    )
+    assert m["price_delta"] == pytest.approx(0.4)   # 8.0 - 7.6
+    # the gain is the solver's own forecast, in the currency the payload
+    # names — never blended with consensus numbers
+    assert p["objective_mode"] == "expected_points"
+    assert p["gain_over_roll"] == pytest.approx(3.3)
+    assert p["is_roll"] is False
+    assert p["free_transfers"] == 2 and p["hits"] == 0
+    assert p["captain"]["code"] == 120
+    assert p["your_captain"]["code"] == 120, "armband is on Mid1"
+    assert p["bounds"] and "best-found" in p["bounds"]
+    # alternatives are name summaries + the solver's numbers, capped at 3
+    assert len(p["alternatives"]) <= 3
+    summaries = [a["summary"] for a in p["alternatives"]]
+    assert any("Mid2" in s_ and "TemplateMan" in s_ for s_ in summaries)
+    assert any("roll" in s_ for s_ in summaries)
+    assert p["hit_verdict"] is None, "no hit, no verdict"
+    statuses = {w["check"]: w["status"] for w in brief["watch_log"]}
+    assert statuses["solver"] == "clear"
+
+
+def test_a_roll_recommendation_is_a_recommendation_not_an_empty_state(db, tmp_path):
+    _write_transfer_plan(tmp_path, dt.datetime.now(UTC).isoformat(),
+                         out=(), into=(), gain=0.0,
+                         alternatives=[])
     brief = run_script("dashboard_brief", {}, db=db).result
     s = brief["solve"]
     assert s["state"] in ("fresh", "aging")
-    d = s["derived"]
-    assert d is not None
-    assert d["method"].startswith("plan squad"), "the derivation confesses itself"
-    moves = {(t["out"]["code"], t["in"]["code"]) for t in d["transfers"]}
-    assert moves == {(131, 202)}, "plan swaps Fwd2 for PlanIn"
-    # The solver's objective stays in its own currency; the consensus delta is
-    # a separate, labelled quantity.
-    assert s["objective_mode"] == "rank_mv"
-    assert d["consensus_label"] is None or "consensus xPts" in d["consensus_label"]
-    assert s["chip"] == "3xc" and s["chip_gw"] == 3
-    assert s["hold_baseline"] is None, (
-        "no hold baseline is stored; the gain slot is a named gap until the "
-        "solve_plan extension ships"
-    )
+    p = s["plan"]
+    assert p is not None, "banking the transfer IS a recommendation"
+    assert p["is_roll"] is True
+    assert p["moves"] == []
+
+
+def test_idea_due_is_gone_from_payload_and_schema(db):
+    """Owner's call: the idea registry is useless in briefings — the tile
+    kind, its watch check and its schema enum entry are all gone."""
+    brief = run_script("dashboard_brief", {}, db=db).result
+    assert not [t for t in brief["tiles"] if t["kind"] == "idea_due"]
+    assert not [w for w in brief["watch_log"] if w["check"] == "idea_due"]
+    assert "idea_registry" not in brief["sources_as_of"]
+    node = script("dashboard_brief").result_schema["oneOf"][0]
+    kinds = node["properties"]["tiles"]["items"]["properties"]["kind"]["enum"]
+    assert "idea_due" not in kinds
 
 
 # ------------------------------------------------------- chips + moves rules

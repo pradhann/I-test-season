@@ -26,6 +26,8 @@
     POST /api/pipelines/{task_id}/run   trigger one registry pipeline (202);
                                         metered without confirm -> needs_confirm
     GET  /api/pipelines/{task_id}/run_state  the poller: state + latest ledger row
+    GET  /api/briefing                model-authored salience artefact + freshness;
+                                      404-shaped JSON when it does not exist yet
     /                                 the built web/ bundle, if present
 
 What is deliberately *absent* is as load-bearing as what is here: no route
@@ -543,6 +545,20 @@ def create_app(db: Path | str = DEFAULT_DB,
                 state["ledger_note"] = f"could not read the ledger: {type(exc).__name__}: {exc}"
         state["last_run"] = _serialize_ledger_row(latest)
         return JSONResponse(state)
+
+    # ---- the intelligence briefing (fpl_edge/platform/briefing_intel.py) --
+    # Read-only: serves the model-authored salience artefact plus freshness.
+    # A missing artefact is 404-shaped JSON, never an exception, so the UI
+    # renders the gap and offers the trigger; generation itself goes through
+    # POST /api/pipelines/briefing_intel/run — the same seam as every task,
+    # so a UI-triggered briefing leaves the same ledger row a scheduled one
+    # does. No POST here on purpose.
+
+    @app.get("/api/briefing")
+    def get_briefing() -> JSONResponse:
+        from fpl_edge.platform import briefing_intel
+
+        return JSONResponse(briefing_intel.briefing_response(db_path))
 
     # ---- paste a link (fpl_edge/platform/link_jobs.py) ----
     # The corpus-writing route on this server, and it writes exactly one way:
