@@ -461,6 +461,13 @@ export default async function home(host) {
     c.onclick = (e) => { e.stopPropagation(); drillTo(d.drill); };
     return c;
   }
+  // A bolded lead and its trailing clause as ONE flex item, so the row's
+  // gap never opens a space before the clause's own comma.
+  function phrase(lead, rest) {
+    const w = el("span");
+    w.append(el("b", null, lead), document.createTextNode(rest));
+    return w;
+  }
   function verdictFace(ref) {
     const wrap = el("span", "vd-face");
     if (ref?.code == null) return wrap;
@@ -561,12 +568,14 @@ export default async function home(host) {
       case "no_bench_named":
         put("no bench read: squad unreadable");
         break;
+      // One flex item, not two: .vd-main is a flex row with a gap, so a
+      // trailing text node would float its comma away from the word.
       case "solver_plan_chip":
-        put(el("b", null, CHIP_NAME[ln.chip] || String(ln.chip)),
-            ", the plan spends it");
+        put(phrase(CHIP_NAME[ln.chip] || String(ln.chip),
+                   ", the plan spends it"));
         break;
       case "chip_hold":
-        put(el("b", null, "hold"), ", the plan spends no chip");
+        put(phrase("hold", ", the plan spends no chip"));
         break;
       case "no_chip_named":
         put("hold by default: no plan stands to ask");
