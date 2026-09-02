@@ -119,6 +119,11 @@ def collect_panels(wh, *, season: str,
     """
     from fpl_edge.platform import registry as panel_registry
 
+    # Registration IS the import: the web server has these loaded, but the
+    # scheduler's process does not, and an empty registry here turned every
+    # panel into "no panel script named ..." on the 07:40 firing.
+    import fpl_edge.platform.scripts  # noqa: F401 - imported for side effect
+
     out: dict[str, dict[str, Any]] = {}
     for name in panels:
         try:

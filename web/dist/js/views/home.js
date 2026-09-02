@@ -1,18 +1,26 @@
 /* Dashboard — the front page, fplreview grammar.
 
-   PAGE ORDER, exact: topbar stats + chip ledger → provenance banner → flags
-   (availability / market / solver-state / gaps ONLY — bench order and the
-   captain are fixed IN the squad, not argued in prose) → THE PITCH (suggested
-   XI rendered by default, one toggle back to the locked picks) → moves to
-   consider (rule cards, not the solver) → the minimal solver card → briefing
-   tiles (cap 6, suppression disclosed) → the watch log folded to one line →
-   foot.
+   PAGE ORDER, exact: topbar stats + chip ledger → provenance banner → the
+   AGENT BRIEFING (model-authored salience, clearly labelled, drawer drills
+   only) → THE PITCH (suggested XI rendered by default, one toggle back to
+   the locked picks; price-fall risk badges ride ON the cards) → the WATCH
+   strip (own-player price risk, template gaps, rise targets — quiet rows
+   below the squad, where they belong) → moves to consider (rule cards, not
+   the solver) → the SOLVER CARD (the real transfer_plan move with avatars,
+   gain labelled "solver forecast", live feedback while solving) → the
+   rule-based signal tiles (cap 6, suppression disclosed) → the watch log
+   folded to one line → foot.
 
-   THREE CALLS, in parallel: `squad_overview`, `dashboard_brief`,
-   `GET /api/solve/plan`. Every number on this page comes from one of them;
-   thresholds render from the brief's own `thresholds` echo — this file
-   contains no gate constants. Wording lives HERE, keyed by rule/kind ids,
-   because the brief carries no free-text recommendation field by contract.
+   TWO VOICES, never merged: the agent Briefing is model-authored and says
+   so in its provenance chip; the Signals tiles are deterministic gates.
+
+   FOUR CALLS, in parallel: `squad_overview`, `dashboard_brief`,
+   `GET /api/briefing`, `GET /api/solve/status` (read-only; a solve that
+   survives a reload resumes its polling UI). Every number on this page
+   comes from one of them; thresholds render from the brief's own
+   `thresholds` echo — this file contains no gate constants. Wording lives
+   HERE, keyed by rule/kind ids, because the brief carries no free-text
+   recommendation field by contract.
 
    COLOUR LAW: each pitch card carries three chips. The xPts chip stays on
    the --s1/--s2 diverging ramp anchored at the XI median (bins in
@@ -23,6 +31,10 @@
    provider serves it and the consensus appearance probability otherwise —
    labelled as which, never fabricated. --good/--warn/--bad stay reserved
    for the risk/status channel.
+
+   SOLVER CURRENCY LAW: gain_over_roll is the solver's own forecast in the
+   plan's objective_mode currency, labelled "solver forecast" on the card —
+   it is never summed or blended with the consensus xPts on the pitch.
 
    Every zone degrades alone (tryPanel memo + named gaps); the page never
    blanks. */
@@ -56,6 +68,11 @@ function clockText(iso) {
   const d = parseTs(iso);
   if (!d) return "unknown";
   return d.toISOString().slice(11, 16) + "Z";
+}
+function localClock(iso) {
+  const d = parseTs(iso);
+  if (!d) return "?";
+  return d.toTimeString().slice(0, 5);
 }
 function fmtSigned(v, digits = 0) {
   if (v == null) return "–";
@@ -107,6 +124,9 @@ function citeChip(panel, asOf) {
    opponent chip and the fixtures grid agree by construction. */
 const FX_CLASSES = ["fx-e3", "fx-e2", "fx-e1", "fx-n0", "fx-h1", "fx-h2", "fx-h3"];
 
+const CHIP_NAME = { "3xc": "Triple Captain", bboost: "Bench Boost",
+                    wildcard: "Wildcard", freehit: "Free Hit" };
+
 /* ------------------------------------------------------------------ view */
 
 export default async function home(host) {
@@ -115,38 +135,44 @@ export default async function home(host) {
   const statsRow = el("div", "stats");
   const chipLedger = el("div", "db-chipledger");
   const provBanner = el("div", "db-prov");
-  const alertsCard = card("Flags", null);
-  const alertsBody = el("div", "db-alerts");
-  alertsCard.appendChild(alertsBody);
+  const intelCard = card(null, null);
+  intelCard.classList.add("db-intel");
   const pitchCard = card("My squad", null);
   const pitchBody = el("div");
   pitchCard.appendChild(pitchBody);
+  const watchStrip = el("div", "db-watchstrip");
   const movesCard = card("Moves to consider",
     "rule-based — not the solver; every gate echoed by the brief");
   const movesBody = el("div");
   movesCard.appendChild(movesBody);
   const solverCard = card(null, null);
   solverCard.classList.add("solver");
-  const tilesCard = card("The briefing", null);
+  const tilesCard = card("Signals",
+    "rule-based voice — deterministic gates over the panels; the Briefing "
+    + "above is the model's voice. Two voices, never merged.");
   const tilesBody = el("div");
   tilesCard.appendChild(tilesBody);
   const watchCard = card(null, null);
   const watchBody = el("div");
   watchCard.appendChild(watchBody);
   const foot = el("div", "db-foot");
-  host.append(statsRow, chipLedger, provBanner, alertsCard, pitchCard,
-              movesCard, solverCard, tilesCard, watchCard, foot);
+  host.append(statsRow, chipLedger, provBanner, intelCard, pitchCard,
+              watchStrip, movesCard, solverCard, tilesCard, watchCard, foot);
 
-  const [sqR, brR, planR] = await Promise.all([
+  const [sqR, brR, ibR, stR] = await Promise.all([
     tryPanel("squad_overview", {}),
     tryPanel("dashboard_brief", {}),
-    getJSON("/api/solve/plan")
+    getJSON("/api/briefing")
+      .then(pl => ({ ok: true, payload: pl }))
+      .catch(e => ({ ok: false, error: e })),
+    getJSON("/api/solve/status")
       .then(pl => ({ ok: true, payload: pl }))
       .catch(e => ({ ok: false, error: e })),
   ]);
   const sq = sqR.ok && !sqR.result.empty ? sqR.result : null;
-  const brief = brR.ok && !brR.result.empty ? brR.result : null;
-  const planPayload = planR.ok ? planR.payload : null;
+  let brief = brR.ok && !brR.result.empty ? brR.result : null;
+  let intel = ibR.ok ? ibR.payload : null;
+  let solveStatus = stR.ok ? stR.payload : null;
   const thr = brief?.thresholds || {};
   const median = brief?.xi_median_xpts ?? null;
   const suggested = brief?.suggested_xi || null;
@@ -180,6 +206,18 @@ export default async function home(host) {
   for (const a of brief?.alerts || []) (a.players || []).forEach(remember);
   for (const tl of brief?.tiles || []) remember(tl.player);
   for (const mv of brief?.moves || []) { remember(mv.in); remember(mv.out); }
+  for (const mv of brief?.solve?.plan?.moves || []) {
+    remember(mv.in); remember(mv.out);
+  }
+  remember(brief?.solve?.plan?.captain);
+
+  // own-player price-fall risk rides ON the pitch card (the FLAGS strip is
+  // dissolved; the squad is where own-player risk belongs)
+  const dropByCode = new Map();
+  for (const a of brief?.alerts || []) {
+    if (a.rule === "own_price_fall")
+      for (const c of a.codes || []) dropByCode.set(c, a.numbers || {});
+  }
 
   function openDrawer(code) {
     const ref = playerIndex.get(code) || { code, name: String(code) };
@@ -207,6 +245,14 @@ export default async function home(host) {
       return solverCard.scrollIntoView({
         behavior: reduceMotion ? "auto" : "smooth", block: "center" });
     if (drill.tab) { location.hash = "#" + drill.tab; }
+  }
+
+  function tinyFace(code) {
+    const img = el("img", "avatar");
+    img.loading = "lazy"; img.alt = "";
+    img.src = PHOTO(code);
+    img.onerror = () => { img.onerror = null; img.style.visibility = "hidden"; };
+    return img;
   }
 
   /* ---------------------------------------------------------- topbar row */
@@ -281,15 +327,146 @@ export default async function home(host) {
     }
   }
 
-  /* ------------------------------------------------------------- alerts */
-  renderAlerts();
-  function alertAvatar(code) {
-    const img = el("img", "avatar");
-    img.loading = "lazy"; img.alt = "";
-    img.src = PHOTO(code);
-    img.onerror = () => { img.onerror = null; img.style.visibility = "hidden"; };
-    return img;
+  /* ----------------------------------------- the agent briefing (model) */
+  renderIntel();
+  function intelProvChip() {
+    const chip = el("span", "db-agentchip",
+      `agent-written · ${intel?.model || "?"} · `
+      + (intel?.age_hours != null ? `${fmt1(intel.age_hours)}h`
+                                  : ageText(intel?.generated_at)));
+    chip.title = `model-authored briefing`
+      + (intel?.generated_at ? ` · generated ${intel.generated_at}` : "")
+      + (intel?.meta_prompt_hash
+          ? ` · meta-prompt ${intel.meta_prompt_hash}` : "");
+    return chip;
   }
+  function generateBtn(label) {
+    const btn = el("button", "chip", label || "Generate");
+    btn.type = "button";
+    btn.title = "POST /api/pipelines/briefing_intel/run — one model pass "
+      + "over the panels; the artefact appears when the ledger settles";
+    btn.onclick = () => generateIntel(btn);
+    return btn;
+  }
+  function generateIntel(btn) {
+    btn.disabled = true;
+    btn.textContent = "generating…";
+    const poll = () => {
+      const started = Date.now();
+      const t = setInterval(async () => {
+        let st = null;
+        try { st = await getJSON("/api/pipelines/briefing_intel/run_state"); }
+        catch { return; }  // transient poll miss; try again in 5s
+        const settled = st.state && st.state !== "running";
+        const timedOut = Date.now() - started > 5 * 60 * 1000;
+        if (!settled && !timedOut) {
+          btn.textContent = "generating… (model pass running)";
+          return;
+        }
+        clearInterval(t);
+        try { intel = await getJSON("/api/briefing"); }
+        catch (e) { intel = { empty: true, reason: String(e.message || e) }; }
+        if (settled && st.state === "error" && intel?.empty)
+          intel.reason = `briefing_intel run failed: ${st.detail || "no detail"}`;
+        if (!settled && timedOut && intel?.empty)
+          intel.reason = "still running after 5 min — the pipelines tab has "
+            + "the ledger; this section will pick the artefact up on reload.";
+        renderIntel();
+      }, 5000);
+    };
+    postJSON("/api/pipelines/briefing_intel/run", {})
+      .then(poll)
+      .catch(e => {
+        if (/HTTP 409/.test(String(e.message || e))) { poll(); return; }
+        btn.disabled = false;
+        btn.textContent = "Generate";
+        btn.insertAdjacentElement("afterend",
+          el("span", "db-quiet", ` trigger failed: ${e.message || e}`));
+      });
+  }
+  function intelNumChip(n) {
+    const v = Number.isInteger(n.value) ? String(n.value) : fmt1(n.value);
+    const c = el("span", "cite", `${v}${n.unit} · ${n.source_panel}`);
+    c.title = n.as_of ? `as of ${n.as_of}`
+                      : `${n.source_panel}: no as-of instant served`;
+    return c;
+  }
+  function intelItem(it) {
+    const row = el("div", "ib-item sev" + it.severity);
+    const main = el("div", "ib-main");
+    main.appendChild(el("b", "ib-headline", it.headline));
+    main.appendChild(el("p", "ib-why", it.why));
+    const meta = el("span", "t-meta");
+    for (const n of (it.numbers || []).slice(0, 4))
+      meta.appendChild(intelNumChip(n));
+    main.appendChild(meta);
+    row.appendChild(main);
+    const faces = el("span", "ib-faces");
+    for (const c of (it.codes || []).slice(0, 3))
+      faces.appendChild(tinyFace(c));
+    row.appendChild(faces);
+
+    // CLICK → the right-side drawer; a tab drill gets a drawer-less
+    // in-place expansion. The briefing never navigates tabs.
+    if (it.drill && it.drill.drawer != null) {
+      row.onclick = () => openDrawer(it.drill.drawer);
+    } else if (!it.drill && (it.codes || []).length) {
+      row.onclick = () => openDrawer(it.codes[0]);
+    } else {
+      let detail = null;
+      row.onclick = () => {
+        if (detail) { detail.remove(); detail = null; return; }
+        detail = el("div", "ib-detail");
+        for (const n of it.numbers || []) {
+          detail.appendChild(el("p", "ib-detailrow",
+            `${n.value}${n.unit} — ${n.source_panel}`
+            + (n.as_of ? ` · as of ${n.as_of}` : " · no as-of served")));
+        }
+        detail.appendChild(el("p", "ib-detailrow",
+          `sources: ${(it.source_panels || []).join(", ") || "?"}`));
+        main.appendChild(detail);
+      };
+    }
+    return row;
+  }
+  function renderIntel() {
+    intelCard.textContent = "";
+    const head = el("div", "ib-head");
+    head.appendChild(el("h2", null, "Briefing"));
+    if (intel && !intel.empty) head.appendChild(intelProvChip());
+    if (intel && !intel.empty && intel.inputs_moved) {
+      const moved = el("span", "chip warn",
+        "panels have moved since this was written");
+      moved.title = "one or more input panels carries a newer as-of than "
+        + "this briefing's generated_at";
+      head.appendChild(moved);
+      head.appendChild(generateBtn("Regenerate"));
+    }
+    intelCard.appendChild(head);
+
+    if (!intel) {
+      intelCard.appendChild(namedGap("Briefing unreachable.",
+        String(ibR.error && ibR.error.message || ibR.error)));
+      return;
+    }
+    if (intel.empty) {
+      const gap = el("div", "ib-empty");
+      gap.appendChild(el("p", "db-quiet",
+        String(intel.reason || "no briefing artefact")));
+      gap.appendChild(generateBtn());
+      intelCard.appendChild(gap);
+      return;
+    }
+    const items = [...(intel.items || [])]
+      .sort((a, b) => (a.severity ?? 9) - (b.severity ?? 9));
+    for (const it of items) intelCard.appendChild(intelItem(it));
+    if (intel.rejected_n > 0)
+      intelCard.appendChild(el("p", "sub",
+        `${intel.rejected_n} candidate item(s) rejected by the citation `
+        + `validator — dropped loudly, never silently.`));
+  }
+
+  /* -------------------- watch-strip wording (kept nested for the tests) */
   function claimFor(a) {
     /* Wording keyed by rule id — the brief carries numbers, never prose.
        Bench order and captaincy have no row here on purpose: they are
@@ -304,20 +481,17 @@ export default async function home(host) {
       case "availability":
         add(`${P(0).name} is flagged `, co(String(a.status || "?")));
         if (a.news) add(` — FPL says: `, el("q", null, a.news));
-        add(" → he is in your 15; the drawer has the projections.");
         break;
       case "own_price_fall":
-        add(`${P(0).name} net `, co(fmtSigned(n.net)),
-            ` in the ${fmt2(n.window_h)}h window (`,
-            co(fmtSigned(n.net_per_hour) + "/hr"),
-            `) — observed flow, not a predicted change.`);
+        add(`${P(0).name} `, co(fmtSigned(n.net_per_hour) + "/hr"),
+            ` in the ${fmt2(n.window_h)}h window (net `,
+            co(fmtSigned(n.net)), `) — price watch, observed flow.`);
         break;
       case "solve_stale":
-        add("This plan solved for a deadline that has passed. ",
-            a.reason || "");
+        add("solver: plan predates the deadline. ", a.reason || "");
         break;
       case "solve_missing":
-        add(a.reason || "No stored solve for this season.");
+        add("solver: ", a.reason || "no stored solve for this season.");
         break;
       case "source_gap":
         add(`${a.source_panel} answered nothing: `, a.reason || "no reason given");
@@ -328,9 +502,9 @@ export default async function home(host) {
     return frag;
   }
   function alertRow(a) {
-    const row = el("div", "al p" + a.priority);
+    const row = el("div", "al wl p" + a.priority);
     row.appendChild(el("b", "al-kind", a.kind));
-    if ((a.codes || []).length) row.appendChild(alertAvatar(a.codes[0]));
+    if ((a.codes || []).length) row.appendChild(tinyFace(a.codes[0]));
     const claim = el("span", "al-claim");
     claim.appendChild(claimFor(a));
     row.appendChild(claim);
@@ -343,22 +517,65 @@ export default async function home(host) {
     }
     return row;
   }
-  function renderAlerts() {
-    alertsBody.textContent = "";
+  function watchTileRow(t) {
+    // template_gap / price_rise_target tiles rendered as quiet watch rows —
+    // the brief's own numbers, filtered by kind, never re-derived
+    const row = el("div", "al wl drillable");
+    row.appendChild(el("b", "al-kind",
+      t.kind === "template_gap" ? "TEMPLATE" : "MARKET"));
+    if (t.player?.code != null) row.appendChild(tinyFace(t.player.code));
+    const claim = el("span", "al-claim");
+    if (t.kind === "template_gap") {
+      claim.textContent = `${t.player?.name} ${fmt1(t.number.value)}% owned, `
+        + `you don't — template gap.`;
+    } else {
+      claim.textContent = `${t.player?.name} ${fmtSigned(t.number.value)}/hr `
+        + `inflow in the ${fmt2(t.number.window_h)}h window — rise watch.`;
+    }
+    row.appendChild(claim);
+    row.appendChild(citeChip(t.source_panel, t.source_as_of));
+    const code = t.player?.code ?? t.code;
+    row.onclick = () => { if (code != null) openDrawer(code); };
+    return row;
+  }
+  renderWatchStrip();
+  function renderWatchStrip() {
+    watchStrip.textContent = "";
     if (!brief) {
-      alertsBody.appendChild(namedGap("dashboard_brief unavailable.",
-        brR.ok ? String(brR.result.reason || "empty")
-               : String(brR.error && brR.error.message || brR.error)));
+      watchStrip.appendChild(el("p", "db-quiet",
+        "watch list unavailable — dashboard_brief did not answer."));
       return;
     }
-    const rows = brief.alerts || [];
-    if (!rows.length) {
-      alertsBody.appendChild(el("p", "db-quiet",
-        `No flags on your 15 — squad checked at `
-        + `${clockText(brief.sources_as_of?.squad_overview)}.`));
-      return;
+    // solver/pipeline gap alerts: one slim utility row, never a banner
+    const gaps = (brief.alerts || [])
+      .filter(a => a.kind === "SOLVER" || a.kind === "GAP");
+    if (gaps.length) {
+      const util = el("div", "db-utilrow");
+      for (const a of gaps.slice(0, 2)) {
+        const span = el("span", "db-utilitem");
+        span.appendChild(claimFor(a));
+        span.onclick = () => drillTo(
+          a.kind === "SOLVER" ? { focus: "solver" } : a.drill);
+        util.appendChild(span);
+      }
+      watchStrip.appendChild(util);
     }
-    for (const a of rows) alertsBody.appendChild(alertRow(a));
+    // the Watch list: own price falls (alerts) + template gaps and rise
+    // targets (tiles), max ~4 quiet rows
+    const rows = [];
+    for (const a of brief.alerts || [])
+      if (a.rule === "own_price_fall") rows.push(alertRow(a));
+    for (const t of brief.tiles || [])
+      if (t.kind === "template_gap" || t.kind === "price_rise_target")
+        rows.push(watchTileRow(t));
+    if (!rows.length) return;
+    const box = el("div", "db-watchlist");
+    box.appendChild(el("span", "db-chiplbl", "watch"));
+    for (const r of rows.slice(0, 4)) box.appendChild(r);
+    if (rows.length > 4)
+      box.appendChild(el("p", "db-quiet",
+        `+${rows.length - 4} more in Signals below.`));
+    watchStrip.appendChild(box);
   }
 
   /* ------------------------------------------------------------- pitch */
@@ -464,6 +681,15 @@ export default async function home(host) {
       const r = el("span", "pp-risk " + risk.cls, risk.letter);
       r.title = (p.news ? `${p.news} ` : `status ${p.status} `) + "(FPL)";
       b.appendChild(r);
+    }
+    const drop = dropByCode.get(p.code);
+    if (drop) {
+      // price-fall risk: the own_price_fall alert's numbers, on the card
+      const dEl = el("span", "pp-drop" + (risk ? " shift" : ""), "↓");
+      dEl.title = `price-fall risk: net ${fmtSigned(drop.net)} in the `
+        + `${fmt2(drop.window_h)}h window (${fmtSigned(drop.net_per_hour)}/hr)`
+        + ` — observed flow, not a predicted change`;
+      b.appendChild(dEl);
     }
     if (isCap || isVice)
       b.appendChild(el("span", "ribbon" + (isVice && !isCap ? " v" : ""),
@@ -717,160 +943,275 @@ export default async function home(host) {
   }
 
   /* ------------------------------------------------------------- solver */
+  let solveKicked = false;
+  let solvePollTimer = null;
+  let solveTickerEl = null;
   renderSolver();
+  if (solveStatus && solveStatus.state === "running") startSolvePolling();
+
   function fullDetailLink() {
     const a = el("a", "chip", "full detail → Solver tab");
     a.href = "#solver";
     return a;
   }
-  function teamRunText(teamCode) {
-    const tf = teamFix.get(teamCode);
-    if (!tf) return null;
-    const run = (tf.labels || []).join(" ");
-    return run
-      ? `${run}${tf.horizon_attack_rank != null
-          ? ` (attack run #${tf.horizon_attack_rank})` : ""}`
-      : null;
+  function lastLogLine() {
+    const t = solveStatus?.log_tail || [];
+    for (let i = t.length - 1; i >= 0; i--) {
+      const s = String(t[i]).trim();
+      if (s) return s;
+    }
+    return "";
+  }
+  function startSolvePolling() {
+    if (solvePollTimer) return;
+    solvePollTimer = setInterval(async () => {
+      let st;
+      try { st = await getJSON("/api/solve/status"); }
+      catch { return; }   // transient poll miss; the next tick retries
+      solveStatus = st;
+      if (st.state === "running") {
+        if (solveTickerEl) solveTickerEl.textContent = lastLogLine();
+        return;
+      }
+      clearInterval(solvePollTimer);
+      solvePollTimer = null;
+      if (st.state === "done") {
+        // the artefact changed on disk: refetch the brief, re-render the
+        // card (and the watch strip, whose solver gap row may have cleared)
+        const r = await tryPanel("dashboard_brief", {});
+        if (r.ok && !r.result.empty) brief = r.result;
+      }
+      renderSolver();
+      renderWatchStrip();
+    }, 5000);
+  }
+  function rerunButton(prominent) {
+    const b = el("button", "chip" + (prominent ? " sv-rerun" : ""),
+      "Re-run solve");
+    b.type = "button";
+    b.title = "POST /api/solve mode=transfers — runs `fpl recommend` against "
+      + "your current 15 and commits a new plan (~2–5 min)";
+    b.onclick = async () => {
+      b.disabled = true;
+      b.textContent = "starting…";
+      try {
+        await postJSON("/api/solve", { mode: "transfers" });
+        solveKicked = true;
+        solveStatus = { state: "running",
+                        started_utc: new Date().toISOString(), log_tail: [] };
+        renderSolver();
+        startSolvePolling();
+      } catch (e) {
+        b.disabled = false;
+        b.textContent = "Re-run solve";
+        b.insertAdjacentElement("afterend", errBox(e));
+      }
+    };
+    return b;
+  }
+  function solveRunningEl() {
+    const box = el("div", "sv-running");
+    const line = el("p", "sv-runline");
+    line.appendChild(el("span", "sv-spin"));
+    line.appendChild(document.createTextNode(
+      `Solving… started ${localClock(solveStatus?.started_utc)} — `
+      + `typically 2–5 min`));
+    box.appendChild(line);
+    solveTickerEl = el("p", "sv-ticker", lastLogLine());
+    box.appendChild(solveTickerEl);
+    return box;
   }
   function renderSolver() {
     solverCard.textContent = "";
-    solverCard.appendChild(el("h2", null, "The solver would…"));
-
-    if (!planR.ok) {
-      solverCard.appendChild(namedGap("Solve plan unreachable.",
-        String(planR.error && planR.error.message || planR.error)));
-      solverCard.appendChild(fullDetailLink());
-      return;
-    }
-    if (planPayload && planPayload.exists === false) {
-      solverCard.appendChild(namedGap("No stored solve for this season.",
-        `${planPayload.reason || ""} The pipeline writes one T-4h before `
-        + `each deadline.`));
-      solverCard.appendChild(fullDetailLink());
-      return;
-    }
+    solveTickerEl = null;
     const S = brief?.solve || null;
-    const plan = planPayload?.plan || null;
-    const state = S ? S.state : null;
+    const plan = S?.plan || null;
+    const running = solveStatus?.state === "running";
 
-    if (state === "stale" || (state == null && plan) || state === "missing") {
-      // ONE sentence + age + Re-run. Nothing else — a stale plan is a
-      // prompt, never a silently stale recommendation.
-      const h = plan?.horizon_gws || [];
-      const sentence = state === "missing"
-        ? (S?.reason || "No plan artefact stored.")
-        : `This plan solved for a deadline that has passed — generated `
-          + `${plan?.generated_at ? ageText(plan.generated_at) + " ago" : "?"}`
-          + ` for GW${h[0] ?? "?"}–${h[h.length - 1] ?? "?"}; the next `
-          + `deadline is GW${brief?.gw ?? planPayload?.next_gw ?? "?"}.`;
-      const line = el("p", "sv-stale");
-      line.appendChild(document.createTextNode(sentence + " "));
-      const rerun = el("button", "chip", "Re-run solve");
-      rerun.title = "POST /api/solve — the runner enforces one at a time";
-      rerun.onclick = async () => {
-        rerun.disabled = true; rerun.textContent = "solve queued…";
-        try { await postJSON("/api/solve", { mode: "both" }); }
-        catch (e) {
-          rerun.textContent = "Re-run solve";
-          rerun.disabled = false;
-          solverCard.appendChild(errBox(e));
-        }
-      };
-      line.appendChild(rerun);
-      solverCard.appendChild(line);
-      solverCard.appendChild(fullDetailLink());
-      return;
+    const head = el("div", "sv-head");
+    head.appendChild(el("h2", null, "Solver — your move"));
+    if (S && S.state !== "missing") {
+      const cls = S.state === "fresh" ? " s1"
+                : S.state === "aging" ? " warn" : " bad";
+      const chip = el("span", "chip" + cls,
+        S.state + (S.age_hours != null ? ` · ${fmt1(S.age_hours)}h old` : ""));
+      chip.title = S.generated_at
+        ? `plan generated ${S.generated_at}` : "no generated_at on the plan";
+      head.appendChild(chip);
     }
+    solverCard.appendChild(head);
 
-    if (!plan) {
-      solverCard.appendChild(namedGap("No plan payload.",
-        "GET /api/solve/plan returned nothing renderable."));
-      solverCard.appendChild(fullDetailLink());
-      return;
-    }
-
-    if (state === "aging") {
-      solverCard.appendChild(el("p", "sv-lines")).appendChild(
-        el("span", "chip warn",
-          `aging — solved ${S.age_hours != null ? S.age_hours + "h" : "?"} ago, `
-          + `before the T-${fmt1(thr.solve_fresh_window_h ?? 4)}h window`));
-    }
-
-    // (a) the move, fplreview-style: OUT photo → IN photo, names, prices
-    const derived = S?.derived;
-    const moveBox = el("div", "sv-move");
-    if (derived && derived.transfers.length) {
-      for (const t of derived.transfers) {
-        const strip = el("span", "sv-strip");
-        strip.append(moveFace(t.out, "out"),
-                     el("span", "sv-arrow", "→"),
-                     moveFace(t.in, "in"));
-        if (t.price_delta != null)
-          strip.appendChild(el("i", "sv-pd", fmtSigned(t.price_delta, 1)));
-        moveBox.appendChild(strip);
-      }
-    } else if (derived) {
-      moveBox.appendChild(el("span", null,
-        "the plan keeps your current 15 — no moves derived"));
+    if (!brief) {
+      solverCard.appendChild(namedGap("Solve state unknowable.",
+        "dashboard_brief unavailable — the solve block rides in it."));
+    } else if (S.state === "missing") {
+      solverCard.appendChild(namedGap("No transfer plan artefact.",
+        S.reason || "no stored solve for this season."));
+    } else if (S.state === "stale") {
+      // honest: a stale plan's moves were priced against a squad you no
+      // longer have — the brief serves no plan body for it, on purpose
+      solverCard.appendChild(el("p", "sv-stale",
+        (S.reason || "this plan solved for a deadline that has passed — "
+         + "its moves were priced against a squad you no longer have.")
+        + (S.generated_at ? ` (generated ${ageText(S.generated_at)} ago)` : "")));
+    } else if (!plan) {
+      solverCard.appendChild(namedGap("Plan body absent.",
+        `solve state is "${S.state}" but the brief served no plan payload — `
+        + `a backend gap, not a quiet day.`));
     } else {
-      moveBox.appendChild(el("span", null,
-        "moves underivable: squad or plan unreadable"));
-    }
-    solverCard.appendChild(moveBox);
+      const h = plan.horizon_gws || [];
+      const hSpan = `GW${h[0] ?? "?"}–${h[h.length - 1] ?? "?"}`;
 
-    // (b) ONE gain line — the derived consensus delta, labelled as derived
-    if (derived && derived.consensus_xpts_delta != null) {
-      const line = el("p", "sv-gainline");
-      line.appendChild(el("b", null,
-        `${fmtSigned(derived.consensus_xpts_delta, 1)} xPts`));
-      line.appendChild(document.createTextNode(
-        ` — ${derived.consensus_label || "consensus xPts for the swapped players"}`
-        + ` (derived from the projection consensus, not the solver objective).`));
-      solverCard.appendChild(line);
-    } else if (derived) {
-      solverCard.appendChild(el("p", "sub",
-        "no consensus projection covers the swapped players over the "
-        + "horizon — the gain is a named gap, not a zero."));
-    }
-
-    // (c) ONE-line why: the swapped players' next-3 fixtures + xPts
-    if (derived && derived.transfers.length) {
-      const why = [];
-      for (const t of derived.transfers) {
-        const inRun = teamRunText(t.in.team_code);
-        const outRun = teamRunText(t.out.team_code);
-        why.push(`${t.in.name}${inRun ? ` next: ${inRun}` : ""}`
-          + (derived.consensus_xpts_in != null
-              ? `, ${fmt1(derived.consensus_xpts_in)} xPts `
-                + `GW${gwsText(derived.consensus_gws)}` : "")
-          + ` vs ${t.out.name}${outRun ? ` next: ${outRun}` : ""}`
-          + (derived.consensus_xpts_out != null
-              ? `, ${fmt1(derived.consensus_xpts_out)} xPts` : ""));
+      if (plan.is_roll) {
+        // banking the transfer IS the recommendation — a positive card
+        const roll = el("div", "sv-roll");
+        roll.appendChild(el("b", "sv-rollhead", "Bank the transfer"));
+        roll.appendChild(el("p", "sv-why",
+          `The solved recommendation over ${hSpan}: no move cleared the bar `
+          + `vs rolling`
+          + (plan.free_transfers != null
+              ? ` — you carry ${plan.free_transfers} free transfer(s) forward.`
+              : ".")));
+        solverCard.appendChild(roll);
+      } else if ((plan.moves || []).length) {
+        const box = el("div", "sv-move sv-planmoves");
+        for (const mv of plan.moves) {
+          const row = el("div", "sv-moverow");
+          const strip = el("span", "sv-strip");
+          strip.append(moveFace(mv.out, "out"),
+                       el("span", "sv-arrow", "→"),
+                       moveFace(mv.in, "in"));
+          row.appendChild(strip);
+          const bits = [];
+          if (mv.price_delta != null)
+            bits.push(`price ${fmtSigned(mv.price_delta, 1)}`);
+          if (mv.out_flow)
+            bits.push(`${mv.out.name} flow `
+              + `${fmtSigned(mv.out_flow.net_per_hour)}/hr`
+              + (mv.out_flow.window_h != null
+                  ? ` (${fmt1(mv.out_flow.window_h)}h)` : ""));
+          if (mv.in_flow)
+            bits.push(`${mv.in.name} flow `
+              + `${fmtSigned(mv.in_flow.net_per_hour)}/hr`
+              + (mv.in_flow.window_h != null
+                  ? ` (${fmt1(mv.in_flow.window_h)}h)` : ""));
+          if (bits.length)
+            row.appendChild(el("p", "sv-flowline", bits.join(" · ")));
+          box.appendChild(row);
+        }
+        solverCard.appendChild(box);
+      } else {
+        solverCard.appendChild(el("p", "sub",
+          "the plan names no paired moves — the Solver tab has the raw sets."));
       }
-      solverCard.appendChild(el("p", "sv-why", why.join(" · ")));
+
+      // the gain, in the solver's own currency, labelled as such
+      if (!plan.is_roll && plan.gain_over_roll != null) {
+        const line = el("p", "sv-gainline");
+        line.appendChild(el("b", null,
+          `${fmtSigned(plan.gain_over_roll, 1)} xPts`));
+        line.appendChild(document.createTextNode(
+          ` over ${hSpan} vs rolling — solver forecast`
+          + (plan.free_transfers != null
+              ? ` · ${plan.free_transfers} free transfer(s)` : "")));
+        line.title = "the solver's own forecast in its own currency ("
+          + (plan.objective_mode || "?")
+          + ") — never blended with the consensus xPts on the pitch";
+        solverCard.appendChild(line);
+      }
+
+      // hits, only when the plan actually spends points
+      if ((plan.hits ?? 0) > 0) {
+        const v = plan.hit_verdict;
+        const line = el("p", "sv-lines");
+        line.appendChild(document.createTextNode(
+          `hits: ${plan.hits} (−${plan.hit_points ?? plan.hits * 4} pts)`));
+        if (v && v.justified != null) {
+          line.appendChild(el("span",
+            "chip " + (v.justified ? "s1" : "warn"),
+            v.justified ? "justified" : "not justified"));
+          if (v.expected_gain != null && v.breakeven_gain != null)
+            line.appendChild(document.createTextNode(
+              ` — expected ${fmt1(v.expected_gain)} vs breakeven `
+              + `${fmt1(v.breakeven_gain)}`));
+        }
+        solverCard.appendChild(line);
+      }
+
+      // the chip, when the plan spends one
+      if (plan.chip) {
+        const line = el("p", "sv-lines");
+        line.appendChild(el("span", "chip s1",
+          CHIP_NAME[plan.chip] || String(plan.chip)));
+        line.appendChild(document.createTextNode(
+          ` — the plan spends it`
+          + (plan.gw != null ? ` in GW${plan.gw}` : "")));
+        solverCard.appendChild(line);
+      }
+
+      // the armband, with the avatar; yours printed only when it differs
+      if (plan.captain) {
+        const line = el("p", "sv-capline");
+        line.appendChild(tinyFace(plan.captain.code));
+        const differs = plan.your_captain
+          && plan.your_captain.code !== plan.captain.code;
+        line.appendChild(document.createTextNode(
+          `Solver captain: ${plan.captain.name}`
+          + (differs ? ` — yours: ${plan.your_captain.name}` : "")));
+        solverCard.appendChild(line);
+      }
+
+      // the losing alternatives, one collapsed line
+      const alts = plan.alternatives || [];
+      if (alts.length) {
+        const det = el("details", "sv-alts");
+        det.appendChild(el("summary", null,
+          "beat: " + alts.map(a => a.summary).join(" · ")));
+        for (const a of alts) {
+          det.appendChild(el("p", "sv-altrow",
+            a.summary
+            + (a.objective != null
+                ? ` — ${fmt1(a.objective)} ${plan.objective_mode || ""}`
+                  + ` (solver currency)` : "")
+            + (a.hits ? ` · ${a.hits} hit(s)` : "")));
+        }
+        solverCard.appendChild(det);
+      }
+
+      // the solver's own confessions
+      if ((plan.notes || []).length || plan.bounds) {
+        const det = el("details", "sv-notes");
+        det.appendChild(el("summary", null, "solver notes & bounds"));
+        for (const n of plan.notes || [])
+          det.appendChild(el("p", "mono", n));
+        if (plan.bounds) det.appendChild(el("p", "mono", plan.bounds));
+        solverCard.appendChild(det);
+      }
     }
 
-    // (d) the chip line, only when the plan spends one
-    const chipUsed = S?.chip ?? (plan.gw1 || {}).chip;
-    if (chipUsed) {
-      const line = el("p", "sv-lines");
-      line.appendChild(document.createTextNode("chip: "));
-      line.appendChild(el("b", null, String(chipUsed)));
-      line.appendChild(document.createTextNode(
-        ` — the plan spends ${chipUsed === "3xc" ? "triple captain" : chipUsed}`
-        + (S?.chip_gw != null ? ` in GW${S.chip_gw}` : "")));
-      solverCard.appendChild(line);
+    const controls = el("div", "sv-controls");
+    if (running) {
+      controls.appendChild(solveRunningEl());
+    } else {
+      const prominent = !S || S.state === "stale" || S.state === "missing";
+      controls.appendChild(rerunButton(prominent));
+      if (solveKicked && solveStatus
+          && (solveStatus.state === "failed" || solveStatus.state === "error"))
+        controls.appendChild(el("p", "sv-ticker sv-fail",
+          "solve failed — " + (lastLogLine() || "no log tail served")));
+      controls.appendChild(fullDetailLink());
     }
-
-    solverCard.appendChild(fullDetailLink());
-    // no verdict, no accept button: the dashboard argues; the owner decides.
+    solverCard.appendChild(controls);
+    // no accept button: the dashboard argues; the owner decides.
   }
 
   /* -------------------------------------------------------------- tiles */
   renderTiles();
   function tileText(t) {
     /* claim / implication templates keyed by kind — every number is the
-       payload's; a missing required arg throws (the tile contract). */
+       payload's; a missing required arg throws (the tile contract).
+       Unknown kinds fall to the default template on purpose: the idea
+       registry left briefings, and any future kind degrades honestly. */
     const name = t.player?.name;
     const ctx = t.context || {};
     switch (t.kind) {
@@ -907,11 +1248,6 @@ export default async function home(host) {
             + `${fmt2(t.number.window_h)}h window.`,
           imp: "→ a named target's flow is against waiting — flow, not a "
             + "prediction.",
-        };
-      case "idea_due":
-        return {
-          claim: `Open idea: ${ctx.subject} plays GW${Math.round(t.number.value)}.`,
-          imp: "→ the registry expects an observation this gameweek.",
         };
       default:
         return { claim: `${t.kind}: ${fmt1(t.number.value)} ${t.number.unit}`,
@@ -1027,7 +1363,7 @@ export default async function home(host) {
     wrap.appendChild(tbl);
     det.appendChild(wrap);
     det.appendChild(el("p", "sub",
-      "Absence of a tile above means checked-and-clear, never "
+      "Absence of a signal above means checked-and-clear, never "
       + "didn't-look — that is what this table is for."));
     watchBody.appendChild(det);
   }

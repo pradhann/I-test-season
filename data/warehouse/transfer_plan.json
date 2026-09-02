@@ -1,0 +1,133 @@
+{
+  "generated_at": "2026-09-02T03:06:26.145109+00:00",
+  "season": "2026-27",
+  "gw": 3,
+  "horizon_gws": [
+    3,
+    4,
+    5,
+    6,
+    7
+  ],
+  "objective_mode": "expected_points",
+  "free_transfers": 2,
+  "unlimited_transfers": false,
+  "chosen": {
+    "out": [
+      455084,
+      485055
+    ],
+    "in": [
+      108416,
+      473284
+    ],
+    "n_transfers": 2,
+    "hits": 0,
+    "hit_points": 0,
+    "objective": 297.60179099999993,
+    "chip": "3xc",
+    "label": "",
+    "bank_after_tenths": 0,
+    "captain": 219168,
+    "vice_captain": 473284,
+    "starting_xi": [
+      108416,
+      141746,
+      177815,
+      219168,
+      226597,
+      424876,
+      440993,
+      446008,
+      466075,
+      472769,
+      473284
+    ]
+  },
+  "roll": {
+    "objective": 286.1616030000004
+  },
+  "gain_over_roll": 11.440187999999523,
+  "alternatives": [
+    {
+      "out": [
+        95658
+      ],
+      "in": [
+        465642
+      ],
+      "n_transfers": 1,
+      "hits": 0,
+      "hit_points": 0,
+      "objective": 293.3192929999999,
+      "chip": "3xc",
+      "label": ""
+    },
+    {
+      "out": [
+        485055
+      ],
+      "in": [
+        473284
+      ],
+      "n_transfers": 1,
+      "hits": 0,
+      "hit_points": 0,
+      "objective": 292.9197750000001,
+      "chip": "3xc",
+      "label": ""
+    },
+    {
+      "out": [
+        489639
+      ],
+      "in": [
+        473284
+      ],
+      "n_transfers": 1,
+      "hits": 0,
+      "hit_points": 0,
+      "objective": 292.43396299999995,
+      "chip": "3xc",
+      "label": ""
+    },
+    {
+      "out": [
+        455084
+      ],
+      "in": [
+        108416
+      ],
+      "n_transfers": 1,
+      "hits": 0,
+      "hit_points": 0,
+      "objective": 290.79971099999995,
+      "chip": "3xc",
+      "label": ""
+    },
+    {
+      "out": [
+        95658
+      ],
+      "in": [
+        108416
+      ],
+      "n_transfers": 1,
+      "hits": 0,
+      "hit_points": 0,
+      "objective": 290.76339099999996,
+      "chip": "3xc",
+      "label": ""
+    }
+  ],
+  "hit_verdicts": [],
+  "notes": [
+    "EXPECTED_POINTS is a surrogate. It ignores ownership, variance and covariance, so it cannot see that a differential is worth more than its mean when you are chasing a rank. Not the objective this engine is for.",
+    "points forecast: table:forecast.parquet",
+    "Stopped at a 31.66% optimality gap (Time limit reached); this plan is the best found, not a proven optimum. Raise time_limit_s, prune the universe with max_candidates_per_position, or fix the chip schedule to close it."
+  ],
+  "n_candidates_screened": 9,
+  "n_candidates_solved": 9,
+  "solve_seconds": 122.06838699997752,
+  "bounds": "candidates capped at 25/position, 60s per MILP; a capped solve is best-found, not a proven optimum"
+}

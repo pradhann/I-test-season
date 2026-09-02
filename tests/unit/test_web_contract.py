@@ -207,20 +207,39 @@ def test_the_fixture_grid_reads_the_split_the_panel_actually_names() -> None:
 
 
 def test_the_solver_objective_is_never_relabelled_as_xpts() -> None:
-    """The no-silent-blend rule (FINAL_SPEC Kill 3), updated for the minimal
-    solver card: the DASHBOARD no longer renders the solver's objective at
-    all — the one gain line is the derived consensus delta, labelled as
-    derived, and the objective lives on the Solver tab in its own currency.
-    So: no hardcoded unit, no objective value on the dashboard, and no line
-    anywhere in either view carrying the objective adjacent to "xPts"."""
+    """The no-silent-blend rule (FINAL_SPEC Kill 3), updated for the
+    transfer-plan solver card: the dashboard now renders the plan's own
+    `gain_over_roll`, but only under the house label ("solver forecast")
+    with the currency named by the payload's `objective_mode` — never
+    blended with, or presented as, the consensus xPts on the pitch. So: no
+    hardcoded unit, the raw objective value stays off the dashboard, and no
+    line in either view carries the objective adjacent to "xPts"."""
     src = _strip_comments(VIEWS["home"])
     assert "rank_mv" not in src, (
         "the solver's unit must come from the payload's objective_mode, "
         "never be hardcoded — a hardcoded label survives an objective change"
     )
-    assert "plan.objective" not in src, (
-        "the dashboard's minimal solver card renders no objective; the "
-        "Solver tab is where the solver speaks in its own currency"
+    assert "gain_over_roll" in src, (
+        "the solver card must render the plan's own gain_over_roll — the "
+        "solver's forecast, not a read-side re-derivation"
+    )
+    assert "solver forecast" in src, (
+        "the gain line must carry the house label 'solver forecast'; an "
+        "unlabelled gain reads as consensus xPts, which is the silent blend"
+    )
+    assert "objective_mode" in src, (
+        "the gain's currency label must come from the payload's "
+        "objective_mode, never be assumed"
+    )
+    for ln in src.splitlines():
+        if "gain_over_roll" in ln:
+            assert "consensus" not in ln, (
+                f"the solver's gain summed or printed beside a consensus "
+                f"number — the silent blend: {ln.strip()[:90]}"
+            )
+    assert not re.search(r"plan\.objective\b", src), (
+        "the raw objective value stays off the dashboard (gain_over_roll is "
+        "the served delta); the Solver tab speaks in the solver's currency"
     )
     solver_src = _strip_comments(VIEWS["solver"])
     assert "objective_mode" in solver_src, (
@@ -233,8 +252,6 @@ def test_the_solver_objective_is_never_relabelled_as_xpts() -> None:
                     f"solver objective rendered adjacent to 'xPts' — the "
                     f"silent blend ({name}): {ln.strip()[:90]}"
                 )
-    # and the derived consensus line must confess whose voice it is
-    assert "not the solver objective" in src
 
 
 def test_the_solve_plan_gain_travels_with_its_currency_label() -> None:

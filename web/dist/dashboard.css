@@ -34,6 +34,33 @@
         background: var(--raised); border-radius: 999px; padding: 2px 8px; }
 .cite:hover { color: var(--ink); }
 
+/* ---- the agent briefing (model voice, clearly labelled) ---- */
+.ib-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+           margin-bottom: 4px; }
+.ib-head h2 { margin: 0; }
+.db-agentchip { font: 600 10.5px var(--mono); color: var(--muted);
+                background: var(--raised); border-radius: 999px;
+                padding: 3px 10px; letter-spacing: .04em; }
+.ib-item { display: flex; gap: 12px; align-items: flex-start;
+           padding: 9px 12px; margin-top: 8px; cursor: pointer;
+           background: var(--surface); border: 1px solid var(--line);
+           border-left-width: 3px; border-radius: 9px; }
+.ib-item:hover { border-color: var(--muted); }
+/* severity = the risk channel, quieter as it drops; 1 = act now */
+.ib-item.sev1 { border-left-color: var(--bad); }
+.ib-item.sev1:hover { border-left-color: var(--bad); }
+.ib-item.sev2 { border-left-color: var(--warn); }
+.ib-item.sev2:hover { border-left-color: var(--warn); }
+.ib-item.sev3 { border-left-color: var(--line); }
+.ib-main { min-width: 0; flex: 1; }
+.ib-headline { display: block; font-weight: 650; font-size: 13.5px; }
+.ib-why { margin: 2px 0 6px; color: var(--muted); font-size: 12.5px; }
+.ib-faces { display: flex; gap: 4px; flex: none; align-self: center; }
+.ib-detail { margin-top: 6px; border-top: 1px solid var(--line);
+             padding-top: 6px; }
+.ib-detailrow { margin: 2px 0; font: 11px var(--mono); color: var(--muted); }
+.ib-empty { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
 /* ---- alert rows (P0 = bad rail, P1 = warn rail — the risk channel) ---- */
 .db-alerts { display: flex; flex-direction: column; gap: 8px; }
 .al { display: flex; align-items: baseline; gap: 10px; padding: 8px 12px;
@@ -185,6 +212,28 @@
   text-transform: uppercase; color: rgb(255 255 255 / .45); }
 .bench.db-benchtray .bn-i { color: rgb(255 255 255 / .55); }
 
+/* ---- the watch strip below the pitch (the dissolved FLAGS strip) ---- */
+.db-watchstrip { margin: -8px 0 18px; }
+.db-utilrow { display: flex; gap: 14px; flex-wrap: wrap; align-items: center;
+              padding: 5px 12px; margin-bottom: 6px; border-radius: 8px;
+              background: color-mix(in oklab, var(--warn) 7%, var(--surface));
+              border: 1px solid var(--line);
+              font: 11.5px var(--mono); color: var(--muted); }
+.db-utilitem { cursor: pointer; }
+.db-utilitem:hover { color: var(--ink); }
+.db-utilitem code { font: 600 11.5px var(--mono); color: var(--ink); }
+.db-watchlist { display: flex; flex-direction: column; gap: 6px; }
+.db-watchlist .db-chiplbl { margin-top: 2px; }
+.al.wl { padding: 5px 10px; font-size: 12.5px; border-left-width: 3px; }
+.al.wl .avatar { width: 20px; height: 20px; }
+.al.wl .al-kind { width: 72px; font-size: 9.5px; }
+
+/* own-player price-fall risk rides ON the pitch card */
+.pp-drop { position: absolute; top: 3px; left: 3px; z-index: 2; width: 16px;
+           height: 16px; border-radius: 50%; font: 700 11px/15px var(--mono);
+           color: #fff; background: var(--bad); text-align: center; }
+.pp-drop.shift { left: 22px; }
+
 /* ---- moves to consider (rule cards, never the solver) ---- */
 .db-move { display: flex; flex-direction: column; gap: 6px;
            padding: 10px 12px; background: var(--surface);
@@ -196,6 +245,41 @@
 
 /* ---- solver card ---- */
 .solver .sub .chip { margin-left: 6px; }
+.sv-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+           margin-bottom: 4px; }
+.sv-head h2 { margin: 0; }
+.sv-planmoves { flex-direction: column; align-items: stretch; gap: 8px; }
+.sv-moverow { display: flex; flex-direction: column; gap: 3px; }
+.sv-flowline { margin: 0; font: 11px var(--mono); color: var(--faint); }
+.sv-roll { margin-top: 8px; padding: 10px 12px; background: var(--raised);
+           border-radius: 9px; }
+.sv-rollhead { display: block; font-size: 15px; }
+.sv-capline { display: flex; align-items: center; gap: 8px; margin: 8px 0 0;
+              font-size: 12.5px; }
+.sv-alts { margin-top: 8px; }
+.sv-alts summary { cursor: pointer; color: var(--muted); font-size: 12px;
+                   white-space: nowrap; overflow: hidden;
+                   text-overflow: ellipsis; }
+.sv-altrow { margin: 4px 0 0; font: 11.5px var(--mono); color: var(--muted); }
+.sv-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+               margin-top: 10px; }
+.sv-controls .chip { text-decoration: none; }
+.sv-rerun { font-weight: 700;
+            background: color-mix(in oklab, var(--s1) 16%, var(--surface));
+            color: var(--s1); }
+.sv-running { min-width: 0; flex: 1; }
+.sv-runline { margin: 0; font-size: 12.5px; }
+.sv-spin { display: inline-block; width: 11px; height: 11px;
+           border: 2px solid var(--line); border-top-color: var(--s1);
+           border-radius: 50%; margin-right: 8px; vertical-align: -1px; }
+@media (prefers-reduced-motion: no-preference) {
+  .sv-spin { animation: sv-rot .9s linear infinite; }
+  @keyframes sv-rot { to { transform: rotate(360deg); } }
+}
+.sv-ticker { margin: 3px 0 0; font: 11px var(--mono); color: var(--faint);
+             white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+             max-width: 100%; }
+.sv-fail { color: var(--bad); white-space: normal; }
 .sv-move { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
            padding: 10px 12px; background: var(--raised); border-radius: 9px;
            margin-top: 8px; }
