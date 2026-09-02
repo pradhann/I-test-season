@@ -157,7 +157,6 @@ svg.fieldmap .mark:hover { stroke: var(--ink); }
 
 /* ---- the table ---------------------------------------------------------- */
 
-table.eotable th.sorted::after { content: " " attr(data-dir); color: var(--s1); }
 table.eotable td { vertical-align: middle; }
 .gapbar { position: relative; display: inline-block; width: 44px; height: 9px;
           background: var(--raised); border-radius: 3px; overflow: hidden;
@@ -363,3 +362,74 @@ svg.fieldmap .slope:hover { stroke-width: 3.5; }
                                                      var(--surface)); }
 .drawer table.data td .freshdot { margin-left: 6px; }
 .drawer h2 { margin-top: 16px; }
+
+/* ---- availability chip (R3 blocker) -------------------------------------
+   A status dot + the WORD, separated from the name — never a bare letter
+   glued to a surname. Both colours are status tokens, both themes. */
+.avail { display: inline-flex; align-items: center; gap: 5px; margin-left: 8px;
+         padding: 1px 8px; border-radius: 999px; font-size: 10.5px;
+         border: 1px solid var(--line); color: var(--muted);
+         vertical-align: middle; white-space: nowrap; }
+.avail .adot { width: 7px; height: 7px; border-radius: 50%; flex: none;
+               background: var(--warn); }
+.avail.bad .adot { background: var(--bad); }
+.avail .aword { letter-spacing: .02em; }
+.availline { display: flex; align-items: center; gap: 2px; }
+.availline .avail { margin-left: 2px; }
+
+/* ---- the field/selection control group (R2) ------------------------------
+   The FIELD radio and WHO IS IN IT drawn as ONE bordered group, so the two
+   populations wearing the word "field" are visibly one linked choice. */
+.fieldgroup { border: 1px solid var(--line); border-radius: 10px;
+              padding: 8px 12px 10px; margin: 8px 0 10px;
+              background: color-mix(in oklab, var(--raised) 45%, var(--surface));
+              display: flex; flex-direction: column; gap: 2px; }
+.fieldgroup > .toolbar { margin: 4px 0; }
+.fgcap { display: flex; flex-direction: column; gap: 2px; }
+.fgcap .fgline { margin: 4px 0 0; max-width: 110ch; }
+.fgcap .fgml { margin: 2px 0 0; color: var(--warn); max-width: 104ch; }
+.fgcap .glyphkey { margin: 2px 0 0; color: var(--faint); font-size: 11px; }
+
+/* ---- low-n guard (tri-consensus) ---------------------------------------- */
+.chip.src.lown { opacity: .55; }
+.chip.src.lown.on { opacity: .85; }
+.chip .cnt.bad { color: var(--bad); }
+.chip.src.on .cnt.bad { color: var(--bad); opacity: 1; }
+.chip .cnt.ml { color: var(--warn); }
+svg.fieldmap .lownwm { fill: var(--warn); opacity: .32;
+                       font: 700 36px/1 var(--mono); letter-spacing: .06em; }
+option.lown { color: var(--faint); }
+
+/* ---- caption tiering (R1+R3) -------------------------------------------- */
+.capline { color: var(--muted); }
+details.howto { margin: 2px 0 8px; }
+details.howto > summary { cursor: pointer; color: var(--faint);
+                          font-size: 11.5px; letter-spacing: .02em; }
+details.howto > summary:hover { color: var(--muted); }
+details.howto p.sub { margin: 6px 0 0 14px; max-width: 88ch; }
+
+/* ---- the collapsed momentum fold (R1+R3) --------------------------------- */
+details.momfold > summary { cursor: pointer; color: var(--muted);
+                            font-size: 12.5px; line-height: 1.5;
+                            max-width: 96ch; padding: 2px 0 6px; }
+details.momfold > summary:hover { color: var(--ink); }
+
+/* ---- table craft --------------------------------------------------------- */
+/* Persistent sort affordance: the sorted column carries its direction, every
+   other sortable header a quiet ⇅ — the promise is visible before the click. */
+table.eotable th.sorted::after { content: " " attr(data-dir); color: var(--s1); }
+table.eotable th.sortable::after { content: " " attr(data-dir);
+                                   color: var(--faint); font-size: 9px; }
+table.eotable th.sortable:hover::after { color: var(--muted); }
+table.eotable th:focus-visible { outline: 2px solid var(--s1);
+                                 outline-offset: -2px; }
+td.held .hsep { color: var(--faint); margin: 0 4px 0 0; }
+
+/* the tile's bridge to the Dashboard plan */
+.stat .coverlink { display: block; margin-top: 5px; font-size: 11px;
+                   color: var(--s1); text-decoration: none; }
+.stat .coverlink:hover { text-decoration: underline; }
+
+/* accessible marks: a focused circle shows the same emphasis hover does */
+svg.fieldmap .mark:focus-visible { outline: none; stroke: var(--ink);
+                                   stroke-width: 2.5; }

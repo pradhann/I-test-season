@@ -623,6 +623,115 @@ button.fx-inchip:focus-visible { outline: 2px solid var(--s1); outline-offset: 1
                padding-left: 8px; }
 
 
+/* ---------- absence vs failure: two states, two looks ----------
+   Honest absence (fx-quiet) stays in the dashed family of fx-gap, compressed
+   to one line. A FAILED FETCH (fx-fetchfail) is a different species: solid
+   --bad rail, the server's reason, a retry — an error must never dress as
+   absence. */
+.fx-quiet { margin: 6px 0; padding-left: 9px; font-size: 11.5px;
+  color: var(--faint); line-height: 1.5;
+  border-left: 2px dashed var(--line); }
+.fx-quiet.fail { border-left-style: solid;
+  border-left-color: color-mix(in oklab, var(--bad) 55%, var(--line));
+  color: var(--muted); }
+.fx-fetchfail { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: 8px 0; padding: 9px 11px; border-radius: 8px;
+  border: 1px solid color-mix(in oklab, var(--bad) 45%, var(--line));
+  border-left: 3px solid var(--bad);
+  background: color-mix(in oklab, var(--bad) 7%, var(--surface));
+  font-size: 12px; line-height: 1.45; }
+.fx-fetchfail b { color: var(--ink); }
+.fx-fetchfail .why { color: var(--muted); font-size: 11.5px; flex: 1 1 24ch;
+  min-width: 0; overflow-wrap: anywhere; }
+.fx-fetchfail .retry { flex: none; }
+
+/* ---------- the hover card: title-tooltip numbers, instantly ---------- */
+.fx-hover { position: fixed; z-index: 60; max-width: 320px;
+  padding: 8px 10px; border-radius: 8px; pointer-events: none;
+  background: var(--surface); border: 1px solid var(--line);
+  box-shadow: 0 6px 24px rgb(0 0 0 / .28);
+  font-size: 11.5px; line-height: 1.5; color: var(--muted);
+  white-space: pre-line; font-variant-numeric: tabular-nums; }
+
+/* ---------- my-squad overlay: pip, row emphasis, dim toggle ---------- */
+.fx-own { display: inline-flex; align-items: center; justify-content: center;
+  min-width: 15px; height: 15px; padding: 0 3px; margin-left: 4px;
+  border-radius: 999px; font: 700 9.5px/1 var(--mono);
+  font-variant-numeric: tabular-nums; color: var(--ink); cursor: help;
+  border: 1px solid color-mix(in oklab, var(--accent) 55%, var(--line));
+  background: color-mix(in oklab, var(--accent) 16%, var(--surface)); }
+.fx-rail.own { background:
+  linear-gradient(90deg, color-mix(in oklab, var(--accent) 9%, var(--surface)),
+                  var(--surface) 70%); }
+.fx-rail.own:hover { background: var(--raised); }
+/* dimmed, never removed — the row is still where the next transfer comes from */
+.fx-dim { opacity: .32; }
+.fx-dim.fx-rail:hover, .fx-grid .fx-dim:hover { opacity: 1; }
+
+/* ---------- the next-GW strip: this week, hardest → easiest ---------- */
+.fx-strip-wrap { display: flex; align-items: center; gap: 8px;
+  margin: 0 0 8px; }
+.fx-strip-wrap > .vlab { flex: none; font-size: 10px; letter-spacing: .07em;
+  text-transform: uppercase; font-weight: 700; color: var(--muted);
+  cursor: help; }
+.fx-strip { display: flex; gap: 5px; overflow-x: auto; min-width: 0;
+  padding: 2px 0; }
+.fx-stripchip { display: inline-flex; align-items: center; gap: 5px;
+  flex: none; padding: 3px 8px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--raised);
+  font: inherit; color: var(--ink); }
+.fx-stripchip:hover { border-color: var(--ink); }
+.fx-stripchip:focus-visible { outline: 2px solid var(--s1); outline-offset: 1px; }
+.fx-stripchip .side { display: inline-flex; align-items: center; gap: 4px; }
+.fx-stripchip .side b { font-size: 11px; font-weight: 700; }
+.fx-stripchip .sw { width: 8px; height: 8px; border-radius: 2px;
+  border: 1px solid var(--line); font-style: normal; }
+.fx-stripchip .sw.nofit {
+  background: repeating-linear-gradient(135deg, transparent 0 2px,
+                                        var(--fx-hatch) 2px 3px), var(--surface); }
+.fx-stripchip .v { font-size: 9.5px; color: var(--faint); }
+.fx-stripchip .ko { font: 500 10px/1 var(--mono); color: var(--faint);
+  font-variant-numeric: tabular-nums; }
+.fx-stripchip .own { min-width: 13px; height: 13px; font-size: 8.5px; }
+
+/* ---------- the fixture-turn sentence: your clubs, the board's ranks ------ */
+.fx-turnrow .txt { font-size: 12px; color: var(--muted); line-height: 1.45; }
+.fx-turnrow .txt b { color: var(--ink); }
+
+/* ---------- the freshness chip's fit-window note ---------- */
+.fx-inchip .fit { font-size: 10.5px; color: var(--faint); }
+
+/* ---------- table view: real sortable headers ---------- */
+.fx-tableview th .fx-th { display: inline-flex; align-items: center; gap: 3px;
+  background: none; border: 0; padding: 0; margin: 0; cursor: pointer;
+  font: inherit; color: inherit; letter-spacing: inherit;
+  text-transform: inherit; }
+.fx-tableview th .fx-th:hover { color: var(--ink); }
+.fx-tableview th .fx-th:focus-visible { outline: 2px solid var(--s1);
+  outline-offset: 1px; border-radius: 3px; }
+.fx-tableview th .fx-th.on { color: var(--ink); }
+.fx-tableview th .fx-th .arr { font-size: 8px; min-width: 8px;
+  color: var(--accent-ink); }
+.fx-tableview td.num, .fx-tableview th.num { font-family: var(--mono);
+  font-variant-numeric: tabular-nums; }
+.fx-tableview td .fx-own { margin-left: 5px; }
+
+/* ---------- the by-position dot plot inside the calibration disclosure ---- */
+.fx-caldisc { margin-top: 4px; }
+.fx-caldisc > summary { font-size: 10px; }
+.fx-dotplot { display: grid; gap: 4px; margin-top: 6px; max-width: 340px; }
+.fx-dotplot .dp-row { display: grid; grid-template-columns: 30px 1fr 52px;
+  gap: 8px; align-items: center; cursor: help; }
+.fx-dotplot .dp-k { font: 700 9.5px/1 var(--mono); color: var(--muted);
+  letter-spacing: .05em; }
+.fx-dotplot .dp-track { position: relative; height: 10px; border-radius: 5px;
+  background: color-mix(in oklab, var(--ink) 8%, var(--surface)); }
+.fx-dotplot .dp-dot { position: absolute; top: 2px; width: 6px; height: 6px;
+  border-radius: 50%; transform: translateX(-50%);
+  background: var(--warn); box-shadow: 0 0 0 1.5px var(--surface); }
+.fx-dotplot .dp-v { font: 600 10.5px/1 var(--mono); color: var(--ink);
+  text-align: right; font-variant-numeric: tabular-nums; }
+
 /* ---------- creator team-talk: two clubs on screen, so name the club ------- */
 .fx-talk { display: flex; flex-direction: column; gap: 10px; }
 .fx-talk-row { border-left: 2px solid color-mix(in oklab, var(--accent) 45%, var(--line));

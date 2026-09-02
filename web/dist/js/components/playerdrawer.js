@@ -24,16 +24,41 @@ import { radarSection } from "/js/components/radar.js";
 export function attachPlayerDrawer(viewName) {
   document.querySelectorAll("aside.pd-drawer").forEach(n => n.remove());
   const drawer = el("aside", "drawer pd-drawer");
+  // dialog semantics: assistive tech must know this is a modal surface, and
+  // focus must move IN on open and RETURN on close (Escape already closes)
+  drawer.setAttribute("role", "dialog");
+  drawer.setAttribute("aria-modal", "true");
+  drawer.setAttribute("aria-label", "player detail");
+  drawer.tabIndex = -1;
   document.body.appendChild(drawer);
   let handles = [];
+  let opener = null;           // the element focus returns to on close
   const close = () => {
     drawer.classList.remove("open");
     for (const h of handles) h?.cancel?.();
     handles = [];
+    if (opener && opener.isConnected
+        && drawer.contains(document.activeElement)) opener.focus();
+    opener = null;
   };
   const onKey = (e) => {
     if (!drawer.isConnected) { removeEventListener("keydown", onKey); return; }
     if (e.key === "Escape") close();
+    // a minimal focus trap: Tab cycles inside the open dialog
+    if (e.key === "Tab" && drawer.classList.contains("open")) {
+      const focusables = drawer.querySelectorAll(
+        "button, a[href], input, select, textarea, [tabindex]:not([tabindex='-1'])");
+      if (!focusables.length) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault(); last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault(); first.focus();
+      } else if (!drawer.contains(document.activeElement)) {
+        e.preventDefault(); first.focus();
+      }
+    }
   };
   addEventListener("keydown", onKey);
   const onHash = () => {
@@ -48,7 +73,14 @@ export function attachPlayerDrawer(viewName) {
   return {
     drawer,
     close,
-    open: () => { drawer.classList.add("open"); drawer.scrollTop = 0; },
+    open: () => {
+      if (!drawer.classList.contains("open"))
+        opener = document.activeElement instanceof HTMLElement
+          ? document.activeElement : null;
+      drawer.classList.add("open");
+      drawer.scrollTop = 0;
+      drawer.focus();
+    },
     setHandles: (hs) => { handles = hs; },
   };
 }
@@ -238,8 +270,16 @@ function profileSection(host, code) {
 
   function renderEmpty(reason) {
     pbody.textContent = "";
-    pbody.appendChild(emptyBox(reason));
-    const btn = el("button", "chip", "Fetch profile");
+    // reader copy carries no raw internals: the panel's reason may name the
+    // POST route — the button IS that route, so the mention is stripped here
+    const readable = String(reason || "")
+      .replace(/\s*\((POST|GET)\s+\/api\/[^)]*\)/g, "")
+      .replace(/\s*(POST|GET)\s+\/api\/\S+/g, "")
+      .replace(/fetch it via the chat player_profile tool or the drawer's\s+Fetch-profile\s+button/i,
+               "fetch it below")
+      .trim();
+    pbody.appendChild(emptyBox(readable || "no Understat profile cached"));
+    const btn = el("button", "chip", "Fetch it now");
     btn.title = "one on-demand fetch from understat.com, cached after that";
     btn.onclick = async () => {
       btn.disabled = true;             // debounce: one click, one fetch
@@ -249,7 +289,7 @@ function profileSection(host, code) {
         poll(0);
       } catch (e) {
         pbody.appendChild(errBox(e));
-        btn.disabled = false; btn.textContent = "Fetch profile";
+        btn.disabled = false; btn.textContent = "Fetch it now";
       }
     };
     pbody.appendChild(btn);

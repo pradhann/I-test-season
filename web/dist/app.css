@@ -12,8 +12,13 @@
 
 :root {
   --bg: #101214; --surface: #16181b; --raised: #1d2024;
-  --ink: #e8eaed; --muted: #9aa2ab; --faint: #6a727c; --line: #2a2e33;
-  --accent: #3d8b5f; --accent-ink: #7fc9a2; --pitch: #274d38;
+  /* muted/faint tiers hold >=4.5:1 on every surface (WCAG AA at any size):
+     muted #b3bac2 8.9:1 / faint #9aa3ad 6.4:1 on --raised #1d2024 */
+  --ink: #e8eaed; --muted: #b3bac2; --faint: #9aa3ad; --line: #2a2e33;
+  /* accent = SELECTION, a desaturated steel blue deliberately outside the
+     green family so "selected" never reads as --good "positive"; white text
+     on --accent holds 5.6:1 */
+  --accent: #3e6c91; --accent-ink: #8fb8d8; --pitch: #274d38;
   --s1: #2a78d6; --s2: #c25322; --s3: #1baf7a; --s4: #b08000;
   --good: #2fa463; --warn: #c77f00; --bad: #d64545;
   --shadow: 0 1px 3px rgb(0 0 0 / .4);
@@ -22,8 +27,9 @@
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) {
     --bg: #f7f8f9; --surface: #ffffff; --raised: #f1f3f5;
-    --ink: #1a1d21; --muted: #5b6470; --faint: #8a919b; --line: #e3e6ea;
-    --accent: #2e6f4b; --accent-ink: #2e6f4b; --pitch: #3a7d57;
+    /* muted #4c5560 7.2:1 / faint #5b6470 5.4:1 on --raised #f1f3f5 */
+    --ink: #1a1d21; --muted: #4c5560; --faint: #5b6470; --line: #e3e6ea;
+    --accent: #3e6c91; --accent-ink: #33597a; --pitch: #3a7d57;
     --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
     --good: #21924f; --warn: #b57500; --bad: #c73e3e;
     --shadow: 0 1px 3px rgb(20 24 28 / .08);
@@ -31,16 +37,16 @@
 }
 :root[data-theme="light"] {
   --bg: #f7f8f9; --surface: #ffffff; --raised: #f1f3f5;
-  --ink: #1a1d21; --muted: #5b6470; --faint: #8a919b; --line: #e3e6ea;
-  --accent: #2e6f4b; --accent-ink: #2e6f4b; --pitch: #3a7d57;
+  --ink: #1a1d21; --muted: #4c5560; --faint: #5b6470; --line: #e3e6ea;
+  --accent: #3e6c91; --accent-ink: #33597a; --pitch: #3a7d57;
   --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
   --good: #21924f; --warn: #b57500; --bad: #c73e3e;
   --shadow: 0 1px 3px rgb(20 24 28 / .08);
 }
 :root[data-theme="dark"] {
   --bg: #101214; --surface: #16181b; --raised: #1d2024;
-  --ink: #e8eaed; --muted: #9aa2ab; --faint: #6a727c; --line: #2a2e33;
-  --accent: #3d8b5f; --accent-ink: #7fc9a2; --pitch: #274d38;
+  --ink: #e8eaed; --muted: #b3bac2; --faint: #9aa3ad; --line: #2a2e33;
+  --accent: #3e6c91; --accent-ink: #8fb8d8; --pitch: #274d38;
   --s1: #2a78d6; --s2: #c25322; --s3: #1baf7a; --s4: #b08000;
   --good: #2fa463; --warn: #c77f00; --bad: #d64545;
   --shadow: 0 1px 3px rgb(0 0 0 / .4);
@@ -53,6 +59,9 @@ body {
   font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
         Helvetica, Arial, sans-serif;
   overflow-x: hidden;
+  /* global: digits are data everywhere in this app — columns of xPts must
+     not wobble as values change width (R3: 4/15 numeric leaves had it) */
+  font-variant-numeric: tabular-nums;
 }
 
 /* ---- app frame: left rail + content ---- */
@@ -80,6 +89,9 @@ body {
 .topbar h1 { font-size: 19px; margin: 0; text-wrap: balance; }
 .deadline { color: var(--muted); font-variant-numeric: tabular-nums; }
 .deadline b { color: var(--warn); }
+/* urgency register: inside 24h the countdown changes weight and hue */
+.deadline.urgent { color: var(--ink); font-weight: 600; }
+.deadline.urgent b { color: var(--bad); font-size: 14px; }
 .topbar .spacer { flex: 1; }
 button, .btn {
   background: var(--raised); color: var(--ink); border: 1px solid var(--line);

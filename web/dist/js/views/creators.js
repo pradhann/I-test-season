@@ -122,8 +122,11 @@ function tier(extractor) {
   if (e === "cue")
     return { key: "cue", label: "keyword window", model: null,
              note: "a keyword landed near this player's name — not an opinion, a search hit" };
-  return { key: "unknown", label: extractor ? `extractor: ${e}` : "extractor not recorded",
-           model: null, note: "the payload does not say how this claim was extracted" };
+  return { key: "unknown",
+           label: "method not recorded",
+           model: null,
+           note: "how this claim was extracted is not recorded in the payload"
+                 + (extractor ? ` (extractor: ${e})` : "") };
 }
 
 const LANES = [
@@ -191,10 +194,72 @@ export default async function creators(host) {
   let consideredOnly = false;         // evidence filter, never a second axis
   let showAgreed = false;
   let gridAll = false;
+  let gridEmptyShown = false;         // matrix rows with no cell and no ring
+  let last48Only = false;             // deadline-window recency filter
   const detailCache = new Map();      // creator -> Promise<creator_detail>
   const jobs = [];                    // paste-a-link jobs, newest first
   const pasted = new Map();           // canonical key -> url, this session only
   let linkBody = null;
+
+  /* One name per player: the payload's `disambiguator` ("C. Palmer (CHE)")
+     wins wherever a bare name renders, so a surname two players share can
+     never silently mean two people. */
+  const dn = r => (r && r.disambiguator) || (r && r.name) || "";
+
+  /* ---- claim recency, at row level ------------------------------------
+     The board's consensus carries counts, not timestamps; the per-creator
+     records carry every claim WITH its published_at. Read once (the same
+     cached creator_detail calls the drawer and the grid already make),
+     indexed by player code, and the decision rows say how fresh their
+     freshest claim is — near a deadline, "6 days ago" and "2 hours ago"
+     are different facts (R1). */
+  const claimsIdx = new Map();        // code -> [{t: ms, gw}]
+  let freshState = "idle";            // idle | loading | done | failed
+  function loadRecency() {
+    if (freshState !== "idle") return;
+    freshState = "loading";
+    const names = (res.creators || []).map(c => c.creator);
+    Promise.all(names.map(n => detailFor(n))).then(ds => {
+      for (const d of ds) {
+        if (!d || d.__error) continue;
+        for (const item of d.items || [])
+          for (const c of item.claims || []) {
+            if (c.code == null) continue;
+            const t = parseTs(c.published_at || item.published_at);
+            if (!t || isNaN(t)) continue;
+            if (!claimsIdx.has(c.code)) claimsIdx.set(c.code, []);
+            claimsIdx.get(c.code).push({ t: +t, gw: c.gameweek ?? null });
+          }
+      }
+      freshState = "done";
+      if (mainCard.isConnected) render();
+    }).catch(() => { freshState = "failed"; });
+  }
+  /* Freshest claim for the gameweek on screen; a claim with no gameweek is
+     still a statement about him and counts. */
+  const freshFor = code => {
+    let best = null;
+    for (const c of claimsIdx.get(code) || [])
+      if (c.gw == null || c.gw === res.gw) if (best == null || c.t > best) best = c.t;
+    return best;
+  };
+  const stmtsFor = code => (claimsIdx.get(code) || [])
+    .filter(c => c.gw == null || c.gw === res.gw).length;
+  const agoText = t => t == null ? null
+    : relAge(new Date(t).toISOString()).text;
+  const H48 = 48 * 3.6e6;
+
+  /* Skeleton shells for the 3–4s panel build — a shape that says "board
+     loading", not a bare text line (R3). */
+  function skeleton(cards = 3) {
+    const sk = el("div", "cx-skel");
+    sk.setAttribute("role", "status");
+    sk.setAttribute("aria-label", "loading");
+    sk.appendChild(el("div", "cx-skelrow"));
+    sk.appendChild(el("div", "cx-skelblock"));
+    for (let i = 0; i < cards; i++) sk.appendChild(el("div", "cx-skelcard"));
+    return sk;
+  }
 
   /* ---- the gameweek axis ---------------------------------------------
      `creator_board` has always taken a `gw` and always defaulted it to the
@@ -227,8 +292,8 @@ export default async function creators(host) {
   const BACK = 4, FWD = 2;            // how far the picker reaches either way
 
   /* ---- load ----------------------------------------------------------- */
-  /* not `.sub`: an empty state and a pending one must not look the same */
-  body.appendChild(el("p", "cx-loading", "loading the panel…"));
+  /* a skeleton, not a text line: the panel build is measured at 2.5–4s */
+  body.appendChild(skeleton());
   const boardP = runPanel("creator_board", {});
   const squadP = runPanel("squad_overview", {}).catch(e => ({ error: e }));
 
@@ -306,6 +371,8 @@ export default async function creators(host) {
       else reason = `${plural(-net, "net seller")}; he is in your squad`;
       return {
         code: c.code, name: c.name, pos: c.pos, team: c.team,
+        disambiguator: c.disambiguator || null,
+        resolved: c.resolved !== false,
         price: c.price, own_pct: c.own_pct,
         mine: c.mine || null, panel_owned: c.panel_owned || null,
         buy, sell, cap, nBuy, nSell, nCap, net, lane, split, capElsewhere,
@@ -327,6 +394,7 @@ export default async function creators(host) {
   renderLinkBar();
   render();
   probeGameweeks();
+  loadRecency();
 
   function render() {
     renderViewRow();
@@ -389,6 +457,7 @@ export default async function creators(host) {
     renderGwRow();
     body.textContent = "";
     body.appendChild(el("p", "cx-loading", `reading GW${g}…`));
+    body.appendChild(skeleton(2));
     try {
       const r = await runPanel("creator_board", { gw: g });
       if (gwSel !== g) return;                 // a later click already won
@@ -413,9 +482,11 @@ export default async function creators(host) {
          says that the control cannot exist without one, and does not draw a
          picker over nothing. */
       gwRow.appendChild(el("span", "tlabel", "Gameweek"));
-      gwRow.appendChild(el("span", "sub",
-        "`creator_board` returned no gameweek, so there is nothing to index " +
-        "the board by and no picker to offer."));
+      const noGw = el("span", "sub",
+        "The board returned no gameweek, so there is nothing to index " +
+        "the board by and no picker to offer.");
+      noGw.title = "source: creator_board.gw";
+      gwRow.appendChild(noGw);
       if (res.gw_reason) gwNote.appendChild(el("p", "cx-provline warn", res.gw_reason));
       return;
     }
@@ -427,10 +498,19 @@ export default async function creators(host) {
       const on = g === gwSel;
       const chip = el("button", "chip gw" +
         (on ? " on" : "") + (empty && !on ? " off" : ""));
+      /* The count sits in a REAL badge with an accessible name: "GW1" plus a
+         glued "9" read as GW19 at speed and in every screen reader (R1+R3). */
       chip.appendChild(document.createTextNode(`GW${g}`));
       if (g === defaultGw) chip.appendChild(el("span", "cx-gwnext", "next"));
-      chip.appendChild(el("span", "cx-gwn",
-        measured ? (n === 0 ? "none" : String(n)) : "…"));
+      const badge = el("span", "cx-gwn",
+        measured ? (n === 0 ? "none" : String(n)) : "…");
+      badge.setAttribute("aria-hidden", "true");
+      chip.appendChild(badge);
+      chip.setAttribute("aria-label", `GW${g}` +
+        (measured
+          ? (n === 0 ? ", nobody named" : `, ${plural(n, "player")} named`)
+          : ", still counting") +
+        (g === defaultGw ? ", the next deadline" : ""));
       chip.title = `GW${g} — ` + (measured
         ? (n === 0
             ? "no claim in this window names this gameweek"
@@ -477,14 +557,29 @@ export default async function creators(host) {
     teachCard.textContent = "";
     teachCard.appendChild(el("h2", null, "Creators — the panel's deadline"));
 
+    /* THE MANIFESTO, ONCE. The intent/own framing, the measured record and
+       its denominator all live in this ONE block — repeated three times it
+       read as protesting too much (R3). The panel's own record_note moves
+       behind the disclosure below. */
+    let hits = 0, scored = 0, nCreators = 0;
+    for (const c of (res && res.creators) || []) {
+      const r = c.record || {};
+      if (r.scored) { hits += r.hits || 0; scored += r.scored; nCreators++; }
+    }
     const lead = el("p", "cx-lead");
     lead.append(
-      "Nobody on this page has earned a weight. ",
-      el("b", null, "Measured, the panel is below chance"),
-      " — so this is not a forecast. It is the field's ",
-      el("b", null, "intent"), ", and what they actually ",
+      "Nobody on this page has earned a weight — measured, the panel is ",
+      scored ? el("b", null, `${(100 * hits / scored).toFixed(1)}% right`)
+             : el("b", null, "unmeasured"),
+      scored
+        ? ` (${hits} hits from ${scored} scored calls across ` +
+          `${plural(nCreators, "creator")}: below a coin flip, every earned ` +
+          `weight 0.0). `
+        : " (no scored calls in this payload). ",
+      "So this is not a forecast. It is the field's ",
+      el("b", null, "intent"), " and what they actually ",
       el("b", null, "own"),
-      ". The only rows worth your attention are the ones where those " +
+      "; the only rows worth your attention are the ones where those " +
       "disagree with your squad.");
     teachCard.appendChild(lead);
 
@@ -521,32 +616,8 @@ export default async function creators(host) {
     rules.append(r1, r2);
     teachCard.appendChild(rules);
 
-    /* the record, with its own denominator, computed from the payload */
-    const rec = el("p", "cx-record");
-    if (res) {
-      let hits = 0, scored = 0, n = 0;
-      for (const c of res.creators || []) {
-        const r = c.record || {};
-        if (r.scored) { hits += r.hits || 0; scored += r.scored; n++; }
-      }
-      if (scored) {
-        rec.append(el("b", null, `${(100 * hits / scored).toFixed(1)}%`),
-          ` — ${hits} hits from ${scored} scored calls across ` +
-          `${plural(n, "creator")} in this payload. Below a coin flip. ` +
-          `Every earned weight is 0.0.`);
-      } else {
-        rec.append("No scored calls in this payload, so there is no measured record to show.");
-      }
-      teachCard.appendChild(rec);
-      if (res.record_note) {
-        const note = el("p", "cx-note");
-        note.appendChild(el("span", "cx-quotemark", "the panel's own words: "));
-        note.appendChild(document.createTextNode(res.record_note));
-        teachCard.appendChild(note);
-      }
-    }
-
-    /* the ordering disclosure — stated, not buried */
+    /* the ordering disclosure — stated, not buried; the panel's own words on
+       its record live here too, behind one fold instead of a third banner */
     const det = el("details", "cx-disclose");
     det.appendChild(el("summary", null, "Why there is no “most trusted” sort"));
     const dp = el("p", "sub");
@@ -559,6 +630,12 @@ export default async function creators(host) {
       "The per-creator scoreboard still exists — it is in the roster at the " +
       "bottom of the board — but it is reference material, not a ranking.";
     det.appendChild(dp);
+    if (res && res.record_note) {
+      const note = el("p", "cx-note");
+      note.appendChild(el("span", "cx-quotemark", "the panel's own words: "));
+      note.appendChild(document.createTextNode(res.record_note));
+      det.appendChild(note);
+    }
     teachCard.appendChild(det);
 
     /* scope: 16 people across 6 shows — or an honest account of its absence */
@@ -597,12 +674,14 @@ export default async function creators(host) {
       const line = el("div", "cx-scope-line warn");
       line.appendChild(el("b", null, "This payload is not scoped to the panel yet."));
       line.append(
-        ` \`creator_board\` returned ${plural((res.creators || []).length, "ingested source")} ` +
-        "and no `scope` block, so the counts below are over everything ingestion " +
-        "reached — which includes `user-shared`, a bucket of links pasted by hand " +
-        "and not a creator at all. The panel is 16 people across 6 shows; when " +
-        "`scope` arrives this line will say so and the excluded sources will be " +
+        ` The board returned ${plural((res.creators || []).length, "ingested source")} ` +
+        "and no scope block, so the counts below are over everything ingestion " +
+        "reached — including a bucket of links pasted by hand that is not a " +
+        "creator at all. The panel is 16 people across 6 shows; when the scope " +
+        "field arrives this line will say so and the excluded sources will be " +
         "named here rather than silently counted.");
+      line.title = "missing field: creator_board.scope · the hand-pasted " +
+                   "bucket is the user-shared source";
       box.appendChild(line);
     }
     return box;
@@ -1541,6 +1620,23 @@ export default async function creators(host) {
       seg.appendChild(b);
     }
     evRow.appendChild(seg);
+    /* The deadline-window filter: only rows whose freshest claim for this
+       gameweek is inside 48h. Recency is measured from the per-creator
+       records; until they land the chip says it is counting (R1). */
+    const chip48 = el("button", "chip cx-48" + (last48Only ? " on" : ""),
+      "said in last 48h");
+    if (freshState === "done") {
+      chip48.title = "Keep only players whose freshest claim for this " +
+        "gameweek was published in the last 48 hours — the deadline window.";
+      chip48.onclick = () => { last48Only = !last48Only; render(); };
+    } else {
+      chip48.disabled = true;
+      chip48.title = freshState === "failed"
+        ? "claim timestamps could not be read from the creator records"
+        : "measuring claim recency from the creator records…";
+      if (freshState === "idle") loadRecency();
+    }
+    evRow.appendChild(chip48);
     const key = el("span", "cx-key");
     const solid = el("span", "cx-keyitem");
     solid.appendChild(el("span", "cx-dot solid"));
@@ -1555,8 +1651,27 @@ export default async function creators(host) {
   /* ==================================================== THE DEADLINE BOARD */
 
   function renderBoard() {
-    const rows = buildRows();
+    let rows = buildRows();
+    if (last48Only && freshState === "done") {
+      const before = rows.length;
+      rows = rows.filter(r => {
+        const t = freshFor(r.code);
+        return t != null && Date.now() - t < H48;
+      });
+      const cut = before - rows.length;
+      if (cut) body.appendChild(el("p", "cx-provline",
+        `Filtered to the deadline window: ${plural(rows.length, "player")} ` +
+        `with a claim in the last 48h shown, ${cut} older hidden. Turn the ` +
+        `“said in last 48h” chip off for the full window.`));
+    }
     if (!rows.length) {
+      if (last48Only && freshState === "done" && buildRows().length) {
+        body.appendChild(emptyBox(
+          "No claim in the last 48 hours names a player for this gameweek.",
+          "Older claims exist — turn the “said in last 48h” chip off to see " +
+          "the full window."));
+        return;
+      }
       body.appendChild(emptyBox(
         consideredOnly
           ? "No considered take names a player in this window."
@@ -1711,7 +1826,7 @@ export default async function creators(host) {
           const lx = m.cx + (m.r.nCap > 0 ? 17 : 9);
           g.appendChild(sv("text", {
             class: "cx-plabel" + (m.r.lane !== "none" ? " mine" : ""),
-            x: lx, y: cy + 3.6 }, m.r.name));
+            x: lx, y: cy + 3.6 }, dn(m.r)));
         }
         g.addEventListener("mouseenter", ev => showTip(ev, m.r));
         g.addEventListener("mousemove", ev => moveTip(ev));
@@ -1728,7 +1843,7 @@ export default async function creators(host) {
 
     function showTip(ev, r) {
       tip.textContent = "";
-      tip.appendChild(el("b", null, r.name));
+      tip.appendChild(el("b", null, dn(r)));
       tip.appendChild(el("div", "sub",
         [r.pos, r.team, r.price != null ? fmtPrice(r.price) : null,
          r.own_pct != null ? `${fmt1(r.own_pct)}% owned` : null]
@@ -1836,11 +1951,12 @@ export default async function creators(host) {
     if (!rows.some(r => r.panel_owned && r.panel_owned.of != null)) {
       const p = el("p", "cx-provline warn");
       p.appendChild(el("b", null, "What the panel actually OWNS is not on these cards yet."));
-      p.append(" No row carries `panel_owned`, so this page can tell you what " +
-        "they SAID and not how many of them hold the player they are talking " +
-        "about. Talk with nobody's squad behind it and a call backed by a " +
-        "locked team look identical here until the panel publishes that field. " +
-        "It is a missing field, not a count of zero.");
+      p.append(" No row carries the ownership field, so this page can tell " +
+        "you what they SAID and not how many of them hold the player they " +
+        "are talking about. Talk with nobody's squad behind it and a call " +
+        "backed by a locked team look identical here until the panel " +
+        "publishes that field. It is a missing field, not a count of zero.");
+      p.title = "missing field: consensus[].panel_owned";
       sec.appendChild(p);
     }
 
@@ -1871,7 +1987,7 @@ export default async function creators(host) {
       for (const r of rest.sort(byWeightOfMouth)) {
         const b = el("button", "cx-thinrow");
         b.appendChild(el("span", "cx-dot " + (r.cueOnly ? "hollow" : "solid in")));
-        b.appendChild(el("b", null, r.name));
+        b.appendChild(el("b", null, dn(r)));
         b.appendChild(el("span", "sub",
           ` ${r.pos || ""} ${r.team || ""} · ${[...r.buy.people].join(", ") || "—"}` +
           `${r.cueOnly ? " · keyword window" : ""}`));
@@ -1892,7 +2008,7 @@ export default async function creators(host) {
     agb.onclick = () => { showAgreed = !showAgreed; agList.hidden = !showAgreed; };
     for (const r of agreed.sort(byWeightOfMouth)) {
       const b = el("button", "cx-thinrow");
-      b.appendChild(el("b", null, r.name));
+      b.appendChild(el("b", null, dn(r)));
       b.appendChild(el("span", "sub", ` — ${r.reason}`));
       b.onclick = () => openPlayer(r);
       agList.appendChild(b);
@@ -1913,7 +2029,19 @@ export default async function creators(host) {
       : r.net < 0 ? (owned ? "SELL" : "AVOID") : "MIXED";
     const t = el("div", "cx-card-title");
     t.appendChild(el("span", "cx-verb", verb));
-    t.appendChild(el("b", null, r.name));
+    t.appendChild(el("b", null, dn(r)));
+    /* Freshness at row level: the freshest claim naming him for this
+       gameweek, from the creator records' own timestamps (R1). */
+    if (freshState === "done") {
+      const ft = freshFor(r.code);
+      if (ft != null) {
+        const fr = el("span", "cx-fresh" +
+          (Date.now() - ft < H48 ? " hot" : ""), `latest ${agoText(ft)}`);
+        fr.title = "when the freshest claim naming him for this gameweek " +
+                   "was published";
+        t.appendChild(fr);
+      }
+    }
     idb.appendChild(t);
     idb.appendChild(el("div", "sub",
       [r.pos, r.team, r.price != null ? fmtPrice(r.price) : null,
@@ -1930,10 +2058,22 @@ export default async function creators(host) {
 
     c.appendChild(el("div", "cx-why", r.reason));
 
-    /* who said it, split by evidence tier — always, never merged */
+    /* who said it, split by evidence tier — always, never merged. The counts
+       name their DENOMINATOR: the card counts buy/sell/captain calls on him,
+       the quotes drawer holds every statement — two different totals that
+       looked like a contradiction when neither said which it was (R2). */
     const ev = el("div", "cx-evline");
     ev.append(`${r.anyLlm} considered take${r.anyLlm === 1 ? "" : "s"}, ` +
-      `${r.anyCue} keyword window${r.anyCue === 1 ? "" : "s"}`);
+      `${r.anyCue} keyword window${r.anyCue === 1 ? "" : "s"} — counting ` +
+      `buy/sell/captain calls only`);
+    if (freshState === "done") {
+      const nStmt = stmtsFor(r.code);
+      if (nStmt) ev.append(` · ${plural(nStmt, "statement")} in the drawer, ` +
+        `watch calls and repeats included`);
+    }
+    ev.title = "The in/out/captain chips count PEOPLE, one opinion each. " +
+      "The drawer lists every stored statement — several per person, plus " +
+      "watch calls, which are never counted as calls.";
     c.appendChild(ev);
     const who = el("div", "cx-who");
     const namesOf = (g, verbLabel) => {
@@ -1991,7 +2131,7 @@ export default async function creators(host) {
     const a = el("a", "cx-cross", label + " ↗");
     a.href = `${hash}?code=${r.code}`;
     a.title = `Opens the ${label} tab. It does not yet accept a player ` +
-      `parameter, so it will not jump to ${r.name} — search for him there.`;
+      `parameter, so it will not jump to ${dn(r)} — search for him there.`;
     return a;
   }
 
@@ -2018,7 +2158,7 @@ export default async function creators(host) {
     for (const r of caps) {
       const row = el("button", "cx-armrow" + (r.lane === "captain" ? " yours" : ""));
       const nm = el("span", "cx-armname");
-      nm.appendChild(el("b", null, r.name));
+      nm.appendChild(el("b", null, dn(r)));
       if (r.lane === "captain") nm.appendChild(el("span", "cx-yours", "yours"));
       else if (r.lane !== "none") nm.appendChild(el("span", "cx-inyours", laneLabel(r.lane).toLowerCase()));
       row.appendChild(nm);
@@ -2061,10 +2201,12 @@ export default async function creators(host) {
       "attribute calls nobody made."));
     sec.appendChild(h);
     if (!obs.length) {
-      sec.appendChild(el("p", "sub",
-        "This payload carries no `take.watching[]` — either nobody flagged a " +
-        "player to watch in this window, or `creator_board` is not publishing " +
-        "the field yet. Either way, no watch call has been counted as a buy above."));
+      const none = el("p", "sub",
+        "This payload carries no watch calls — either nobody flagged a " +
+        "player to watch in this window, or the board is not publishing " +
+        "the field yet. Either way, no watch call has been counted as a buy above.");
+      none.title = "field: creators[].take.watching[]";
+      sec.appendChild(none);
       body.appendChild(sec); return;
     }
     const list = el("div", "cx-obslist");
@@ -2072,7 +2214,8 @@ export default async function creators(host) {
       const d = el("div", "cx-obs");
       const t = el("div", "cx-obs-head");
       t.appendChild(el("span", "cx-obsbadge", "observed"));
-      t.appendChild(el("b", null, o.name || String(o.code)));
+      t.appendChild(el("b", null, o.disambiguator || o.display_name ||
+                                    o.name || String(o.code)));
       t.appendChild(el("span", "sub", ` — ${o.creator}`));
       d.appendChild(t);
       if (o.quote) d.appendChild(quoteBlock(o.quote, o, o.latest));
@@ -2211,11 +2354,15 @@ export default async function creators(host) {
       for (const who of r.cap.people)  put(who, r.code, "cap", r.cap.llm === 0);
     }
     /* watch calls are a third, neutral state — never a buy */
-    const nameByCode = new Map(rows.map(r => [r.code, r.name]));
+    const nameByCode = new Map(rows.map(r => [r.code, dn(r)]));
     for (const c of res.creators || [])
       for (const w of (c.take && c.take.watching) || []) {
         if (w.code == null) continue;
-        if (w.name && !nameByCode.has(w.code)) nameByCode.set(w.code, w.name);
+        /* the resolver's canonical name, so "Martin Odegaard" (a raw watch
+           string) and "Ødegaard" (the board row) become ONE column label —
+           they already share a code, the label must not split them */
+        const wName = w.disambiguator || w.display_name || w.name;
+        if (wName && !nameByCode.has(w.code)) nameByCode.set(w.code, wName);
         if (!said.has(c.creator)) said.set(c.creator, new Map());
         const m = said.get(c.creator);
         const cell = m.get(w.code) || { in: false, out: false, cap: false, cueOnly: false };
@@ -2308,13 +2455,12 @@ export default async function creators(host) {
                         note: "no panel person is published for this show" });
       }
     }
+    /* Band titles are one-liners; the sentence they shared moves to ONE
+       footnote under the grid instead of shouting per group (R3). */
     if (solo.length) bands.push({
-      title: "One host, so what the show said is what that person said",
-      rows: solo });
+      title: "One host — the show's words are his", rows: solo });
     if (showBand.length) bands.push({
-      title: "Said by the show — this payload attributes no claim to a host, " +
-             "so nothing here is any one person's opinion",
-      rows: showBand });
+      title: "Said by the show*", foot: true, rows: showBand });
     /* A note repeated on every row of a band is clutter, not honesty. Say it
        once in the band header and keep only the rows that differ. */
     for (const b of bands) {
@@ -2347,12 +2493,14 @@ export default async function creators(host) {
     const lead = el("p", "cx-provline" + (own.size ? "" : " warn"));
     lead.appendChild(el("b", null, "Hue is what they SAID. Outline is what they OWN."));
     if (own.size) {
-      lead.append(` The own channel is live from \`${ownSource}\`. ` +
+      lead.append(" The own channel is read live from the panel's stored " +
+        "squads and ownership records. " +
         "A ring with no hue is a QUIET holding — a player somebody owns and " +
         "has never mentioned on air, which no transcript can ever surface. A " +
         "column of hue with no rings is talk with nobody's money behind it. " +
         "Click a person's name in the left column for their whole 15 and " +
         "every quiet holding in it, including the ones no column here shows.");
+      lead.title = `own-channel sources: ${ownSource}`;
     } else if (squadsPending > 0) {
       lead.append(" Reading the squads behind these rows…");
     } else {
@@ -2363,9 +2511,11 @@ export default async function creators(host) {
       // reads as measured is worse than no number.
       const sq = res.panel_squads || {};
       lead.append(" The own channel is EMPTY for the panel in this payload: " +
-        "`creator_board` is not yet publishing `panel_owned` or " +
-        "`entry.people[].owned`, so no panel row can carry a ring. Only your " +
-        "own row, pinned at the bottom, has a squad to draw. ");
+        "the board is not yet publishing who owns whom, so no panel row can " +
+        "carry a ring. Only your own row, pinned at the bottom, has a squad " +
+        "to draw. ");
+      lead.title = "missing fields: consensus[].panel_owned, " +
+                   "creators[].entry.people[].owned";
       if (sq.known != null && sq.with_entry != null) {
         lead.append(`${sq.known} of the ${sq.with_entry} verified panel ` +
           `entries have a crawled squad` +
@@ -2393,13 +2543,16 @@ export default async function creators(host) {
       cover.appendChild(el("b", null,
         `${fullRows.length} of ${plural(personRows.length, "person row")} ` +
         `${fullRows.length === 1 ? "carries" : "carry"} a whole locked squad`));
-      cover.append(" — read from `creator_detail.squad`, so every one of their " +
+      cover.append(" — read from the stored squads, so every one of their " +
         "fifteen is known whether or not it reached a column here. ");
+      cover.title = "sources: creator_detail.squad (whole squads), " +
+                    "panel_owned (board-only ownership)";
       if (partRows.length)
         cover.append(`${plural(partRows.length, "other row")} ` +
-          `${partRows.length === 1 ? "is" : "are"} ringed from \`panel_owned\`, ` +
-          "which names owners of the players ON this board and not the rest of " +
-          "their team: those counts are what they own HERE, never a squad size. ");
+          `${partRows.length === 1 ? "is" : "are"} ringed from the board's ` +
+          "own ownership field, which names owners of the players ON this " +
+          "board and not the rest of their team: those counts are what they " +
+          "own HERE, never a squad size. ");
       if (showRows.length)
         cover.append(`${plural(showRows.length, "row")} ` +
           `${showRows.length === 1 ? "is" : "are"} a SHOW, not a person, and ` +
@@ -2435,14 +2588,27 @@ export default async function creators(host) {
     thead.appendChild(hr); t.appendChild(thead);
     const tb = el("tbody");
 
+    /* Empty rows collapse by default: half the matrix was whitespace whose
+       only content was "nothing said, nothing ringed here" (R3). A hidden
+       row is COUNTED and recoverable — never silently dropped. */
+    const rowEmpty = R => {
+      const m = said.get(R.key);
+      const o = R.ownKey ? own.get(R.ownKey) : null;
+      return !codes.some(code => (m && m.has(code)) || (o && o.has(code)));
+    };
+    let hiddenEmpty = 0;
     for (const band of bands) {
+      const visible = gridEmptyShown ? band.rows
+                                     : band.rows.filter(R => !rowEmpty(R));
+      hiddenEmpty += band.rows.length - visible.length;
+      if (!visible.length) continue;
       const btr = el("tr", "cx-bandrow");
       const btd = el("td", "cx-band");
       btd.colSpan = codes.length + 1;
       btd.appendChild(el("span", "cx-bandt", band.title));
       if (band.common) btd.appendChild(el("span", "cx-bandnote", band.common));
       btr.appendChild(btd); tb.appendChild(btr);
-      for (const R of band.rows) tb.appendChild(gridRow(R));
+      for (const R of visible) tb.appendChild(gridRow(R));
     }
     /* your row, pinned, under a rule */
     if (squadReady) {
@@ -2498,7 +2664,7 @@ export default async function creators(host) {
         s.title = full
           ? "his whole locked squad was read — the rings on this row are the " +
             "members of it that reached these columns"
-          : "`panel_owned` names him on " + plural(owned.size, "player") +
+          : "the board's ownership field names him on " + plural(owned.size, "player") +
             " ON THIS BOARD. It does not publish his whole squad, so this is " +
             "not his squad size and the rest of his team cannot be shown here.";
         g.appendChild(s);
@@ -2574,6 +2740,23 @@ export default async function creators(host) {
       b.onclick = () => { gridAll = !gridAll; render(); };
       lg.appendChild(b);
     }
+    if (hiddenEmpty || gridEmptyShown) {
+      const b = el("button", "cx-more",
+        gridEmptyShown
+          ? "hide the empty rows again"
+          : `show ${plural(hiddenEmpty, "empty row")} — nothing said, no ` +
+            `ring among these columns`);
+      b.title = "A hidden row said nothing about the players in these " +
+        "columns and rings none of them. Hidden by default, counted here, " +
+        "one click away — never silently dropped.";
+      b.onclick = () => { gridEmptyShown = !gridEmptyShown; render(); };
+      lg.appendChild(b);
+    }
+    if (bands.some(b2 => b2.foot))
+      lg.appendChild(el("p", "sub",
+        "* a multi-host show's claims are the show's, not any one host's — " +
+        "this payload attributes no claim to a person, so nothing in that " +
+        "band is any one person's opinion."));
     lg.appendChild(el("p", "sub",
       `Columns are ordered by how many people touched the player — volume, ` +
       `not merit. Rows are grouped by what the payload can honestly say about ` +
@@ -2646,10 +2829,10 @@ export default async function creators(host) {
     if ((ps.no_entry_people || []).includes(name))
       return { known: false, text: "the panel publishes no verified entry id for him" };
     if ((ps.unknown_people || []).includes(name))
-      return { known: false, text: "`panel_squads` lists him under the people no picks are stored for" };
+      return { known: false, text: "the panel's squad ledger lists him under the people no picks are stored for" };
     if (ps.known != null)
       return { known: true, text:
-        `\`panel_squads\` counts him inside its ${ps.known} crawled ` +
+        `the panel's squad ledger counts him inside its ${ps.known} crawled ` +
         `squad${ps.known === 1 ? "" : "s"}` + (ps.gw != null ? ` (GW${ps.gw})` : "") };
     return { known: null, text: "the payload does not say whether his squad has been crawled" };
   }
@@ -2734,8 +2917,8 @@ export default async function creators(host) {
       p.appendChild(el("b", null, "A show has no squad."));
       p.append(people.length > 1
         ? ` ${R.label} has ${plural(people.length, "host")} with ` +
-          `${people.length} different teams. \`creator_detail\` is keyed on the ` +
-          "show, and this show's own `entry_id` is null, so there is no one " +
+          `${people.length} different teams. Squads are stored one per ` +
+          "SHOW, and this show has no entry id of its own, so there is no one " +
           "locked 15 behind this row. Merging four squads into one would be " +
           "inventing a team nobody picked, so this row carries hue and never " +
           "a ring — what was SAID here is the show's, not any one host's."
@@ -2770,10 +2953,10 @@ export default async function creators(host) {
           const note = el("div", "cx-tiny");
           note.append(w.text + ". ");
           if (w.known === true) note.append(
-            "His whole fifteen is still not reachable from here: " +
-            "`creator_detail` serves one squad per SHOW, and this show has no " +
-            "entry id of its own. Open his own row for the part `panel_owned` " +
-            "does name.");
+            "His whole fifteen is still not reachable from here: squads " +
+            "are served one per SHOW, and this show has no entry id of " +
+            "its own. Open his own row for the part the board's " +
+            "ownership field does name.");
           row.appendChild(note);
           list.appendChild(row);
         }
@@ -2782,7 +2965,9 @@ export default async function creators(host) {
       return;
     }
 
-    const load = el("p", "cx-loading", "reading his record…");
+    const load = el("div");
+    load.appendChild(el("p", "cx-loading", "reading his record…"));
+    load.appendChild(skeleton(1));
     drawer.appendChild(load);
     const d = await detailFor(R.show);
     if (!drawer.classList.contains("open")) return;
@@ -2813,14 +2998,14 @@ export default async function creators(host) {
       if (!solo) {
         const w = panelSquadWord(R.label);
         p.append(` ${R.label} is one of ${plural((R.people || []).length, "host")} ` +
-          `on ${R.show}. \`creator_detail\` returns one squad per SHOW, keyed ` +
+          `on ${R.show}. Squads come back one per SHOW, keyed ` +
           "on the show's own entry id — and a multi-host show has none — so " +
           `his team cannot be fetched from this page. ${w.text}.`);
       } else if (d.squad_reason) {
         p.append(" The panel gives a reason rather than an empty team, and it " +
           "is the reason, not a count of zero.");
       } else {
-        p.append(" `creator_detail` returned no squad and no reason for it.");
+        p.append(" The record returned no squad and no reason for it.");
       }
       drawer.appendChild(p);
       if (d.squad_reason) {
@@ -2839,14 +3024,14 @@ export default async function creators(host) {
       drawer.appendChild(el("h2", null, "What the board does know he holds"));
       if (!held.length) {
         drawer.appendChild(el("p", "sub",
-          `\`panel_owned\` names him on none of the ${plural((res.consensus || []).length, "player")} ` +
+          `The board's ownership field names him on none of the ${plural((res.consensus || []).length, "player")} ` +
           `on this board for GW${res.gw}. That is a statement about these ` +
           "players only — it is not a statement that he owns nobody."));
       } else {
         drawer.appendChild(el("p", "sub",
           `${held.length} of the ` +
           `${plural((res.consensus || []).length, "player")} on this board, ` +
-          "from `panel_owned`. " +
+          "from the board's own ownership field. " +
           "The other members of his fifteen are not published anywhere this " +
           "page can read, so this is a slice of his team and never the whole " +
           "of it. Marked below: whether this show's record ever names them."));
@@ -2928,7 +3113,7 @@ export default async function creators(host) {
       const qp = el("p", "sub");
       if (quiet.length) {
         qp.append(`${quiet.length} of his ${squad.length}. ` +
-          `Measured against every claim \`creator_detail\` holds for ${R.show}` +
+          `Measured against every claim in ${R.show}'s stored record` +
           (d.window_days != null ? ` — ${plural(d.window_days, "day")}` : "") +
           `, across every gameweek, not just GW${res.gw}. A transcript can ` +
           "never surface these: they are the picks he made and did not " +
@@ -3035,7 +3220,7 @@ export default async function creators(host) {
     const head = el("div", "dhead");
     head.appendChild(faceImg(r.code, "bigface"));
     const id = el("div");
-    id.appendChild(el("div", "dname", r.name));
+    id.appendChild(el("div", "dname", dn(r)));
     id.appendChild(el("div", "sub",
       [r.pos, r.team, r.price != null ? fmtPrice(r.price) : null,
        r.own_pct != null ? `${fmt1(r.own_pct)}% owned` : null,
@@ -3056,7 +3241,7 @@ export default async function creators(host) {
       "back to the episode it came from. Considered takes first, then keyword " +
       "windows; within each, newest first."));
     const list = el("div", "cx-quotes");
-    list.appendChild(el("p", "sub", "reading the sources…"));
+    list.appendChild(skeleton(1));
     sec.appendChild(list);
     drawer.appendChild(sec);
 

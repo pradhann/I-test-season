@@ -34,6 +34,72 @@
         background: var(--raised); border-radius: 999px; padding: 2px 8px; }
 .cite:hover { color: var(--ink); }
 
+/* ---- skeleton shells: grey blocks while the four calls are in flight ----
+   replaced by each section's first render; shimmer gated on motion pref */
+.sk { display: flex; flex-direction: column; gap: 8px; padding: 4px 0; }
+.sk-line, .sk-tile, .sk-block { background: var(--raised); border-radius: 8px; }
+.sk-line { height: 14px; }
+.sk-line:nth-child(2) { width: 72%; }
+.sk-line:nth-child(3) { width: 48%; }
+.sk-tile { display: inline-block; width: 108px; height: 46px;
+           border-radius: 9px; }
+.sk-block { height: 180px; border-radius: 12px; }
+.stats .sk { flex-direction: row; gap: 10px; }
+@media (prefers-reduced-motion: no-preference) {
+  .sk-line, .sk-tile, .sk-block { animation: sk-pulse 1.2s ease-in-out infinite; }
+  @keyframes sk-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
+}
+
+/* ---- THE VERDICT ("This week"): one pick per question, dissent beside ----
+   The card PICKS by the printed precedence; dissent chips carry the other
+   voices in their own currencies and drill to their evidence. */
+.db-verdict { border-left: 3px solid var(--s1); }
+.vd-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.vd-head h2 { margin: 0; }
+.vd-row { display: flex; align-items: center; gap: 12px; padding: 8px 10px;
+          border-top: 1px solid var(--line); cursor: pointer; }
+.vd-row:hover { background: var(--raised); border-radius: 8px; }
+.vd-q { flex: none; width: 74px; color: var(--faint); font-size: 10.5px;
+        letter-spacing: .08em; text-transform: uppercase; font-weight: 650; }
+.vd-main { min-width: 0; flex: 1; display: flex; align-items: center;
+           gap: 10px; flex-wrap: wrap; font-size: 13px; }
+.vd-movestrip { display: inline-flex; align-items: center; gap: 6px; }
+.vd-movestrip .avatar { margin-right: 0; }
+.vd-out { color: var(--muted);
+          text-decoration-color: color-mix(in oklab, var(--bad) 60%, transparent); }
+.vd-face { display: inline-flex; }
+.vd-nums { font: 600 11.5px var(--mono); color: var(--muted);
+           font-variant-numeric: tabular-nums; }
+.vd-side { display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+           justify-content: flex-end; margin-left: auto; }
+.vd-dissent { border: 1px solid var(--line); background: var(--surface);
+              color: var(--muted); font: 600 10.5px var(--mono);
+              border-radius: 999px; padding: 2px 9px; cursor: pointer; }
+.vd-dissent:hover { color: var(--ink); border-color: var(--muted); }
+.vd-how { margin-top: 6px; }
+.vd-how summary { cursor: pointer; color: var(--faint); font-size: 11px; }
+.vd-prec { margin: 6px 0 0; color: var(--muted); font-size: 12px; }
+@media (max-width: 640px) {
+  .vd-row { flex-wrap: wrap; }
+  .vd-side { margin-left: 84px; justify-content: flex-start; }
+}
+
+/* the briefing item's cross-reference chip: the same decision seen by the
+   rule voice folds into ONE card instead of three sections */
+.ib-xref { border: 1px dashed var(--line); background: transparent;
+           color: var(--muted); font: 600 10.5px var(--mono);
+           border-radius: 999px; padding: 2px 9px; cursor: pointer; }
+.ib-xref:hover { color: var(--ink); border-color: var(--muted); }
+
+/* solver honesty line: gap + age printed beside the headline gain */
+.sv-gapline { color: var(--muted); font: 600 11.5px var(--mono); }
+.sv-cost { font-size: 11px; }
+
+/* the armband 2×2 micro-table (mean vs haul, never blended) */
+.db-armband2 { margin-top: 8px; }
+.db-captbl { width: auto; min-width: 300px; }
+.db-captbl th { position: static; }
+
 /* ---- the agent briefing (model voice, clearly labelled) ---- */
 .ib-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
            margin-bottom: 4px; }

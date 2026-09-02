@@ -39,7 +39,7 @@
    fixtures.css, which owns them.
 */
 
-import { runPanel, el, emptyBox, errBox, provenance, fmt1, fmt2 } from "/js/app.js";
+import { runPanel, el, emptyBox, provenance, fmt1, fmt2 } from "/js/app.js";
 import { crest } from "/js/components/clubmark.js";
 
 /* The seven classes of the diverging scale, easy → hard. Defined in CSS, in
@@ -98,6 +98,87 @@ function gapText(...parts) {
   const f = document.createDocumentFragment();
   for (const p of parts) f.appendChild(typeof p === "string" ? document.createTextNode(p) : p);
   return f;
+}
+/* Honest absence, compacted: one quiet line, not a 40-word apology. The
+   dashed rail keeps it in the same visual family as fx-gap so "absence" still
+   reads as absence — it is just no longer a paragraph. */
+function quietGap(text) { return el("p", "fx-quiet", text); }
+
+/* A FAILED FETCH is not absence, and must never wear absence's clothes.
+   Solid --bad rail, the server's own reason, and a retry — visually a
+   different species from the dashed honest-empty style. */
+function errReason(e) {
+  const msg = String((e && e.message) || e || "");
+  // the structured shape: {error: true, panel, reason} serialized into the
+  // thrown message by runPanel's `HTTP 500 <body>` suffix
+  const m = msg.match(/\{.*\}/s);
+  if (m) {
+    try {
+      const j = JSON.parse(m[0]);
+      if (j && j.error && j.reason) return String(j.reason);
+    } catch { /* not JSON — fall through to the raw message */ }
+  }
+  return msg;
+}
+function fetchFailBox(what, reason, retry) {
+  const d = el("div", "fx-fetchfail");
+  d.setAttribute("role", "alert");
+  d.appendChild(el("b", null, `Couldn't load ${what}.`));
+  d.appendChild(el("span", "why",
+    "This is a fetch failure, not missing data" + (reason ? ` — ${reason}` : ".")));
+  if (retry) {
+    const b = el("button", "chip retry", "retry");
+    b.onclick = retry;
+    d.appendChild(b);
+  }
+  return d;
+}
+
+/* ------------------------------------------------- the hover card ---------
+   One floating card for the whole view, replacing native title-only tooltips
+   on grid cells, strip chips and scatter marks: the same numbers, instantly,
+   styled, and reachable by keyboard focus (Understat's hover panel is the
+   reference). It is pointer-transparent and positioned clamped to the
+   viewport. The text it shows is exactly what the title used to say. */
+function makeHoverCard() {
+  document.querySelectorAll(".fx-hover").forEach(n => n.remove());
+  const card = el("div", "fx-hover");
+  card.hidden = true;
+  document.body.appendChild(card);
+  let anchor = null;
+  const place = (x, y) => {
+    const r = card.getBoundingClientRect();
+    const px = Math.min(Math.max(8, x + 14), innerWidth - r.width - 8);
+    const py = y + 16 + r.height > innerHeight - 8 ? y - r.height - 10 : y + 16;
+    card.style.left = `${px}px`;
+    card.style.top = `${Math.max(8, py)}px`;
+  };
+  const show = (elm, text, x, y) => {
+    anchor = elm;
+    card.textContent = text;
+    card.hidden = false;
+    if (x != null) place(x, y);
+    else {
+      const r = elm.getBoundingClientRect();
+      place(r.left + r.width / 2, r.bottom - 8);
+    }
+  };
+  const hide = (elm) => { if (anchor === elm || !elm) { card.hidden = true; anchor = null; } };
+  return {
+    card,
+    hide,
+    attach(elm, textFn) {
+      // aria carries the same content for screen readers; no native title, so
+      // the browser's delayed tooltip never doubles the card
+      elm.setAttribute("aria-label", textFn());
+      elm.addEventListener("mouseenter", e => show(elm, textFn(), e.clientX, e.clientY));
+      elm.addEventListener("mousemove", e => { if (anchor === elm) place(e.clientX, e.clientY); });
+      elm.addEventListener("mouseleave", () => hide(elm));
+      elm.addEventListener("focus", () => show(elm, textFn()));
+      elm.addEventListener("blur", () => hide(elm));
+    },
+    destroy() { card.remove(); },
+  };
 }
 
 /* Panel call that reports failure as data instead of throwing, so one absent
@@ -520,10 +601,12 @@ export default async function fixtures(host) {
   /* The drawer lives on <body>, so leaving the view would otherwise leave it
      hanging over whatever loads next — the cross-links at the bottom of the
      drawer make that a one-click accident. */
+  const hover = makeHoverCard();
   const onHash = () => {
     closeDrawer();
     if ((location.hash || "").slice(1).split("?")[0] !== "fixtures") {
       drawer.remove();
+      hover.destroy();
       removeEventListener("hashchange", onHash);
       removeEventListener("keydown", onKey);
     }
@@ -575,9 +658,11 @@ export default async function fixtures(host) {
   controls.append(horizonRow, lensRow);
   const verdictEl = el("div", "fx-verdict");
   verdictEl.hidden = true;
+  const stripEl = el("div", "fx-strip-wrap");
+  stripEl.hidden = true;
   const body = el("div");
   const foot = el("div");
-  card.append(freshRow, controls, verdictEl, body, foot);
+  card.append(freshRow, controls, verdictEl, stripEl, body, foot);
   host.appendChild(card);
 
   const tornCard = el("section", "card");
@@ -592,7 +677,34 @@ export default async function fixtures(host) {
   let lens = "both";              // both | attack | defence — and the SORT
   let tableView = false;          // Table shows the last grid state's order
   let azSort = false;             // the look-one-club-up escape hatch
+  let tsort = null;               // table view's own sort: {key, dir} or null
   let M = null, prov = null, scriptUsed = null, boardErr = null;
+
+  /* ------------------------------------------------- my squad, once ----
+     One squad_overview fetch per visit. The map is a JOIN of two served
+     facts — who you hold (squad_overview) and the board's clubs — never a
+     computation: the pips, the dim toggle and the fixture-turn sentence all
+     read it. When the squad cannot be read the controls say so and the board
+     renders exactly as before (squad-awareness is an overlay, not a gate). */
+  let SQ = null;                  // {byClub: Map(code -> [names])} | {failed}
+  let myClubsOnly = false;
+  (async () => {
+    const r = await tryPanel("squad_overview", {});
+    if (r.ok && r.result && !r.result.empty) {
+      const byClub = new Map();
+      for (const p of [...(r.result.starters || []), ...(r.result.bench || [])]) {
+        const code = num(p.team_code);
+        if (code == null) continue;
+        if (!byClub.has(code)) byClub.set(code, []);
+        byClub.get(code).push(p.name || "—");
+      }
+      SQ = { byClub };
+    } else {
+      SQ = { failed: true, reason: r.ok ? (r.result && r.result.reason) : errReason(r.error) };
+    }
+    if (M) renderAll();           // overlay the marks once both facts exist
+  })();
+  const ownedNames = code => (SQ && SQ.byClub && SQ.byClub.get(code)) || null;
 
   /* --------------------------------------------------------- data fetch */
   async function load() {
@@ -611,14 +723,14 @@ export default async function fixtures(host) {
       boardErr = r;
       body.textContent = "";
       renderCalibration();
-      body.appendChild(errBox(r.error));
+      body.appendChild(fetchFailBox("the fixture board", errReason(r.error), load));
       body.appendChild(el("p", "sub",
         "The split panel refused this request, so there is nothing to draw. "
         + "(The legacy blended ticker is deleted — fixture_board carries its "
         + "number as legacy_difficulty, so there is no second panel to ask.) "
         + "The page shows the failure rather than an empty grid, because an "
         + "empty grid would read as “no fixtures”."));
-      verdictEl.hidden = tornCard.hidden = shapeCard.hidden = true;
+      verdictEl.hidden = stripEl.hidden = tornCard.hidden = shapeCard.hidden = true;
       return;
     }
     scriptUsed = r.script; prov = r.prov;
@@ -634,7 +746,7 @@ export default async function fixtures(host) {
         + "Neither is modelled in the browser: when the warehouse has no "
         + "fixtures for this window there is nothing to draw and nothing to "
         + "infer."));
-      verdictEl.hidden = tornCard.hidden = shapeCard.hidden = true;
+      verdictEl.hidden = stripEl.hidden = tornCard.hidden = shapeCard.hidden = true;
       return;
     }
     M = buildModel(res);
@@ -648,6 +760,7 @@ export default async function fixtures(host) {
     renderLens();
     renderNotes();
     renderVerdict();
+    renderStrip();
     renderBody();
     renderTorn();
     renderShape();
@@ -678,19 +791,23 @@ export default async function fixtures(host) {
                     emp && num(emp.outfield_ratio)].filter(v => v != null);
 
     if (mLo != null && eHi != null) {
+      /* ONE always-on line — the essay lives behind the disclosure. On a
+         Friday the reader needs the verdict ("tie-breaker"), not the method. */
       calibEl.hidden = false;
       const line = el("p", "fx-cal-line");
-      line.appendChild(document.createTextNode("Over "));
-      line.appendChild(el("b", null, `${gws} gameweeks`));
-      line.appendChild(document.createTextNode(", the difference between the best and worst fixture run is worth "));
-      line.appendChild(el("b", "fx-cal-hi", `${fmt1(mLo)}–${fmt1(eHi)} points`));
-      line.appendChild(document.createTextNode(" per asset. Which club you own is worth "));
+      line.appendChild(document.createTextNode("Fixtures are "));
+      line.appendChild(el("b", null, "tie-breakers"));
+      line.appendChild(document.createTextNode(
+        `: over ${gws} GWs the best-minus-worst run is worth `));
+      line.appendChild(el("b", "fx-cal-hi", `${fmt1(mLo)}–${fmt1(eHi)} pts`));
+      line.appendChild(document.createTextNode(" per asset; which club you own is worth "));
       line.appendChild(el("b", "fx-cal-hi",
         `${fmt1(Math.min(...ratios))}–${fmt1(Math.max(...ratios))}×`));
-      line.appendChild(document.createTextNode(
-        " that. Break ties with this page; do not pick assets with it."));
+      line.appendChild(document.createTextNode(" that."));
       calibEl.appendChild(line);
 
+      const disc = el("details", "fx-how fx-caldisc");
+      disc.appendChild(el("summary", null, "How this was measured"));
       const why = el("p", "sub");
       why.appendChild(document.createTextNode(
         `The low end is the model, which carries no estimation noise and is `
@@ -702,23 +819,38 @@ export default async function fixtures(host) {
       why.appendChild(document.createTextNode(
         `${emp.seasons ? " across " + String(emp.seasons).split(",").length + " seasons" : ""}, `
         + `where taking best-minus-worst across twenty estimated effects is biased `
-        + `upward by sampling noise and is therefore a ceiling. The truth is inside.`));
-      calibEl.appendChild(why);
+        + `upward by sampling noise and is therefore a ceiling. The truth is inside. `
+        + `Break ties with this page; do not pick assets with it.`));
+      disc.appendChild(why);
 
+      /* MEASURED, BY POSITION as a tiny dot plot on one shared axis, its
+         horizon restated — four numbers that were begging to be positions. */
       if (Array.isArray(emp.by_position) && emp.by_position.length) {
-        const strip = el("div", "fx-cal-pos");
+        const hGws = num(emp.horizon_gws) || 6;
+        disc.appendChild(el("span", "fx-cal-poslab",
+          `measured fixture effect by position — pts over ${hGws} GWs`));
+        const dmax = Math.max(...emp.by_position.map(r => num(r.fixture_pts_6gw) || 0), 0.01);
+        const plot = el("div", "fx-dotplot");
         for (const r of emp.by_position) {
-          const chip = el("span", "fx-cal-chip");
-          chip.appendChild(el("span", "p", String(r.position || "—")));
-          chip.appendChild(el("span", "n", `${fmt1(num(r.fixture_pts_6gw))} pts`));
-          chip.title = `${(num(r.n_starts) || 0).toLocaleString()} starts; `
-            + `team quality ${fmt1(num(r.team_pts_6gw))} pts, ${fmt1(num(r.ratio))}x the fixture effect`;
-          strip.appendChild(chip);
+          const v = num(r.fixture_pts_6gw);
+          const row = el("div", "dp-row");
+          row.appendChild(el("span", "dp-k", String(r.position || "—")));
+          const track = el("span", "dp-track");
+          if (v != null) {
+            const dot = el("i", "dp-dot");
+            dot.style.left = `${(v / dmax * 100).toFixed(1)}%`;
+            track.appendChild(dot);
+          }
+          row.appendChild(track);
+          row.appendChild(el("span", "dp-v", v == null ? "–" : `${fmt1(v)} pts`));
+          row.title = `${(num(r.n_starts) || 0).toLocaleString()} starts; `
+            + `team quality ${fmt1(num(r.team_pts_6gw))} pts over the same ${hGws} GWs, `
+            + `${fmt1(num(r.ratio))}x the fixture effect`;
+          plot.appendChild(row);
         }
-        const lab = el("span", "fx-cal-poslab", "measured, by position");
-        calibEl.appendChild(lab);
-        calibEl.appendChild(strip);
+        disc.appendChild(plot);
       }
+      calibEl.appendChild(disc);
       return;
     }
 
@@ -765,6 +897,15 @@ export default async function fixtures(host) {
           + (state === "fresh" ? "good" : state === "degraded" ? "warn" : "bad")));
         chip.appendChild(el("b", null, i.name));
         chip.appendChild(el("span", "age", h == null ? "—" : ageText(h)));
+        /* "5d old" undersells what a fitted rating's age MEANS: everything the
+           fit has seen ends at fitted_at, so matches since then are not in any
+           colour. Say what the fit includes, not just how old it is. */
+        if (inputKey(i.name) === "ratings" && i.as_of) {
+          const d = parseTs(i.as_of);
+          if (d) chip.appendChild(el("span", "fit",
+            `fit includes matches through ${d.toLocaleDateString(undefined,
+              { day: "numeric", month: "short" })}`));
+        }
         if (state !== "fresh") chip.appendChild(el("span", "tag", state));
         chip.setAttribute("aria-pressed", String(on));
         chip.title = [
@@ -976,6 +1117,25 @@ export default async function fixtures(host) {
     az.setAttribute("aria-pressed", String(azSort));
     az.onclick = () => { azSort = !azSort; renderLens(); renderBody(); };
     lensRow.appendChild(az);
+
+    /* the my-clubs overlay toggle (FFS ticker's my-team pin): DIMS rows where
+       you hold nobody — it never removes them, because a row you don't hold
+       is still the row your next transfer comes from */
+    const mine = el("button", "chip" + (myClubsOnly ? " on" : ""), "my clubs");
+    mine.setAttribute("aria-pressed", String(myClubsOnly));
+    if (SQ && SQ.byClub && SQ.byClub.size) {
+      mine.title = `dim clubs you own nobody from (you hold players at `
+        + `${SQ.byClub.size} club${SQ.byClub.size === 1 ? "" : "s"}); rows stay `
+        + "— dimmed, never removed";
+      mine.onclick = () => { myClubsOnly = !myClubsOnly; renderLens(); renderBody(); };
+    } else {
+      mine.disabled = true;
+      mine.title = SQ && SQ.failed
+        ? `squad_overview could not be read${SQ.reason ? ` — ${SQ.reason}` : ""}; `
+          + "the board renders without the overlay rather than guessing your squad"
+        : "reading your squad…";
+    }
+    lensRow.appendChild(mine);
   }
 
   function renderNotes() {
@@ -1089,14 +1249,60 @@ export default async function fixtures(host) {
       r.appendChild(open);
       return r;
     };
-    const groups = tornGroups();
-    if (!groups.length) {
+    /* The fixture-turn sentence the dashboard brief knows, surfaced where the
+       fixtures live: a served rank joined with a served holding — no number
+       is computed here, only the join. Shown only when it applies to YOU. */
+    if (SQ && SQ.byClub && SQ.byClub.size) {
+      const turns = [];
+      for (const t of M.teams) {
+        const names = ownedNames(t.code);
+        if (!names) continue;
+        if (t.attRankH != null && t.attRankH <= 3)
+          turns.push({ t, names, rank: t.attRankH, what: "attacking" });
+        if (t.defRankH != null && t.defRankH <= 3)
+          turns.push({ t, names, rank: t.defRankH, what: "defensive" });
+      }
+      turns.sort((a, b) => a.rank - b.rank);
+      for (const u of turns.slice(0, 2)) {
+        const r = el("div", "vrow fx-turnrow");
+        r.appendChild(el("span", "vlab", "your fixture turn"));
+        const txt = el("span", "txt");
+        txt.appendChild(el("b", null, u.t.short));
+        txt.appendChild(document.createTextNode(
+          ` has the #${u.rank} easiest ${u.what} run over `
+          + `GW${M.gws[0]}–GW${M.gws[M.gws.length - 1]} and you hold `
+          + `${u.names.length} (${u.names.join(", ")})`));
+        r.appendChild(txt);
+        const open = el("button", "chip", "open");
+        open.title = `jump to ${u.t.short}'s row on the board`;
+        open.onclick = () => bookmark(u.t);
+        r.appendChild(open);
+        verdictEl.appendChild(r);
+      }
+    }
+
+    /* Torn feature rows are squad-aware: with a readable squad, they show
+       only when a torn fixture belongs to a club you hold — otherwise the
+       finding is trivia here and lives in the collapsed list below. Without
+       a readable squad the page cannot know, so it shows the biggest tear
+       as before rather than guessing. */
+    const allGroups = tornGroups();
+    const relevantOf = gs => (SQ && SQ.byClub && SQ.byClub.size)
+      ? gs.filter(g => g.some(d => ownedNames(num(d.team_code))))
+      : gs;
+    const groups = relevantOf(allGroups);
+    if (!allGroups.length) {
       const r = el("div", "vrow tear");
       r.appendChild(el("span", "vlab", "the torn opponent"));
       r.appendChild(el("span", "txt",
         "no torn fixtures in this window — a real finding, not an empty "
         + "state: over this window the split does not change any decision"));
       verdictEl.appendChild(r);
+    } else if (!groups.length) {
+      verdictEl.appendChild(quietGap(
+        `${allGroups.length} torn opponent-venue${allGroups.length === 1 ? "" : "s"} `
+        + "in this window, none at a club you hold — the list is folded below "
+        + "and every one is marked on its cell's seam"));
     } else {
       verdictEl.appendChild(tearRow(groups[0], false));
       const sign = (groups[0][0].gap || 0) > 0;
@@ -1117,6 +1323,84 @@ export default async function fixtures(host) {
           + `quality is ${fmt1(Math.min(...ratios))}–${fmt1(Math.max(...ratios))}× this`
         : `ranks are ease sums over ${range} · no calibration served — treat `
           + "them as tie-breakers, not asset-pickers"));
+  }
+
+  /* ---------------------------------------------- the next-GW strip ---
+     One compact row: THIS week's fixtures, hardest → easiest through the
+     attack lens, kickoff printed — the captain sanity check (the official
+     app's plain fixture list is faster than a 6-GW matrix for this one
+     question). Every number is the board's own; each side's swatch is that
+     club's attack-lens colour, so the strip and the grid can never disagree. */
+  function renderStrip() {
+    stripEl.textContent = "";
+    stripEl.hidden = true;
+    if (!M.anySplit || !M.gws.length) return;
+    const gw0 = M.gws[0];
+    const byId = new Map();     // fixture_id -> {home:{t,c}, away:{t,c}}
+    for (const t of M.teams) {
+      const slot = t.byGw.get(gw0);
+      if (!slot || slot.blank) continue;
+      for (const c of slot.opps) {
+        if (c.fixtureId == null) continue;
+        if (!byId.has(c.fixtureId)) byId.set(c.fixtureId, {});
+        byId.get(c.fixtureId)[c.isHome ? "home" : "away"] = { t, c, slot };
+      }
+    }
+    const rows = [...byId.values()].filter(f => f.home && f.away);
+    if (!rows.length) return;
+    const best = f => {
+      const vals = [f.home.c.easeAtt, f.away.c.easeAtt].filter(v => v != null);
+      return vals.length ? Math.max(...vals) : null;
+    };
+    rows.sort((a, b) => {
+      const va = best(a), vb = best(b);
+      if (va == null && vb == null) return 0;
+      if (va == null) return -1;
+      if (vb == null) return 1;
+      if (va !== vb) return va - vb;               // hardest first, easiest last
+      return String(a.home.c.kickoff || "").localeCompare(String(b.home.c.kickoff || ""));
+    });
+
+    stripEl.hidden = false;
+    const lab = el("span", "vlab",
+      `GW${gw0} · hardest → easiest`);
+    lab.title = "this week's fixtures through the attack lens — the captain "
+      + "sanity check; each club's swatch is its own attack-lens colour";
+    stripEl.appendChild(lab);
+    const strip = el("div", "fx-strip scroll-x");
+    for (const f of rows) {
+      const { home, away } = f;
+      const chip = el("button", "fx-stripchip");
+      const side = (x, caps) => {
+        const s = el("span", "side");
+        s.appendChild(el("i", "sw " + (x.c.easeAtt == null ? "nofit"
+          : (cls(x.c.easeAtt, M.scale.dom) || "fx-n0"))));
+        s.appendChild(el("b", null,
+          caps ? x.t.short.toUpperCase() : x.t.short.toLowerCase()));
+        if (ownedNames(x.t.code))
+          s.appendChild(el("span", "own", String(ownedNames(x.t.code).length)));
+        return s;
+      };
+      chip.appendChild(side(home, true));
+      chip.appendChild(el("span", "v", "v"));
+      chip.appendChild(side(away, false));
+      const ko = parseTs(home.c.kickoff);
+      if (ko) chip.appendChild(el("span", "ko",
+        ko.toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" })));
+      hover.attach(chip, () => [
+        `${home.t.short} v ${away.t.short} · GW${gw0}`,
+        kickoffText(home.c.kickoff),
+        `${home.t.short} attackers ${sgn2(home.c.easeAtt)} · `
+          + `${away.t.short} attackers ${sgn2(away.c.easeAtt)}`,
+        `${M.scale.unit}; positive is easier`,
+        ownedNames(home.t.code) ? `you hold ${ownedNames(home.t.code).join(", ")} (${home.t.short})` : null,
+        ownedNames(away.t.code) ? `you hold ${ownedNames(away.t.code).join(", ")} (${away.t.short})` : null,
+        "click for the match detail",
+      ].filter(Boolean).join("\n"));
+      chip.onclick = () => openFixture(home.t, home.slot, home.c);
+      strip.appendChild(chip);
+    }
+    stripEl.appendChild(strip);
   }
 
   /* A chip click is a bookmark, not a claim: scroll the board to the club's
@@ -1194,8 +1478,17 @@ export default async function fixtures(host) {
 
     const ordered = sortedTeams();
     ordered.forEach((t) => {
-      grid.appendChild(railCell(t, railMax));
-      for (const g of M.gws) grid.appendChild(gwCell(t, t.byGw.get(g)));
+      /* the my-clubs overlay DIMS, never removes: an unowned row is still the
+         row your next transfer comes from */
+      const dim = myClubsOnly && SQ && SQ.byClub && !ownedNames(t.code);
+      const rail = railCell(t, railMax);
+      if (dim) rail.classList.add("fx-dim");
+      grid.appendChild(rail);
+      for (const g of M.gws) {
+        const cell = gwCell(t, t.byGw.get(g));
+        if (dim) cell.classList.add("fx-dim");
+        grid.appendChild(cell);
+      }
     });
 
     wrap.appendChild(grid);
@@ -1226,6 +1519,17 @@ export default async function fixtures(host) {
         + "prior, not data — newly promoted, so read its colours gently";
     }
     nm.appendChild(label);
+    /* the ownership pip: a count, because "you own 2 here" is the fact the
+       rusher cross-references from memory today (FFS ticker's my-team pin) */
+    const held = ownedNames(t.code);
+    if (held) {
+      d.classList.add("own");
+      const pip = el("span", "fx-own", String(held.length));
+      pip.title = `you hold ${held.length} at ${t.short}: ${held.join(", ")}`;
+      pip.setAttribute("aria-label",
+        `you hold ${held.length} player${held.length === 1 ? "" : "s"} here: ${held.join(", ")}`);
+      nm.appendChild(pip);
+    }
     if (t.tornRows && t.tornRows.length) {
       const z = el("i", "fx-torn2", "⇄");
       z.title = `${t.tornRows.length} torn fixture`
@@ -1331,8 +1635,10 @@ export default async function fixtures(host) {
     if (!known) btn.appendChild(el("span", "why",
       M.anySplit && lens === "both" ? "half fitted" : "no fit"));
 
+    /* the styled hover/focus card replaces the native title: the same
+       numbers, instantly, reachable by keyboard (the cell is a button) */
     const venue = c.isHome ? "home" : "away";
-    btn.title = [
+    hover.attach(btn, () => [
       `${t.short} ${c.isHome ? "v" : "at"} ${c.opponent} · GW${slot.gw}${slot.double ? " (double)" : ""}`,
       kickoffText(c.kickoff),
       hasSplit
@@ -1348,8 +1654,10 @@ export default async function fixtures(host) {
           + (c.nBooks != null ? ` · ${c.nBooks} books` : "")
           + (c.marketAgeH != null ? ` · ${ageText(c.marketAgeH)}` : "")
         : null,
+      ownedNames(t.code)
+        ? `you hold ${ownedNames(t.code).length} at ${t.short}` : null,
       `${venue} · click for the match detail`,
-    ].filter(Boolean).join("\n");
+    ].filter(Boolean).join("\n"));
     btn.onclick = () => openFixture(t, slot, c);
     return btn;
   }
@@ -1421,15 +1729,72 @@ export default async function fixtures(host) {
     const wrap = el("div", "scroll-x");
     const t = el("table", "data sticky-first fx-tableview");
     const thead = el("thead"), hr = el("tr");
-    hr.appendChild(el("th", null, "club"));
-    for (const g of M.gws) hr.appendChild(el("th", "num", `GW${g}`));
-    hr.appendChild(el("th", "num", M.anySplit ? "Σ att" : "Σ run"));
-    if (M.anySplit) hr.appendChild(el("th", "num", "Σ def"));
+
+    /* REAL sort — the toggle's tooltip promised a sortable table, so the
+       headers are buttons, the active one carries aria-sort and a persistent
+       arrow (FBRef's headers are the reference). Sort values are the same
+       eases the cells print; a blank sorts last under either direction. */
+    const gwVal = (team, g) => {
+      const slot = team.byGw.get(g);
+      if (!slot || slot.blank || !slot.opps.length) return null;
+      const c = slot.opps[0];
+      return c.easeAtt != null ? c.easeAtt : c.easeBlend;
+    };
+    const keyVal = (team, key) => {
+      if (key === "club") return team.short;
+      if (key === "att") return M.anySplit ? team.attSum
+        : (team.blendMean == null ? null : team.blendMean * team.nFixtures);
+      if (key === "def") return team.defSum;
+      return gwVal(team, Number(key.slice(3)));       // "gw:<n>"
+    };
+    const th = (key, label, numeric) => {
+      const cell = el("th", numeric ? "num" : null);
+      const on = tsort && tsort.key === key;
+      cell.setAttribute("aria-sort",
+        on ? (tsort.dir > 0 ? "ascending" : "descending") : "none");
+      const b = el("button", "fx-th" + (on ? " on" : ""));
+      b.appendChild(el("span", null, label));
+      b.appendChild(el("span", "arr", on ? (tsort.dir > 0 ? "▲" : "▼") : ""));
+      b.title = numeric
+        ? `sort by ${label} — first click puts the easiest run on top`
+        : "sort by club name";
+      b.onclick = () => {
+        if (on) tsort = { key, dir: -tsort.dir };
+        else tsort = { key, dir: numeric ? -1 : 1 };  // numeric: easiest first
+        renderBody();
+      };
+      cell.appendChild(b);
+      return cell;
+    };
+    hr.appendChild(th("club", "club", false));
+    for (const g of M.gws) hr.appendChild(th(`gw:${g}`, `GW${g}`, true));
+    hr.appendChild(th("att", M.anySplit ? "Σ att" : "Σ run", true));
+    if (M.anySplit) hr.appendChild(th("def", "Σ def", true));
     thead.appendChild(hr); t.appendChild(thead);
+
+    let rows = sortedTeams();                          // the lens order
+    if (tsort) {
+      rows = rows.slice().sort((a, b) => {
+        const va = keyVal(a, tsort.key), vb = keyVal(b, tsort.key);
+        if (typeof va === "string" || typeof vb === "string")
+          return String(va).localeCompare(String(vb)) * tsort.dir;
+        if (va == null && vb == null) return 0;
+        if (va == null) return 1;                      // blanks last, always
+        if (vb == null) return -1;
+        return (va - vb) * tsort.dir;
+      });
+    }
     const tb = el("tbody");
-    for (const team of sortedTeams()) {
+    for (const team of rows) {
       const tr = el("tr");
-      tr.appendChild(el("td", null, team.short));
+      const tdc = el("td", null, team.short);
+      const held = ownedNames(team.code);
+      if (held) {
+        const pip = el("span", "fx-own", String(held.length));
+        pip.title = `you hold ${held.join(", ")}`;
+        tdc.appendChild(pip);
+      }
+      tr.appendChild(tdc);
       for (const g of M.gws) {
         const slot = team.byGw.get(g);
         const td = el("td", "num");
@@ -1489,9 +1854,9 @@ export default async function fixtures(host) {
     const rows = M.divergent;
     tornCard.appendChild(el("p", "sub",
       `${rows.length} fixture${rows.length === 1 ? "" : "s"} in GW${M.gws[0]}–`
-      + `GW${M.gws[M.gws.length - 1]} where the two lenses point opposite ways. `
-      + "These are the fixtures a single difficulty number reports as average, "
-      + "which is the one thing they are not."));
+      + `GW${M.gws[M.gws.length - 1]} where the two lenses point opposite ways — `
+      + "the ones a single difficulty number reports as average. Every one is "
+      + "marked on its cell's seam above."));
     if (!rows.length) {
       tornCard.appendChild(namedGap("No torn fixtures in this window.",
         "Every fixture here has its two lenses pointing the same way. That is a "
@@ -1499,6 +1864,14 @@ export default async function fixtures(host) {
         + "change any decision, and a blended number would have served."));
       return;
     }
+    /* the prose list folds by default — the seams on the grid stay, and are
+       the durable encoding; this is the appendix, one click away */
+    const disc = el("details", "fx-how");
+    const nGroupsAll = tornGroups().length;
+    disc.appendChild(el("summary", null,
+      `show the ${Math.min(5, nGroupsAll)} biggest of `
+      + `${nGroupsAll} torn opponent-venue${nGroupsAll === 1 ? "" : "s"}`));
+    tornCard.appendChild(disc);
     const list = el("div", "fx-torn-list");
     for (const g of tornGroups().slice(0, 5)) {
       const top = g[0];
@@ -1522,11 +1895,10 @@ export default async function fixtures(host) {
       row.appendChild(who);
       list.appendChild(row);
     }
-    tornCard.appendChild(list);
-    const nGroups = tornGroups().length;
-    if (nGroups > 5)
-      tornCard.appendChild(el("p", "sub",
-        `${nGroups - 5} more torn opponent-venues in this window — every one `
+    disc.appendChild(list);
+    if (nGroupsAll > 5)
+      disc.appendChild(el("p", "sub",
+        `${nGroupsAll - 5} more torn opponent-venues in this window — every one `
         + "is marked on its own cell's seam above."));
   }
 
@@ -1583,7 +1955,15 @@ export default async function fixtures(host) {
     const model = cal.model || null, emp = cal.empirical || null;
     const ratios = [model && num(model.ratio_attack), model && num(model.ratio_defence),
                     emp && num(emp.outfield_ratio)].filter(v => v != null);
-    shapeCard.appendChild(el("p", "sub",
+    /* asset-picking context, not deadline flow — folded by default behind its
+       own one-line claim; the chips at the top of the page already carry the
+       deadline answer */
+    const disc = el("details", "fx-how");
+    disc.appendChild(el("summary", null,
+      "team quality, club by club — the map you pick assets on; the board "
+      + "above is the tie-breaker"));
+    shapeCard.appendChild(disc);
+    disc.appendChild(el("p", "sub",
       "The fitted attack and defence ratings behind every colour above — team "
       + "quality, which is what the board deliberately holds constant. "
       + (ratios.length
@@ -1635,8 +2015,10 @@ export default async function fixtures(host) {
       if (v > y0 && v < y1) {
         svg.appendChild(mk("line", { class: "tick", x1: P - 4, x2: P,
           y1: sy(v), y2: sy(v) }));
+        /* same quantity, same chart, ONE number format — "−0.25" on both
+           axes; the y-axis's clipped "−.25" was a second format for free */
         svg.appendChild(mk("text", { class: "ticklab", x: P - 6, y: sy(v) + 3,
-          "text-anchor": "end" }, (v > 0 ? "+" : "−") + ".25"));
+          "text-anchor": "end" }, (v > 0 ? "+" : "−") + "0.25"));
       }
     }
     const q = (x, y, anchor, text) =>
@@ -1674,7 +2056,9 @@ export default async function fixtures(host) {
       b.style.top = `${(y / H * 100).toFixed(2)}%`;
       b.appendChild(crest(t.code, t.short, "s20"));
       if (keepLabel.has(t.code)) b.appendChild(el("span", "lbl", t.short));
-      b.title = [
+      /* the styled hover card is the instant, keyboard-reachable fallback for
+         every mark — the label-collision pass drops LABELS, never data */
+      hover.attach(b, () => [
         t.name,
         `attack ${sgn2(num(t.rating.attack))} · defence ${sgn2(num(t.rating.defence))} `
           + "goals vs league average, per match",
@@ -1686,12 +2070,12 @@ export default async function fixtures(host) {
         t.rating.is_promoted
           ? "promoted — the fit leans on a prior, so read this mark gently" : null,
         "click for the club's run",
-      ].filter(Boolean).join("\n");
+      ].filter(Boolean).join("\n"));
       b.onclick = () => openClub(t);
       wrap.appendChild(b);
     }
-    shapeCard.appendChild(wrap);
-    shapeCard.appendChild(el("p", "sub",
+    disc.appendChild(wrap);
+    disc.appendChild(el("p", "sub",
       "Both axes are goals versus a league-average opponent, per match, from "
       + "the same fit as every colour above. The crosshair is league average. "
       + "This is the map you pick assets on; the board above is the "
@@ -1776,9 +2160,12 @@ export default async function fixtures(host) {
     const ratings = (M.res.inputs || []).find(i => /rating/i.test(String(i.name || "")));
     if (ratings) {
       const h = num(ratings.age_hours) ?? ageHours(ratings.as_of);
+      const fd = parseTs(ratings.as_of);
       fresh.appendChild(mastFreshChip("ratings",
-        h == null ? "age unknown" : ageText(h), false,
-        String(ratings.detail || "")));
+        (h == null ? "age unknown" : ageText(h))
+        + (fd ? ` · fit includes matches through ${fd.toLocaleDateString(undefined,
+              { day: "numeric", month: "short" })}` : ""),
+        false, String(ratings.detail || "")));
     }
     fresh.appendChild(mastFreshChip("market",
       c.marketState !== "priced"
@@ -1969,6 +2356,21 @@ export default async function fixtures(host) {
     const r = await tryPanel("fixture_detail", params);
     if (!drawer.classList.contains("open")) return;
     load.remove();
+
+    /* A FAILED FETCH never wears absence's clothes: when the panel 500s the
+       sections say "couldn't load — retry", not "nothing filed" — presenting
+       an error as honest absence is the one lie this page must never tell. */
+    if (!r.ok && !r.missing) {
+      A.A2.appendChild(fetchFailBox("the match detail", errReason(r.error),
+        () => openFixture(t, slot, c)));
+      A.A3.appendChild(el("p", "fx-quiet fail",
+        "not loaded — the match-detail fetch failed; retry in the Market act"));
+      A.A4.appendChild(el("p", "fx-quiet fail",
+        "not loaded — the match-detail fetch failed; retry in the Market act"));
+      crossLinks(A.A5, t, c);
+      return;
+    }
+
     const raw = (r.ok && r.result && !r.result.empty) ? r.result : null;
     const D = flattenDetail(raw);
 
@@ -1994,12 +2396,10 @@ export default async function fixtures(host) {
     }
     crossLinks(A.A5, t, c);
 
-    if (!r.ok) {
+    if (!r.ok && r.missing) {
       drawer.appendChild(el("p", "sub",
-        r.missing
-          ? "fixture_detail is not registered, so every section above is a named "
-            + "gap rather than a fetch failure."
-          : `fixture_detail failed: ${String(r.error.message || r.error)}`));
+        "fixture_detail is not registered, so every section above is a named "
+        + "gap rather than a fetch failure."));
     }
   }
 
@@ -2026,12 +2426,9 @@ export default async function fixtures(host) {
     const dis = raw && Array.isArray(raw.disagreement) && raw.disagreement.length
       ? raw.disagreement : null;
     if (!dis) {
-      host.appendChild(namedGap("No model/market comparison in this payload.",
-        gapText(
-          codeSpan("fixture_detail"), "'s ", codeSpan("disagreement"),
-          " rows carry both estimators for the same quantities. None arrived, "
-          + "so there is no gap to draw — the market-state note below still "
-          + "says what the board knew.")));
+      host.appendChild(quietGap(
+        "market: nothing fetched for this fixture — the state note below "
+        + "still says what the board knew"));
       return;
     }
 
@@ -2135,30 +2532,18 @@ export default async function fixtures(host) {
         host.appendChild(el("p", "sub", String(raw.intel.framing)));
     }
 
-    /* whole sections with nothing keep their named gaps, full width */
-    if (!news) host.appendChild(namedGap("No team news in this payload.", gapText(
-      "Availability lives in ", codeSpan("fact_player_state"), " and ",
-      codeSpan("intel_item"), " (kind ", codeSpan("availability"),
-      "). Nothing in this payload carries it, so nothing is shown — a blank "
-      + "here means “not fetched”, never “nobody is injured”.")));
-    if (!xi) host.appendChild(namedGap(
+    /* honest absence, one quiet line per section — the WHY is still true and
+       still said, just no longer a 40-word apology on the scan path */
+    if (!news) host.appendChild(quietGap(
+      "team news: nothing fetched for this fixture — not fetched, never "
+      + "“nobody is injured”"));
+    if (!xi) host.appendChild(quietGap(
       raw && raw.predicted_lineups && raw.predicted_lineups.unavailable
-        ? "No predicted XI yet."
-        : "No predicted XI in this payload.",
-      raw && raw.predicted_lineups && raw.predicted_lineups.unavailable
-        ? String(raw.predicted_lineups.unavailable)
-        : gapText(
-            codeSpan("fact_predicted_lineup"), " holds predictions for gameweeks the "
-            + "provider has published. The panel does not return them, so none are "
-            + "drawn. Providers usually publish around T−48h, so an early "
-            + "gameweek in the horizon legitimately has none.")));
-    if (!sp) host.appendChild(namedGap(
-      "Set-piece duty is in the warehouse and not in this payload.", gapText(
-      "Set-piece duty is the highest-value team-level intel in the warehouse (",
-      codeSpan("set_piece_duty"), ", ", codeSpan("set_piece_change"),
-      ") and nothing in the UI renders it yet. It belongs here as DUTY — who "
-      + "takes them — and not as a team trait: set-piece goals-over-expected "
-      + "barely persists season to season, while who takes the corner does.")));
+        ? `predicted XI: ${String(raw.predicted_lineups.unavailable)}`
+        : "predicted XI: none published for this fixture yet (providers "
+          + "publish ~T−48h)"));
+    if (!sp) host.appendChild(quietGap(
+      "set-piece duty: in the warehouse, not in this payload yet"));
   }
 
   function peopleBlock(label, rows, clubName, renderRows) {
@@ -2249,13 +2634,9 @@ export default async function fixtures(host) {
         + "thing this page could do. Style explains a fixture; it is never "
         + "allowed into the colour."));
     } else {
-      host.appendChild(namedGap("No style summary in this payload.",
-        "What this warehouse can honestly say about style is team xG for and "
-        + "against, goals versus xG, and clean-sheet rate, split home and away. "
-        + "What it cannot say is PPDA, field tilt, sequence types or line height "
-        + "— that event data is not here, and inventing it would be the worst "
-        + "thing this page could do. Style explains a fixture; it is never "
-        + "allowed into the colour."));
+      host.appendChild(quietGap(
+        "form: no style summary in this payload — and no PPDA or field tilt "
+        + "anywhere, because that event data is not in this warehouse"));
     }
 
     host.appendChild(el("h2", null, "Previous meetings"));
@@ -2274,12 +2655,9 @@ export default async function fixtures(host) {
             + "and mostly different players, is not evidence about this one. "
             + "Head-to-head is the most over-read object in fixture analysis."));
     } else {
-      host.appendChild(namedGap("No previous meetings in this payload.", gapText(
-        "Completed meetings would come from ", codeSpan("fact_fixture"),
-        " in both orientations. The panel returns none. If these two clubs have "
-        + "never met in the Premier League there is nothing to show and nothing "
-        + "to infer — but this page cannot currently tell you which of those two "
-        + "it is, and it will not guess.")));
+      host.appendChild(quietGap(
+        "previous meetings: none in this payload — “never met” and “not "
+        + "fetched” are indistinguishable here, and the page will not guess"));
     }
 
     host.appendChild(el("h2", null, "Creator team-talk"));
@@ -2306,13 +2684,8 @@ export default async function fixtures(host) {
       }
       host.appendChild(box);
     } else {
-      host.appendChild(namedGap("No creator has said anything about either club.",
-        gapText(
-          codeSpan("content_insight"), " carries team-level observations, and none "
-          + "of them is about either of these clubs at this instant. Insights are "
-          + "written by both analysis paths now; ",
-          codeSpan("fpl-content backfill-insights"),
-          " recovers them from analyses already stored, without a model call.")));
+      host.appendChild(quietGap(
+        "creator team-talk: nothing filed on either club in this window"));
     }
 
     host.appendChild(el("h2", null, "Press & scout links"));
@@ -2335,9 +2708,8 @@ export default async function fixtures(host) {
         + "them because FPL publishes no timestamp for the field. Treat the age "
         + "as an upper bound on freshness, not a publication time."));
     } else {
-      host.appendChild(namedGap("No press or scout links for this fixture.", gapText(
-        "Press-conference and scout links would come from ", codeSpan("intel_item"),
-        ". None reached this fixture.")));
+      host.appendChild(quietGap(
+        "press & scout links: none reached this fixture"));
     }
   }
 

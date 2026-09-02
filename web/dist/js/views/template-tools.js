@@ -128,6 +128,11 @@ export function renderTools(host, ctx) {
   const byKey = Object.fromEntries(fields.map(f => [f.key, f]));
   const field = byKey[ctx.fieldKey];
   const focus = typeof ctx.onFocus === "function" ? ctx.onFocus : () => {};
+  /* The page's namesake-aware display name (payload disambiguator first,
+     club-tagged duplicate second) — both halves of the tab must print one
+     name per player. Falls back to the raw name for an older seam. */
+  const dName = typeof ctx.dispName === "function" ? ctx.dispName
+                                                   : (r => r.name);
 
   const diffCard = el("section", "card tt");
   const simCard = el("section", "card tt");
@@ -279,7 +284,7 @@ export function renderTools(host, ctx) {
 
     const id = el("div", "ttid");
     const nm = el("div", "ttname");
-    nm.appendChild(el("span", "n", r.name));
+    nm.appendChild(el("span", "n", dName(r)));
     if (opts.chip) nm.appendChild(el("span", "chip " + (opts.chipCls || ""), opts.chip));
     id.appendChild(nm);
     const pc = pctileOf(v);
@@ -517,7 +522,7 @@ export function renderTools(host, ctx) {
        the reason he is missing. */
     const noField = squad.filter(r => eoOf(r) == null);
     const noRole = squad.filter(r => eoOf(r) != null && myMult(r).v == null);
-    const names = l => l.map(r => r.name).join(", ");
+    const names = l => l.map(r => dName(r)).join(", ");
     if (noField.length || noRole.length) {
       const d = el("p", "sub");
       if (noField.length) d.append(
@@ -662,7 +667,7 @@ export function renderTools(host, ctx) {
       ...pts.filter(p => p.mine).sort((a, b) => Math.abs(b.t) - Math.abs(a.t)).slice(0, 6),
     ];
     for (const p of cands) {
-      const w = p.r.name.length * 5.6 + 8;
+      const w = dName(p.r).length * 5.6 + 8;
       /* Four placements, in order of how naturally the eye ties the name to
          the mark: right of it, left of it, then straight above or below —
          which is what saves the dots sitting at the end of a tall column,
@@ -680,7 +685,7 @@ export function renderTools(host, ctx) {
         if (!free(b)) continue;
         placed.push(b);
         svg.appendChild(sv("text", { x: t.x, y: t.y,
-          class: "ttlabel" + t.cls + (p.mine ? " mine" : "") }, p.r.name));
+          class: "ttlabel" + t.cls + (p.mine ? " mine" : "") }, dName(p.r)));
         break;
       }
     }
@@ -696,16 +701,21 @@ export function renderTools(host, ctx) {
     const tip = el("div", "tttip");
     wrap.appendChild(tip);
     host2.appendChild(wrap);
-    host2.appendChild(el("p", "sub",
-      `Filled = you own him, hollow = you do not; the tint is the same term ` +
-      `the rows below rank by. The axis is square-root scaled — which is why ` +
-      `its ticks are unevenly spaced — because half the players this field ` +
-      `holds sit under ${pct(quantile(heldVals, 0.5))} EO and a linear axis ` +
-      `would pile them into one column. Only the marks with clear space ` +
-      `around them are named — a label laid across three other dots is worse ` +
-      `than none, and every player here is named in the rows below and on ` +
-      `hover. Hover anywhere near a dot for its numbers; click for the full ` +
-      `ladder.`));
+    /* One always-on line; the methodology behind the drawer's own
+       "how this is computed" disclosure pattern (caption tiering, R1+R3). */
+    host2.appendChild(el("p", "sub capline",
+      `Filled = you own him, hollow = you do not · tint = the term the rows ` +
+      `below rank by · hover near a dot for numbers, click for the ladder.`));
+    const how = el("details", "howto");
+    how.appendChild(el("summary", null, "how this is computed"));
+    how.appendChild(el("p", "sub",
+      `The axis is square-root scaled — which is why its ticks are unevenly ` +
+      `spaced — because half the players this field holds sit under ` +
+      `${pct(quantile(heldVals, 0.5))} EO and a linear axis would pile them ` +
+      `into one column. Only the marks with clear space around them are ` +
+      `named — a label laid across three other dots is worse than none, and ` +
+      `every player here is named in the rows below and on hover.`));
+    host2.appendChild(how);
 
     let cur = null;
     const clear = () => {
@@ -731,7 +741,7 @@ export function renderTools(host, ctx) {
 
     function showTip(p, box) {
       tip.textContent = "";
-      tip.appendChild(el("b", null, p.r.name));
+      tip.appendChild(el("b", null, dName(p.r)));
       tip.appendChild(el("div", "sub",
         [p.r.pos, p.r.team, fmtPrice(p.r.price)].filter(Boolean).join(" · ")));
       const line = (k, v) => {
@@ -793,7 +803,7 @@ export function renderTools(host, ctx) {
     for (const r of [...squad].sort((a, b) => (eoOf(b) ?? -1) - (eoOf(a) ?? -1))) {
       const m = myMult(r);
       outSel.appendChild(Object.assign(el("option", null,
-        `${r.name} · ${r.pos ?? "?"} · ${ROLE_NAME[r.your_role] || `${mult(m.v)}`}` +
+        `${dName(r)} · ${r.pos ?? "?"} · ${ROLE_NAME[r.your_role] || `${mult(m.v)}`}` +
         ` · EO ${pct(eoOf(r))}`), { value: String(r.code) }));
     }
     outSel.value = outCode == null ? "" : String(outCode);
@@ -821,7 +831,7 @@ export function renderTools(host, ctx) {
     row2.appendChild(q);
     if (inCode != null) {
       const r = uni.get(inCode);
-      const chip = el("button", "chip s1", `✓ ${r.name} · EO ${pct(eoOf(r))}`);
+      const chip = el("button", "chip s1", `✓ ${dName(r)} · EO ${pct(eoOf(r))}`);
       chip.title = "clear";
       chip.onclick = () => { inCode = null; renderPickers(); renderResult(); };
       row2.appendChild(chip);
@@ -878,7 +888,7 @@ export function renderTools(host, ctx) {
         const b = el("button", "ttcand");
         b.appendChild(faceImg(r.code, "avatar"));
         const d = el("div");
-        d.appendChild(el("div", "n", r.name));
+        d.appendChild(el("div", "n", dName(r)));
         d.appendChild(el("div", "sub",
           `${r.pos ?? "?"} · ${fmtPrice(r.price)} · EO ${pct(eoOf(r))} · ` +
           `${sgn2(termOf(r))} now`));
@@ -985,7 +995,7 @@ export function renderTools(host, ctx) {
       `from those ${TOP_N} — which means a like-for-like swap between two of ` +
       `them leaves it exactly where it was. That is the honest answer, not a ` +
       `stuck number.`);
-    if (worstAfter) tile(tiles, worstAfter.r.name,
+    if (worstAfter) tile(tiles, dName(worstAfter.r),
       `worst remaining hole · ${sgn2(worstAfter.t)}`, "bad",
       `The largest single term still running against you after the swap, over ` +
       `every player on this page.`);
@@ -1029,7 +1039,7 @@ export function renderTools(host, ctx) {
       const hd = el("div", "hd");
       hd.appendChild(faceImg(r.code, "avatar"));
       const t = el("div");
-      t.appendChild(el("div", "n", r.name));
+      t.appendChild(el("div", "n", dName(r)));
       t.appendChild(el("div", "sub",
         [r.pos, r.team, fmtPrice(r.price),
          r.xpts != null ? `${fmt1(r.xpts)} xPts` : null].filter(Boolean).join(" · ")));

@@ -34,6 +34,15 @@ function sv(tag, attrs = {}) {
   for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, String(v));
   return n;
 }
+/* English ordinal: 1st, 2nd, 3rd, 4th … 11th–13th stay -th (never "72th") */
+function ord(n) {
+  const v = Math.abs(Math.round(Number(n)));
+  const m100 = v % 100, m10 = v % 10;
+  const suf = m100 >= 11 && m100 <= 13 ? "th"
+    : m10 === 1 ? "st" : m10 === 2 ? "nd" : m10 === 3 ? "rd" : "th";
+  return `${n}${suf}`;
+}
+
 const rad = (deg) => (deg - 90) * Math.PI / 180;
 const px = (cx, r, deg) => cx + r * Math.cos(rad(deg));
 const py = (cy, r, deg) => cy + r * Math.sin(rad(deg));
@@ -118,7 +127,7 @@ export function renderPizza(players) {
       ? `${s.label}: no separation in this metric yet (≥ half the peers tie `
         + `at 0) · ${s.per90}/90`
       : `${s.label.replace(" /90", "")} ${s.per90}/90 · `
-        + `${s.percentile}th of ${res.n_peers} ${res.pos}s`;
+        + `${ord(s.percentile)} of ${res.n_peers} ${res.pos}s`;
     path.appendChild(tip);
     fillG.appendChild(path);
 

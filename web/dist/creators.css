@@ -331,10 +331,17 @@ button.cx-no:hover { color: var(--ink); }
    clicked. A chip that has been MEASURED empty is `.chip.off` and disabled;
    an unmeasured one stays live and says "…", because not knowing and knowing
    nothing are different facts. */
-.cx-gwn { margin-left: 6px; font-family: var(--mono);
-          font-variant-numeric: tabular-nums; font-weight: 500;
-          font-size: 11px; color: var(--faint); }
-.chip.gw.on .cx-gwn { color: var(--muted); }
+/* A REAL badge, visually severed from the GW label: "GW1" + a glued "9"
+   read as GW19 at speed (R1+R3). The chip also carries an aria-label, so
+   this pill is presentation only. */
+.cx-gwn { margin-left: 7px; font-family: var(--mono);
+          font-variant-numeric: tabular-nums; font-weight: 600;
+          font-size: 10px; color: var(--muted); line-height: 1;
+          padding: 2px 6px; border-radius: 999px;
+          background: color-mix(in oklab, var(--ink) 8%, var(--surface));
+          border: 1px solid var(--line); }
+.chip.gw.on .cx-gwn { color: var(--ink);
+          background: color-mix(in oklab, var(--ink) 12%, var(--surface)); }
 .cx-gwnext { margin-left: 6px; font-size: 9px; font-weight: 700;
              letter-spacing: .08em; text-transform: uppercase;
              color: var(--accent-ink); }
@@ -681,8 +688,10 @@ th.cx-colh { height: 118px; vertical-align: bottom; padding-bottom: 4px;
 
 tr.cx-bandrow td.cx-band { padding: 14px 2px 5px;
   border-bottom: 1px solid var(--line); }
-.cx-bandt { color: var(--faint); font-size: 10px; letter-spacing: .1em;
-            text-transform: uppercase; font-weight: 700; }
+/* Sentence-case one-liners, not ALL-CAPS shouts repeated per group (R3);
+   the shared sentence lives in one footnote under the grid. */
+.cx-bandt { color: var(--muted); font-size: 11px; letter-spacing: .02em;
+            font-weight: 650; }
 .cx-bandnote { display: block; color: var(--faint); font-size: 11px;
                font-weight: 400; letter-spacing: 0; text-transform: none;
                margin-top: 2px; max-width: 70ch; line-height: 1.5; }
@@ -808,3 +817,33 @@ tr.cx-you td.cx-gutter { background: color-mix(in oklab, var(--accent) 10%, var(
   .cx-identity > .cx-eq-op { display: block; padding: 5px 0 3px 2px; }
   .cx-eq-col + .cx-eq-col { margin-top: 2px; }
 }
+
+/* ---- skeleton loading (R3) ----------------------------------------------
+   The panel build is measured at 2.5–4s; a shape that says "board loading"
+   replaces the bare text line. Tokens only, both themes; motion respects
+   prefers-reduced-motion. */
+.cx-skel { display: flex; flex-direction: column; gap: 10px; margin: 12px 0; }
+.cx-skelrow, .cx-skelblock, .cx-skelcard {
+  border-radius: 9px;
+  background: linear-gradient(100deg,
+    var(--raised) 40%,
+    color-mix(in oklab, var(--ink) 7%, var(--raised)) 50%,
+    var(--raised) 60%);
+  background-size: 200% 100%;
+  animation: cx-shimmer 1.2s linear infinite; }
+.cx-skelrow { height: 14px; width: 38%; }
+.cx-skelblock { height: 72px; }
+.cx-skelcard { height: 96px; }
+@keyframes cx-shimmer { to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .cx-skelrow, .cx-skelblock, .cx-skelcard { animation: none; }
+}
+
+/* ---- row-level recency (R1) --------------------------------------------- */
+.cx-fresh { margin-left: 8px; font-size: 10px; font-family: var(--mono);
+            font-variant-numeric: tabular-nums; color: var(--faint);
+            padding: 1px 6px; border-radius: 999px;
+            border: 1px solid var(--line); white-space: nowrap; }
+.cx-fresh.hot { color: var(--good); border-color:
+                color-mix(in oklab, var(--good) 45%, var(--line)); }
+.chip.cx-48:disabled { opacity: .55; cursor: default; }

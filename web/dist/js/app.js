@@ -193,6 +193,8 @@ export async function mountDeadline(node) {
       const ms = when - Date.now();
       if (ms <= 0) { node.textContent = `GW${d.gw} deadline passed`; return; }
       const h = Math.floor(ms / 3.6e6), m = Math.floor(ms % 3.6e6 / 6e4);
+      // urgency register: the countdown changes voice inside 24h
+      node.classList.toggle("urgent", h < 24);
       node.innerHTML = "";
       node.append(`GW${d.gw} deadline in `);
       const b = el("b", null, `${h}h ${m}m`);

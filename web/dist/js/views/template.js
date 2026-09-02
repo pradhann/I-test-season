@@ -295,6 +295,32 @@ const tagCaveat = c =>
     (c.caveat === undefined && !!tagInfo(c.tag).warn));
 const tagWarns = c => tagDanger(c) || tagCaveat(c);
 
+/* FPL availability status codes. The payload carries a one-letter status and
+   no chance-of-playing percentage, so the chip renders a status dot plus the
+   WORD — never a bare letter glued to a surname ("Rodon d" read as "Rodond",
+   the R3 blocker). If a chance % ever lands on the wire it belongs here. */
+const STATUS_WORD = { d: "doubtful", i: "injured", s: "suspended",
+                      u: "unavailable", n: "not in squad" };
+function availChip(status) {
+  if (!status || status === "a") return null;
+  const word = STATUS_WORD[status] || `status “${status}”`;
+  const chip = el("span", "avail" + (status === "d" ? " warn" : " bad"));
+  chip.appendChild(el("span", "adot"));
+  chip.appendChild(el("span", "aword", word));
+  chip.setAttribute("role", "img");
+  chip.setAttribute("aria-label", `availability: ${word}`);
+  chip.title = `Availability: ${word} — FPL status flag “${status}”. The ` +
+    `payload carries no chance-of-playing percentage, so none is invented.`;
+  return chip;
+}
+
+/* Cohorts below this many managers are greyed in the selectors, kept out of
+   every DEFAULT comparison, and watermark any chart drawn from them: with
+   n=4 every share is a multiple of 25% and the bars are quantization noise
+   wearing full visual weight (R1+R2+R3, tri-consensus). */
+const MIN_N = 25;
+const lowN = f => f != null && f.n != null && f.n < MIN_N;
+
 function roleChip(r) {
   if (r.in_squad == null) return el("span", "chip", "unknown");
   if (r.in_squad === false) return el("span", "chip dim", "not owned");
@@ -339,9 +365,17 @@ export default async function view(host) {
   const measureRow = el("div", "toolbar");
   const fieldRow = el("div", "toolbar");
   const segRow = el("div", "toolbar segrow");
+  /* The FIELD radio (the measured cohort every chart reads) and WHO IS IN IT
+     (the segment selection behind diff/what-if) are two populations answering
+     to one word — the payload's `field_distinction` names both, and this box
+     draws them as ONE control group so a level from one and a trend from the
+     other can never be read as the same population (R2). */
+  const fieldGroup = el("div", "fieldgroup");
+  const fgCap = el("div", "fgcap");
+  fieldGroup.append(fieldRow, segRow, fgCap);
   const compRow = el("div", "toolbar comp");
   const tiles = el("div", "stats");
-  head.append(measureRow, fieldRow, segRow, compRow, tiles);
+  head.append(measureRow, fieldGroup, compRow, tiles);
 
   const PARAMS = { limit: 200 };
 
@@ -380,9 +414,29 @@ export default async function view(host) {
 
   let allFields = res.fields || [];
   let byKey = Object.fromEntries(allFields.map(f => [f.key, f]));
+
+  /* Namesakes. Two players named "Palmer" (CHE MID and IPS GKP) render as one
+     word wherever a name stands alone, and the reader assumes Cole. The
+     payload's own `disambiguator` wins when present; otherwise a name shared
+     by two rows gets its club appended — from the row itself, never guessed. */
+  let dupNames = new Set();
+  function relearnNames() {
+    const seen = new Map(), codes = new Set();
+    for (const r of (res.rows || []).concat(res.differentials || [])) {
+      if (codes.has(r.code)) continue;      // rows ∪ differentials overlap —
+      codes.add(r.code);                    // one player is never a namesake
+      seen.set(r.name, (seen.get(r.name) || 0) + 1);
+    }
+    dupNames = new Set([...seen].filter(([, n]) => n > 1).map(([k]) => k));
+  }
+  relearnNames();
+  const dispName = r => r.disambiguator ||
+    (dupNames.has(r.name) && r.team ? `${r.name} (${r.team})` : r.name);
+
   function reindex() {
     allFields = res.fields || [];
     byKey = Object.fromEntries(allFields.map(f => [f.key, f]));
+    relearnNames();
   }
 
   // ---- state ----------------------------------------------------------
@@ -392,11 +446,15 @@ export default async function view(host) {
 
   let measure = pickable("eo").length && baseOf("eo") ? "eo"
               : pickable("own").length && baseOf("own") ? "own" : "eo";
-  let fieldKey = (pickable(measure).find(f => f.kind === "cohort")
+  /* The default field skips any cohort under MIN_N: a 4-manager sample must
+     be asked for, never handed out. */
+  let fieldKey = (pickable(measure).find(f => f.kind === "cohort" && !lowN(f))
+                  || pickable(measure).find(f => f.kind === "cohort")
                   || pickable(measure)[0] || {}).key;
   let rowset = "template";           // template | diff
   let pos = "", team = "", search = "", mineOnly = false, band = "all";
   let sortBy = { kind: "gap" }, sortDir = -1;
+  let showAllRows = false;           // the 150-row cut, with a control on it
 
   const BAND = 10;                   // percentage points — stated, not implied
 
@@ -617,6 +675,89 @@ export default async function view(host) {
     return `color-mix(in oklab, ${pole} ${Math.round(100 * t)}%, var(--tpl-mid))`;
   };
 
+  // ---- shared craft helpers -------------------------------------------
+  /* Caption tiering (R1+R3): every chart carries ONE always-on line, and the
+     methodology moves behind the drawer's existing "how this is computed"
+     disclosure pattern. Nothing is deleted — it is re-shelved. */
+  function caption(host2, line, paras, label) {
+    if (line) host2.appendChild(el("p", "sub capline", line));
+    const texts = (paras || []).filter(Boolean);
+    if (!texts.length) return;
+    const d = el("details", "howto");
+    d.appendChild(el("summary", null, label || "how this is computed"));
+    for (const p of texts) d.appendChild(el("p", "sub", p));
+    host2.appendChild(d);
+  }
+
+  /* What the baseline column actually IS under the current measure — under
+     "Effective ownership" it is LiveFPL's predicted EO (with the feed's own
+     capture instant from `eo_pred_captured`), under "Ownership" it is FPL's
+     own%. Same header word, two different numbers, so the header says which
+     (R2's "ALL FPL silently switches" finding). */
+  function baselineDesc(b) {
+    if (!b) return null;
+    if (b.key === "eo_predicted") {
+      const cap = res.eo_pred_captured || {};
+      const d = cap.as_of ? new Date(String(cap.as_of).replace(" ", "T")) : null;
+      const ds = d && !isNaN(d)
+        ? d.toLocaleDateString(undefined, { day: "numeric", month: "short" })
+        : null;
+      const bits = [ds ? `captured ${ds}` : null,
+                    cap.gw != null ? `GW${cap.gw}` : null].filter(Boolean);
+      return `predicted EO${bits.length ? ` (${bits.join(", ")})` : ""}`;
+    }
+    if (b.key === "global") return "own%";
+    return null;
+  }
+  const baselineLabel = b => {
+    if (!b) return "game";
+    const d = baselineDesc(b);
+    return `${b.short || b.label}${d ? ` — ${d}` : ""}`;
+  };
+
+  /* The low-n watermark: the n is already printed, but printing n is not the
+     same as protecting the reader — a chart drawn from 4 managers says so
+     ACROSS the marks (R3). */
+  function watermark(svg, W, H, f) {
+    if (!lowN(f)) return;
+    svg.appendChild(sv("text", {
+      x: W / 2, y: H / 2, class: "lownwm", "text-anchor": "middle",
+      "aria-hidden": "true",
+    }, `n=${f.n} — quantized`));
+  }
+
+  /* An accessible mark: <title>, tabindex, aria-label, and keyboard open —
+     the promised hover/click was mouse-only and invisible to assistive tech
+     on 102 circles (R3). Focus shows the same tooltip hover does. */
+  function accessMark(c, label, onOpen, onShow, onHide) {
+    c.appendChild(sv("title", {}, label));
+    c.setAttribute("tabindex", "0");
+    c.setAttribute("role", "button");
+    c.setAttribute("aria-label", label);
+    if (onShow) c.addEventListener("focus", onShow);
+    if (onHide) c.addEventListener("blur", onHide);
+    c.addEventListener("keydown", e => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(); }
+    });
+  }
+
+  /* "cover this hole →": the plan that says what to sell to fund him lives on
+     the Dashboard's verdict/solver card, and nothing connected them (R1).
+     Simple tab + focus navigation — it IS a cross-tab action. */
+  function focusDashboardPlan() {
+    let tries = 0;
+    const seek = () => {
+      const t = document.querySelector(
+        "section.card.verdict, [data-card='verdict'], section.card.solver");
+      if (t) {
+        t.setAttribute("tabindex", "-1");
+        t.focus({ preventScroll: true });
+        t.scrollIntoView({ block: "start" });
+      } else if (++tries < 12) setTimeout(seek, 250);
+    };
+    setTimeout(seek, 250);
+  }
+
   // ---- header ---------------------------------------------------------
   function renderTeach() {
     teach.textContent = "";
@@ -631,12 +772,15 @@ export default async function view(host) {
       el("span", "eq-op", "×"),
       el("span", "eq-lead", "points"));
     teach.appendChild(eq);
-    teach.appendChild(el("p", "sub",
-      "Template holdings cancel out of that sum. A player the field is loaded " +
-      "on is insurance, not upside — owning him moves you almost nothing, " +
-      "missing him is ruinous. So the number that carries information is not " +
-      "ownership: it is the GAP between the field you are racing and the game " +
-      "as a whole."));
+    caption(teach,
+      "Template holdings cancel out of that sum — the number that carries " +
+      "information is the GAP between the field you are racing and the game.",
+      ["A player the field is loaded on is insurance, not upside: owning him " +
+       "moves you almost nothing, missing him is ruinous. That is why this " +
+       "page is a comparison of two fields everywhere, never a single " +
+       "ownership column — and why every chart below positions players by " +
+       "the gap rather than by raw ownership."],
+      "why the gap, not ownership");
 
     const key = el("div", "zonekey");
     const zone = (cls, name, text) => {
@@ -689,19 +833,35 @@ export default async function view(host) {
     for (const f of options) {
       const on = f.key === fieldKey;
       const a = ageInfo(f.as_of);
-      const chip = el("button", "chip src" + (on ? " on" : ""));
+      const small = lowN(f);
+      const chip = el("button", "chip src" + (on ? " on" : "") +
+                      (small ? " lown" : ""));
       chip.append(on ? "✓ " : "", el("span", "freshdot " + a.cls),
                   ` ${f.short || f.label}`);
-      if (f.n != null) chip.appendChild(el("span", "cnt", `n=${f.n}`));
+      if (f.n != null) chip.appendChild(el("span", "cnt" + (small ? " bad" : ""),
+        small ? `n=${f.n} — too small to quote` : `n=${f.n}`));
+      if (f.mini_league_n)
+        chip.appendChild(el("span", "cnt ml", `incl. ${f.mini_league_n} mini-league`));
       chip.title =
         `${f.label}\n% of: ${f.denominator}\n` +
         (f.gw != null ? `gameweek ${f.gw}` : "no gameweek stamp") +
         ` · ${f.players ?? "?"} players measured · ${a.text}` +
+        (small
+          ? `\nn=${f.n}: below the ${MIN_N}-manager floor — every share is a ` +
+            `multiple of ${(100 / f.n).toFixed(0)}%, so it is excluded from ` +
+            `every default view. Pick it and the charts watermark themselves.`
+          : "") +
         (f.same_values_as_gw != null
           ? `\nValues are byte-identical to GW${f.same_values_as_gw}: the feed ` +
             `re-stamped a settled gameweek, it is not a fresh forecast.`
           : "") +
         (f.note ? `\n${f.note}` : "");
+      chip.setAttribute("aria-label", `${f.label}` +
+        (f.n != null ? `, ${f.n} managers` : "") +
+        (small ? ", too small to quote" : "") +
+        (f.mini_league_n ? `, includes ${f.mini_league_n} of your ` +
+                           `mini-league rivals` : "") +
+        (on ? ", selected" : ""));
       chip.onclick = () => {
         fieldKey = f.key;
         renderAll();
@@ -719,11 +879,52 @@ export default async function view(host) {
     const b = baseOf(measure);
     const bf = ageInfo(b?.as_of);
     const baseline = el("span", "baseline");
+    /* The stamp travels WITH the label: under EO the baseline is LiveFPL's
+       predicted EO with its own capture instant, under own% it is FPL's
+       marginal ownership — the header must change when the measure does. */
+    /* The label already names the measure ("Whole game — predicted EO"), so
+       only the capture stamp is appended here — never the measure twice. */
+    const bd = b ? baselineDesc(b) : null;
+    const stamp = bd && bd.includes("(") ? bd.slice(bd.indexOf("(")) : null;
     baseline.append("compared against ", el("b", null, b ? b.label : "—"),
+                    stamp ? ` ${stamp}` : "",
                     " ", el("span", "freshdot " + bf.cls));
     if (b) baseline.title = `% of: ${b.denominator}` +
       (b.gw != null ? ` · gameweek ${b.gw}` : "") + ` · ${bf.text}`;
     fieldRow.appendChild(baseline);
+  }
+
+  /* The caption that ties the group together: field_distinction, verbatim
+     numbers, and the mini-league conflict named where the number is used. */
+  function renderFieldGroupCap() {
+    fgCap.textContent = "";
+    const fd = res.field_distinction;
+    const f = byKey[fieldKey];
+    if (fd && fd.measured_cohort && fd.selection) {
+      const mc = fd.measured_cohort, sel = fd.selection;
+      const line = el("p", "sub fgline");
+      line.append(el("b", null, "One box, two populations. "),
+        `The FIELD radio is the measured cohort` +
+        (mc.n != null ? ` (${mc.n} managers` +
+          (mc.gw != null ? `, GW${mc.gw}` : "") + `)` : "") +
+        ` behind every chart and elite column above; WHO IS IN IT is the ` +
+        `segment selection` +
+        (sel.n != null ? ` (${sel.n} managers)` : "") +
+        ` behind the diff and the what-if simulator below. They are ` +
+        `different sets — a level from one and a trend from the other never ` +
+        `share a sentence.`);
+      if (fd.note) line.title = fd.note;
+      fgCap.appendChild(line);
+    }
+    const mlN = f?.mini_league_n ?? fd?.measured_cohort?.mini_league_n;
+    if (mlN && f?.kind === "cohort")
+      fgCap.appendChild(el("p", "sub fgml",
+        `This measured cohort includes your ${mlN} mini-league rivals — a ` +
+        `set the default selection excludes. Their picks correlate with ` +
+        `yours, which pulls every gap here towards zero.`));
+    fgCap.appendChild(el("p", "sub glyphkey",
+      "Marks on the set chips: ✓ = in the field · * = read with a caveat " +
+      "(sentence below) · ! = untrustworthy, never in a default."));
   }
 
   /* ---- the segment selector ------------------------------------------
@@ -1040,10 +1241,19 @@ export default async function view(host) {
       const holes = top.filter(r => r.in_squad === false);
       if (holes.length) {
         const worst = holes[0];
-        tile(worst.name, `biggest hole · ${pct(val(worst, fieldKey, measure))}`,
+        const t = tile(dispName(worst),
+             `biggest hole · ${pct(val(worst, fieldKey, measure))}`,
              "bad",
              `The highest-${MEASURE[measure].short} player in ${f.label} that ` +
              `you do not own. If he hauls, the field gains and you do not.`);
+        /* The bridge to the action: what to sell to fund him lives on the
+           Dashboard's verdict/solver card, and nothing connected them (R1). */
+        const go = el("a", "coverlink", "cover this hole →");
+        go.href = "#home";
+        go.title = "Opens the Dashboard and focuses the verdict/solver card " +
+                   "— the plan that says what to sell to fund him.";
+        go.addEventListener("click", focusDashboardPlan);
+        t.appendChild(go);
       } else {
         tile("none", `top-${TOP_N} template fully covered`, "good",
              "You hold every player in the stated basis.");
@@ -1054,7 +1264,7 @@ export default async function view(host) {
         .sort((a, b) => exposureOf(b) - exposureOf(a));
       if (bets.length) {
         const b0 = bets[0];
-        tile(b0.name, `furthest ahead · ${signed(exposureOf(b0))}`, "good",
+        tile(dispName(b0), `furthest ahead · ${signed(exposureOf(b0))}`, "good",
              "Where your multiplier most exceeds the field's EO, over every " +
              "player shown. It is not necessarily a differential — a captain " +
              "the field also owns can land here.");
@@ -1122,17 +1332,26 @@ export default async function view(host) {
     svg.appendChild(sv("title", {},
       `${f.label} against ${b.label}, ${shown.length} players`));
 
-    // grid — solid hairlines, one shade off the surface, never dashed
-    for (const v of new Set(TICKS)) {
+    // grid — solid hairlines, one shade off the surface, never dashed.
+    // The x labels render as one run and the y labels as another (each run
+    // aria-hidden): interleaving them per-tick read "0% 5% 5% 10% 10%…" in
+    // the text layer, two axes shuffled into one nonsense sequence (R3).
+    const tickVals = [...new Set(TICKS)];
+    for (const v of tickVals) {
       svg.appendChild(sv("line", { x1: sx(v), x2: sx(v), y1: T, y2: H - B,
                                    class: "grid" }));
       svg.appendChild(sv("line", { x1: L, x2: W - R, y1: sy(v), y2: sy(v),
                                    class: "grid" }));
-      svg.appendChild(sv("text", { x: sx(v), y: H - B + 16, class: "tick" },
-                         `${v}%`));
-      if (v) svg.appendChild(sv("text", { x: L - 8, y: sy(v) + 4,
-                                          class: "tick end" }, `${v}%`));
     }
+    const xTicks = sv("g", { "aria-hidden": "true" });
+    for (const v of tickVals)
+      xTicks.appendChild(sv("text", { x: sx(v), y: H - B + 16, class: "tick" },
+                            `${v}%`));
+    const yTicks = sv("g", { "aria-hidden": "true" });
+    for (const v of tickVals)
+      if (v) yTicks.appendChild(sv("text", { x: L - 8, y: sy(v) + 4,
+                                             class: "tick end" }, `${v}%`));
+    svg.append(xTicks, yTicks);
     // the reference line: where the field matches the game
     svg.appendChild(sv("line", { x1: sx(0), y1: sy(0), x2: sx(dom), y2: sy(dom),
                                  class: "diag" }));
@@ -1166,9 +1385,15 @@ export default async function view(host) {
       c.addEventListener("mouseenter", () => showTip(p, g));
       c.addEventListener("mouseleave", hideTip);
       c.addEventListener("click", () => showDetail(p.r));
+      accessMark(c,
+        `${dispName(p.r)}: ${b.short || b.label} ${pct(p.x)}, ` +
+        `${f.short || f.label} ${pct(p.y)}, gap ${signed(g)}pp` +
+        (mine ? ", in your squad" : ""),
+        () => showDetail(p.r), () => showTip(p, g), hideTip);
       marks.appendChild(c);
     }
     svg.appendChild(marks);
+    watermark(svg, W, H, f);
 
     // selective direct labels: the extremes, and your own squad among them
     const placed = [];
@@ -1184,8 +1409,9 @@ export default async function view(host) {
     let labelled = 0;
     for (const p of cands) {
       if (labelled >= 9) break;
+      const nm = dispName(p.r);
       const left = sx(p.x) > W - 150;
-      const w = p.r.name.length * 5.8 + 10;
+      const w = nm.length * 5.8 + 10;
       const x = left ? sx(p.x) - 9 - w : sx(p.x) + 9;
       if (x < L || x + w > W - 2) continue;
       if (!fits(x, sy(p.y), w)) continue;
@@ -1193,7 +1419,7 @@ export default async function view(host) {
         x: left ? sx(p.x) - 9 : sx(p.x) + 9, y: sy(p.y) + 4,
         class: "plabel" + (left ? " end" : "") +
                (p.r.in_squad === true ? " mine" : ""),
-      }, p.r.name));
+      }, nm));
       labelled++;
     }
 
@@ -1204,7 +1430,7 @@ export default async function view(host) {
 
     function showTip(p, g) {
       tip.textContent = "";
-      tip.appendChild(el("b", null, p.r.name));
+      tip.appendChild(el("b", null, dispName(p.r)));
       tip.appendChild(el("div", "sub",
         [p.r.pos, p.r.team, fmtPrice(p.r.price)].filter(Boolean).join(" · ")));
       const line = (k, v) => {
@@ -1252,15 +1478,17 @@ export default async function view(host) {
     leg.title = "colour saturates at the 90th percentile of |gap| so ordinary " +
                 "gaps are still distinguishable next to one extreme one";
     mapCard.appendChild(leg);
-    mapCard.appendChild(el("p", "sub",
-      `${shown.length} players plotted` +
-      (hidden ? `; ${hidden} under ${FLOOR}% on both axes are not drawn — they ` +
-                `would sit on top of each other at the origin` : "") +
-      `. Both axes are square-root scaled by the same transform, which is why ` +
-      `the ticks are unevenly spaced: it spreads the crowded low end without ` +
-      `moving the diagonal, so “above the line” still means exactly “the field ` +
-      `is heavier than the game”. Hover any mark for its numbers, click for ` +
-      `the full ladder.`));
+    caption(mapCard,
+      `${shown.length} players plotted · sqrt axes` +
+      (hidden ? ` · ${hidden} under ${FLOOR}% not drawn` : "") +
+      ` · hover or focus any mark for its numbers, click for the ladder.`,
+      [`Both axes are square-root scaled by the same transform, which is why ` +
+       `the ticks are unevenly spaced: it spreads the crowded low end without ` +
+       `moving the diagonal, so “above the line” still means exactly “the ` +
+       `field is heavier than the game”.` +
+       (hidden ? ` The ${hidden} players under ${FLOOR}% on both axes would ` +
+                 `sit on top of each other at the origin, so they are left ` +
+                 `out rather than drawn as one blob.` : "")]);
   }
 
   // ---- the swarm: what the template LOOKS like ------------------------
@@ -1395,9 +1623,9 @@ export default async function view(host) {
           c.setAttribute("stroke", rampColor(p.g, scale));
         }
         const pctile = Math.round(100 * k / Math.max(1, sorted.length - 1));
-        c.addEventListener("mouseenter", () =>
+        const showT = () =>
           tip.show(svg, W, H, xs[k], cyy, (t, line) => {
-            t.appendChild(el("b", null, p.r.name));
+            t.appendChild(el("b", null, dispName(p.r)));
             t.appendChild(el("div", "sub",
               [p.r.pos, p.r.team, fmtPrice(p.r.price)].filter(Boolean).join(" · ")));
             line(`${f.short || f.label} ${ms}`, pct(p.v));
@@ -1406,9 +1634,15 @@ export default async function view(host) {
             line(`among ${gp.pos}`, `${pctile}th pctile`);
             line("you", p.r.in_squad == null ? "unknown"
               : p.r.in_squad === false ? "not owned" : (p.r.your_role || "owned"));
-          }));
+          });
+        c.addEventListener("mouseenter", showT);
         c.addEventListener("mouseleave", tip.hide);
         c.addEventListener("click", () => showDetail(p.r));
+        accessMark(c,
+          `${dispName(p.r)}: ${f.short || f.label} ${ms} ${pct(p.v)}, ` +
+          `${pctile}th percentile among ${gp.pos}` +
+          (p.r.in_squad === true ? ", in your squad" : ""),
+          () => showDetail(p.r), showT, tip.hide);
         svg.appendChild(c);
       });
 
@@ -1432,11 +1666,13 @@ export default async function view(host) {
       for (const p of top) {
         if (p.v < SPIKE) break;
         const k = sorted.indexOf(p);
-        labels.push({ x: sx(p.v), y: cy - half - 5, text: p.r.name,
+        labels.push({ x: sx(p.v), y: cy - half - 5, text: dispName(p.r),
                       my: cy + Math.max(-half, Math.min(half, ys[k])),
                       mine: p.r.in_squad === true });
       }
     });
+
+    watermark(svg, W, H, f);
 
     /* Selective direct labels, collision-tested, each with a hairline leader
        back to its own mark — the label sits above the row and the mark can be
@@ -1477,14 +1713,15 @@ export default async function view(host) {
       el("span", "legkey out-key", ""), el("span", "sub", "you do not"),
       el("span", "legkey med-key", ""), el("span", "sub", "position median"));
     swarmCard.appendChild(leg);
-    swarmCard.appendChild(el("p", "sub",
-      `Marks are nudged off the row's centre line only enough to stop them ` +
-      `covering each other — the horizontal position is the whole of the value, ` +
-      `the vertical position carries nothing. Where a row is too crowded for ` +
-      `even that, near the floor, marks do overlap and the ring around each one ` +
-      `is what keeps them countable; that crowding is itself the finding. Hover ` +
-      `any mark for its numbers and its percentile within its own position, ` +
-      `click for the full ladder. Every value here is also in the table below.`));
+    caption(swarmCard,
+      "Horizontal position is the whole of the value · hover or focus a mark " +
+      "for its numbers and within-position percentile · every value is also " +
+      "in the table below.",
+      [`Marks are nudged off the row's centre line only enough to stop them ` +
+       `covering each other — the vertical position carries nothing. Where a ` +
+       `row is too crowded for even that, near the floor, marks do overlap ` +
+       `and the ring around each one is what keeps them countable; that ` +
+       `crowding is itself the finding.`]);
   }
 
   // ---- your exposure ledger ------------------------------------------
@@ -1553,12 +1790,28 @@ export default async function view(host) {
         const row = el("div", "lrow " + cls);
         row.appendChild(faceImg(p.r.code, "avatar"));
         const id = el("div", "lid");
-        id.appendChild(el("div", "lname", p.r.name));
+        id.appendChild(el("div", "lname", dispName(p.r)));
+        /* xPts beside the exposure term: "you concede −0.7 per point" is half
+           a multiplication — the expected points finish the thought (R1). The
+           value is the table's own consensus xpts column, no new joins; the
+           spread rides along because it is already on the row. */
         id.appendChild(el("div", "sub",
           `${p.r.pos ?? "?"} · ${p.r.team ?? "?"} · ${fmtPrice(p.r.price)} · ` +
           `${f.short || f.label} EO ${pct(p.v)}` +
-          ` · you ${p.m.v}×${p.m.assumed ? "*" : ""}`));
-        if (p.m.assumed) id.title = "multiplier inferred from your squad role";
+          ` · you ${p.m.v}×${p.m.assumed ? "*" : ""}` +
+          (p.r.xpts != null
+            ? ` · ${fmt1(p.r.xpts)} xPts` +
+              (p.r.xpts_spread != null ? `±${fmt1(p.r.xpts_spread)}` : "") +
+              (res.xpts_gw != null ? ` gw${res.xpts_gw}` : "")
+            : "")));
+        const idTitle = [
+          p.m.assumed ? "multiplier inferred from your squad role" : null,
+          p.r.xpts != null
+            ? `consensus xPts across ${p.r.n_sources ?? "?"} sources — ` +
+              `the same column the table below shows`
+            : null,
+        ].filter(Boolean).join("\n");
+        if (idTitle) id.title = idTitle;
         row.appendChild(id);
         const barwrap = el("div", "lbar");
         const bar = el("span");
@@ -1595,19 +1848,31 @@ export default async function view(host) {
   function ensureComparePair() {
     const opts = informedFields(measure);
     const keys = opts.map(f => f.key);
+    /* Quotable = at or above the MIN_N floor (a field with no countable n is
+       a provider feed, not a small sample). The DEFAULT pair is the largest
+       two quotable fields; a below-floor field is still selectable, and the
+       chart watermarks itself when one is picked (tri-consensus n-guard). */
+    const ok = f => !lowN(f);
+    const bySize = list => [...list].sort((x, y) => (y.n ?? -1) - (x.n ?? -1));
     /* A follows the field chosen at the top of the page — the reader who
        switches fields up there means "study this one" — until he picks A here
        himself, at which point this card is his and stops being steered. */
-    if (!cmpTouched && keys.includes(fieldKey)) cmpA = fieldKey;
-    if (!keys.includes(cmpA)) cmpA = keys.includes(fieldKey) ? fieldKey : keys[0];
+    if (!cmpTouched && keys.includes(fieldKey) && ok(byKey[fieldKey]))
+      cmpA = fieldKey;
+    if (!keys.includes(cmpA))
+      cmpA = (bySize(opts.filter(ok))[0] || opts[0] || {}).key
+             || (keys.includes(fieldKey) ? fieldKey : keys[0]);
     if (!keys.includes(cmpB) || cmpB === cmpA) {
       // Prefer the other CRAWLED pool — two observed cohorts disagreeing is a
-      // sharper read than an observed cohort against a modelled one — then fall
-      // back to whatever else publishes the same measure.
+      // sharper read than an observed cohort against a modelled one — then
+      // fall back to whatever else publishes the same measure. Never a
+      // below-floor cohort by default: n=4 quantizes every share to 25%.
       const a = byKey[cmpA];
-      cmpB = (opts.find(f => f.key !== cmpA && f.kind === "cohort" &&
-                             f.cohort !== a?.cohort)
-              || opts.find(f => f.key !== cmpA) || {}).key || null;
+      const cands = opts.filter(f => f.key !== cmpA);
+      cmpB = (cands.find(f => ok(f) && f.kind === "cohort" &&
+                              f.cohort !== a?.cohort)
+              || bySize(cands.filter(ok))[0]
+              || cands[0] || {}).key || null;
     }
   }
 
@@ -1630,9 +1895,11 @@ export default async function view(host) {
       bar.appendChild(el("span", "tlabel", which));
       const sel = el("select");
       for (const f of opts) {
-        const o = el("option", null, f.label);
+        const o = el("option", null,
+          lowN(f) ? `${f.label} — n=${f.n}, too small to quote` : f.label);
         o.value = f.key;
         o.disabled = f.key === other;
+        if (lowN(f)) o.className = "lown";
         sel.appendChild(o);
       }
       sel.value = cur;
@@ -1758,7 +2025,7 @@ export default async function view(host) {
                                class: "rowhit" });
       hit.addEventListener("mouseenter", () =>
         tip.show(svg, W, H, Math.max(xa, xb), cy, (t, line) => {
-          t.appendChild(el("b", null, p.r.name));
+          t.appendChild(el("b", null, dispName(p.r)));
           t.appendChild(el("div", "sub",
             [p.r.pos, p.r.team, fmtPrice(p.r.price)].filter(Boolean).join(" · ")));
           line(A.short || A.label, pct(p.a));
@@ -1782,7 +2049,7 @@ export default async function view(host) {
       const nm = sv("text", { x: L - 12, y: cy + 4,
                               class: "dname end" +
                                      (p.r.in_squad === true ? " mine" : "") },
-                    p.r.name);
+                    dispName(p.r));
       svg.appendChild(nm);
       svg.appendChild(sv("text", { x: NUMX[0], y: cy + 4, class: "dnum end" },
                          pct(p.a)));
@@ -1806,9 +2073,18 @@ export default async function view(host) {
                        B2.short || B2.label));
     svg.appendChild(sv("text", { x: NUMX[2], y: T - 18, class: "dhead end" },
                        "split"));
+    watermark(svg, W, H, lowN(A) ? A : B2);
 
     wrap.appendChild(svg);
     compareCard.appendChild(wrap);
+    if (lowN(A) || lowN(B2)) {
+      const s = lowN(A) ? A : B2;
+      compareCard.appendChild(el("p", "warnline",
+        `${s.label} is ${s.n} managers — every one of its shares is a ` +
+        `multiple of ${(100 / s.n).toFixed(0)}%, so the biggest “splits” ` +
+        `here are quantization, not disagreement. It is never a default; ` +
+        `you picked it, and the chart is watermarked while it is on.`));
+    }
 
     const leg = el("div", "maplegend");
     const ramp = el("div", "ramp");
@@ -1830,17 +2106,20 @@ export default async function view(host) {
     if (agree.length) {
       const line = el("p", "sub");
       line.append("Both fields already agree on ",
-        el("b", null, agree.map(p => p.r.name).join(", ")),
+        el("b", null, agree.map(p => dispName(p.r)).join(", ")),
         ` — held at ${BAND}%+ by both and within ` +
         `${Math.max(...agree.map(p => Math.abs(p.d))).toFixed(1)}pp. Those are ` +
         `insurance, not a decision.`);
       compareCard.appendChild(line);
     }
-    compareCard.appendChild(el("p", "sub",
-      `Colour saturates at ±${dScale.toFixed(0)}pp, the 90th percentile of the ` +
-      `split across all ${pairs.length} shared players, so one extreme case ` +
-      `cannot flatten the rest. Every number on the chart is printed beside it; ` +
-      `hover a row for the full read, click it for the ladder.`));
+    caption(compareCard,
+      `Every number is printed beside its row · hover a row for the full ` +
+      `read, click it for the ladder.`,
+      [`Colour saturates at ±${dScale.toFixed(0)}pp, the 90th percentile of ` +
+       `the split across all ${pairs.length} shared players, so one extreme ` +
+       `case cannot flatten the rest. The axis is linear where the map above ` +
+       `is square-root, because here the reader compares LENGTHS and a ` +
+       `nonlinear axis would make identical splits look different sizes.`]);
   }
 
   // ---- ownership momentum ---------------------------------------------
@@ -1860,6 +2139,8 @@ export default async function view(host) {
      chart. It reads several plausible shapes because the key that will carry
      them does not exist yet. */
   let deadline = null;               // {gw, deadline_utc} once fetched
+  let momOpen = false;               // the folded ledger's open state, kept
+                                     // across redraws (deadline fetch redraws)
 
   /* The panel's own momentum view when it publishes one: `available`, a
      `reason` in its words, the gameweeks it has, and one series per player with
@@ -1913,7 +2194,26 @@ export default async function view(host) {
     const moving = panelSeries() || sourceRows()
       .map(r => ({ r, s: eoSeries(r, fieldKey) }))
       .filter(p => p.s);
-    if (moving.length >= 4) { renderSlopes(f, moving); return; }
+    if (moving.length >= 4) {
+      /* A trend exists — but of 38 gameweeks it may be ONE delta between the
+         first two, mostly fringe players. Until four gameweeks are observed
+         the section collapses to a line and the slopes live behind it
+         (R1+R3); at 4+ observations it opens itself for good. */
+      const gwObs = new Set(moving.flatMap(p => p.s.map(x => x.gw)));
+      if (gwObs.size >= 4) { renderSlopes(f, moving); return; }
+      const fold = el("details", "momfold");
+      fold.open = momOpen;
+      fold.addEventListener("toggle", () => { momOpen = fold.open; });
+      fold.appendChild(el("summary", null,
+        `${gwObs.size} of 4 gameweek observations — one early delta, thin ` +
+        `evidence of direction. Collapsed until four gameweeks are on file; ` +
+        `open for the early movers.`));
+      const mom = el("div");
+      fold.appendChild(mom);
+      momentumCard.appendChild(fold);
+      renderSlopes(f, moving, mom);
+      return;
+    }
 
     /* ---- the honest state: an observation ledger ---------------------- */
     const mo = res.momentum || null;
@@ -1963,6 +2263,22 @@ export default async function view(host) {
     const maxGw = Math.max(nextGw, ...lanes.flatMap(l => l.gws));
     const minGw = Math.min(...lanes.flatMap(l => l.gws));
 
+    /* Under 4 observed movers there is no trend to draw, so the SECTION
+       COLLAPSES to one honest line (R1+R3): of 38 gameweeks this is one
+       delta at best, and a full card this early is distraction wearing a
+       chart. The observation ledger survives, behind the fold, unchanged. */
+    const fold = el("details", "momfold");
+    fold.open = momOpen;
+    fold.addEventListener("toggle", () => { momOpen = fold.open; });
+    fold.appendChild(el("summary", null,
+      `No trend yet — ${have} of ${needed} gameweeks measured. This card ` +
+      `becomes a movement chart at the second distinct observation` +
+      (nextGw != null ? ` (GW${nextGw})` : "") +
+      `; open for the observation ledger.`));
+    const mom = el("div");
+    fold.appendChild(mom);
+    momentumCard.appendChild(fold);
+
     const tl = el("div", "stats");
     const tile = (v, k, cls, title) => {
       const d = el("div", "stat" + (cls ? " " + cls : ""));
@@ -1991,7 +2307,7 @@ export default async function view(host) {
     tile(`GW${nextGw}`, "next crawled point", null,
          "When squads for this gameweek lock and the crawl stores them, this " +
          "card becomes a movement chart on its own.");
-    momentumCard.appendChild(tl);
+    mom.appendChild(tl);
 
     /* The panel's own account of why, verbatim, when it gives one — it knows
        what it looked for and did not find. The page adds only the argument for
@@ -2007,8 +2323,8 @@ export default async function view(host) {
           "trusting the stamp. ",
       "A flat line across one observation would say “ownership is stable”; " +
       "nothing here supports that claim, so nothing here draws it.");
-    momentumCard.appendChild(warn);
-    momentumCard.appendChild(el("p", "sub",
+    mom.appendChild(warn);
+    mom.appendChild(el("p", "sub",
       "What can be shown honestly instead: every gameweek each field has " +
       "actually been measured at. Solid means a distinct observation; hollow " +
       "with a tie-back means the feed republished an earlier week under a new " +
@@ -2080,7 +2396,7 @@ export default async function view(host) {
     });
 
     wrap.appendChild(svg);
-    momentumCard.appendChild(wrap);
+    mom.appendChild(wrap);
 
     const leg = el("div", "maplegend");
     leg.append(
@@ -2088,7 +2404,7 @@ export default async function view(host) {
       el("span", "legkey copy-key", ""), el("span", "sub", "re-stamp of an earlier week"),
       el("span", "legkey served-key", ""), el("span", "sub", "the values on screen"),
       el("span", "legkey future-key", ""), el("span", "sub", "not measured yet"));
-    momentumCard.appendChild(leg);
+    mom.appendChild(leg);
 
     const dl = el("p", "sub");
     dl.append("This card turns into a movement chart the moment a second " +
@@ -2101,8 +2417,8 @@ export default async function view(host) {
     } else {
       dl.append("No deadline is on the wire, so no date is claimed here.");
     }
-    momentumCard.appendChild(dl);
-    momentumCard.appendChild(el("p", "sub",
+    mom.appendChild(dl);
+    mom.appendChild(el("p", "sub",
       `One thing the ledger shows that the rest of the page cannot: the ` +
       `warehouse already holds earlier gameweeks for the provider feeds, but ` +
       `this panel serves only the latest value per player, so the earlier ones ` +
@@ -2113,7 +2429,7 @@ export default async function view(host) {
   /* The live path. One line per player between the last two gameweeks he was
      measured at, coloured by the direction of the move, names direct-labelled
      at the end each line arrives at — a slope chart, not a spaghetti of 200. */
-  function renderSlopes(f, moving) {
+  function renderSlopes(f, moving, host2 = momentumCard) {
     const ms = MEASURE[measure].short;
     const items = moving.map(p => {
       const s = p.s, a = s[s.length - 2], b2 = s[s.length - 1];
@@ -2123,7 +2439,7 @@ export default async function view(host) {
       .slice(0, 14);
     const gwA = top[0].from.gw, gwB = top[0].to.gw;
 
-    momentumCard.appendChild(el("p", "sub",
+    host2.appendChild(el("p", "sub",
       `How ${f.label}'s ${MEASURE[measure].label.toLowerCase()} moved between ` +
       `GW${gwA} and GW${gwB}, for the ${top.length} players it moved most. A ` +
       `player the field is piling into is a hole opening up; a player it is ` +
@@ -2135,7 +2451,11 @@ export default async function view(host) {
     const dom = Math.ceil(hi / 10) * 10;
     const sy = v => H - B - (H - B - T) * (Math.max(0, v) / dom);
     const xA = L + 40, xB = W - R - 40;
-    const ds = items.map(x => Math.abs(x.d)).sort((a, b2) => a - b2);
+    /* Anchored at the 90th percentile of the DISPLAYED rows, not of all
+       movers: anchored on the full set, every displayed row (they are the
+       biggest movers by construction) sat past saturation and the colour
+       channel carried nothing (R3). */
+    const ds = top.map(x => Math.abs(x.d)).sort((a, b2) => a - b2);
     const dScale = Math.max(2, ds[Math.floor(ds.length * 0.9)] ?? ds[ds.length - 1]);
 
     const wrap = el("div", "chartwrap");
@@ -2164,7 +2484,7 @@ export default async function view(host) {
                              class: "slope", stroke: col });
       l.addEventListener("mouseenter", () =>
         tip.show(svg, W, H, xB, sy(x.to.v), (t, line) => {
-          t.appendChild(el("b", null, x.r.name));
+          t.appendChild(el("b", null, dispName(x.r)));
           line(`GW${gwA}`, pct(x.from.v));
           line(`GW${gwB}`, pct(x.to.v));
           line("move", `${signed(x.d)}pp`);
@@ -2181,14 +2501,17 @@ export default async function view(host) {
       placed.push(y);
       svg.appendChild(sv("text", { x: xB + 10, y,
         class: "plabel" + (x.r.in_squad === true ? " mine" : "") },
-        `${x.r.name}  ${signed(x.d)}`));
+        `${dispName(x.r)}  ${signed(x.d)}`));
     }
     wrap.appendChild(svg);
-    momentumCard.appendChild(wrap);
-    momentumCard.appendChild(el("p", "sub",
-      `Colour saturates at ±${dScale.toFixed(0)}pp, the 90th percentile of the ` +
-      `move across all ${items.length} players with two observations. The number ` +
-      `is printed beside every name, so the colour is never the only channel.`));
+    host2.appendChild(wrap);
+    caption(host2,
+      `The number is printed beside every name — colour is never the only ` +
+      `channel.`,
+      [`Colour saturates at ±${dScale.toFixed(0)}pp, the 90th percentile of ` +
+       `the move across the ${top.length} rows DRAWN (of ${items.length} ` +
+       `players with two observations) — rescaled to the displayed set so ` +
+       `the biggest movers, the only rows on screen, still differ in tint.`]);
   }
 
   // ---- the table ------------------------------------------------------
@@ -2280,14 +2603,27 @@ export default async function view(host) {
   }
 
   const sameSort = spec => JSON.stringify(spec) === JSON.stringify(sortBy);
+  /* Sortable headers that SAY so: aria-sort for assistive tech, a persistent
+     glyph on every sortable column (the sorted one gets the direction, the
+     rest a quiet ⇅), and keyboard operation — a cursor:pointer with no
+     affordance was a promised interaction that wasn't real (R3). */
   function th(label, spec, opts = {}) {
+    const on = sameSort(spec);
     const h = el("th", (opts.num === false ? "" : "num") +
-                       (sameSort(spec) ? " sorted" : ""), label);
-    if (sameSort(spec)) h.dataset.dir = sortDir === -1 ? "▼" : "▲";
+                       (on ? " sorted" : " sortable"), label);
+    h.dataset.dir = on ? (sortDir === -1 ? "▼" : "▲") : "⇅";
+    h.setAttribute("aria-sort",
+      on ? (sortDir === -1 ? "descending" : "ascending") : "none");
+    h.setAttribute("role", "columnheader");
+    h.tabIndex = 0;
     if (opts.title) h.title = opts.title;
-    h.onclick = () => {
+    const go = () => {
       sortDir = sameSort(spec) ? -sortDir : -1;
       sortBy = spec; renderBody();
+    };
+    h.onclick = go;
+    h.onkeydown = e => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); }
     };
     return h;
   }
@@ -2342,8 +2678,17 @@ export default async function view(host) {
       th("pos", { kind: "col", key: "pos" }, { num: false }),
       th("team", { kind: "col", key: "team" }, { num: false }),
       th("£", { kind: "col", key: "price" }),
-      th(b ? (b.short || b.label) : "game", { kind: "base" },
-         { title: b ? `% of: ${b.denominator}` : "" }),
+      /* The baseline header names its MEASURE and its capture instant: under
+         the EO toggle this column is LiveFPL's predicted EO (captured before
+         the previous deadline), under own% it is FPL ownership. Without the
+         suffix the same words held two numbers 2× apart (R2). */
+      th(baselineLabel(b), { kind: "base" },
+         { title: b ? `% of: ${b.denominator}` +
+             (b.key === "eo_predicted" && res.eo_pred_captured?.as_of
+               ? `\nLiveFPL capture instant: ${res.eo_pred_captured.as_of}` +
+                 (res.eo_pred_captured.gw != null
+                   ? ` (GW${res.eo_pred_captured.gw})` : "")
+               : "") : "" }),
       th(f ? (f.short || f.label) : "field", { kind: "field" },
          { title: f ? `% of: ${f.denominator}` : "" }),
       th("gap", { kind: "gap" },
@@ -2360,16 +2705,18 @@ export default async function view(host) {
          { title: "your multiplier − field EO, per point he scores" }),
     );
     thead.appendChild(hr); table.appendChild(thead);
+    const CUT = 150;
+    const shown2 = showAllRows ? rows : rows.slice(0, CUT);
     const tb = el("tbody");
-    for (const r of rows.slice(0, 150)) {
+    for (const r of shown2) {
       const g = gapOf(r, fieldKey, measure);
       const tr = el("tr");
       const nameTd = el("td", "clickable");
       nameTd.appendChild(faceImg(r.code, "avatar" +
         (r.in_squad === true ? " mine" : "")));
-      nameTd.appendChild(document.createTextNode(r.name));
-      if (r.status && r.status !== "a")
-        nameTd.appendChild(el("span", "chip warn", ` ${r.status}`));
+      nameTd.appendChild(document.createTextNode(dispName(r)));
+      const av = availChip(r.status);
+      if (av) { nameTd.appendChild(document.createTextNode(" ")); nameTd.appendChild(av); }
       nameTd.title = "click for every field's read on him";
       nameTd.onclick = () => showDetail(r);
       tr.append(nameTd, el("td", null, r.pos ?? "–"),
@@ -2395,14 +2742,23 @@ export default async function view(host) {
       const cap = (r.fields?.[fieldKey] || {}).cap;
       tr.appendChild(el("td", "num", cap == null ? "–" : pct(cap)));
 
+      /* Three facts, three separated badges — "270/309240 C" in the text
+         layer was three values glued into one unpunctuated cell (R1). */
       const m = r.fields?.[fieldKey] || {};
       const heldTd = el("td", "held");
       if (m.owned_by != null && f?.n != null) {
         heldTd.appendChild(el("span", "frac", `${m.owned_by}/${f.n}`));
-        if (m.captained_by) heldTd.appendChild(
-          el("span", "chip s1", `${m.captained_by} C`));
-        if (m.benched_by) heldTd.appendChild(
-          el("span", "chip warn", `${m.benched_by} benched`));
+        if (m.captained_by) {
+          heldTd.appendChild(el("span", "hsep", "·"));
+          heldTd.appendChild(el("span", "chip s1", `${m.captained_by} C`));
+        }
+        if (m.benched_by) {
+          heldTd.appendChild(el("span", "hsep", "·"));
+          heldTd.appendChild(el("span", "chip warn", `${m.benched_by} benched`));
+        }
+        heldTd.title = `${m.owned_by} of ${f.n} own him` +
+          (m.captained_by ? ` · ${m.captained_by} captain him` : "") +
+          (m.benched_by ? ` · ${m.benched_by} bench him` : "");
       } else heldTd.textContent = f?.kind === "cohort" ? "–" : "no counts";
       tr.appendChild(heldTd);
 
@@ -2421,11 +2777,22 @@ export default async function view(host) {
     }
     table.appendChild(tb); wrap.appendChild(table);
     tbody.appendChild(wrap);
-    tbody.appendChild(el("p", "sub",
-      `${rows.length} rows${rows.length > 150 ? ", showing the first 150" : ""} · ` +
-      `ring on a photo = in your squad · bar tint = the gap, and the number is ` +
-      `always printed beside it · “held by” is the count behind the ` +
-      `percentage, not a second estimate of it.`));
+    const footLine = el("p", "sub");
+    footLine.append(
+      `${rows.length} rows` +
+      (rows.length > CUT
+        ? showAllRows ? ", all shown" : `, showing the first ${CUT}`
+        : "") +
+      ` · ring on a photo = in your squad · bar tint = the gap, and the ` +
+      `number is always printed beside it · “held by” is the count behind ` +
+      `the percentage, not a second estimate of it.`);
+    if (rows.length > CUT) {
+      const more = el("button", "chip", showAllRows
+        ? `show only the first ${CUT}` : `show all ${rows.length} rows`);
+      more.onclick = () => { showAllRows = !showAllRows; renderBody(); };
+      footLine.appendChild(more);
+    }
+    tbody.appendChild(footLine);
   }
 
   // ---- drawer: every field's read on one player -----------------------
@@ -2436,7 +2803,7 @@ export default async function view(host) {
     const hd = el("div", "dhead");
     hd.appendChild(faceImg(r.code, "bigface"));
     const id = el("div");
-    id.appendChild(el("div", "dname", r.name));
+    id.appendChild(el("div", "dname", dispName(r)));
     id.appendChild(el("div", "sub", [r.pos, r.team, fmtPrice(r.price),
       r.xpts != null ? `${fmt1(r.xpts)} xPts` : null].filter(Boolean).join(" · ")));
     hd.appendChild(id);
@@ -2445,8 +2812,13 @@ export default async function view(host) {
     hd.appendChild(x);
     drawer.appendChild(hd);
 
-    if (r.status && r.status !== "a")
-      drawer.appendChild(el("p", "sub", `availability flag: ${r.status}`));
+    const av = availChip(r.status);
+    if (av) {
+      const line = el("p", "sub availline");
+      line.append("availability: ");
+      line.appendChild(av);
+      drawer.appendChild(line);
+    }
 
     drawer.appendChild(el("h2", null, "Where every field has him"));
     drawer.appendChild(el("p", "sub",
@@ -2609,6 +2981,7 @@ export default async function view(host) {
         measure,
         onFocus: code => { const r = rowByCode(code); if (r) showDetail(r); },
         // extras, clearly named and safe to ignore
+        dispName,
         baselineKey: baseOf(measure)?.key ?? null,
         rows: sourceRows(),
         // The sets actually behind the numbers in `res`, straight off the
@@ -2632,6 +3005,7 @@ export default async function view(host) {
   // ---- go -------------------------------------------------------------
   function renderAll() {
     renderTeach(); renderMeasure(); renderFields(); renderSegments();
+    renderFieldGroupCap();
     renderComposition(); renderTiles();
     renderMap(); renderSwarm(); renderLedger();
     renderCompare(); renderMomentum();
