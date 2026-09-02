@@ -82,31 +82,31 @@ def test_every_pinned_script_actually_exists(client):
 
 
 def test_running_a_script_returns_result_and_provenance(client):
-    r = client.post("/api/scripts/fixture_ticker/run", json={"horizon": 1})
+    r = client.post("/api/scripts/fixture_board/run", json={"horizon": 1})
     assert r.status_code == 200
     body = r.json()
     assert body["result"]["row_count"] == 2
-    assert body["provenance"]["script"] == "fixture_ticker"
+    assert body["provenance"]["script"] == "fixture_board"
     assert body["provenance"]["repo_sha"]
     assert body["performance"] == "ok"
     assert isinstance(body["duration_ms"], int)
 
 
 def test_running_a_script_with_no_body_uses_defaults(client):
-    r = client.post("/api/scripts/fixture_ticker/run")
+    r = client.post("/api/scripts/fixture_board/run")
     assert r.status_code == 200
-    assert r.json()["provenance"]["params"]["horizon"] == 5
+    assert r.json()["provenance"]["params"]["horizon"] == 6
 
 
 def test_params_may_be_sent_at_the_top_level_or_nested(client):
-    flat = client.post("/api/scripts/fixture_ticker/run", json={"horizon": 2}).json()
-    nested = client.post("/api/scripts/fixture_ticker/run",
+    flat = client.post("/api/scripts/fixture_board/run", json={"horizon": 2}).json()
+    nested = client.post("/api/scripts/fixture_board/run",
                          json={"params": {"horizon": 2}}).json()
     assert flat["result"]["gws"] == nested["result"]["gws"] == [1, 2]
 
 
 def test_invalid_params_are_a_400_naming_the_field(client):
-    r = client.post("/api/scripts/fixture_ticker/run", json={"horizon": 99})
+    r = client.post("/api/scripts/fixture_board/run", json={"horizon": 99})
     assert r.status_code == 400
     assert "horizon" in r.json()["detail"]
 
@@ -114,6 +114,85 @@ def test_invalid_params_are_a_400_naming_the_field(client):
 def test_an_unknown_script_is_a_404(client):
     r = client.post("/api/scripts/nope/run", json={})
     assert r.status_code == 404
+
+
+def test_the_deleted_fixture_ticker_panel_is_a_404(client):
+    """The legacy blended ticker is deleted, not hidden: asking for it is the
+    same 404 as any other unregistered script."""
+    r = client.post("/api/scripts/fixture_ticker/run", json={})
+    assert r.status_code == 404
+
+
+# -- the panel error contract -------------------------------------------------
+# A broken panel must return {error, panel, reason} with a 500 -- never a bare
+# "Internal Server Error" body. The UI renders "couldn't load -- retry" from
+# this shape, DISTINCT from the honest-empty {empty, reason} 200: one means
+# the data is genuinely absent, the other means the code failed. Collapsing
+# them is how a third of the fixture board came to fail silently.
+
+
+@pytest.fixture()
+def broken_script():
+    """Register a deliberately crashing script; deregister it afterwards."""
+    from fpl_edge.platform import registry
+
+    schema = {"type": "object", "additionalProperties": False,
+              "required": ["ok"], "properties": {"ok": {"type": "boolean"}}}
+
+    def _boom(wh):
+        raise ValueError("the data edge this panel cannot survive: " + "x" * 2000)
+
+    def _key_error(wh):
+        raise KeyError(("2026-27", 21))
+
+    registry.register_script(
+        "test_broken_panel", _boom,
+        params_schema={"type": "object", "additionalProperties": False,
+                       "properties": {}},
+        result_schema=schema, description="crashes on purpose",
+    )
+    registry.register_script(
+        "test_keyerror_panel", _key_error,
+        params_schema={"type": "object", "additionalProperties": False,
+                       "properties": {}},
+        result_schema=schema, description="crashes with KeyError on purpose",
+    )
+    yield
+    registry._SCRIPTS.pop("test_broken_panel", None)
+    registry._SCRIPTS.pop("test_keyerror_panel", None)
+
+
+def test_a_crashing_panel_returns_the_structured_error_shape(client, broken_script):
+    r = client.post("/api/scripts/test_broken_panel/run", json={})
+    assert r.status_code == 500
+    body = r.json()
+    assert body["error"] is True
+    assert body["panel"] == "test_broken_panel"
+    assert body["reason"].startswith("ValueError: ")
+    # Bounded: a pandas repr or a whole SQL statement must not flood the page.
+    assert len(body["reason"]) <= 500
+    # And it is never the bare default body.
+    assert r.text != "Internal Server Error"
+
+
+def test_a_keyerror_inside_a_script_is_a_500_not_a_404(client, broken_script):
+    """Only the registry's own "no such script" KeyError is a 404. A KeyError
+    raised INSIDE a script is that script's bug; serving it as 404 would tell
+    the UI the panel does not exist."""
+    r = client.post("/api/scripts/test_keyerror_panel/run", json={})
+    assert r.status_code == 500
+    body = r.json()
+    assert body["error"] is True and body["panel"] == "test_keyerror_panel"
+    assert "KeyError" in body["reason"]
+
+
+def test_the_error_shape_is_distinct_from_the_honest_empty_shape(client, broken_script):
+    """The two states the UI must never conflate, side by side."""
+    empty = client.post("/api/scripts/projection_table/run", json={})
+    error = client.post("/api/scripts/test_broken_panel/run", json={})
+    assert empty.status_code == 200 and empty.json()["result"]["empty"] is True
+    assert error.status_code == 500 and error.json()["error"] is True
+    assert "empty" not in error.json()
 
 
 def test_an_empty_panel_is_a_200_with_a_reason_not_an_error(client):

@@ -24,7 +24,7 @@ from fpl_edge.store.warehouse import Warehouse
 
 UTC = dt.timezone.utc
 
-ALL_SCRIPTS = ["squad_overview", "projection_table", "fixture_ticker",
+ALL_SCRIPTS = ["squad_overview", "projection_table", "fixture_board",
                "price_radar", "idea_registry"]
 
 
@@ -38,7 +38,7 @@ def empty_db(tmp_path):
 
 @pytest.fixture()
 def seeded_db(tmp_path):
-    """Enough real-shaped data for the fixture ticker to have something to say."""
+    """Enough real-shaped data for the fixture board to have something to say."""
     path = tmp_path / "fpl.duckdb"
     wh = Warehouse(path)
     stamp = pd.Timestamp("2026-08-01", tz="UTC")
@@ -106,34 +106,15 @@ def test_every_script_declares_both_schemas_and_a_docstring(name):
 
 def test_the_reason_names_the_fix_not_just_the_gap(empty_db):
     """A reason a reader cannot act on is only half an answer."""
-    run = run_script("fixture_ticker", {}, db=empty_db)
+    run = run_script("fixture_board", {}, db=empty_db)
     assert "ingest" in run.result["reason"].lower()
 
 
-def test_fixture_ticker_returns_real_fixtures_when_they_exist(seeded_db):
-    run = run_script("fixture_ticker", {"horizon": 1}, db=seeded_db)
-    assert run.result.get("empty") is not True
-    assert run.result["gws"] == [1]
-    assert run.result["row_count"] == 2
-
-    by_name = {t["short_name"]: t for t in run.result["teams"]}
-    ars = by_name["ARS"]["fixtures"][0]
-    che = by_name["CHE"]["fixtures"][0]
-    # Home is upper-case, away lower-case -- the Telegram grid's convention.
-    assert ars["opponents"][0]["label"] == "CHE"
-    assert ars["opponents"][0]["is_home"] is True
-    assert che["opponents"][0]["label"] == "ars"
-    assert che["opponents"][0]["is_home"] is False
-    assert ars["blank"] is False and ars["double"] is False
-
-
-def test_fixture_ticker_marks_a_blank_gameweek_explicitly(seeded_db):
-    """A club with no fixture gets a blank slot, not a missing key: a blank is
-    a decision, and a missing key renders as nothing at all."""
-    run = run_script("fixture_ticker", {"horizon": 2}, db=seeded_db)
-    ars = next(t for t in run.result["teams"] if t["short_name"] == "ARS")
-    gw2 = ars["fixtures"][1]
-    assert gw2["gw"] == 2 and gw2["blank"] is True and gw2["opponents"] == []
+# The deprecated fixture_ticker panel is DELETED (superseded by
+# fixture_board, which carries the same blend per cell as the deprecated
+# `legacy_difficulty` field). Nothing may quietly resurrect it.
+def test_the_legacy_fixture_ticker_is_gone_and_stays_gone():
+    assert "fixture_ticker" not in registered()
 
 
 def _write_difficulty_artefact(db_path, *, fitted_at, ars=0.25, che=0.80):
@@ -154,42 +135,30 @@ def _opponent_of(run, short_name):
     return team["fixtures"][0]["opponents"][0]
 
 
-def test_fixture_ticker_merges_cached_difficulty_when_fresh(seeded_db):
+def test_fixture_board_serves_the_cached_blend_as_legacy_difficulty(seeded_db):
+    """The blend survives ONLY as fixture_board's deprecated per-cell field --
+    the panel that served it as the headline number is deleted."""
     _write_difficulty_artefact(seeded_db, fitted_at=pd.Timestamp.now(tz="UTC"))
-    run = run_script("fixture_ticker", {"horizon": 1}, db=seeded_db)
-    assert _opponent_of(run, "ARS")["difficulty"] == 0.25
-    assert _opponent_of(run, "CHE")["difficulty"] == 0.80
-    assert not any("stale" in n.lower() for n in run.result["notes"])
+    run = run_script("fixture_board", {"horizon": 1}, db=seeded_db)
+    assert _opponent_of(run, "ARS")["legacy_difficulty"] == 0.25
+    assert _opponent_of(run, "CHE")["legacy_difficulty"] == 0.80
 
 
-def test_fixture_ticker_omits_difficulty_when_no_artefact_exists(seeded_db):
-    """No cached fit means no number at all -- not a default, not a zero.
-    The frontend's caption flips on the field's presence, so absence is the
-    honest signal."""
-    run = run_script("fixture_ticker", {"horizon": 1}, db=seeded_db)
-    assert "difficulty" not in _opponent_of(run, "ARS")
-    assert "difficulty" not in _opponent_of(run, "CHE")
+def test_fixture_board_omits_the_blend_when_no_artefact_exists(seeded_db):
+    """No cached fit means no number at all -- not a default, not a zero."""
+    run = run_script("fixture_board", {"horizon": 1}, db=seeded_db)
+    assert _opponent_of(run, "ARS")["legacy_difficulty"] is None
+    assert _opponent_of(run, "CHE")["legacy_difficulty"] is None
 
 
-def test_fixture_ticker_serves_stale_difficulty_with_a_note(seeded_db):
-    fitted = pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=30)
-    _write_difficulty_artefact(seeded_db, fitted_at=fitted)
-    run = run_script("fixture_ticker", {"horizon": 1}, db=seeded_db)
-    # Still served: a month-old fitted rating beats a made-up fresh one.
-    assert _opponent_of(run, "ARS")["difficulty"] == 0.25
-    note = next(n for n in run.result["notes"] if "stale" in n.lower())
-    assert "30" in note
-
-
-def test_fixture_ticker_drops_out_of_range_difficulty(seeded_db):
-    """A corrupted cache value outside [0,1] would fail the result schema and
-    take the panel down; the reader treats it as absent instead."""
+def test_fixture_board_drops_out_of_range_legacy_difficulty(seeded_db):
+    """A corrupted cache value outside [0,1] is treated as absent, not served."""
     _write_difficulty_artefact(
         seeded_db, fitted_at=pd.Timestamp.now(tz="UTC"), ars=1.7,
     )
-    run = run_script("fixture_ticker", {"horizon": 1}, db=seeded_db)
-    assert "difficulty" not in _opponent_of(run, "ARS")
-    assert _opponent_of(run, "CHE")["difficulty"] == 0.80
+    run = run_script("fixture_board", {"horizon": 1}, db=seeded_db)
+    assert _opponent_of(run, "ARS")["legacy_difficulty"] is None
+    assert _opponent_of(run, "CHE")["legacy_difficulty"] == 0.80
 
 
 def test_price_radar_needs_two_snapshots_to_say_anything(tmp_path):

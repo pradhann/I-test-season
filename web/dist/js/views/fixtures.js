@@ -20,12 +20,13 @@
      fixture-specific number, with your own club's strength in it, is one click
      away in every cell.
 
-   DATA PATH. Panels are the only data path. This view asks `fixture_board`
-   first — the split panel — and falls back to the legacy `fixture_ticker`,
-   which carries one blended number per fixture. On the fallback the page
-   REFUSES to draw two bands from one number: it draws a single-band cell and
-   says, loudly, that the split is unavailable and why. Inventing a split would
-   be exactly the failure this rebuild exists to fix.
+   DATA PATH. Panels are the only data path. This view asks `fixture_board`,
+   the split panel. (The legacy `fixture_ticker` is deleted; the board carries
+   its blended number per cell as the deprecated `legacy_difficulty`.) When
+   the split artefact is absent the page REFUSES to draw two bands from that
+   one number: it draws a single-band cell and says, loudly, that the split is
+   unavailable and why. Inventing a split would be exactly the failure this
+   rebuild exists to fix.
 
    NOTHING IS FABRICATED. A blank gameweek is hatched and says "blank"; a
    fixture the model has no rating for is hatched and says "no fit". They are
@@ -348,7 +349,10 @@ function readOpponent(raw, scale) {
       basis = "split01";
     }
   }
-  const blended = num(o.difficulty);
+  // fixture_board serves the legacy blend per cell as `legacy_difficulty`
+  // (deprecated in its schema); the deleted ticker's flat `difficulty`
+  // field no longer exists on any registered panel.
+  const blended = num(o.legacy_difficulty);
   return {
     opponent: o.opponent, oppCode: num(o.opponent_code),
     isHome: !!o.is_home, kickoff: o.kickoff_utc || null,
@@ -588,7 +592,7 @@ export default async function fixtures(host) {
   let lens = "both";              // both | attack | defence — and the SORT
   let tableView = false;          // Table shows the last grid state's order
   let azSort = false;             // the look-one-club-up escape hatch
-  let M = null, prov = null, scriptUsed = null, fellBack = false, boardErr = null;
+  let M = null, prov = null, scriptUsed = null, boardErr = null;
 
   /* --------------------------------------------------------- data fetch */
   async function load() {
@@ -598,26 +602,22 @@ export default async function fixtures(host) {
     if (fromGw != null) params.from_gw = fromGw;
 
     let r = await tryPanel("fixture_board", params);
-    fellBack = false; boardErr = null;
-    if (!r.ok) {
-      boardErr = r;
-      // horizon/from_gw are the legacy panel's own params, so the fallback is
-      // a straight retry — but the SPLIT is gone and the page will say so.
-      r = await tryPanel("fixture_ticker", params);
-      fellBack = true;
-      if (!r.ok && fromGw != null) {           // the window shift was refused
-        fromGw = null;
-        r = await tryPanel("fixture_ticker", { horizon });
-      }
+    boardErr = null;
+    if (!r.ok && fromGw != null) {             // the window shift was refused
+      fromGw = null;
+      r = await tryPanel("fixture_board", { horizon });
     }
     if (!r.ok) {
+      boardErr = r;
       body.textContent = "";
       renderCalibration();
       body.appendChild(errBox(r.error));
       body.appendChild(el("p", "sub",
-        "Both the split panel and the legacy ticker refused this request, so "
-        + "there is nothing to draw. The page shows the failure rather than an "
-        + "empty grid, because an empty grid would read as “no fixtures”."));
+        "The split panel refused this request, so there is nothing to draw. "
+        + "(The legacy blended ticker is deleted — fixture_board carries its "
+        + "number as legacy_difficulty, so there is no second panel to ask.) "
+        + "The page shows the failure rather than an empty grid, because an "
+        + "empty grid would read as “no fixtures”."));
       verdictEl.hidden = tornCard.hidden = shapeCard.hidden = true;
       return;
     }
@@ -986,21 +986,11 @@ export default async function fixtures(host) {
       const w = el("div", "empty");
       w.appendChild(el("b", null, "The split is not in this payload."));
       const p = el("div");
+      p.appendChild(document.createTextNode("This page is reading "));
+      p.appendChild(codeSpan(scriptUsed));
       p.appendChild(document.createTextNode(
-        fellBack
-          ? "This page asked "
-          : "This page is reading "));
-      p.appendChild(codeSpan(fellBack ? "fixture_board" : scriptUsed));
-      if (fellBack) {
-        p.appendChild(document.createTextNode(
-          boardErr && boardErr.missing
-            ? ", which is not registered, and fell back to "
-            : ", which failed, and fell back to "));
-        p.appendChild(codeSpan("fixture_ticker"));
-        p.appendChild(document.createTextNode("."));
-      }
-      p.appendChild(document.createTextNode(
-        " That panel returns ONE blended difficulty per fixture. A blended "
+        ", whose split artefact is absent, so each cell carries at most the "
+        + "deprecated legacy_difficulty — ONE blended number per fixture. A blended "
         + "number is the average of the attack question and the defence "
         + "question, and the average is not the answer to either — it is the "
         + "exact failure this page exists to fix. So the grid below draws a "
@@ -1583,7 +1573,7 @@ export default async function fixtures(host) {
         gapText(
           "The map draws ", codeSpan("rating.attack"), " and ",
           codeSpan("rating.defence"), " per club, which ride along with ",
-          codeSpan("fixture_board"), ". The legacy ticker carries neither, so "
+          codeSpan("fixture_board"), ". A payload without a stored fit carries neither, so "
           + "there is no quality to place — and the page will not infer one "
           + "from blended difficulties.")));
       return;

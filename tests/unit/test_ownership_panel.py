@@ -641,6 +641,72 @@ def test_a_set_with_no_stored_squad_shows_its_pool_beside_its_zero(segmented_db)
     assert all("selected" not in r["fields"] for r in res["rows"])
 
 
+def test_every_cohort_derived_measure_carries_its_n(segmented_db):
+    """R2 #4: 'top1k cap 100%' from 4 managers, n nowhere near the number.
+    The denominator now rides ON every cohort measurement, and on every diff
+    row — a share never travels without its n."""
+    res = run(segmented_db)
+    row = next(r for r in res["rows"] if r["code"] == 100)
+    assert row["fields"]["selected"]["n"] == res["selection"]["n"] == 3
+    coh = row["fields"]["cohort:elite"]
+    assert coh["n"] == res["cohort_n"]
+    d = next(r for r in res["diff"] if r["code"] == 100)
+    assert d["field_n"] == 3
+    # fields with no countable denominator claim none — never a fake n
+    assert "n" not in row["fields"]["global"]
+
+
+def test_the_two_fields_are_told_apart_explicitly(segmented_db):
+    """R2 #5: the measured cohort (charts, elite_* columns) and the segment
+    selection (WHO IS IN IT, diff, whatif) are different populations under
+    one word. The payload now names both, with n and mini-league content."""
+    res = run(segmented_db)
+    fd = res["field_distinction"]
+    assert fd["measured_cohort"]["key"] == "cohort:elite"
+    assert fd["measured_cohort"]["n"] == res["cohort_n"]
+    assert fd["selection"]["key"] == "selected"
+    assert fd["selection"]["n"] == res["selection"]["n"] == 3
+    # the measured cohort contains the owner's own mini-league opponents;
+    # the default selection excludes them — and the payload SAYS both
+    assert fd["measured_cohort"]["includes_mini_league"] is True
+    assert fd["measured_cohort"]["mini_league_n"] == 1
+    assert fd["selection"]["includes_mini_league"] is False
+    assert fd["selection"]["mini_league_n"] is None
+    assert "different sets of managers" in fd["note"]
+
+
+def test_mini_league_inclusion_is_labelled_on_the_measured_field(segmented_db):
+    """The default SELECTION excludes mini_league; the crawled cohort does
+    not. That asymmetry is labelled on the field descriptor itself, not left
+    to a composition fold."""
+    res = run(segmented_db)
+    f = _fields(res)
+    elite = f["cohort:elite"]
+    assert elite["mini_league_n"] == 1
+    assert "mini-league" in elite["note"]
+    assert "default selection excludes" in elite["note"]
+    # the default selected field holds no mini-league managers
+    assert f["selected"]["mini_league_n"] is None
+    # selecting mini_league flips the label honestly
+    with_ml = run(segmented_db,
+                  segments=["elite_list", "winner", "mini_league"])
+    assert _fields(with_ml)["selected"]["mini_league_n"] == 1
+    assert with_ml["field_distinction"]["selection"][
+        "includes_mini_league"] is True
+
+
+def test_livefpl_predicted_eo_carries_its_capture_instant(seeded_db):
+    """R2 #9: eo_predicted was captured pre-deadline and the UI only said
+    'GW2'. The capture as-of is now a first-class stamp beside the gw."""
+    res = run(seeded_db)
+    cap = res["eo_pred_captured"]
+    assert cap is not None
+    assert cap["gw"] == 1
+    assert cap["as_of"] is not None and "2026-08-01" in str(cap["as_of"])
+    # and it matches the field descriptor's own as-of
+    assert _fields(res)["eo_predicted"]["as_of"] == cap["as_of"]
+
+
 def test_an_unknown_segment_is_reported_not_silently_dropped(segmented_db):
     """A typo that quietly narrows the field is how a reader ends up comparing
     himself against the wrong people and never finds out."""

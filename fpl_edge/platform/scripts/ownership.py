@@ -281,6 +281,11 @@ _MEASURE = {
         "started_by": {"type": ["integer", "null"]},
         "benched_by": {"type": ["integer", "null"]},
         "captained_by": {"type": ["integer", "null"]},
+        # The manager count behind this measurement — the denominator carried
+        # ON the number, so no cohort-derived share ever travels without its
+        # n. Absent for fields with no countable denominator (FPL global,
+        # external EO feeds).
+        "n": {"type": ["integer", "null"]},
     },
 }
 
@@ -359,6 +364,11 @@ _FIELD = {
         "overlaps": {"type": ["boolean", "null"]},
         # Segment-union fields only: which selectable sets compose this field.
         "segments": {"type": ["array", "null"], "items": {"type": "string"}},
+        # How many of the owner's OWN mini-league opponents are inside this
+        # field's denominator. The default selection excludes that set; the
+        # crawled cohorts do not — a conflict of interest that must be
+        # labelled ON the field, not discovered in a composition fold.
+        "mini_league_n": {"type": ["integer", "null"]},
     },
 }
 
@@ -421,6 +431,9 @@ _DIFF_ROW = {
         "field_cap_pct": {"type": ["number", "null"]},
         "field_owned_by": {"type": ["integer", "null"]},
         "field_captained_by": {"type": ["integer", "null"]},
+        # The selection's denominator, on every row — a field_* share never
+        # travels without its n.
+        "field_n": {"type": ["integer", "null"]},
         # THE identity term: your_eo_pct − field_eo_pct, multipliers minus
         # multipliers. Positive = you are overweight the field.
         "edge_eo_pct": {"type": ["number", "null"]},
@@ -529,6 +542,53 @@ RESULT_SCHEMA: dict[str, Any] = {
         "as_of": {"type": ["string", "null"]},
         # The ladder of fields this warehouse can actually measure today.
         "fields": {"type": "array", "items": _FIELD},
+        # THE 309-vs-262 distinction, named explicitly: the measured cohort
+        # (elite_* columns, rows[].fields["cohort:*"]) and the segment
+        # selection (rows[].fields["selected"], diff, whatif) are DIFFERENT
+        # populations under the same word "field". The UI renders this so no
+        # sentence can attach one population's trend to the other's level.
+        "field_distinction": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["measured_cohort", "selection", "note"],
+            "properties": {
+                "measured_cohort": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["key", "n"],
+                    "properties": {
+                        "key": {"type": "string"},
+                        "n": {"type": ["integer", "null"]},
+                        "gw": {"type": ["integer", "null"]},
+                        "includes_mini_league": {"type": ["boolean", "null"]},
+                        "mini_league_n": {"type": ["integer", "null"]},
+                    },
+                },
+                "selection": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["key", "n"],
+                    "properties": {
+                        "key": {"type": "string"},
+                        "n": {"type": ["integer", "null"]},
+                        "gw": {"type": ["integer", "null"]},
+                        "includes_mini_league": {"type": ["boolean", "null"]},
+                        "mini_league_n": {"type": ["integer", "null"]},
+                    },
+                },
+                "note": {"type": "string"},
+            },
+        },
+        # When the LiveFPL predicted-EO series was CAPTURED (the feed's own
+        # as-of instant) and for which gw — the point-of-use stamp for every
+        # eo_pred_pct column, distinct from this panel's read clock.
+        "eo_pred_captured": {
+            "type": ["object", "null"],
+            "additionalProperties": False,
+            "required": ["as_of", "gw"],
+            "properties": {"as_of": {"type": ["string", "null"]},
+                           "gw": {"type": ["integer", "null"]}},
+        },
         # What the squad read produced, so the UI can say how much of the
         # "my multiplier" side of the rank identity it is entitled to claim.
         "squad": {
@@ -1243,6 +1303,8 @@ def ownership_eo(
                     "started_by": _i(r["started_by"]),
                     "benched_by": _i(r["benched_by"]),
                     "captained_by": _i(r["captained_by"]),
+                    # the denominator, ON the measurement
+                    "n": _i(r["n_managers"]),
                 }
                 cohort_meta[co] = {"n": _i(r["n_managers"]), "gw": int(r["gw"])}
                 if co == cohort:
@@ -1323,7 +1385,7 @@ def ownership_eo(
         # "eo_predicted" reads all three the same way.
         sel_m = sel_by_code.get(code)
         if sel_m is not None:
-            f["selected"] = sel_m
+            f["selected"] = {**sel_m, "n": sel_n}
         return {
             "code": code,
             "name": str(r["web_name"]) if r["web_name"] == r["web_name"] else str(code),
@@ -1544,6 +1606,11 @@ def ownership_eo(
         n, g = meta["n"], meta["gw"]
         label, short = _COHORT_LABEL.get(co, (f"Crawled {co}", co))
         comp = composition.get((co, g))
+        # The conflict of interest, labelled ON the field: the crawled pool
+        # can contain the owner's own mini-league opponents — a set the
+        # default SELECTION deliberately excludes.
+        ml_n = next((int(x["n"]) for x in comp or []
+                     if x.get("tag") == "mini_league"), None)
         denom = (
             f"the {n} managers in the {co} crawl pool with a stored GW{g} "
             f"squad" if co != "unclassified" else
@@ -1571,9 +1638,13 @@ def ownership_eo(
             "note": "Observed squads, not a model: EO is the mean FPL "
                     "multiplier these managers actually applied. A small "
                     "denominator makes every share coarse — one manager is "
-                    + (f"{100.0 / n:.2f} percentage points." if n else "one row."),
+                    + (f"{100.0 / n:.2f} percentage points." if n else "one row.")
+                    + (f" Includes {ml_n} of the owner's own mini-league "
+                       f"opponents — a set the default selection excludes; "
+                       f"this measured cohort does not." if ml_n else ""),
             "composition": comp,
             "overlaps": bool(comp) and sum(x["n"] for x in comp) > (n or 0),
+            "mini_league_n": ml_n,
         })
 
     # -- the selectable sets, as first-class descriptors ---------------------
@@ -1714,6 +1785,9 @@ def ownership_eo(
             "composition": sel_comp,
             "overlaps": bool(overlap) if overlap is not None else None,
             "segments": resolved,
+            "mini_league_n": next(
+                (s["n"] for s in segment_rows
+                 if s["key"] == "mini_league" and s["selected"]), None),
         })
 
     # -- tool 1: squad-vs-field diff ----------------------------------------
@@ -1785,6 +1859,7 @@ def ownership_eo(
             "field_cap_pct": f_cap,
             "field_owned_by": f_owned,
             "field_captained_by": f_capped,
+            "field_n": sel_n if sel_n else None,
             "edge_eo_pct": (round(your_eo - f_eo, 1)
                             if your_eo is not None and f_eo is not None else None),
             "edge_own_pct": (round(your_own - f_own, 1)
@@ -1923,6 +1998,52 @@ def ownership_eo(
         "series": mom_series,
     }
 
+    # -- the two "fields" under one word, told apart explicitly --------------
+    # R2's finding: the measured cohort (elite_* columns, the charts) and the
+    # segment selection (the WHO-IS-IN-IT card, diff, whatif) are DIFFERENT
+    # populations both answering to "the field". This block names both, with
+    # their n and their mini-league content, so the UI links them visibly and
+    # no sentence attaches one population's trend to the other's level.
+    ml_measured = None
+    if elite_gw is not None:
+        ml_measured = next(
+            (int(x["n"]) for x in composition.get((cohort, elite_gw)) or []
+             if x.get("tag") == "mini_league"), None)
+    field_distinction = {
+        "measured_cohort": {
+            "key": f"cohort:{cohort}",
+            "n": elite_cohort or None,
+            "gw": elite_gw,
+            "includes_mini_league": (bool(ml_measured)
+                                     if elite_cohort else None),
+            "mini_league_n": ml_measured,
+        },
+        "selection": {
+            "key": "selected",
+            "n": sel_n,
+            "gw": sel_gw,
+            "includes_mini_league": "mini_league" in resolved,
+            "mini_league_n": next(
+                (s["n"] for s in segment_rows
+                 if s["key"] == "mini_league" and s["selected"]), None),
+        },
+        "note": (
+            f"Two populations answer to the word \"field\" in this payload: "
+            f"the measured cohort (cohort:{cohort} — the elite_* columns and "
+            f"rows[].fields) and the segment selection (rows[].fields"
+            f"[\"selected\"], diff, whatif). They are different sets of "
+            f"managers with different denominators; a level from one and a "
+            f"trend from the other must never share a sentence."
+        ),
+    }
+
+    # -- LiveFPL predicted-EO capture instant, at point of use ---------------
+    eo_pred_captured = None
+    g_pred = external_gw.get("eo_predicted")
+    if g_pred is not None:
+        c_pred = cov_at_gw.get(("eo_predicted", g_pred), {})
+        eo_pred_captured = {"as_of": c_pred.get("latest"), "gw": g_pred}
+
     return {
         "season": season,
         "rows": template,
@@ -1940,6 +2061,8 @@ def ownership_eo(
         "cohort_gw": elite_gw,
         "gws_covered": gws_covered,
         "fields": fields,
+        "field_distinction": field_distinction,
+        "eo_pred_captured": eo_pred_captured,
         "squad": squad_meta,
         "xpts_gw": gw,
         "squad_note": squad_note,

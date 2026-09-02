@@ -49,6 +49,22 @@ salience.
 - **Every claim quotes a number that appears in the input**, and names the
   panel it came from and that panel's as-of instant. No number in the input,
   no claim.
+- **Every number you write in `headline` or `why` is machine-checked**
+  against the values your cited panels actually served (small rounding
+  tolerance only). A rank, a percent, a count or an ordinal that does not
+  exist in a cited panel rejects the whole item — do not round creatively,
+  do not average, do not quote a number from a panel you did not cite in
+  `source_panels`.
+- **The elite lens is mandatory on price and ownership items.** Any item
+  about a price move, ownership level or template gap must quote the elite
+  cohort's own% beside the global own% (both from the ownership panel). A
+  market-wide rush the elite field ignores reverses the decision — omitting
+  the elite read on a price item is a rejection-grade omission.
+- **Every cohort-derived number carries its n, inline.** A share measured
+  over a crawled cohort must be written with its denominator in the same
+  breath — "cap 100% (n=4)", never "cap 100%". A cohort with **n below 25
+  must not headline a claim**: it may appear only as context beside a
+  larger field's number, with its n printed.
 - **No invented stats.** Do not extrapolate, average across panels, or fill
   gaps with football knowledge from outside the input. An absent number is an
   absent number.

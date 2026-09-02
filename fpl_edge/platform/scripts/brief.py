@@ -32,6 +32,20 @@ Four blocks serve the pitch and the move cards, all under the same contract:
   ``form_upgrade``): rule ids + numbers only, thresholds echoed, capped and
   suppression-disclosed. No free text — templates live in the view.
 
+Two assembly blocks answer R1's "the user is the only join", still under the
+contract:
+
+* ``verdict`` — one pick per question (transfer / captain / bench / chip) by
+  the PRINTED deterministic precedence (:data:`PRECEDENCE`, echoed verbatim
+  and schema-pinned with ``const``). Rule ids + structured refs/numbers
+  only; every dissenting voice (mean-xPts captain, haul-odds captain,
+  creator armband count, the rule moves when they differ from the solver)
+  is served beside the pick as data, currencies never summed, each line
+  with a drill ref to its evidence card.
+* ``header`` — the free-transfer count and the chip verdict at top level
+  (they are the budget and the gate of the whole decision), each with the
+  solve state it was read under.
+
 The solve block renders ``transfer_plan.json`` — the artefact ``fpl
 recommend`` commits: the real transfer recommendation for the CURRENT 15
 (free optimum vs roll vs screened candidate moves, one MILP and one
@@ -49,6 +63,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import math
+import re
 import statistics
 from pathlib import Path
 from typing import Any
@@ -57,6 +72,7 @@ from fpl_edge.config import USER
 from fpl_edge.platform.registry import register_script
 from fpl_edge.platform.scripts.common import (
     POSITION_NAME,
+    PROJECTION_NAME,
     UTC,
     empty,
     latest_as_of,
@@ -71,6 +87,25 @@ from fpl_edge.platform.scripts.prices import price_radar
 from fpl_edge.platform.scripts.squad import squad_overview
 
 TRANSFER_PLAN_NAME = "transfer_plan.json"
+
+#: The verdict's adjudication rule, echoed VERBATIM into the payload (the same
+#: contract as the thresholds echo: the view renders this constant, it never
+#: paraphrases it). The verdict PICKS, it does not blend: one answer per
+#: question by this precedence, with every dissenting voice printed beside it
+#: as data — currencies never summed.
+PRECEDENCE = (
+    "The solver is the only voice optimizing the season objective, so its "
+    "fresh plan wins ties; a voice may only overrule it through a named "
+    "rule. Transfer: the solver plan while fresh or aging; the deterministic "
+    "move rules only when the plan is stale or missing. Captain: the solver "
+    "plan's captain, else the mean-xPts pick; dissenting measures are "
+    "printed, never blended. Bench: the bench_inversion swaps applied in the "
+    "suggested XI. Chip: the solver plan's chip, else hold."
+)
+
+#: "31.66% optimality gap" in the solver's own notes — parsed, never
+#: recomputed. The gap prints NEXT TO gain_over_roll, not behind a fold.
+_GAP_NOTE = re.compile(r"(\d+(?:\.\d+)?)\s*%\s*optimality gap")
 
 #: Every gate the brief applies, echoed verbatim into the payload. The view
 #: renders these; it hardcodes none of them.
@@ -292,6 +327,10 @@ _PLAN = {
         "notes": {"type": "array", "items": {"type": "string"}},
         "bounds": {"type": ["string", "null"]},
         "solve_seconds": {"type": ["number", "null"]},
+        # Parsed from the solver's own notes ("31.66% optimality gap") —
+        # first-class so the UI prints it BESIDE gain_over_roll, never in a
+        # fold. Null = the solve closed within tolerance (no gap note).
+        "optimality_gap_pct": {"type": ["number", "null"]},
         # n_transfers == 0: banking the transfer IS the recommendation.
         "is_roll": {"type": "boolean"},
         "moves": {"type": "array", "items": _TRANSFER},
@@ -396,6 +435,9 @@ _TEAMFIX = {
         "labels": {"type": "array", "items": {"type": "string"}},
         "horizon_attack_rank": {"type": ["integer", "null"]},
         "horizon_defence_rank": {"type": ["integer", "null"]},
+        # THE gameweeks the horizon ranks were computed over — fixture_board's
+        # own window, carried so no rank ever prints without its horizon.
+        "horizon_gws": {"type": "array", "items": {"type": "integer"}},
     },
 }
 
@@ -436,8 +478,109 @@ _MOVE = {
         "team_code": {"type": ["integer", "null"]},
         "numbers": _NUMBERS,
         "gws": {"type": "array", "items": {"type": "integer"}},
+        # The gameweeks any quoted fixture/attack rank was computed over —
+        # fixture_board's own horizon window, so a move card can never quote
+        # "#1 easiest run" without saying over WHICH gameweeks. Empty when the
+        # rule quotes no rank (form_upgrade).
+        "rank_gws": {"type": "array", "items": {"type": "integer"}},
         "sources": {"type": "array", "items": _SOURCE_CHIP},
         "drill": _DRILL,
+    },
+}
+
+#: One dissenting voice on a verdict line: a voice id + rule id + the numbers
+#: in that voice's OWN currency. Displayed beside the pick, never summed into
+#: it. No free text — wording lives in view templates keyed by voice/rule.
+_DISSENT = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["voice", "rule", "numbers", "source_panel"],
+    "properties": {
+        "voice": {"type": "string",
+                  "enum": ["mean_xpts", "haul_odds", "creator_armband",
+                           "rule_moves", "solver"]},
+        "rule": {"type": "string"},                 # rule id, never prose
+        "player": {"anyOf": [_PLAYER_REF, {"type": "null"}]},
+        "in": {"anyOf": [_PLAYER_REF, {"type": "null"}]},
+        "out": {"anyOf": [_PLAYER_REF, {"type": "null"}]},
+        "numbers": _NUMBERS,
+        "source_panel": {"type": "string"},
+        "source_as_of": {"type": ["string", "null"]},
+        "drill": _DRILL,
+    },
+}
+
+#: One verdict line: WHICH question, WHICH named precedence rule produced the
+#: pick (an id keyed to view templates — the house rule stands: no free-text
+#: recommendation field), the pick as structured refs/numbers, and every
+#: dissenting voice as data. Each line drills to its evidence card.
+_VERDICT_LINE = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["question", "rule", "numbers", "dissent",
+                 "source_panel", "source_as_of"],
+    "properties": {
+        "question": {"type": "string",
+                     "enum": ["transfer", "captain", "bench", "chip"]},
+        "rule": {"type": "string",
+                 "enum": ["solver_plan", "solver_roll",
+                          "rule_moves_solver_stale",
+                          "rule_moves_solver_missing", "no_move_named",
+                          "solver_plan_captain", "mean_xpts_captain",
+                          "no_captain_named",
+                          "bench_inversion_applied", "bench_confirmed",
+                          "no_bench_named",
+                          "solver_plan_chip", "chip_hold", "no_chip_named"]},
+        # The solve state behind the pick — printed ON the line, so a verdict
+        # produced under a stale/missing plan can never render as fresh.
+        "state": {"type": ["string", "null"]},
+        "pick": {"anyOf": [_PLAYER_REF, {"type": "null"}]},
+        "moves": {"type": "array", "items": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["out", "in"],
+            "properties": {"out": _PLAYER_REF, "in": _PLAYER_REF},
+        }},
+        "chip": {"type": ["string", "null"]},       # null = hold
+        "numbers": _NUMBERS,
+        "dissent": {"type": "array", "items": _DISSENT},
+        "source_panel": {"type": "string"},
+        "source_as_of": {"type": ["string", "null"]},
+        "drill": _DRILL,
+    },
+}
+
+#: The verdict block. `precedence` is the PRECEDENCE constant echoed verbatim
+#: (schema-pinned with const) — the printed deterministic rule the lines were
+#: produced by, disclosed on the card, never paraphrased warehouse-side.
+_VERDICT = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["precedence", "lines"],
+    "properties": {
+        "precedence": {"type": "string", "const": PRECEDENCE},
+        "lines": {"type": "array", "items": _VERDICT_LINE,
+                  "minItems": 4, "maxItems": 4},
+    },
+}
+
+#: Header stats: the budget of the whole decision (free transfers, bank) and
+#: the chip verdict, surfaced top-level instead of buried in the solver card.
+#: Every number names its source clock; a stale plan's FT count says so.
+_HEADER = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["free_transfers", "chip"],
+    "properties": {
+        "free_transfers": {"type": ["integer", "null"]},
+        "free_transfers_as_of": {"type": ["string", "null"]},
+        # The solve state the count was read under — "stale" means the count
+        # predates the last deadline and must render flagged, never bare.
+        "free_transfers_state": {"type": ["string", "null"]},
+        "bank_tenths": {"type": ["integer", "null"]},
+        "chip": {"type": ["string", "null"]},       # null = hold
+        "chip_rule": {"type": ["string", "null"]},
+        "chip_state": {"type": ["string", "null"]},
     },
 }
 
@@ -448,7 +591,8 @@ RESULT: dict[str, Any] = {
                  "thresholds", "alerts", "tiles", "suppressed_counts",
                  "empty_kinds", "watch_log", "solve", "suggested_xi",
                  "team_fixtures", "squad_projection", "moves",
-                 "moves_suppressed", "fixtures_scale"],
+                 "moves_suppressed", "fixtures_scale", "verdict", "header",
+                 "projection_generated"],
     "properties": {
         "season": {"type": "string"},
         "gw": {"type": ["integer", "null"]},
@@ -479,6 +623,14 @@ RESULT: dict[str, Any] = {
         "projection_gw": {"type": ["integer", "null"]},
         "moves": {"type": "array", "items": _MOVE},
         "moves_suppressed": {"type": "integer"},
+        "verdict": _VERDICT,
+        "header": _HEADER,
+        # The DATA-BIRTH instant of the solved projection artefact behind the
+        # squad card's xPts / p_haul (the model RUN, not the panel read time),
+        # plus what that source actually is — so no view can caption the
+        # solved numbers "(CONSENSUS)" again.
+        "projection_generated": {"type": ["string", "null"]},
+        "projection_source": {"type": ["string", "null"]},
         "fixtures_scale": {
             "type": ["object", "null"],
             "additionalProperties": False,
@@ -1096,6 +1248,8 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
                 "labels": all_labels,
                 "horizon_attack_rank": h.get("attack_rank"),
                 "horizon_defence_rank": h.get("defence_rank"),
+                # the board's own window — a rank never travels without it
+                "horizon_gws": [int(g) for g in near.get("gws") or []],
             })
 
         if far.get("empty"):
@@ -1374,6 +1528,11 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
                             "next_gw": g_next,
                         },
                         "gws": settled_gws,
+                        # attack_rank is fixture_board's horizon rank — the
+                        # gameweeks it was computed over travel with it, so
+                        # the card can never contradict the board's default
+                        # window without the difference being printed.
+                        "rank_gws": [int(g) for g in near.get("gws") or []],
                         "sources": move_sources + [
                             {"panel": "fixture_board",
                              "as_of": sources_as_of.get("fixture_board")}],
@@ -1423,6 +1582,7 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
                         "next_gw": g_next,
                     },
                     "gws": settled_gws,
+                    "rank_gws": [],   # form_upgrade quotes no fixture rank
                     "sources": list(move_sources),
                     "drill": {"drawer": c_},
                 }))
@@ -1646,6 +1806,16 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
                                ("label", "hits", "hit_points", "expected_gain",
                                 "breakeven_gain", "justified")}
 
+            # The optimality gap, parsed from the solver's own notes — the
+            # honesty number that belongs NEXT TO gain_over_roll, not in a
+            # fold. Null = no gap note = the solve closed within tolerance.
+            gap_pct = None
+            for note_ in tplan.get("notes") or []:
+                m_gap = _GAP_NOTE.search(str(note_))
+                if m_gap:
+                    gap_pct = float(m_gap.group(1))
+                    break
+
             my_cap = next((p for p in squad15 if p.get("is_captain")), None)
             solve["plan"] = {
                 "generated_at": solve["generated_at"],
@@ -1674,6 +1844,7 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
                 "solve_seconds": (float(tplan["solve_seconds"])
                                   if tplan.get("solve_seconds") is not None
                                   else None),
+                "optimality_gap_pct": gap_pct,
                 # Zero transfers is the ROLL recommendation \u2014 bank the
                 # transfer \u2014 not an empty state.
                 "is_roll": not in_codes,
@@ -1683,6 +1854,222 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
                 "alternatives": alternatives,
                 "hit_verdict": hit_verdict,
             }
+
+    # ---- the verdict: one pick per question, by the PRINTED precedence ---
+    # It PICKS, it does not blend. Rule ids + structured refs/numbers only —
+    # the house rule stands (no free-text recommendation field); wording
+    # lives in view templates keyed by the rule id. Every dissenting voice
+    # (mean-xPts captain, haul-odds captain, creator armband count, the rule
+    # moves when they differ from the solver) is served beside the pick as
+    # data, currencies never summed.
+    plan = solve.get("plan")
+    plan_as_of = solve.get("generated_at")
+    sq_as_of_v = sources_as_of.get("squad_overview")
+    sq_by_code_v = {p["code"]: p for p in squad15}
+
+    # creator armband count — creator_board's consensus, read for the dissent
+    # chip only; an unreadable corpus degrades to no chip, noted, never a 500.
+    creator_cap: dict[str, Any] | None = None
+    try:
+        from fpl_edge.platform.scripts.creators import creator_board
+
+        cb = creator_board(wh)
+        if not cb.get("empty"):
+            best_row, best_n = None, 0
+            for r_ in cb.get("consensus") or []:
+                n_c = int(((r_.get("captain") or {}).get("n")) or 0)
+                if n_c > best_n:
+                    best_row, best_n = r_, n_c
+            if best_row is not None:
+                creator_cap = {
+                    "n": best_n,
+                    "ref": {"code": int(best_row["code"]),
+                            "name": str(best_row.get("name")
+                                        or best_row["code"]),
+                            "pos": best_row.get("pos"),
+                            "team": best_row.get("team"),
+                            "team_code": None,
+                            "price": best_row.get("price"),
+                            "own_pct": best_row.get("own_pct")},
+                    "as_of": _iso(cb.get("as_of")),
+                }
+    except Exception as exc:  # noqa: BLE001 - a dissent chip, not the page
+        notes.append(f"creator_board unreadable for the armband dissent: "
+                     f"{type(exc).__name__}: {exc}")
+
+    # -- transfer ----------------------------------------------------------
+    t_dissent: list[dict[str, Any]] = []
+    if plan is not None:
+        t_rule = "solver_roll" if plan["is_roll"] else "solver_plan"
+        t_moves = [{"out": m["out"], "in": m["in"]} for m in plan["moves"]]
+        t_numbers: dict[str, Any] = {
+            "gain_over_roll": plan.get("gain_over_roll"),
+            "optimality_gap_pct": plan.get("optimality_gap_pct"),
+            "solve_seconds": plan.get("solve_seconds"),
+            "age_hours": plan.get("age_hours"),
+            "free_transfers": plan.get("free_transfers"),
+            "hits": plan.get("hits"),
+        }
+        t_src, t_as_of = "solve_plan", plan_as_of
+        # the rule moves dissent only where they differ from the solver
+        plan_pairs = {(m["out"]["code"], m["in"]["code"])
+                      for m in plan["moves"]}
+        for mv in moves:
+            if (mv["out"]["code"], mv["in"]["code"]) in plan_pairs:
+                continue
+            t_dissent.append({
+                "voice": "rule_moves", "rule": mv["rule"],
+                "player": None, "in": mv["in"], "out": mv["out"],
+                "numbers": {"cand_xpts": mv["numbers"].get("cand_xpts"),
+                            "out_xpts": mv["numbers"].get("out_xpts")},
+                "source_panel": "dashboard_brief",
+                "source_as_of": proj_as_of,
+                "drill": mv.get("drill") or {"focus": "moves"},
+            })
+    elif moves:
+        t_rule = ("rule_moves_solver_stale" if solve["state"] == "stale"
+                  else "rule_moves_solver_missing")
+        t_moves = [{"out": m["out"], "in": m["in"]} for m in moves]
+        t_numbers = {"n_rule_moves": len(moves)}
+        t_src, t_as_of = "dashboard_brief", proj_as_of
+    else:
+        t_rule, t_moves, t_numbers = "no_move_named", [], {}
+        t_src, t_as_of = "dashboard_brief", None
+    if plan is None and solve["state"] in ("stale", "missing"):
+        # the overruled/absent solver is itself a dissent entry, dated
+        t_dissent.append({
+            "voice": "solver", "rule": f"solve_{solve['state']}",
+            "player": None, "in": None, "out": None,
+            "numbers": {"age_hours": solve.get("age_hours")},
+            "source_panel": "solve_plan",
+            "source_as_of": solve.get("generated_at"),
+            "drill": {"focus": "solver"},
+        })
+    transfer_line = {
+        "question": "transfer", "rule": t_rule, "state": solve["state"],
+        "pick": None, "moves": t_moves, "chip": None, "numbers": t_numbers,
+        "dissent": t_dissent, "source_panel": t_src, "source_as_of": t_as_of,
+        "drill": {"focus": "solver" if plan is not None else "moves"},
+    }
+
+    # -- captain -----------------------------------------------------------
+    cap_pick = None
+    if plan is not None and plan.get("captain"):
+        c_rule, cap_pick = "solver_plan_captain", plan["captain"]
+        c_src, c_as_of = "solve_plan", plan_as_of
+    elif suggested_xi and suggested_xi.get("captain"):
+        c_rule, cap_pick = "mean_xpts_captain", suggested_xi["captain"]
+        c_src, c_as_of = "squad_overview", sq_as_of_v
+    else:
+        c_rule, c_src, c_as_of = "no_captain_named", "dashboard_brief", None
+    c_numbers: dict[str, Any] = {}
+    if cap_pick is not None:
+        row_v = sq_by_code_v.get(cap_pick["code"])
+        if row_v is not None:
+            c_numbers = {"pick_xpts": row_v.get("xpts"),
+                         "pick_p_haul": row_v.get("p_haul")}
+    c_dissent: list[dict[str, Any]] = []
+    if suggested_xi and cap_pick is not None:
+        cn = suggested_xi.get("captain_numbers") or {}
+        bm = suggested_xi.get("captain_by_mean")
+        if bm and bm["code"] != cap_pick["code"]:
+            c_dissent.append({
+                "voice": "mean_xpts", "rule": "mean_xpts_captain",
+                "player": bm, "in": None, "out": None,
+                "numbers": {"xpts": cn.get("mean_pick_xpts")},
+                "source_panel": "squad_overview", "source_as_of": sq_as_of_v,
+                "drill": {"drawer": bm["code"]},
+            })
+        bh = suggested_xi.get("captain_by_haul")
+        if bh and bh["code"] != cap_pick["code"]:
+            c_dissent.append({
+                "voice": "haul_odds", "rule": "haul_odds_captain",
+                "player": bh, "in": None, "out": None,
+                "numbers": {"p_haul": cn.get("haul_pick_p_haul")},
+                "source_panel": "squad_overview", "source_as_of": sq_as_of_v,
+                "drill": {"drawer": bh["code"]},
+            })
+    if (creator_cap is not None and cap_pick is not None
+            and creator_cap["ref"]["code"] != cap_pick["code"]):
+        c_dissent.append({
+            "voice": "creator_armband", "rule": "creator_armband_count",
+            "player": creator_cap["ref"], "in": None, "out": None,
+            "numbers": {"armband_calls": creator_cap["n"]},
+            "source_panel": "creator_board",
+            "source_as_of": creator_cap["as_of"],
+            "drill": {"tab": "creators"},
+        })
+    captain_line = {
+        "question": "captain", "rule": c_rule, "state": solve["state"],
+        "pick": cap_pick, "moves": [], "chip": None, "numbers": c_numbers,
+        "dissent": c_dissent, "source_panel": c_src, "source_as_of": c_as_of,
+        "drill": {"focus": "squad"},
+    }
+
+    # -- bench (suggested_xi IS the pick; the verdict line points at it) ---
+    if suggested_xi is None:
+        b_rule, b_numbers = "no_bench_named", {}
+        b_as_of = None
+    elif suggested_xi["n_changes"]:
+        b_rule = "bench_inversion_applied"
+        b_numbers = {"n_changes": suggested_xi["n_changes"],
+                     "swap_delta_xpts": suggested_xi.get("swap_delta_xpts")}
+        b_as_of = sq_as_of_v
+    else:
+        b_rule, b_numbers = "bench_confirmed", {"n_changes": 0}
+        b_as_of = sq_as_of_v
+    bench_line = {
+        "question": "bench", "rule": b_rule, "state": solve["state"],
+        "pick": None, "moves": [], "chip": None, "numbers": b_numbers,
+        "dissent": [], "source_panel": "squad_overview",
+        "source_as_of": b_as_of, "drill": {"focus": "squad"},
+    }
+
+    # -- chip: a yes/no verdict line (null chip = hold) --------------------
+    if plan is not None:
+        chip_val = plan.get("chip") or None
+        ch_rule = "solver_plan_chip" if chip_val else "chip_hold"
+        ch_numbers: dict[str, Any] = {"age_hours": plan.get("age_hours")}
+        ch_as_of = plan_as_of
+    else:
+        chip_val, ch_rule, ch_numbers = None, "no_chip_named", {}
+        ch_as_of = solve.get("generated_at")
+    chip_line = {
+        "question": "chip", "rule": ch_rule, "state": solve["state"],
+        "pick": None, "moves": [], "chip": chip_val, "numbers": ch_numbers,
+        "dissent": [], "source_panel": "solve_plan",
+        "source_as_of": ch_as_of, "drill": {"focus": "solver"},
+    }
+
+    verdict = {
+        "precedence": PRECEDENCE,
+        "lines": [transfer_line, captain_line, bench_line, chip_line],
+    }
+
+    # ---- header stats: FT count + chip verdict, top-level ---------------
+    header = {
+        "free_transfers": (int(tplan["free_transfers"])
+                           if tplan is not None
+                           and tplan.get("free_transfers") is not None
+                           else None),
+        "free_transfers_as_of": solve.get("generated_at"),
+        "free_transfers_state": solve["state"],
+        "bank_tenths": (sq.get("bank_tenths")
+                        if not sq.get("empty") else None),
+        "chip": chip_val,
+        "chip_rule": ch_rule,
+        "chip_state": solve["state"],
+    }
+
+    # ---- data-birth instant of the solved projection artefact -----------
+    # The squad card's xPts/p_haul come from the solved artefact (via
+    # squad_overview) — this is when that model RUN happened, distinct from
+    # every panel read clock in sources_as_of.
+    projection_generated = None
+    proj_artefact = Path(source_dir(wh)) / PROJECTION_NAME
+    if proj_artefact.exists():
+        projection_generated = dt.datetime.fromtimestamp(
+            proj_artefact.stat().st_mtime, UTC).isoformat()
 
     # ---- assemble --------------------------------------------------------
     alerts.sort(key=lambda a: (
@@ -1741,6 +2128,13 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
         "projection_gw": g_next,
         "moves": moves,
         "moves_suppressed": moves_suppressed,
+        "verdict": verdict,
+        "header": header,
+        "projection_generated": projection_generated,
+        "projection_source": (
+            f"solved artefact {PROJECTION_NAME} — the engine's own "
+            f"simulation run, not the provider consensus"
+            if projection_generated else None),
         "fixtures_scale": fixtures_scale,
         "notes": notes,
     }

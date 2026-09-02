@@ -167,11 +167,10 @@ def test_the_fixture_adapter_reads_only_fields_fixture_board_publishes() -> None
     single place worth pinning: everything it reads off an opponent must be a
     field `fixture_board` actually declares.
     """
-    # The view falls back to fixture_ticker when the split artefact is absent,
-    # so the union of the two is what it may legitimately see. Anything outside
-    # that union is a field no registered panel publishes.
-    allowed = (_schema_props("fixture_board", "teams", "fixtures", "opponents")
-               | _schema_props("fixture_ticker", "teams", "fixtures", "opponents"))
+    # The legacy fixture_ticker fallback is deleted, so fixture_board's
+    # opponent schema is the ONLY shape the view may legitimately see.
+    # Anything outside it is a field no registered panel publishes.
+    allowed = _schema_props("fixture_board", "teams", "fixtures", "opponents")
     body = _strip_comments(_fn_body(VIEWS["fixtures"], "flatten"))
     used = set(re.findall(r"\bo\.(\w+)", body))
     unknown = used - allowed
@@ -352,8 +351,11 @@ def test_the_fixtures_caption_flips_on_data_not_prose() -> None:
     unrelated line, the next matched a ternary -- so treat a pass here as a
     smoke test.
     """
-    props = _schema_props("fixture_ticker", "teams", "fixtures", "opponents")
-    assert "difficulty" in props, "the optional difficulty field left the schema"
+    props = _schema_props("fixture_board", "teams", "fixtures", "opponents")
+    assert "legacy_difficulty" in props, (
+        "the optional legacy_difficulty field left the schema -- with the "
+        "ticker deleted it is the only blend the view can fall back to"
+    )
     src = VIEWS["fixtures"]
     # Assert the BEHAVIOUR, not the identifier. This pinned a variable named
     # `anyDifficulty`, so rebuilding the view broke the test while the

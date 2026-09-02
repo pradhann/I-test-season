@@ -201,6 +201,90 @@ def build_context(
 
 _CODE_KEY = re.compile(r"^(code|codes|.*_codes)$")
 
+#: A numeric token in prose: digits with optional thousands commas and a
+#: decimal part. Sign and percent handled at the call site.
+_NUM_CAND = re.compile(r"\d[\d,]*(?:\.\d+)?")
+_ORDINAL = ("st", "nd", "rd", "th")
+
+
+def prose_numbers(text: str) -> list[tuple[float, int]]:
+    """Every numeric token in prose, with its printed decimal precision.
+
+    Tolerant of formatting: thousands commas, percent signs, signs, ordinal
+    suffixes ("33rd" is the quantity 33). Digits glued to letters (GW3,
+    top10k, p90, 36h) are labels/units, not quantities this validator can
+    adjudicate against payload values — skipped, deliberately.
+    """
+    vals: list[tuple[float, int]] = []
+    text = text or ""
+    for m in _NUM_CAND.finditer(text):
+        s, e = m.span()
+        if s and (text[s - 1].isalnum() or text[s - 1] in "._"):
+            continue          # part of a label (GW3, x2, p90, v1.2)
+        tail = text[e:]
+        if tail[:1].isalpha() and not (
+                tail[:2].lower() in _ORDINAL and not tail[2:3].isalpha()):
+            continue          # unit glued on (10k, 36h, 5d)
+        tok = m.group(0).replace(",", "")
+        decimals = len(tok.split(".")[1]) if "." in tok else 0
+        try:
+            vals.append((float(tok), decimals))
+        except ValueError:    # pragma: no cover - regex should prevent this
+            continue
+    return vals
+
+
+def known_values(context: dict[str, Any]) -> dict[str, list[float]]:
+    """Every numeric value each panel actually served, panel by panel.
+
+    The pool the numeric-token validator checks prose against: a number the
+    model prints must exist in a panel it cites — R2's finding was headline
+    prose ("ranks 33rd", payload 30) slipping past a validator that only
+    checked the number chips.
+    """
+    out: dict[str, list[float]] = {}
+
+    def walk(acc: list[float], value: Any) -> None:
+        if isinstance(value, dict):
+            for v in value.values():
+                walk(acc, v)
+        elif isinstance(value, list):
+            for v in value:
+                walk(acc, v)
+        elif isinstance(value, (int, float)) and not isinstance(value, bool):
+            acc.append(float(value))
+
+    for name, res in context.items():
+        acc: list[float] = []
+        walk(acc, res)
+        out[name] = acc
+    return out
+
+
+def _decimals_of(v: float) -> int:
+    s = f"{v:.6f}".rstrip("0")
+    frac = s.split(".")[1] if "." in s else ""
+    return len(frac)
+
+
+def _num_in(value: float, decimals: int, pool: list[float]) -> bool:
+    """Does ``value`` (printed at ``decimals`` places) appear in ``pool``?
+
+    Small rounding tolerance (half a unit in the last printed place), sign
+    ignored (prose says "fall of 2891" for -2891), and the ×100/÷100 pair
+    accepted because EO/probability fields are served both as fractions and
+    as percents.
+    """
+    tol = 0.5 * 10.0 ** (-decimals) + 1e-9
+    target = abs(value)
+    for p in pool:
+        ap = abs(p)
+        if (abs(ap - target) <= tol
+                or abs(ap * 100.0 - target) <= tol
+                or abs(ap / 100.0 - target) <= tol):
+            return True
+    return False
+
 
 def known_codes(context: dict[str, Any]) -> set[int]:
     """Every player code the model was actually shown.
@@ -390,8 +474,16 @@ def _valid_drill(drill: Any, codes: set[int]) -> bool:
     return False
 
 
-def _valid_item(item: Any, panels: set[str], codes: set[int]) -> bool:
-    """One item against the contract. Pure; every rule mirrors the meta-prompt."""
+def _valid_item(item: Any, panels: set[str], codes: set[int],
+                values: dict[str, list[float]] | None = None) -> bool:
+    """One item against the contract. Pure; every rule mirrors the meta-prompt.
+
+    When ``values`` is given (panel -> the numeric values it actually
+    served), the numeric-token rule applies: every number chip's value must
+    exist in its named panel, and every numeric token in the headline/why
+    prose must exist in one of the CITED panels — small rounding tolerance,
+    percent/fraction pairs accepted. A prose number the input never served
+    is an invented stat, however plausible."""
     if not isinstance(item, dict):
         return False
     if not (isinstance(item.get("headline"), str)
@@ -429,6 +521,22 @@ def _valid_item(item: Any, panels: set[str], codes: set[int]) -> bool:
             and all(isinstance(p, str) for p in sps)
             and set(sps) <= panels):
         return False
+    if values is not None:
+        # every chip value must exist in the panel it names
+        for n in numbers:
+            v = float(n["value"])
+            if not _num_in(v, _decimals_of(v),
+                           values.get(n["source_panel"]) or []):
+                return False
+        # every numeric token in the PROSE must exist in a cited panel —
+        # the seam R2 found: chips validated, sentences did not.
+        cited: list[float] = []
+        for p in sps:
+            cited.extend(values.get(p) or [])
+        for v, d in prose_numbers(
+                str(item["headline"]) + " " + str(item["why"])):
+            if not _num_in(v, d, cited):
+                return False
     return _valid_drill(item.get("drill"), codes)
 
 
@@ -437,17 +545,20 @@ def validate_items(
     *,
     panels: set[str],
     codes: set[int],
+    values: dict[str, list[float]] | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
     """Keep only contract-clean items; count everything dropped.
 
     Rejects are counted — dropped loudly into ``rejected_n``, never
     silently — and the survivors are severity-sorted (1 first) and capped at
     :data:`MAX_ITEMS`; overflow past the cap counts as rejected too.
+    ``values`` (from :func:`known_values`) arms the numeric-token rule over
+    chips AND headline/why prose; None skips it (schema-only validation).
     """
     kept: list[dict[str, Any]] = []
     rejected = 0
     for item in raw_items:
-        if _valid_item(item, panels, codes):
+        if _valid_item(item, panels, codes, values):
             kept.append(item)
         else:
             rejected += 1
@@ -569,7 +680,8 @@ def generate(
     text = (run_model or _run_model)(prompt)
     items = parse_items(text)
     kept, rejected_n = validate_items(
-        items, panels=set(context), codes=known_codes(context))
+        items, panels=set(context), codes=known_codes(context),
+        values=known_values(context))
     if not kept:
         raise BriefingIntelError(
             f"zero valid items survived validation ({rejected_n} rejected of "

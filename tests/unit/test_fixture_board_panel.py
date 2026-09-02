@@ -667,3 +667,70 @@ def test_an_unattributable_insight_is_counted_never_shown(tmp_path):
     assert {r["entity_name"] for r in talk["items"]} == {"Arsenal"}
     assert "1 team-level insight" in talk["note"], talk["note"]
     assert "refused" in talk["note"]
+
+
+# --------------------------------------------------------------------------
+# regression: the NULL-ord set-piece row that 500'd a third of the board
+# --------------------------------------------------------------------------
+
+
+def _seed_duty(path, *, team_code, code, duty, ord, season=SEASON):
+    """One set_piece_duty row, exactly as bootstrap-static ingestion writes it.
+
+    ``ord`` may be None: the schema documents NULL as "dropped off the list",
+    and the live FPL API also lists takers with no rank. Both are real rows.
+    """
+    from fpl_edge.intel.store import IntelStore
+    wh = Warehouse(path)
+    IntelStore(wh)  # applies the intel migrations (intel_item, set_piece_duty)
+    wh.sql(
+        "INSERT INTO set_piece_duty (season, code, duty, ord, note, team_code, "
+        "source, as_of) VALUES (?, ?, ?, ?, NULL, ?, "
+        "'fpl_api:bootstrap-static', ?)",
+        [season, code, duty, ord, team_code,
+         pd.Timestamp("2026-08-13 09:00", tz="UTC")],
+    )
+    wh.close()
+
+
+def test_a_null_duty_order_is_served_not_a_crash(tmp_path):
+    """The live data shape behind the 21-of-60 fixture_detail 500s.
+
+    Four clubs carried set_piece_duty rows with ``ord IS NULL`` (the FPL API
+    names a taker without ranking him, and the store also writes NULL for a
+    player dropped off a list). ``int(NaN)`` in the intel block then took the
+    WHOLE drawer down for every fixture involving those clubs -- a silent dead
+    click on a third of the board. The row must be served with order: null.
+    """
+    path = _seed(tmp_path)
+    _seed_duty(path, team_code=1, code=101, duty="penalties", ord=None)
+    _seed_duty(path, team_code=1, code=102, duty="corners_indirect", ord=1)
+
+    run = run_script("fixture_detail", {"fixture_id": 1}, db=path)
+    assert run.result.get("empty") is not True
+    intel = run.result["intel"]
+    assert intel["available"] is True, intel.get("unavailable")
+    duties = intel["set_piece_duty"]["1"]
+    by_duty = {d["duty"]: d for d in duties}
+    assert by_duty["penalties"]["order"] is None, (
+        "a NULL ord is an absent order, not an error and not a zero")
+    assert by_duty["corners_indirect"]["order"] == 1
+
+
+def test_a_crashing_optional_section_degrades_to_a_named_gap(tmp_path, monkeypatch):
+    """An optional section that hits a data edge must yield the house gap
+    shape for THAT section -- naming the exception -- not 500 the panel."""
+    path = _seed(tmp_path)
+
+    def _boom(*args, **kwargs):
+        raise ValueError("a data edge this section cannot survive")
+
+    monkeypatch.setattr(fxmod, "_intel_block", _boom)
+    run = run_script("fixture_detail", {"fixture_id": 1}, db=path)
+    assert run.result.get("empty") is not True, "the panel must still serve"
+    intel = run.result["intel"]
+    assert intel["available"] is False
+    assert "ValueError" in intel["unavailable"]
+    assert "dropped rather than guessed" in intel["unavailable"]
+    # ...and the untouched sections are unaffected.
+    assert run.result["model"] is not None

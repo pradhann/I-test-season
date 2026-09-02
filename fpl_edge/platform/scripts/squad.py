@@ -78,6 +78,12 @@ RESULT: dict[str, Any] = {
         "projected_xi_xpts": {"type": ["number", "null"]},
         "captain": {"type": ["string", "null"]},
         "vice": {"type": ["string", "null"]},
+        # The DATA-BIRTH instant of the xpts/p_haul columns: when the solved
+        # projection artefact was generated (the model RUN, not this panel's
+        # read time), and what that source actually is — so no view can label
+        # these numbers "consensus". Null when no artefact is cached.
+        "projection_generated": {"type": ["string", "null"]},
+        "projection_source": {"type": ["string", "null"]},
         "starters": {"type": "array", "items": _PLAYER},
         "bench": {"type": "array", "items": _PLAYER},
         # Chip ledger from MyTeamState.chip_status() — the rules registry's
@@ -174,6 +180,8 @@ def squad_overview(wh, *, season: str, entry_id: int | None = None) -> dict[str,
     proj = load_projection(wh)
     xpts, phaul = {}, {}
     notes: list[str] = []
+    projection_generated = None
+    projection_source = None
     if proj is None:
         notes.append(
             "No projection artefact cached, so xPts columns are null. "
@@ -183,6 +191,23 @@ def squad_overview(wh, *, season: str, entry_id: int | None = None) -> dict[str,
         xpts = dict(zip(proj["code"].astype(int), proj["xpts"]))
         if "p_haul" in proj.columns:
             phaul = dict(zip(proj["code"].astype(int), proj["p_haul"]))
+        # Data-birth instant of the xPts columns: the artefact's own write
+        # time — the model RUN, not this panel's state read. Named so the
+        # view never captions a solved number as a consensus.
+        import datetime as dt
+
+        from fpl_edge.platform.scripts.common import (
+            PROJECTION_NAME,
+            source_dir,
+        )
+
+        artefact = source_dir(wh) / PROJECTION_NAME
+        if artefact.exists():
+            projection_generated = dt.datetime.fromtimestamp(
+                artefact.stat().st_mtime, dt.UTC).isoformat()
+        projection_source = (
+            f"solved artefact {PROJECTION_NAME} — the engine's own "
+            f"simulation run, not the provider consensus")
 
     def card(pick) -> dict[str, Any]:
         code = int(pick.code)
@@ -253,6 +278,8 @@ def squad_overview(wh, *, season: str, entry_id: int | None = None) -> dict[str,
         "projected_xi_xpts": round(float(xi_total), 2) if xi_total is not None else None,
         "captain": cap,
         "vice": vice,
+        "projection_generated": projection_generated,
+        "projection_source": projection_source,
         "starters": starters,
         "bench": bench,
         "chips": chips,

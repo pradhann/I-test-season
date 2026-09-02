@@ -468,6 +468,78 @@ def _resolver(wh, season: str, moment: dt.datetime):
     return resolver_for(players)
 
 
+def _display_index(wh, moment: dt.datetime) -> dict[str, Any]:
+    """Canonical display identity per player code, for READ-time naming.
+
+    The claim rows store the name AS SPOKEN ("rayan cherki", "Martin
+    Odegaard"), so one player can exist under several spellings and his claims
+    split across identities. This index maps a RESOLVED code -- and only a
+    resolved code; identity is never guessed from the string here -- to the
+    same ``sem_players`` identity every other panel renders, so "Ødegaard" is
+    one column everywhere.
+
+    ``shared`` marks web_names carried by two or more players in the pool (two
+    Palmers), so any surface serving the bare web_name can attach a first
+    initial + club instead of leaving a namesake ambiguous.
+    """
+    rows = q(
+        wh,
+        """
+        SELECT sp.code, sp.web_name, sp.team, dp.first_name
+        FROM sem_players(?) sp
+        LEFT JOIN (
+            SELECT code, first_name FROM (
+                SELECT code, first_name, row_number() OVER (
+                    PARTITION BY season, code ORDER BY as_of DESC) rn
+                FROM dim_player WHERE season = ? AND as_of <= ?
+            ) WHERE rn = 1
+        ) dp ON dp.code = sp.code
+        WHERE sp.season = ?
+        """,
+        (moment, SEASON_DEFAULT, moment, SEASON_DEFAULT),
+    )
+    by_code: dict[int, dict[str, Any]] = {}
+    counts: dict[str, int] = {}
+    for r in rows.to_dict("records"):
+        code = _i(r.get("code"))
+        web = _s(r.get("web_name"))
+        if code is None or web is None:
+            continue
+        by_code[code] = {"web_name": web, "team": _s(r.get("team")),
+                         "first_name": _s(r.get("first_name"))}
+        key = web.casefold()
+        counts[key] = counts.get(key, 0) + 1
+    return {"by_code": by_code,
+            "shared": {k for k, n in counts.items() if n > 1}}
+
+
+def _naming(code: int | None, raw_name: str | None,
+            display: dict[str, Any] | None) -> dict[str, Any]:
+    """The read-side naming contract every claim/call surface serves.
+
+    * resolved (code known to the pool)  -> ``display_name`` is the canonical
+      ``web_name``, ``resolved: true``.
+    * unresolved -> the creator's own words survive untouched with
+      ``resolved: false``. Never edit-distance, never nearest-looking.
+    * namesake  -> ``disambiguator`` ("C. Palmer (CHE)") whenever the served
+      web_name is carried by more than one player, so a bare surname can
+      never silently mean two people.
+    """
+    raw = (raw_name or "").strip()
+    info = (display or {}).get("by_code", {}).get(code) if code is not None else None
+    if info is None:
+        return {"display_name": raw or "(unnamed)", "resolved": False,
+                "disambiguator": None}
+    web = str(info["web_name"])
+    dis = None
+    if web.casefold() in (display or {}).get("shared", set()):
+        initial = (info.get("first_name") or "")[:1]
+        team = info.get("team")
+        bits = f"{initial}. {web}" if initial else web
+        dis = f"{bits} ({team})" if team else bits
+    return {"display_name": web, "resolved": True, "disambiguator": dis}
+
+
 def _resolve_code(resolver, name: str) -> int | None:
     """Exact alias lookup. Unknown and ambiguous both yield None.
 
@@ -487,12 +559,18 @@ def _resolve_code(resolver, name: str) -> int | None:
 
 
 def _call(call: dict[str, Any], resolver, index: TranscriptIndex,
-          url: str | None) -> dict[str, Any]:
+          url: str | None, display: dict[str, Any] | None = None
+          ) -> dict[str, Any]:
     quote = _s(call.get("quote"))
     start_s = index.find(quote)
+    raw = str(call.get("player") or "").strip()
+    code = _resolve_code(resolver, raw)
     return {
-        "code": _resolve_code(resolver, str(call.get("player") or "")),
-        "name": str(call.get("player") or "").strip() or "(unnamed)",
+        "code": code,
+        # `name` stays the creator's own words, verbatim -- the naming fields
+        # below are the canonical read, never a replacement for the evidence.
+        "name": raw or "(unnamed)",
+        **_naming(code, raw, display),
         "conviction": str(call.get("conviction") or "medium"),
         "quote": quote,
         "start_s": _f(start_s, 2),
@@ -501,7 +579,8 @@ def _call(call: dict[str, Any], resolver, index: TranscriptIndex,
 
 
 def _take(analysis: dict[str, Any] | None, model: str | None, resolver,
-          index: TranscriptIndex, url: str | None) -> dict[str, Any] | None:
+          index: TranscriptIndex, url: str | None,
+          display: dict[str, Any] | None = None) -> dict[str, Any] | None:
     if analysis is None:
         return None
     bullets = [str(b) for b in (analysis.get("summary") or []) if str(b).strip()]
@@ -523,7 +602,7 @@ def _take(analysis: dict[str, Any] | None, model: str | None, resolver,
         for c in (analysis.get(source) or []):
             if not isinstance(c, dict):
                 continue
-            call = _call(c, resolver, index, url)
+            call = _call(c, resolver, index, url, display)
             if str(c.get("stance") or "").strip().lower() == "watch":
                 # Where it was stored is kept, because "watch, raised while
                 # talking about transfers in" is more informative than "watch".
@@ -1031,15 +1110,30 @@ _SOURCE = {
     },
 }
 
+#: The read-side naming contract shared by every surface that serves a player
+#: name a creator spoke. `name` is always the verbatim spoken string;
+#: `display_name` is the canonical `web_name` when the strict resolver found
+#: exactly one player (`resolved: true`), and the raw string otherwise
+#: (`resolved: false` -- never guessed). `disambiguator` is non-null exactly
+#: when the served web_name belongs to two or more players in the pool
+#: ("C. Palmer (CHE)"), so a bare surname can never silently mean two people.
+_NAMING_PROPS: dict[str, Any] = {
+    "display_name": {"type": "string"},
+    "resolved": {"type": "boolean"},
+    "disambiguator": {"type": ["string", "null"]},
+}
+
 _CALL = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["code", "name", "conviction", "quote", "start_s", "deep_link"],
+    "required": ["code", "name", "display_name", "resolved", "disambiguator",
+                 "conviction", "quote", "start_s", "deep_link"],
     "properties": {
         # null when the spoken name does not resolve to exactly one stable
         # player code. The name is always the creator's own words.
         "code": {"type": ["integer", "null"]},
         "name": {"type": "string"},
+        **_NAMING_PROPS,
         "conviction": {"type": "string"},
         "quote": {"type": ["string", "null"]},
         "start_s": {"type": ["number", "null"]},
@@ -1067,8 +1161,8 @@ _CHIP = {
 _WATCH = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["code", "name", "conviction", "quote", "start_s", "deep_link",
-                 "raised_in"],
+    "required": ["code", "name", "display_name", "resolved", "disambiguator",
+                 "conviction", "quote", "start_s", "deep_link", "raised_in"],
     "properties": {
         **_CALL["properties"],
         "raised_in": {"enum": ["transfers_in", "transfers_out", "captain",
@@ -1235,11 +1329,16 @@ _PANEL_OWNED = {
 _CONSENSUS = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["code", "name", "buy", "sell", "captain", "net", "mine",
-                 "panel_owned"],
+    "required": ["code", "name", "resolved", "disambiguator", "buy", "sell",
+                 "captain", "net", "mine", "panel_owned"],
     "properties": {
         "code": {"type": "integer"},
+        # `name` here is already the canonical web_name when the code is in
+        # the pool; `resolved: false` marks the fallback to the raw claim
+        # string. `disambiguator` follows the shared naming contract.
         "name": {"type": "string"},
+        "resolved": {"type": "boolean"},
+        "disambiguator": {"type": ["string", "null"]},
         "pos": {"type": ["string", "null"]},
         "team": {"type": ["string", "null"]},
         "price": {"type": ["number", "null"]},
@@ -1337,11 +1436,13 @@ BOARD_RESULT: dict[str, Any] = {
 _CLAIM = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["code", "name", "action", "confidence", "quote", "start_s",
+    "required": ["code", "name", "display_name", "resolved", "disambiguator",
+                 "action", "confidence", "quote", "start_s",
                  "deep_link", "extractor"],
     "properties": {
         "code": {"type": "integer"},
         "name": {"type": "string"},
+        **_NAMING_PROPS,
         "action": {"type": "string"},
         "confidence": {"type": ["number", "null"]},
         "quote": {"type": ["string", "null"]},
@@ -1608,6 +1709,7 @@ def creator_board(wh, *, days: int = 30, gw: int | None = None,
     transcripts = (_transcripts(wh, wanted)
                    if "transcript_segment" in present else {})
     resolver = _resolver(wh, SEASON_DEFAULT, moment)
+    display = _display_index(wh, moment)
 
     # Publications, not stored rows: the same video under `watch?v=` and
     # `youtube.com/live/` is one thing this creator published.
@@ -1649,7 +1751,7 @@ def creator_board(wh, *, days: int = 30, gw: int | None = None,
                 index = transcripts[item_id]
                 break
         url = _s(row["url"]) if row is not None else None
-        take = _take(analysis, model, resolver, index, url)
+        take = _take(analysis, model, resolver, index, url, display)
 
         src = sorted(by_creator_sources.get(name, []), key=lambda s: s["key"])
         kinds = sorted({s["kind"] for s in src}
@@ -1703,7 +1805,7 @@ def creator_board(wh, *, days: int = 30, gw: int | None = None,
                   "excluded": scoped_out, "reason": panel_reason},
         "creators": creators,
         "consensus": _consensus(wh, claims, gw, moment, roles, panel_by_code,
-                                panel_meta),
+                                panel_meta, display),
         "record_note": _record_note(weights),
         "mine_reason": mine_reason,
         "panel_squads": panel_meta,
@@ -1752,7 +1854,8 @@ def _mine_row(roles: dict[int, dict] | None, code: int) -> dict[str, Any]:
 def _consensus(wh, claims, gw: int | None, moment: dt.datetime,
                roles: dict[int, dict] | None = None,
                panel_by_code: dict[int, list[dict[str, Any]]] | None = None,
-               panel_meta: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+               panel_meta: dict[str, Any] | None = None,
+               display: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """Who agrees with whom about which player, for the gameweek in question.
 
     Deduplicated to one claim per (creator, player, action, gameweek) through
@@ -1825,10 +1928,16 @@ def _consensus(wh, claims, gw: int | None, moment: dt.datetime,
         if not any(s["n"] for s in sides.values()):
             continue
         name = _s(info.get("web_name")) or entry["name"]
+        naming = _naming(code, entry["name"], display)
         holders = (panel_by_code or {}).get(code, [])
         out.append({
             "code": code,
             "name": str(name),
+            # Canonical read-side naming: `resolved` is false when the code is
+            # absent from the pool (a transferred-out or misresolved player),
+            # in which case `name` above is the raw claim string and stays so.
+            "resolved": naming["resolved"],
+            "disambiguator": naming["disambiguator"],
             "pos": POSITION_NAME.get(_i(info.get("position")) or 0),
             "team": _s(info.get("team")),
             "price": _f(info.get("price"), 1),
@@ -1909,6 +2018,7 @@ def creator_detail(wh, *, creator: str, days: int = 60, limit: int = 40,
     analyses = _analyses(wh, ids) if "content_analysis" in present else {}
     transcripts = _transcripts(wh, ids) if "transcript_segment" in present else {}
     resolver = _resolver(wh, SEASON_DEFAULT, moment)
+    display = _display_index(wh, moment)
 
     claims = _content_store(wh).claims_visible_at(moment)
     if not claims.empty:
@@ -1932,7 +2042,7 @@ def creator_detail(wh, *, creator: str, days: int = 60, limit: int = 40,
             if sib in analyses:
                 analysis, model = analyses[sib]
                 break
-        take = _take(analysis, model, resolver, index, url)
+        take = _take(analysis, model, resolver, index, url, display)
 
         # Claims from every stored row of this publication, collapsed on
         # (player, action, gameweek, extractor). The live warehouse holds the
@@ -1944,7 +2054,7 @@ def creator_detail(wh, *, creator: str, days: int = 60, limit: int = 40,
             for c in by_item.get(str(sib["item_id"]), []):
                 key = (_i(c.get("player_code")), str(c.get("action")),
                        _i(c.get("gameweek")), str(c.get("extractor") or "cue"))
-                row = _claim_row(c, index, url)
+                row = _claim_row(c, index, url, display)
                 kept = best.get(key)
                 # Of two rows saying the same thing, keep the one whose quote
                 # could actually be located in the transcript: same position,
@@ -1996,20 +2106,27 @@ def creator_detail(wh, *, creator: str, days: int = 60, limit: int = 40,
 
 
 def _claim_row(c: dict[str, Any], index: TranscriptIndex,
-               url: str | None) -> dict[str, Any]:
+               url: str | None, display: dict[str, Any] | None = None
+               ) -> dict[str, Any]:
     """One claim, with its verbatim evidence and a link to the moment.
 
     The quote for an ``llm:`` claim is the verbatim fragment the extractor
     stored after ``| quote: ``; for a ``cue`` claim the rationale IS the
     keyword window lifted from the item, so it is the quote. Both are untrusted
-    third-party prose.
+    third-party prose. ``name`` stays the stored spoken string ("rayan
+    cherki"); ``display_name``/``resolved``/``disambiguator`` carry the
+    canonical read (see ``_naming``), so the drawer never shows one player
+    split across two spellings.
     """
     rationale = _s(c.get("rationale")) or ""
     quote = rationale.split("| quote: ", 1)[1] if "| quote: " in rationale else rationale
     start_s = index.find(quote)
+    code = int(c["player_code"])
+    raw = str(c.get("player_name") or c.get("surface_form") or "")
     return {
-        "code": int(c["player_code"]),
-        "name": str(c.get("player_name") or c.get("surface_form") or ""),
+        "code": code,
+        "name": raw,
+        **_naming(code, raw, display),
         "action": str(c.get("action")),
         "confidence": _f(c.get("confidence"), 3),
         "quote": quote or None,
@@ -2355,11 +2472,15 @@ CHATTER_RESULT: dict[str, Any] = {
     # Disjoint from the registry's {empty, reason} branch by construction:
     # these keys are required and `additionalProperties` is false, so an honest
     # empty can never also validate as a real payload.
-    "required": ["code", "name", "as_of", "gw", "gw_reason", "owned",
-                 "owned_reason", "said", "said_by_gw", "noticed", "counts"],
+    "required": ["code", "name", "disambiguator", "as_of", "gw", "gw_reason",
+                 "owned", "owned_reason", "said", "said_by_gw", "noticed",
+                 "counts"],
     "properties": {
         "code": {"type": "integer"},
         "name": {"type": "string"},
+        # Non-null exactly when this web_name belongs to 2+ players in the
+        # pool ("C. Palmer (CHE)") -- the drawer heading must show it then.
+        "disambiguator": {"type": ["string", "null"]},
         "as_of": {"type": "string"},
         "window_days": {"type": "integer"},
         # The gameweek `said` is filtered to; null when no filter is in force.
@@ -2913,6 +3034,10 @@ def player_chatter(wh, *, code: int, days: int = 30,
             f"stable PlayerCode, not an element_id -- the two differ and "
             f"passing an element_id here finds nobody."
         )
+    # A bare web_name can name two players (two Palmers). When it does, the
+    # payload carries the first-initial-plus-club form so the drawer heading
+    # can never silently mean somebody else.
+    disambiguator = _naming(code, name, _display_index(wh, moment))["disambiguator"]
 
     roster, roster_reason = _panel_roster(wh, present)
     panel_by_code, panel_meta = _panel_squads(wh, roster, present, moment)
@@ -2975,6 +3100,7 @@ def player_chatter(wh, *, code: int, days: int = 30,
     return {
         "code": code,
         "name": name,
+        "disambiguator": disambiguator,
         "as_of": moment.isoformat(),
         "window_days": int(days),
         # Which gameweek `said` is FOR, and why that one. Null means no

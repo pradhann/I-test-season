@@ -1552,3 +1552,127 @@ def test_a_creator_with_no_entry_still_reports_the_gameweek_keys(seeded_db):
     jsonschema.Draft202012Validator(
         script("creator_detail").result_schema
     ).validate(det)
+
+
+# ---------------------------------------------------------------------------
+# read-side entity resolution: canonical display names, never guessed
+# ---------------------------------------------------------------------------
+# The claim rows store names AS SPOKEN ("Martin Odegaard", "rayan cherki"), so
+# one player could exist twice with his claims split between identities. The
+# panels canonicalize AT READ TIME through the same sem_players identity every
+# other surface renders: resolved -> canonical web_name + code; unresolved ->
+# the raw string kept, flagged, never edit-distance matched to somebody else.
+
+
+def test_a_resolved_claim_is_canonicalized_and_carries_its_code(seeded_db):
+    res = detail(seeded_db, creator="The Talker")
+    claims = [c for item in res["items"] for c in item["claims"]]
+    ha = next(c for c in claims if c["code"] == HAALAND)
+    assert ha["name"] == "Erling Haaland", "the spoken words must survive verbatim"
+    assert ha["display_name"] == "Haaland", "the display read is the canonical web_name"
+    assert ha["resolved"] is True
+    assert ha["disambiguator"] is None, "nobody shares the web_name Haaland here"
+
+
+def test_a_resolved_take_call_is_canonicalized_too(seeded_db):
+    res = board(seeded_db)
+    take = _by_name(res)["The Talker"]["take"]
+    call = next(c for c in take["transfers_in"] if c["code"] == HAALAND)
+    assert call["name"] == "Erling Haaland"
+    assert call["display_name"] == "Haaland"
+    assert call["resolved"] is True
+
+
+def test_an_unresolved_claim_stays_raw_and_flagged_never_guessed(seeded_db):
+    """A stored code absent from the player pool gets NO canonical identity.
+
+    The alternative -- nearest-looking name -- is exactly what the extractor
+    already refuses ("forester" -> Brentford); the read side must refuse it
+    identically rather than undo that discipline at render time.
+    """
+    wh = Warehouse(seeded_db)
+    _claim(wh, "c_ghost", "watch_row", "The Talker", "yt_talker", 999999,
+           "rayan cherki", "buy", PAST)
+    wh.close()
+    res = detail(seeded_db, creator="The Talker")
+    claims = [c for item in res["items"] for c in item["claims"]]
+    ghost = next(c for c in claims if c["code"] == 999999)
+    assert ghost["name"] == "rayan cherki"
+    assert ghost["display_name"] == "rayan cherki", "kept raw, not guessed"
+    assert ghost["resolved"] is False
+    assert ghost["disambiguator"] is None
+
+
+def test_an_unresolvable_spoken_name_in_a_take_stays_raw_and_flagged(seeded_db):
+    """The take path: a call whose spoken name the STRICT resolver refuses
+    keeps the creator's words with code: null and resolved: false."""
+    analysis = {"summary": ["One unknown name."], "transfers_in": [{
+        "player": "Rayan Cherki", "stance": "buy", "conviction": "high",
+        "gameweek": 2, "reasoning": "Not in this warehouse's pool.",
+        "quote": "cherki looks a bargain",
+    }]}
+    wh = Warehouse(seeded_db)
+    _source(wh, "yt_ghost", "Ghost Caller", "youtube",
+            "https://www.youtube.com/@ghost")
+    _item(wh, "ghost_item", "yt_ghost", "Ghost Caller", "youtube",
+          "GW2 bargains", "https://www.youtube.com/watch?v=GHOSTvid001",
+          PAST, "description")
+    wh.sql("INSERT INTO content_analysis VALUES (?, ?, ?, ?)",
+           ["ghost_item", "claude-opus-5", PAST, json.dumps(analysis)])
+    wh.close()
+    take = _by_name(board(seeded_db))["Ghost Caller"]["take"]
+    call = take["transfers_in"][0]
+    assert call["code"] is None
+    assert call["name"] == "Rayan Cherki"
+    assert call["display_name"] == "Rayan Cherki"
+    assert call["resolved"] is False
+    assert call["disambiguator"] is None
+
+
+def _plant_two_palmers(db):
+    """Two players sharing one web_name -- the shape a bare surname lies about."""
+    wh = Warehouse(db)
+    wh.append("dim_player", pd.DataFrame([
+        _player(555001, 30, "Palmer", "Cole", "Palmer", 3),
+        _player(555002, 31, "Palmer", "Jack", "Palmer", 3),
+    ]))
+    wh.append("fact_player_state", pd.DataFrame([
+        _state(555001, 30, 25.0, 105),
+        _state(555002, 31, 0.4, 45),
+    ]))
+    wh.close()
+
+
+def test_a_namesake_web_name_carries_a_disambiguator(seeded_db):
+    _plant_two_palmers(seeded_db)
+    wh = Warehouse(seeded_db)
+    _claim(wh, "c_palmer", "watch_row", "The Talker", "yt_talker", 555001,
+           "Cole Palmer", "buy", PAST)
+    wh.close()
+
+    res = detail(seeded_db, creator="The Talker")
+    claims = [c for item in res["items"] for c in item["claims"]]
+    palmer = next(c for c in claims if c["code"] == 555001)
+    assert palmer["display_name"] == "Palmer"
+    assert palmer["resolved"] is True
+    assert palmer["disambiguator"] == "C. Palmer (MCI)", (
+        "two players share this web_name, so the payload must carry first "
+        "initial + club")
+
+    # ...and the board's consensus row for him says so too.
+    row = next(r for r in board(seeded_db)["consensus"] if r["code"] == 555001)
+    assert row["resolved"] is True
+    assert row["disambiguator"] == "C. Palmer (MCI)"
+
+    # A player whose web_name is his alone carries none.
+    ha = next(c for c in claims if c["code"] == HAALAND)
+    assert ha["disambiguator"] is None
+
+
+def test_player_chatter_serves_the_namesake_disambiguator(seeded_db):
+    _plant_two_palmers(seeded_db)
+    res = run_script("player_chatter", {"code": 555001}, db=seeded_db).result
+    assert res["name"] == "Palmer"
+    assert res["disambiguator"] == "C. Palmer (MCI)"
+    solo = run_script("player_chatter", {"code": HAALAND}, db=seeded_db).result
+    assert solo["disambiguator"] is None

@@ -130,17 +130,12 @@ PANELS: tuple[Panel, ...] = (
             "news, set pieces, predicted lineups and previous meetings."
         ),
     ),
-    Panel(
-        id="fixture_ticker",
-        title="Fixture ticker (legacy blend)",
-        script="fixture_ticker",
-        layout="table",
-        description=(
-            "The single blended difficulty per fixture. Superseded by "
-            "fixture_board's attack/defence split; kept because the fixtures "
-            "view falls back to it when the split artefact is absent."
-        ),
-    ),
+    # fixture_ticker (the legacy blended difficulty) is DELETED, not retired to
+    # a comment graveyard: its own description said "superseded by
+    # fixture_board", fixture_board serves the same blend per cell as the
+    # deprecated `legacy_difficulty` field, and a registered panel whose one
+    # number this app's fixtures page preaches against is worse than dead
+    # weight -- it is a second, blended answer on offer beside the split one.
     Panel(
         id="creator_board",
         title="The deadline board",

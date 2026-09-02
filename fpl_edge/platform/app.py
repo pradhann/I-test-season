@@ -211,22 +211,48 @@ def create_app(db: Path | str = DEFAULT_DB,
             "repo_sha": repo_sha(),
         }
 
+    #: A panel failure the UI can render. Bounded so a pandas repr or a whole
+    #: SQL statement inside an exception message cannot flood the page.
+    _ERROR_REASON_CHARS = 500
+
+    def _panel_error(panel: str, exc: BaseException) -> JSONResponse:
+        """The structured 500 for a broken panel: {error, panel, reason}.
+
+        Never a bare "Internal Server Error" body. The UI needs to draw
+        "couldn't load -- retry" as a state DISTINCT from the honest-empty
+        shape ({empty, reason}, a 200): one means the data is genuinely
+        absent, the other means this code failed. Collapsing them was how a
+        third of the fixture board came to fail silently.
+        """
+        reason = f"{type(exc).__name__}: {exc}"
+        if len(reason) > _ERROR_REASON_CHARS:
+            reason = reason[: _ERROR_REASON_CHARS - 1] + "…"
+        return JSONResponse(
+            status_code=500,
+            content={"error": True, "panel": panel, "reason": reason},
+        )
+
     @app.post("/api/scripts/{name}/run")
     def post_run_script(name: str, body: RunRequest | None = None) -> JSONResponse:
         params = body.resolved() if body is not None else {}
         try:
             run = run_script(name, params, db=db_path)
         except KeyError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
+            # Only the registry's own "no such script" KeyError is a 404. A
+            # KeyError raised INSIDE a script is that script's bug, and serving
+            # it as 404 would tell the UI the panel does not exist.
+            if "no panel script named" in str(exc):
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            return _panel_error(name, exc)
         except ParamsInvalid as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except ResultInvalid as exc:
+        except (ResultInvalid, ScriptError) as exc:
             # The script broke its own contract. That is a 500: the caller did
             # nothing wrong and must not be led to think the shape is theirs to
             # fix.
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
-        except ScriptError as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            return _panel_error(name, exc)
+        except Exception as exc:  # noqa: BLE001 - the contract IS the catch-all
+            return _panel_error(name, exc)
         return JSONResponse(run.to_dict())
 
     @app.post("/api/query")

@@ -178,6 +178,88 @@ def test_tab_drill_and_null_drill_are_both_legal():
     assert len(kept) == 2 and rejected == 0
 
 
+# -- the numeric-token rule (prose numbers checked against cited panels) -----
+
+#: panel -> the numeric values it "served" for the token tests. good_item
+#: cites ownership_eo + squad_overview and quotes -1800 in chip and prose.
+VALUES = {
+    "ownership_eo": [-1800.0, 55.0, 30.0, 0.1971, 100.0],
+    "squad_overview": [5.415, 3.0],
+    "projection_table": [6.8],
+}
+
+
+def test_prose_numbers_extracts_quantities_and_skips_labels():
+    toks = bi.prose_numbers(
+        "CHE ranks 33rd defensively in GW3; top10k cap 100% and p90 6.1, "
+        "flow -2,891/hr over 36h")
+    # 33rd (ordinal) kept; GW3, top10k, p90's 90, 36h all label/unit-glued
+    # and skipped; 100%, 6.1 and the comma'd 2891 kept.
+    assert (33.0, 0) in toks
+    assert (100.0, 0) in toks
+    assert (6.1, 1) in toks
+    assert (2891.0, 0) in toks
+    assert all(v not in (3.0, 90.0, 36.0, 10.0) for v, _ in toks)
+
+
+def test_known_values_collects_numerics_per_panel():
+    vals = bi.known_values({
+        "a": {"x": 1.5, "rows": [{"y": 2, "s": "no", "b": True}]},
+        "b": {"z": None},
+    })
+    assert sorted(vals["a"]) == [1.5, 2.0]
+    assert vals["b"] == []
+
+
+def test_a_prose_number_the_cited_panels_never_served_is_rejected():
+    """R2's finding: 'ranks 33rd' when the payload says 30. The chips
+    validated; the sentence did not — now it does."""
+    bad = good_item(why="defence ranks 33rd, flow -1800/hr")
+    ok = good_item(why="defence ranks 30th, flow -1800/hr")
+    kept, rejected = bi.validate_items([ok, bad], panels=PANELS, codes=CODES,
+                                       values=VALUES)
+    assert len(kept) == 1 and rejected == 1
+    assert "30th" in kept[0]["why"]
+
+
+def test_prose_tolerates_rounding_and_percent_fraction_pairs():
+    items = [
+        # 5.4 is squad_overview's 5.415 printed at 1dp
+        good_item(why="his 5.4 xPts beat the bench, flow -1800/hr"),
+        # 19.7% is ownership_eo's 0.1971 served as a fraction
+        good_item(why="clean sheet odds 19.7% say hold, flow -1800/hr"),
+    ]
+    kept, rejected = bi.validate_items(items, panels=PANELS, codes=CODES,
+                                       values=VALUES)
+    assert len(kept) == 2 and rejected == 0
+
+
+def test_a_chip_value_its_named_panel_never_served_is_rejected():
+    bad = good_item(numbers=[{"value": -1799.0, "unit": "net/hr",
+                              "source_panel": "ownership_eo",
+                              "as_of": None}],
+                    why="watch the price")
+    kept, rejected = bi.validate_items([bad], panels=PANELS, codes=CODES,
+                                       values=VALUES)
+    assert kept == [] and rejected == 1
+
+
+def test_a_prose_number_from_an_uncited_panel_is_rejected():
+    """6.8 exists in projection_table, but the item does not cite it —
+    quoting a panel you did not name is the same invention."""
+    bad = good_item(why="consensus 6.8 xPts and flow -1800/hr")
+    kept, rejected = bi.validate_items([bad], panels=PANELS, codes=CODES,
+                                       values=VALUES)
+    assert kept == [] and rejected == 1
+
+
+def test_without_values_the_numeric_rule_is_skipped():
+    kept, rejected = bi.validate_items(
+        [good_item(why="an unchecked 42 sails through, flow -1800/hr")],
+        panels=PANELS, codes=CODES)
+    assert len(kept) == 1 and rejected == 0
+
+
 # -- parsing the model's answer ---------------------------------------------
 
 
@@ -240,7 +322,7 @@ def fake_panels(monkeypatch):
 def model_answer():
     return "```json\n" + json.dumps({"items": [
         {"headline": "Haaland at 55% owned is a template gap",
-         "why": "ownership_eo has him at 55.0 own% and he is not in the 15",
+         "why": "ownership_eo has him at 55.0 own% and he is not owned",
          "severity": 1,
          "numbers": [{"value": 55.0, "unit": "own%",
                       "source_panel": "ownership_eo",

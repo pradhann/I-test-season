@@ -457,6 +457,209 @@ def test_a_roll_recommendation_is_a_recommendation_not_an_empty_state(db, tmp_pa
     assert p["moves"] == []
 
 
+# --------------------------------------------------- the verdict + header --
+
+
+def test_the_verdict_prints_the_precedence_constant_verbatim(db):
+    from fpl_edge.platform.scripts.brief import PRECEDENCE
+
+    brief = run_script("dashboard_brief", {}, db=db).result
+    v = brief["verdict"]
+    assert v["precedence"] == PRECEDENCE
+    assert [ln["question"] for ln in v["lines"]] == [
+        "transfer", "captain", "bench", "chip"]
+    # the schema pins the constant: a drifted echo cannot validate
+    node = script("dashboard_brief").result_schema["oneOf"][0]
+    assert (node["properties"]["verdict"]["properties"]["precedence"]["const"]
+            == PRECEDENCE)
+
+
+def test_the_verdict_carries_rule_ids_and_no_free_text(db):
+    """The house rule extends to the verdict: rule ids + structured fields,
+    wording in view templates — no prose field anywhere in the block."""
+    brief = run_script("dashboard_brief", {}, db=db).result
+    node = script("dashboard_brief").result_schema["oneOf"][0]
+    line_schema = (node["properties"]["verdict"]["properties"]["lines"]
+                   ["items"])
+    line_props = set(line_schema["properties"])
+    dissent_props = set(line_schema["properties"]["dissent"]["items"]
+                        ["properties"])
+    for banned in ("recommendation", "advice", "claim", "text", "message",
+                   "headline", "because", "sentence", "why", "reason"):
+        assert banned not in line_props
+        assert banned not in dissent_props
+    rules = line_schema["properties"]["rule"]["enum"]
+    for line in brief["verdict"]["lines"]:
+        assert line["rule"] in rules
+
+
+def test_a_fresh_plan_wins_every_verdict_question(db, tmp_path):
+    _write_transfer_plan(tmp_path, "2099-09-05T15:00:00+00:00")
+    brief = run_script("dashboard_brief", {}, db=db).result
+    lines = {ln["question"]: ln for ln in brief["verdict"]["lines"]}
+    t = lines["transfer"]
+    assert t["rule"] == "solver_plan" and t["state"] == "fresh"
+    assert [(m["out"]["code"], m["in"]["code"])
+            for m in t["moves"]] == [(131, 202)]
+    # the honesty numbers sit ON the line, beside the headline gain
+    assert t["numbers"]["gain_over_roll"] == pytest.approx(3.3)
+    assert t["numbers"]["solve_seconds"] == 42.0
+    assert "optimality_gap_pct" in t["numbers"]
+    assert t["source_panel"] == "solve_plan"
+    c = lines["captain"]
+    assert c["rule"] == "solver_plan_captain" and c["pick"]["code"] == 120
+    # dissent: haul odds prefer Mid2; the mean pick agrees so no mean chip
+    voices = {d["voice"]: d for d in c["dissent"]}
+    assert voices["haul_odds"]["player"]["code"] == 121
+    assert "mean_xpts" not in voices
+    b = lines["bench"]
+    assert b["rule"] == "bench_inversion_applied"
+    assert b["numbers"]["n_changes"] >= 1
+    ch = lines["chip"]
+    assert ch["rule"] == "chip_hold" and ch["chip"] is None
+
+
+def test_a_stale_plan_verdict_falls_back_and_dates_the_solver_dissent(db, tmp_path):
+    _write_transfer_plan(tmp_path, "2026-08-20T00:00:00+00:00",
+                         horizon=(2, 3, 4))
+    brief = run_script("dashboard_brief", {}, db=db).result
+    lines = {ln["question"]: ln for ln in brief["verdict"]["lines"]}
+    t = lines["transfer"]
+    # no rule moves in the default seed -> nothing named; the overruled
+    # solver is a dated dissent entry, never a silently dropped voice
+    assert t["rule"] == "no_move_named" and t["state"] == "stale"
+    solver_d = [d for d in t["dissent"] if d["voice"] == "solver"]
+    assert solver_d and solver_d[0]["rule"] == "solve_stale"
+    assert solver_d[0]["source_as_of"] == "2026-08-20T00:00:00+00:00"
+    # captain falls back to the mean-xPts rule over the suggested XI
+    c = lines["captain"]
+    assert c["rule"] == "mean_xpts_captain" and c["pick"]["code"] == 120
+    assert lines["chip"]["rule"] == "no_chip_named"
+
+
+def test_rule_moves_take_the_transfer_verdict_when_the_solver_is_stale(db, tmp_path):
+    _seed_moves(db, tmp_path)
+    _write_transfer_plan(tmp_path, "2026-08-20T00:00:00+00:00",
+                         horizon=(2, 3, 4))
+    brief = run_script("dashboard_brief", {}, db=db).result
+    t = {ln["question"]: ln for ln in brief["verdict"]["lines"]}["transfer"]
+    assert t["rule"] == "rule_moves_solver_stale"
+    assert t["moves"]
+    assert t["numbers"]["n_rule_moves"] == len(brief["moves"])
+    assert t["source_panel"] == "dashboard_brief"
+
+
+def test_rule_moves_dissent_on_a_fresh_plan_when_they_differ(db, tmp_path):
+    _seed_moves(db, tmp_path)
+    _write_transfer_plan(tmp_path, "2099-09-05T15:00:00+00:00")
+    brief = run_script("dashboard_brief", {}, db=db).result
+    t = {ln["question"]: ln for ln in brief["verdict"]["lines"]}["transfer"]
+    assert t["rule"] == "solver_plan"
+    rm = [d for d in t["dissent"] if d["voice"] == "rule_moves"]
+    plan_pairs = {(m["out"]["code"], m["in"]["code"]) for m in t["moves"]}
+    assert rm, "the seeded rule moves do not overlap the plan's move"
+    for d in rm:
+        assert (d["out"]["code"], d["in"]["code"]) not in plan_pairs
+        assert d["rule"] in ("coverage_gap", "form_upgrade")
+
+
+def test_creator_armband_count_dissents_when_the_panel_differs(db, tmp_path, monkeypatch):
+    _write_transfer_plan(tmp_path, "2099-09-05T15:00:00+00:00")
+    import fpl_edge.platform.scripts.creators as creators
+
+    monkeypatch.setattr(creators, "creator_board", lambda wh, **kw: {
+        "as_of": "2026-09-01 10:00:00",
+        "consensus": [
+            {"code": 121, "name": "Mid2", "pos": "MID", "team": "BET",
+             "price": 8.0, "own_pct": 20.0,
+             "captain": {"n": 3, "creators": ["a", "b", "c"],
+                         "n_cue": 1, "n_llm": 2}},
+            {"code": 120, "name": "Mid1", "pos": "MID", "team": "ALP",
+             "price": 12.0, "own_pct": 20.0,
+             "captain": {"n": 1, "creators": ["d"],
+                         "n_cue": 1, "n_llm": 0}},
+        ],
+    })
+    brief = run_script("dashboard_brief", {}, db=db).result
+    c = {ln["question"]: ln for ln in brief["verdict"]["lines"]}["captain"]
+    cd = [d for d in c["dissent"] if d["voice"] == "creator_armband"]
+    assert cd and cd[0]["player"]["code"] == 121
+    assert cd[0]["numbers"]["armband_calls"] == 3
+    assert cd[0]["source_panel"] == "creator_board"
+
+
+def test_the_optimality_gap_is_parsed_from_the_solvers_own_notes(db, tmp_path):
+    _write_transfer_plan(tmp_path, "2099-09-05T15:00:00+00:00")
+    plan_path = tmp_path / "transfer_plan.json"
+    plan = json.loads(plan_path.read_text())
+    plan["notes"].append(
+        "Stopped at a 31.66% optimality gap (kTimeLimit); this plan is the "
+        "best found, not a proven optimum.")
+    plan_path.write_text(json.dumps(plan))
+    brief = run_script("dashboard_brief", {}, db=db).result
+    p = brief["solve"]["plan"]
+    assert p["optimality_gap_pct"] == pytest.approx(31.66)
+    # the gap, the solve time and the plan age are first-class beside the
+    # headline gain — and the verdict line repeats them
+    assert p["solve_seconds"] == 42.0 and p["age_hours"] is not None
+    t = {ln["question"]: ln for ln in brief["verdict"]["lines"]}["transfer"]
+    assert t["numbers"]["optimality_gap_pct"] == pytest.approx(31.66)
+
+
+def test_a_closed_solve_carries_a_null_gap_not_a_zero(db, tmp_path):
+    _write_transfer_plan(tmp_path, "2099-09-05T15:00:00+00:00")
+    brief = run_script("dashboard_brief", {}, db=db).result
+    assert brief["solve"]["plan"]["optimality_gap_pct"] is None
+
+
+def test_header_stats_carry_the_ft_count_and_the_chip_verdict(db, tmp_path):
+    _write_transfer_plan(tmp_path, "2099-09-05T15:00:00+00:00")
+    brief = run_script("dashboard_brief", {}, db=db).result
+    h = brief["header"]
+    assert h["free_transfers"] == 2
+    assert h["free_transfers_state"] == "fresh"
+    assert h["free_transfers_as_of"] == "2099-09-05T15:00:00+00:00"
+    assert h["chip"] is None and h["chip_rule"] == "chip_hold"
+    assert h["bank_tenths"] == 15
+
+
+def test_header_without_a_plan_is_null_not_guessed(db):
+    brief = run_script("dashboard_brief", {}, db=db).result
+    h = brief["header"]
+    assert h["free_transfers"] is None
+    assert h["free_transfers_state"] == "missing"
+    assert h["chip"] is None and h["chip_rule"] == "no_chip_named"
+
+
+def test_move_rank_carries_the_boards_own_horizon_gws(db, tmp_path):
+    """R1+R2: 'EVE #1' vs the board's 'A#8' — a rank must never travel
+    without the gameweeks it was computed over."""
+    _seed_moves(db, tmp_path)
+    brief = run_script("dashboard_brief", {}, db=db).result
+    fb = run_script("fixture_board",
+                    {"horizon": 3, "from_gw": 3, "include_form": False,
+                     "include_calibration": False}, db=db).result
+    cov = [m for m in brief["moves"] if m["rule"] == "coverage_gap"][0]
+    assert cov["rank_gws"] == fb["gws"] == [3, 4, 5]
+    for m in brief["moves"]:
+        if m["rule"] == "form_upgrade":
+            assert m["rank_gws"] == [], "no rank quoted, no horizon claimed"
+    for tf in brief["team_fixtures"]:
+        assert tf["horizon_gws"] == fb["gws"]
+
+
+def test_projection_data_birth_and_source_are_named_at_point_of_use(db):
+    """R2 #9: the artefact's RUN instant (not the panel read clock) and the
+    actual source of the squad xPts — never '(CONSENSUS)' again."""
+    sq = run_script("squad_overview", {}, db=db).result
+    brief = run_script("dashboard_brief", {}, db=db).result
+    assert sq["projection_generated"] is not None
+    assert "solved artefact" in sq["projection_source"]
+    assert "not the provider consensus" in sq["projection_source"]
+    assert brief["projection_generated"] == sq["projection_generated"]
+    assert "solved artefact" in brief["projection_source"]
+
+
 def test_idea_due_is_gone_from_payload_and_schema(db):
     """Owner's call: the idea registry is useless in briefings — the tile
     kind, its watch check and its schema enum entry are all gone."""

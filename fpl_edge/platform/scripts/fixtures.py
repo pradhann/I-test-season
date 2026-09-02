@@ -90,6 +90,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -123,7 +124,6 @@ CALIBRATION_NAME = "fixture_calibration.parquet"
 
 #: A fit only moves when matches finish, so within a normal week it cannot be
 #: more than one round out of date. Beyond it, the refresh job has stopped.
-DIFFICULTY_STALE_DAYS = 7
 RATINGS_STALE_HOURS = 7 * 24.0
 
 #: Odds move on team news, so a price older than this predates the press
@@ -511,16 +511,6 @@ def load_legacy_difficulty(wh, season: str) -> dict[tuple[int, int], float]:
             for r in df.itertuples(index=False)}
 
 
-def legacy_fitted_at(wh, season: str) -> Any:
-    df, _ = _read_parquet(source_dir(wh) / DIFFICULTY_NAME)
-    if df is None or "fitted_at" not in df.columns:
-        return None
-    df = df[df["season"].astype(str) == season]
-    if df.empty:
-        return None
-    return pd.to_datetime(df["fitted_at"], utc=True).max()
-
-
 # ---------------------------------------------------------------------------
 # calibration: how big is a fixture, really
 # ---------------------------------------------------------------------------
@@ -767,220 +757,13 @@ MARKET_CELL_SCHEMA: dict[str, Any] = {
 
 
 # ---------------------------------------------------------------------------
-# fixture_ticker -- the original panel, unchanged
+# fixture_ticker is GONE. The legacy blended-difficulty panel was deleted
+# (2026-09): its own description said "superseded by fixture_board", and
+# fixture_board serves the same blend per cell as the deprecated
+# `legacy_difficulty` field, so nothing the ticker published is lost -- only
+# the second, blended data path is. `load_legacy_difficulty` above survives
+# because fixture_board reads it for exactly that field.
 # ---------------------------------------------------------------------------
-
-TICKER_PARAMS: dict[str, Any] = {
-    "type": "object",
-    "additionalProperties": False,
-    "properties": {
-        "season": season_param(),
-        "horizon": {"type": "integer", "minimum": 1, "maximum": 10, "default": 5},
-        "from_gw": {
-            "type": ["integer", "null"],
-            "default": None,
-            "description": "Start gameweek; defaults to the next unplayed one.",
-        },
-    },
-}
-
-TICKER_RESULT: dict[str, Any] = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": ["season", "gws", "teams", "row_count"],
-    "properties": {
-        "season": {"type": "string"},
-        "gws": {"type": "array", "items": {"type": "integer"}},
-        "row_count": {"type": "integer"},
-        "as_of": {"type": ["string", "null"]},
-        "notes": {"type": "array", "items": {"type": "string"}},
-        "teams": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["team_code", "short_name", "fixtures"],
-                "properties": {
-                    "team_code": {"type": "integer"},
-                    "short_name": {"type": "string"},
-                    "name": {"type": ["string", "null"]},
-                    "n_fixtures": {"type": "integer"},
-                    "fixtures": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "additionalProperties": False,
-                            "required": ["gw", "opponents"],
-                            "properties": {
-                                "gw": {"type": "integer"},
-                                "blank": {"type": "boolean"},
-                                "double": {"type": "boolean"},
-                                "opponents": {
-                                    "type": "array",
-                                    "items": {
-                                        "type": "object",
-                                        "additionalProperties": False,
-                                        "required": ["opponent", "is_home"],
-                                        "properties": {
-                                            "opponent": {"type": "string"},
-                                            "opponent_code": {"type": ["integer", "null"]},
-                                            "is_home": {"type": "boolean"},
-                                            "kickoff_utc": {"type": ["string", "null"]},
-                                            "label": {"type": "string"},
-                                            "difficulty": {
-                                                "type": "number",
-                                                "minimum": 0,
-                                                "maximum": 1,
-                                            },
-                                        },
-                                    },
-                                },
-                            },
-                        },
-                    },
-                },
-            },
-        },
-    },
-}
-
-
-def fixture_ticker(
-    wh, *, season: str, horizon: int = 5, from_gw: int | None = None
-) -> dict[str, Any]:
-    """Each club's next `horizon` gameweeks: opponent, venue, kickoff.
-
-    DEPRECATED in favour of ``fixture_board``, which carries both difficulties
-    instead of the blended one. Kept registered and unchanged because other
-    surfaces are pinned to this shape.
-
-    UPPER-case opponent labels mean home, lower-case away -- the convention the
-    Telegram fixture grid already uses, so the two surfaces read alike.
-    """
-    teams = q(
-        wh,
-        "SELECT team_code, short_name, name FROM ("
-        "  SELECT *, row_number() OVER (PARTITION BY season, team_code"
-        "                               ORDER BY as_of DESC) rn"
-        "  FROM dim_team WHERE season = ?"
-        ") WHERE rn = 1 ORDER BY short_name",
-        (season,),
-    )
-    if teams.empty:
-        return empty(
-            f"No {season} clubs in the warehouse. Run `make ingest` to pull the "
-            f"FPL bootstrap, which is where dim_team comes from."
-        )
-
-    start = from_gw if from_gw is not None else next_gw(wh, season)
-    notes: list[str] = []
-    if start is None:
-        played = q(
-            wh, "SELECT max(gw) AS g FROM fact_fixture WHERE season = ?", (season,)
-        )
-        latest = None if played.empty else played.iloc[0]["g"]
-        if latest is None:
-            return empty(
-                f"No {season} fixtures or deadlines known yet. Run `make ingest`."
-            )
-        start = int(latest)
-        notes.append(
-            f"Every {season} deadline has passed, so the ticker starts at the last "
-            f"known gameweek ({start}) rather than a future one."
-        )
-    gws = list(range(int(start), int(start) + int(horizon)))
-
-    fx = q(
-        wh,
-        "SELECT gw, fixture_id, home_team_code, away_team_code, kickoff_utc FROM ("
-        "  SELECT *, row_number() OVER (PARTITION BY season, fixture_id"
-        "                               ORDER BY as_of DESC) rn"
-        "  FROM fact_fixture WHERE season = ? AND gw >= ? AND gw <= ?"
-        ") WHERE rn = 1 ORDER BY gw, kickoff_utc",
-        (season, gws[0], gws[-1]),
-    )
-    if fx.empty:
-        return empty(
-            f"No {season} fixtures scheduled for GW{gws[0]}-GW{gws[-1]}. The "
-            f"fixture list is ingested from the FPL API; run `make ingest`."
-        )
-
-    short = dict(zip(teams["team_code"], teams["short_name"]))
-
-    difficulty = load_legacy_difficulty(wh, season)
-    fitted = legacy_fitted_at(wh, season)
-    if difficulty and fitted is not None:
-        days = (dt.datetime.now(UTC) - fitted.to_pydatetime()).total_seconds() / 86400.0
-        if days > DIFFICULTY_STALE_DAYS:
-            notes.append(
-                f"Difficulty ratings were fitted {days:.0f} days ago "
-                f"({fitted.isoformat()}) and are stale; still shown, but re-run "
-                f"the post-gameweek job to refresh fixture_difficulty.parquet."
-            )
-
-    per: dict[tuple[int, int], list[dict[str, Any]]] = {}
-    for _, r in fx.iterrows():
-        gw = int(r["gw"])
-        fid = int(r["fixture_id"])
-        home, away = int(r["home_team_code"]), int(r["away_team_code"])
-        kick = None if r["kickoff_utc"] is None else str(r["kickoff_utc"])
-        for me, them, is_home in ((home, away, True), (away, home, False)):
-            label = short.get(them, str(them))
-            entry: dict[str, Any] = {
-                "opponent": label,
-                "opponent_code": them,
-                "is_home": is_home,
-                "kickoff_utc": kick,
-                "label": label.upper() if is_home else label.lower(),
-            }
-            d = difficulty.get((fid, me))
-            if d is not None:
-                entry["difficulty"] = d
-            per.setdefault((me, gw), []).append(entry)
-
-    out = []
-    for _, t in teams.iterrows():
-        code = int(t["team_code"])
-        slots = []
-        total = 0
-        for gw in gws:
-            opps = per.get((code, gw), [])
-            total += len(opps)
-            slots.append({"gw": gw, "blank": not opps,
-                          "double": len(opps) > 1, "opponents": opps})
-        if total == 0:
-            continue
-        out.append({
-            "team_code": code,
-            "short_name": str(t["short_name"]),
-            "name": None if t["name"] is None else str(t["name"]),
-            "n_fixtures": total,
-            "fixtures": slots,
-        })
-
-    if not out:
-        return empty(f"No club has a fixture in GW{gws[0]}-GW{gws[-1]} for {season}.")
-    return {
-        "season": season,
-        "gws": gws,
-        "row_count": len(out),
-        "teams": out,
-        "as_of": latest_as_of(wh, "fact_fixture", season),
-        "notes": notes,
-    }
-
-
-register_script(
-    "fixture_ticker",
-    fixture_ticker,
-    params_schema=TICKER_PARAMS,
-    result_schema=TICKER_RESULT,
-    title="Fixture ticker (deprecated)",
-    description=(
-        "Superseded by fixture_board. Each club's next gameweeks with the "
-        "blended difficulty. Kept for back-compatibility only."
-    ),
-)
 
 
 # ---------------------------------------------------------------------------
@@ -1867,6 +1650,28 @@ def _gap(reason: str, **extra: Any) -> dict[str, Any]:
     return {"available": False, "unavailable": reason, **extra}
 
 
+def _section(label: str, build: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+    """Run one OPTIONAL section builder; an unexpected crash becomes a named gap.
+
+    The same rule `_safe_q` applies to a missing table, applied to the whole
+    section: a data edge in team intel (a NULL `ord` in set_piece_duty took the
+    entire drawer down for 21 of 60 fixtures) must degrade to the house
+    honest-empty shape for THAT section, loudly, instead of 500ing the panel.
+    The exception type is named so the gap is a bug report, not whitespace --
+    dropped loudly, never silently. The model/market core stays unguarded on
+    purpose: a crash there means the panel has no headline number and should
+    fail its run visibly through the API error contract.
+    """
+    try:
+        return build()
+    except Exception as exc:  # noqa: BLE001 - converted to a named, rendered gap
+        return _gap(
+            f"the {label} section crashed on this fixture's data "
+            f"({type(exc).__name__}: {exc}) and is dropped rather than guessed "
+            f"-- a data edge worth reporting, not an empty week"
+        )
+
+
 #: Tables created by feature migrations rather than by the base schema. A fresh
 #: clone, or a warehouse whose migrations have only partly run, genuinely does
 #: not have them -- ``intel_item``, ``set_piece_duty`` and ``content_insight``
@@ -2160,7 +1965,12 @@ def _intel_block(wh, season: str, codes: tuple[int, int], now: dt.datetime) -> d
     }
     for r in duties.itertuples(index=False):
         out["set_piece_duty"].setdefault(str(int(r.team_code)), []).append({
-            "duty": str(r.duty), "order": int(r.ord),
+            # `ord` is NULL for some bootstrap-static rows (the FPL API lists a
+            # taker without ranking him). That is an absent order, not a zero
+            # and not an error: `int(NaN)` here was the crash that 500'd every
+            # fixture involving those clubs -- 21 of 60 board cells, silently.
+            "duty": str(r.duty),
+            "order": None if pd.isna(r.ord) else int(r.ord),
             "player": None if r.web_name is None else str(r.web_name),
             "source": str(r.source), "as_of": _iso(r.as_of),
         })
@@ -2406,11 +2216,14 @@ def fixture_detail(
     form, _, form_newest = _team_form(wh, season, now, ratings)
 
     codes = (home, away)
-    news = _news_block(wh, season, codes, now)
-    intel = _intel_block(wh, season, codes, now)
-    lineups = _lineups_block(wh, season, gw, codes, now)
-    meetings = _meetings_block(wh, home, away, now, meetings_limit)
-    talk = _team_talk_block(wh, season, codes, now)
+    news = _section("team news", lambda: _news_block(wh, season, codes, now))
+    intel = _section("team intel", lambda: _intel_block(wh, season, codes, now))
+    lineups = _section("predicted XI",
+                       lambda: _lineups_block(wh, season, gw, codes, now))
+    meetings = _section("previous meetings",
+                        lambda: _meetings_block(wh, home, away, now, meetings_limit))
+    talk = _section("creator team-talk",
+                    lambda: _team_talk_block(wh, season, codes, now))
 
     inputs = [
         _input_row("fitted ratings", source=RATINGS_NAME,
