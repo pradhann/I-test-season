@@ -63,6 +63,8 @@ from claude_agent_sdk import (
     UserMessage,
 )
 
+from fpl_edge.platform.prose_style import STYLE_RULES
+
 UTC = dt.UTC
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -141,6 +143,10 @@ CHARTER = (
     "only. For any chart, use python_viz (real matplotlib under the house "
     "theme) and embed each [chart:<id>] marker it returns on its own line "
     "exactly where the figure belongs. Be direct; state as-of instants.\n"
+    + STYLE_RULES + "\n"
+    "A claim you cannot attach to a tool result does not go in the answer. "
+    "When the data does not support a recommendation, say which query you "
+    "ran and what it returned, and stop there.\n"
     "When an answer is a REPORT -- a deadline brief, a multi-player "
     "comparison, a transfer plan, anything the owner would keep or share -- "
     "wrap that report in a fenced block starting ```doc and ending ``` : "

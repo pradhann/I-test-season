@@ -118,16 +118,44 @@ def _seed(tmp_path):
     )
     con.close()
 
-    # Projection artefact next to the db — the same file squad_overview reads.
+    # xPts values shared by BOTH projection surfaces the squad card reads:
+    # the provider CONSENSUS (fact_projection -> sem_projection_consensus,
+    # the xpts column) and the engine simulation artefact (p_haul only).
+    XPTS = [2.0,               # StartGK — invertible vs BenchGK
+            3.6,               # BenchGK
+            4.0, 4.1, 4.2, 4.3, 3.0,     # defs
+            5.4, 5.0, 4.5, 4.4,          # mids (Mid1 highest mean)
+            3.2,                          # MidBench (no inversion: 3.2 < 4.4? -> vs weakest MID starter 4.4, no)
+            4.0, 3.9, 3.8,                # fwds
+            5.9, 4.9, 5.0]               # non-owned
+    all_codes = SQUAD_CODES + [200, 201, 202]
+
+    # The consensus the squad card's xPts column now reads: one provider's
+    # GW3 rows, so consensus-of-one equals the seeded value exactly. The
+    # provider is "s1" — the same name _seed_moves writes under at T1, so
+    # the richer seed SUPERSEDES these rows for its own codes instead of
+    # averaging two providers and moving every number under the moves tests.
+    # fact_projection has its own ingest path outside Warehouse.append's
+    # PIT map, so seed it the way the watchlist is seeded: directly.
+    #
+    # Fwd3 (132, a bench forward nothing asserts an xPts on) is deliberately
+    # LEFT OUT: the squad-projection contract test needs one squad player
+    # with no provider row, to prove absence carries nulls and not zeros.
+    con = duckdb.connect(str(path))
+    for c, x in zip(all_codes, XPTS):
+        if c == 132:
+            continue
+        con.execute(
+            "INSERT INTO fact_projection (provider, season, gw, code, xp, "
+            "xp_if_appears, p_appear, as_of) VALUES (?, ?, 3, ?, ?, ?, 0.9, ?)",
+            ["s1", SEASON, c, x, x, T0.to_pydatetime()],
+        )
+    con.close()
+
+    # The engine-simulation artefact next to the db — the only p_haul source.
     proj = pd.DataFrame({
-        "code": SQUAD_CODES + [200, 201, 202],
-        "xpts": [2.0,               # StartGK — invertible vs BenchGK
-                 3.6,               # BenchGK
-                 4.0, 4.1, 4.2, 4.3, 3.0,     # defs
-                 5.4, 5.0, 4.5, 4.4,          # mids (Mid1 highest mean)
-                 3.2,                          # MidBench (no inversion: 3.2 < 4.4? -> vs weakest MID starter 4.4, no)
-                 4.0, 3.9, 3.8,                # fwds
-                 5.9, 4.9, 5.0],               # non-owned
+        "code": all_codes,
+        "xpts": XPTS,                    # present in the artefact, unread now
         "p_haul": [0.01, 0.02,
                    0.05, 0.05, 0.05, 0.05, 0.04,
                    0.10, 0.30, 0.08, 0.07,     # Mid2 has the haul odds
@@ -171,6 +199,15 @@ def db(tmp_path, monkeypatch):
     monkeypatch.setattr(QuestionRouter, "_team_state",
                         lambda self: _fake_state())
     return path
+
+
+def _write_forecast(tmp_path, per_code, *, gw=3):
+    """The solver's OWN per-GW forecast — `fpl solve` commits this beside the
+    plan, and the captain line quotes it in the solver's own currency rather
+    than dressing a solver pick in the consensus's number."""
+    pd.DataFrame([{"code": c, "gw": gw, "xpts": x, "p_play": 0.9}
+                  for c, x in per_code.items()]).to_parquet(
+        tmp_path / "forecast.parquet", index=False)
 
 
 def _write_transfer_plan(tmp_path, generated_at, *, out=(131,), into=(202,),
@@ -649,15 +686,21 @@ def test_move_rank_carries_the_boards_own_horizon_gws(db, tmp_path):
 
 
 def test_projection_data_birth_and_source_are_named_at_point_of_use(db):
-    """R2 #9: the artefact's RUN instant (not the panel read clock) and the
-    actual source of the squad xPts — never '(CONSENSUS)' again."""
+    """The squad card's TWO projection columns each name their own source
+    and clock: xPts is the provider consensus (the xPoints tab's numbers,
+    so one player can never wear 5.6 here and 4.7 there), and p_haul is the
+    engine simulation with its own, possibly much older, data-birth."""
     sq = run_script("squad_overview", {}, db=db).result
     brief = run_script("dashboard_brief", {}, db=db).result
-    assert sq["projection_generated"] is not None
-    assert "solved artefact" in sq["projection_source"]
-    assert "not the provider consensus" in sq["projection_source"]
-    assert brief["projection_generated"] == sq["projection_generated"]
-    assert "solved artefact" in brief["projection_source"]
+    assert "consensus" in sq["xpts_source"]
+    assert sq["xpts_as_of"] is not None
+    assert sq["xpts_gw"] == 3
+    assert "engine simulation" in sq["p_haul_source"]
+    assert sq["p_haul_generated"] is not None
+    # the two clocks are distinct fields — never conflated
+    assert brief["xpts_source"] == sq["xpts_source"]
+    assert brief["p_haul_generated"] is not None
+    assert brief["xpts_as_of"] != brief["p_haul_generated"]
 
 
 def test_idea_due_is_gone_from_payload_and_schema(db):
@@ -685,13 +728,18 @@ def test_squad_overview_serves_the_chip_ledger(db):
     assert chips["3xc"]["played"] == []
 
 
-def test_moves_are_a_named_gap_when_no_consensus_exists(db):
-    """The default seed has no provider projections: the rules must say so
-    rather than serving nothing silently."""
+def test_moves_are_a_named_gap_when_the_rules_cannot_be_evaluated(db):
+    """The default seed carries no settled gameweek, so the returns gate
+    cannot run: the rules must NAME that blocker rather than serving an
+    empty list silently. Which blocker bites first is the seed's business;
+    that one is named, in the payload and the watch log, is the contract."""
     brief = run_script("dashboard_brief", {}, db=db).result
     assert brief["moves"] == []
     gap = [e for e in brief["empty_kinds"] if e["kind"] == "moves"]
-    assert gap and "consensus" in gap[0]["reason"]
+    assert gap, "an empty moves list must arrive with its reason"
+    reason = gap[0]["reason"]
+    assert any(blocker in reason for blocker in
+               ("consensus", "settled gameweek")), reason
     statuses = {w["check"]: w["status"] for w in brief["watch_log"]}
     assert statuses["move_rules"] == "gap"
 
@@ -839,6 +887,59 @@ def test_coverage_candidate_xpts_equals_the_projection_panels_number(db, tmp_pat
         assert m["numbers"]["out_xpts"] == by_code[m["out"]["code"]]["xpts"]
 
 
+def test_a_solver_captain_carries_its_disagreement_with_the_consensus(db, tmp_path):
+    """The owner's question: why is the plan triple-captaining Isak when the
+    consensus and the haul odds both prefer Bruno? Because the solver's own
+    forecast ranks him top — a number the providers do not share. The verdict
+    still takes the solver (precedence), but the gap and its gate travel with
+    the pick, and the watch log measures it."""
+    _write_transfer_plan(tmp_path, "2099-09-05T15:00:00+00:00")
+    # the plan captains Mid1 (120); the solver's own GW3 forecast rates him
+    # 9.0 where the seeded consensus says 5.4 — the live Isak case in
+    # miniature, well past the 1.5 xPts gate
+    _write_forecast(tmp_path, {120: 9.0, 121: 5.0})
+    brief = run_script("dashboard_brief", {}, db=db).result
+    cap = [l for l in brief["verdict"]["lines"] if l["question"] == "captain"][0]
+    n = cap["numbers"]
+    assert cap["rule"] == "solver_plan_captain"
+    # both currencies present, each under its own key — never one number
+    assert "pick_solver_xpts" in n and "pick_xpts" in n
+    assert n["solver_vs_consensus"] == pytest.approx(
+        round(n["pick_solver_xpts"] - n["pick_xpts"], 2))
+    # the gate is echoed so the reader can check the verdict's own arithmetic
+    assert n["divergence_gate"] == brief["thresholds"]["captain_divergence_xpts"]
+    assert n["solver_vs_consensus"] == pytest.approx(3.6)   # 9.0 - 5.4
+    checks = {w["check"]: w for w in brief["watch_log"]}
+    assert checks["captain_divergence"]["status"] == "firing"
+    assert "do not share" in checks["captain_divergence"]["detail"]
+    # Here the consensus names the SAME man (no mean_xpts dissent) yet rates
+    # him 3.6 xPts lower. Agreement about who is not agreement about how
+    # much, which is why the divergence flag is separate from dissent.
+    voices = {d["voice"] for d in cap["dissent"]}
+    assert "mean_xpts" not in voices
+    assert "haul_odds" in voices
+
+
+def test_squad_card_xpts_equals_the_xpoints_tab_for_the_same_player(db):
+    """The owner's report: Gabriel read 5.6 on the dashboard and 4.7 on the
+    xPoints tab. One player, one gameweek, two surfaces, two numbers — the
+    squad card was quoting a solved simulation artefact while the xPoints
+    tab quoted the provider consensus. Both surfaces now read the SAME
+    consensus, and this test fails the moment they diverge again."""
+    sq = run_script("squad_overview", {}, db=db).result
+    proj = run_script("projection_table", {"gw": 3}, db=db).result
+    by_code = {r["code"]: r for r in proj["rows"]}
+    seen = 0
+    for p in sq["starters"] + sq["bench"]:
+        row = by_code.get(p["code"])
+        if row is None or p["xpts"] is None:
+            continue
+        assert p["xpts"] == pytest.approx(row["xpts"], abs=5e-4), (
+            f"{p['name']}: squad card {p['xpts']} vs xPoints {row['xpts']}")
+        seen += 1
+    assert seen >= 10, "the comparison must actually cover the squad"
+
+
 def test_coverage_gap_stays_quiet_when_no_candidate_has_returns(db, tmp_path):
     """The no-gap day: the run is still rank-1 but no Gamma attacker has a
     recent return, so no coverage card — and the absence is measured, not
@@ -886,7 +987,7 @@ def test_squad_projection_serves_p_appear_and_labels_xmins_absent(db, tmp_path):
     assert rows[120]["xmins"] is None
     assert brief["projection_gw"] == 3
     # squad players with no provider row carry nulls, not zeros
-    assert rows[100]["p_appear"] is None and rows[100]["xmins"] is None
+    assert rows[132]["p_appear"] is None and rows[132]["xmins"] is None
 
 
 def test_team_fixtures_copies_the_boards_opponent_only_lens(db, tmp_path):

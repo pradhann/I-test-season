@@ -72,7 +72,6 @@ from fpl_edge.config import USER
 from fpl_edge.platform.registry import register_script
 from fpl_edge.platform.scripts.common import (
     POSITION_NAME,
-    PROJECTION_NAME,
     UTC,
     empty,
     latest_as_of,
@@ -130,6 +129,12 @@ THRESHOLDS: dict[str, float | int] = {
     "recent_returns_min": 1,
     "form_returns_margin": 2,
     "form_xpts_margin": 1.0,
+    # A solver captain whose OWN forecast is this far from the provider
+    # consensus for the same gameweek is resting on a number the market
+    # does not share. The verdict still takes the solver (precedence), but
+    # the disagreement is printed — spending a triple captain on a private
+    # 2x forecast is exactly the bet that should be made knowingly.
+    "captain_divergence_xpts": 1.5,
 }
 
 PARAMS: dict[str, Any] = {
@@ -592,7 +597,7 @@ RESULT: dict[str, Any] = {
                  "empty_kinds", "watch_log", "solve", "suggested_xi",
                  "team_fixtures", "squad_projection", "moves",
                  "moves_suppressed", "fixtures_scale", "verdict", "header",
-                 "projection_generated"],
+                 "xpts_source"],
     "properties": {
         "season": {"type": "string"},
         "gw": {"type": ["integer", "null"]},
@@ -625,12 +630,15 @@ RESULT: dict[str, Any] = {
         "moves_suppressed": {"type": "integer"},
         "verdict": _VERDICT,
         "header": _HEADER,
-        # The DATA-BIRTH instant of the solved projection artefact behind the
-        # squad card's xPts / p_haul (the model RUN, not the panel read time),
-        # plus what that source actually is — so no view can caption the
-        # solved numbers "(CONSENSUS)" again.
-        "projection_generated": {"type": ["string", "null"]},
-        "projection_source": {"type": ["string", "null"]},
+        # Sources of the squad card's two projection columns, threaded from
+        # squad_overview: xPts is the provider consensus (the xPoints tab's
+        # own numbers, so the two surfaces cannot disagree); p_haul is the
+        # engine simulation with its OWN data-birth instant, which can be
+        # weeks older — the two clocks are never conflated.
+        "xpts_source": {"type": ["string", "null"]},
+        "xpts_as_of": {"type": ["string", "null"]},
+        "p_haul_source": {"type": ["string", "null"]},
+        "p_haul_generated": {"type": ["string", "null"]},
         "fixtures_scale": {
             "type": ["object", "null"],
             "additionalProperties": False,
@@ -1855,6 +1863,16 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
                 "hit_verdict": hit_verdict,
             }
 
+    # ---- projection provenance, threaded from the squad panel ------------
+    # xPts = provider consensus (the xPoints tab's numbers); p_haul = the
+    # engine simulation with its own, possibly much older, data-birth
+    # instant. Served side by side, two clocks, never conflated.
+    xpts_source = None if sq.get("empty") else sq.get("xpts_source")
+    xpts_as_of_v = None if sq.get("empty") else _iso(sq.get("xpts_as_of"))
+    p_haul_source = None if sq.get("empty") else sq.get("p_haul_source")
+    p_haul_generated = (None if sq.get("empty")
+                        else _iso(sq.get("p_haul_generated")))
+
     # ---- the verdict: one pick per question, by the PRINTED precedence ---
     # It PICKS, it does not blend. Rule ids + structured refs/numbers only —
     # the house rule stands (no free-text recommendation field); wording
@@ -1968,6 +1986,34 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
         if row_v is not None:
             c_numbers = {"pick_xpts": row_v.get("xpts"),
                          "pick_p_haul": row_v.get("p_haul")}
+        # A solver pick must be quoted in the SOLVER'S OWN currency: its
+        # committed per-GW forecast. Decorating it with another source's
+        # number once made the solver's best captain (its 6.7) wear a stale
+        # simulation's 4.0 and look self-contradictory on its own card.
+        if c_rule == "solver_plan_captain" and plan is not None:
+            fc_path = Path(source_dir(wh)) / "forecast.parquet"
+            h_gws = plan.get("horizon_gws") or []
+            if fc_path.exists() and h_gws:
+                try:
+                    import pandas as pd
+                    fdf = pd.read_parquet(fc_path)
+                    first_gw = int(h_gws[0])
+                    hit = fdf[(fdf["gw"] == first_gw)
+                              & (fdf["code"] == int(cap_pick["code"]))]
+                    if not hit.empty:
+                        c_numbers["pick_solver_xpts"] = round(
+                            float(hit.iloc[0]["xpts"]), 2)
+                        c_numbers["solver_gw"] = first_gw
+                except (OSError, KeyError, ValueError):
+                    pass  # the forecast is decoration here; absence is quiet
+        # Do the two voices agree about the man being captained? The gap is
+        # served whenever both exist; the gate says when it is worth shouting.
+        s_x, c_x = c_numbers.get("pick_solver_xpts"), c_numbers.get("pick_xpts")
+        if s_x is not None and c_x is not None:
+            gap_x = round(float(s_x) - float(c_x), 2)
+            c_numbers["solver_vs_consensus"] = gap_x
+            c_numbers["divergence_gate"] = float(
+                THRESHOLDS["captain_divergence_xpts"])
     c_dissent: list[dict[str, Any]] = []
     if suggested_xi and cap_pick is not None:
         cn = suggested_xi.get("captain_numbers") or {}
@@ -1986,7 +2032,10 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
                 "voice": "haul_odds", "rule": "haul_odds_captain",
                 "player": bh, "in": None, "out": None,
                 "numbers": {"p_haul": cn.get("haul_pick_p_haul")},
-                "source_panel": "squad_overview", "source_as_of": sq_as_of_v,
+                # Dated by the SIMULATION's data-birth, not the squad read:
+                # this voice can be weeks older than everything beside it.
+                "source_panel": "squad_overview",
+                "source_as_of": p_haul_generated or sq_as_of_v,
                 "drill": {"drawer": bh["code"]},
             })
     if (creator_cap is not None and cap_pick is not None
@@ -1998,6 +2047,22 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
             "source_panel": "creator_board",
             "source_as_of": creator_cap["as_of"],
             "drill": {"tab": "creators"},
+        })
+    cap_gap = c_numbers.get("solver_vs_consensus")
+    if cap_gap is not None:
+        gate_x = float(THRESHOLDS["captain_divergence_xpts"])
+        firing = abs(cap_gap) >= gate_x
+        watch.append({
+            "check": "captain_divergence",
+            "status": "firing" if firing else "clear",
+            "detail": (
+                f"{cap_pick['name']}: solver "
+                f"{c_numbers['pick_solver_xpts']} vs consensus "
+                f"{c_numbers['pick_xpts']} xPts ({cap_gap:+.2f}) — "
+                + ("the armband rests on a forecast the providers do not "
+                   "share" if firing else
+                   f"inside the {gate_x} gate, the voices broadly agree")),
+            "source_panel": "solve_plan", "as_of": plan_as_of,
         })
     captain_line = {
         "question": "captain", "rule": c_rule, "state": solve["state"],
@@ -2061,16 +2126,6 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
         "chip_state": solve["state"],
     }
 
-    # ---- data-birth instant of the solved projection artefact -----------
-    # The squad card's xPts/p_haul come from the solved artefact (via
-    # squad_overview) — this is when that model RUN happened, distinct from
-    # every panel read clock in sources_as_of.
-    projection_generated = None
-    proj_artefact = Path(source_dir(wh)) / PROJECTION_NAME
-    if proj_artefact.exists():
-        projection_generated = dt.datetime.fromtimestamp(
-            proj_artefact.stat().st_mtime, UTC).isoformat()
-
     # ---- assemble --------------------------------------------------------
     alerts.sort(key=lambda a: (
         a["priority"],
@@ -2130,11 +2185,10 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
         "moves_suppressed": moves_suppressed,
         "verdict": verdict,
         "header": header,
-        "projection_generated": projection_generated,
-        "projection_source": (
-            f"solved artefact {PROJECTION_NAME} — the engine's own "
-            f"simulation run, not the provider consensus"
-            if projection_generated else None),
+        "xpts_source": xpts_source,
+        "xpts_as_of": xpts_as_of_v,
+        "p_haul_source": p_haul_source,
+        "p_haul_generated": p_haul_generated,
         "fixtures_scale": fixtures_scale,
         "notes": notes,
     }

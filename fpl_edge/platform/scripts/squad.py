@@ -78,12 +78,17 @@ RESULT: dict[str, Any] = {
         "projected_xi_xpts": {"type": ["number", "null"]},
         "captain": {"type": ["string", "null"]},
         "vice": {"type": ["string", "null"]},
-        # The DATA-BIRTH instant of the xpts/p_haul columns: when the solved
-        # projection artefact was generated (the model RUN, not this panel's
-        # read time), and what that source actually is — so no view can label
-        # these numbers "consensus". Null when no artefact is cached.
-        "projection_generated": {"type": ["string", "null"]},
-        "projection_source": {"type": ["string", "null"]},
+        # xPts is the PROVIDER CONSENSUS for the next open gameweek — the
+        # same source the xPoints tab renders, so the two surfaces can never
+        # disagree about one player again. p_haul has no consensus provider;
+        # it stays the engine simulation's, with its OWN data-birth instant
+        # so a three-week-old haul probability is never dated by the fresher
+        # consensus clock.
+        "xpts_source": {"type": ["string", "null"]},
+        "xpts_as_of": {"type": ["string", "null"]},
+        "xpts_gw": {"type": ["integer", "null"]},
+        "p_haul_source": {"type": ["string", "null"]},
+        "p_haul_generated": {"type": ["string", "null"]},
         "starters": {"type": "array", "items": _PLAYER},
         "bench": {"type": "array", "items": _PLAYER},
         # Chip ledger from MyTeamState.chip_status() — the rules registry's
@@ -177,37 +182,59 @@ def squad_overview(wh, *, season: str, entry_id: int | None = None) -> dict[str,
         )
 
     by_code = {int(r["code"]): r for _, r in players.iterrows()}
-    proj = load_projection(wh)
-    xpts, phaul = {}, {}
     notes: list[str] = []
-    projection_generated = None
-    projection_source = None
-    if proj is None:
+
+    # xPts: the provider CONSENSUS for the next open gameweek — the exact
+    # numbers the xPoints tab renders. The squad card once read the solved
+    # artefact instead, and the same player wore 5.6 here and 4.7 there.
+    import datetime as dt
+
+    from fpl_edge.platform.scripts.common import (
+        PROJECTION_NAME,
+        next_gw,
+        source_dir,
+    )
+
+    xpts: dict[int, float] = {}
+    xpts_gw = next_gw(wh, season)
+    xpts_as_of = None
+    xpts_source = None
+    if xpts_gw is not None:
+        cdf = q(
+            wh,
+            "SELECT code, xpts_mean, n_sources FROM "
+            "sem_projection_consensus(now()) WHERE season = ? AND gw = ?",
+            (season, int(xpts_gw)),
+        )
+        if not cdf.empty:
+            xpts = dict(zip(cdf["code"].astype(int), cdf["xpts_mean"]))
+            n_src = int(cdf["n_sources"].max())
+            xpts_as_of = latest_as_of(wh, "fact_projection", season)
+            xpts_source = (
+                f"provider consensus of {n_src} source(s), GW{int(xpts_gw)} "
+                f"— the same numbers the xPoints tab shows")
+    if not xpts:
         notes.append(
-            "No projection artefact cached, so xPts columns are null. "
-            "Run `make solve` to fill them."
-        )
-    else:
-        xpts = dict(zip(proj["code"].astype(int), proj["xpts"]))
-        if "p_haul" in proj.columns:
-            phaul = dict(zip(proj["code"].astype(int), proj["p_haul"]))
-        # Data-birth instant of the xPts columns: the artefact's own write
-        # time — the model RUN, not this panel's state read. Named so the
-        # view never captions a solved number as a consensus.
-        import datetime as dt
-
-        from fpl_edge.platform.scripts.common import (
-            PROJECTION_NAME,
-            source_dir,
+            "No projection consensus for the next gameweek, so xPts columns "
+            "are null. Run the projections ingest."
         )
 
+    # p_haul: no provider publishes one; the engine simulation is the only
+    # voice, and it carries its OWN data-birth instant because it can be
+    # weeks older than the consensus above.
+    phaul: dict[int, float] = {}
+    p_haul_generated = None
+    p_haul_source = None
+    proj = load_projection(wh)
+    if proj is not None and "p_haul" in proj.columns:
+        phaul = dict(zip(proj["code"].astype(int), proj["p_haul"]))
         artefact = source_dir(wh) / PROJECTION_NAME
         if artefact.exists():
-            projection_generated = dt.datetime.fromtimestamp(
+            p_haul_generated = dt.datetime.fromtimestamp(
                 artefact.stat().st_mtime, dt.UTC).isoformat()
-        projection_source = (
-            f"solved artefact {PROJECTION_NAME} — the engine's own "
-            f"simulation run, not the provider consensus")
+        p_haul_source = (
+            f"engine simulation ({PROJECTION_NAME}) — no provider publishes "
+            f"a haul probability")
 
     def card(pick) -> dict[str, Any]:
         code = int(pick.code)
@@ -278,8 +305,11 @@ def squad_overview(wh, *, season: str, entry_id: int | None = None) -> dict[str,
         "projected_xi_xpts": round(float(xi_total), 2) if xi_total is not None else None,
         "captain": cap,
         "vice": vice,
-        "projection_generated": projection_generated,
-        "projection_source": projection_source,
+        "xpts_source": xpts_source,
+        "xpts_as_of": xpts_as_of,
+        "xpts_gw": int(xpts_gw) if xpts_gw is not None else None,
+        "p_haul_source": p_haul_source,
+        "p_haul_generated": p_haul_generated,
         "starters": starters,
         "bench": bench,
         "chips": chips,

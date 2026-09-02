@@ -344,12 +344,12 @@ export default async function home(host) {
                                 "squad value"));
     if (sq && sq.projected_xi_xpts != null) {
       // Σ marks the SUM (the median tile beside it is per starter — 11× the
-      // unit), and the label names the data birth, not "(CONSENSUS)"
-      const gen = shortDate(brief?.projection_generated);
+      // unit); xPts is the provider consensus, the xPoints tab's own numbers
+      const gen = shortDate(brief?.xpts_as_of);
       const xi = stat(fmt1(sq.projected_xi_xpts),
-                      "Σ XI xPts" + (gen ? ` · solved ${gen}` : ""));
-      xi.title = brief?.projection_source
-        || "sum of the XI's per-player xPts";
+                      "Σ XI xPts" + (gen ? ` · consensus ${gen}` : ""));
+      xi.title = brief?.xpts_source
+        || "sum of the XI's per-player consensus xPts";
       statsRow.appendChild(xi);
     }
     if (median != null) {
@@ -421,17 +421,24 @@ export default async function home(host) {
      each in its own currency, each drilling to its evidence. Wording is
      keyed by rule id — the payload carries no free-text recommendation. */
   renderVerdict();
+  // The haul probability is the engine simulation's, which can be weeks
+  // older than every consensus number beside it — its date rides with it.
+  function haulSimTag() {
+    const d = shortDate(brief?.p_haul_generated);
+    return d ? ` · sim ${d}` : "";
+  }
   function dissentChip(d) {
     const n = d.numbers || {};
     let txt;
     switch (d.voice) {
       case "mean_xpts":
-        txt = `mean prefers ${d.player?.name ?? "?"}`
+        txt = `consensus prefers ${d.player?.name ?? "?"}`
           + (n.xpts != null ? ` (${fmt1(n.xpts)} xPts)` : "");
         break;
       case "haul_odds":
         txt = `haul odds prefer ${d.player?.name ?? "?"}`
-          + (n.p_haul != null ? ` (${Math.round(n.p_haul * 100)}%)` : "");
+          + (n.p_haul != null
+             ? ` (${Math.round(n.p_haul * 100)}%${haulSimTag()})` : "");
         break;
       case "creator_armband":
         txt = `creators: ${n.armband_calls ?? "?"} named `
@@ -485,7 +492,7 @@ export default async function home(host) {
         }
         if (n.gain_over_roll != null)
           numBits.push(`${fmtSigned(n.gain_over_roll, 1)} xPts vs rolling`
-            + ` — solver forecast`);
+            + `, solver forecast`);
         if (n.optimality_gap_pct != null)
           numBits.push(`${fmt1(n.optimality_gap_pct)}% gap`);
         if (n.age_hours != null) numBits.push(`${fmt1(n.age_hours)}h old`);
@@ -494,7 +501,7 @@ export default async function home(host) {
       }
       case "solver_roll":
         put(el("b", null, "bank the transfer"),
-            " — no move cleared the bar vs rolling");
+            ", no move cleared the bar vs rolling");
         if (n.free_transfers != null)
           numBits.push(`${n.free_transfers} FT carried forward`);
         if (n.optimality_gap_pct != null)
@@ -513,24 +520,33 @@ export default async function home(host) {
           main.appendChild(strip);
         }
         numBits.push(ln.rule === "rule_moves_solver_stale"
-          ? "rule-based — the solver plan is stale"
-          : "rule-based — no solver plan stands");
+          ? "rule-based, the solver plan is stale"
+          : "rule-based, no solver plan stands");
         break;
       }
       case "no_move_named":
-        put("no move named — no plan stands and nothing cleared a gate");
+        put("no move named: no plan stands and nothing cleared a gate");
         break;
       case "solver_plan_captain":
       case "mean_xpts_captain":
         put(verdictFace(ln.pick), el("b", null, ln.pick?.name ?? "?"));
-        if (n.pick_xpts != null) numBits.push(`${fmt1(n.pick_xpts)} xPts`);
+        // A solver pick is quoted in the solver's OWN currency first; the
+        // consensus figure rides beside it, labelled — two sources, never
+        // one number wearing the other's name.
+        if (ln.rule === "solver_plan_captain" && n.pick_solver_xpts != null)
+          numBits.push(`${fmt1(n.pick_solver_xpts)} xPts`
+            + `${n.solver_gw != null ? ` GW${n.solver_gw}` : ""}`
+            + `, solver forecast`);
+        if (n.pick_xpts != null)
+          numBits.push(`consensus ${fmt1(n.pick_xpts)} xPts`);
         if (n.pick_p_haul != null)
-          numBits.push(`${Math.round(n.pick_p_haul * 100)}% haul odds`);
+          numBits.push(`${Math.round(n.pick_p_haul * 100)}% haul odds`
+            + haulSimTag());
         numBits.push(ln.rule === "solver_plan_captain"
-          ? "solver plan" : "mean-xPts pick — no solver plan");
+          ? "solver plan" : "consensus pick, no solver plan");
         break;
       case "no_captain_named":
-        put("no captain named — neither a plan nor a projection stands");
+        put("no captain named: neither a plan nor a projection stands");
         break;
       case "bench_inversion_applied":
         put(el("b", null,
@@ -543,17 +559,17 @@ export default async function home(host) {
         put("your bench order stands");
         break;
       case "no_bench_named":
-        put("no bench read — squad unreadable");
+        put("no bench read: squad unreadable");
         break;
       case "solver_plan_chip":
         put(el("b", null, CHIP_NAME[ln.chip] || String(ln.chip)),
-            " — the plan spends it");
+            ", the plan spends it");
         break;
       case "chip_hold":
-        put(el("b", null, "hold"), " — the plan spends no chip");
+        put(el("b", null, "hold"), ", the plan spends no chip");
         break;
       case "no_chip_named":
-        put("hold by default — no plan stands to ask");
+        put("hold by default: no plan stands to ask");
         break;
       default:
         put(ln.rule);
@@ -562,6 +578,20 @@ export default async function home(host) {
       main.appendChild(el("span", "vd-nums", numBits.join(" · ")));
     row.appendChild(main);
     const side = el("span", "vd-side");
+    // Sources disagreeing about the captained man is louder than any single
+    // number: the solver keeps the pick (precedence), the market's dissent
+    // rides beside it so a triple captain is never spent unknowingly.
+    if (n.solver_vs_consensus != null && n.divergence_gate != null
+        && Math.abs(n.solver_vs_consensus) >= n.divergence_gate) {
+      const dv = el("span", "chip warn",
+        `solver ${fmt1(n.pick_solver_xpts)} vs consensus `
+        + `${fmt1(n.pick_xpts)} xPts`);
+      dv.title = "the solver's own forecast for this player differs from the "
+        + `provider consensus by ${fmtSigned(n.solver_vs_consensus, 2)} xPts `
+        + `(gate ${n.divergence_gate}) — the pick rests on a number the `
+        + "market does not share";
+      side.appendChild(dv);
+    }
     // the solve state behind a solver-sourced pick, printed ON the line
     if (ln.source_panel === "solve_plan" && ln.state
         && ln.state !== "fresh") {
@@ -785,10 +815,14 @@ export default async function home(host) {
     for (const it of items)
       intelCard.appendChild(
         intelItem(it, dupes.byItem.get((intel.items || []).indexOf(it))));
-    if (intel.rejected_n > 0)
+    if (intel.rejected_n > 0) {
+      // A count says something was dropped; the reasons say what to fix.
+      const why = (intel.rejected_reasons || []).join(" · ");
       intelCard.appendChild(el("p", "sub",
-        `${intel.rejected_n} candidate item(s) rejected by the citation `
-        + `validator — dropped loudly, never silently.`));
+        `${intel.rejected_n} candidate item(s) rejected by the citation and `
+        + `house-prose rules, dropped loudly, never silently.`
+        + (why ? ` Reasons: ${why}.` : "")));
+    }
   }
 
   /* -------------------- watch-strip wording (kept nested for the tests) */
@@ -1163,9 +1197,12 @@ export default async function home(host) {
         + `. Two measures, never blended:`));
       const tbl = el("table", "data db-captbl");
       const hd = el("tr");
+      const haulTh = el("th", "num", "haul odds" + haulSimTag());
+      haulTh.title = brief?.p_haul_source
+        || "engine simulation — no provider publishes a haul probability";
       hd.append(el("th", null, "measure → pick"),
-                el("th", "num", "mean xPts"),
-                el("th", "num", "haul odds"));
+                el("th", "num", "consensus xPts"),
+                haulTh);
       const thd = el("thead"); thd.appendChild(hd); tbl.appendChild(thd);
       const tb = el("tbody");
       const capRow = (measure, ref, xp, ph) => {
@@ -1181,8 +1218,8 @@ export default async function home(host) {
           ph != null ? `${Math.round(ph * 100)}%` : "–"));
         tb.appendChild(tr);
       };
-      capRow("mean", bm, cn.mean_pick_xpts, cn.mean_pick_p_haul);
-      capRow("haul", bh, cn.haul_pick_xpts, cn.haul_pick_p_haul);
+      capRow("consensus mean", bm, cn.mean_pick_xpts, cn.mean_pick_p_haul);
+      capRow("haul odds", bh, cn.haul_pick_xpts, cn.haul_pick_p_haul);
       tbl.appendChild(tb);
       if (tb.children.length) box.appendChild(tbl);
       pitchBody.appendChild(box);
@@ -1194,8 +1231,8 @@ export default async function home(host) {
       + (sq.bank_tenths != null ? ` · bank ${fmtPrice(sq.bank_tenths / 10)}` : "")
       + (sq.projected_xi_xpts != null
           ? ` · Σ XI ${fmt1(sq.projected_xi_xpts)} xPts`
-            + (brief?.projection_generated
-                ? ` (solved ${shortDate(brief.projection_generated)})` : "")
+            + (brief?.xpts_as_of
+                ? ` (consensus ${shortDate(brief.xpts_as_of)})` : "")
           : "")
       + (median != null ? ` · xPts chip colour = vs your XI median ${fmt2(median)}` : "")
       + (easeDom != null
@@ -1483,7 +1520,7 @@ export default async function home(host) {
         line.appendChild(el("b", null,
           `${fmtSigned(plan.gain_over_roll, 1)} xPts`));
         line.appendChild(document.createTextNode(
-          ` over ${hSpan} vs rolling — solver forecast`));
+          ` over ${hSpan} vs rolling, solver forecast`));
         line.appendChild(el("span", "sv-gapline",
           " · " + (plan.optimality_gap_pct != null
               ? `${fmt1(plan.optimality_gap_pct)}% optimality gap`
@@ -1524,7 +1561,7 @@ export default async function home(host) {
         line.appendChild(el("span", "chip s1",
           CHIP_NAME[plan.chip] || String(plan.chip)));
         line.appendChild(document.createTextNode(
-          ` — the plan spends it`
+          `, the plan spends it`
           + (plan.gw != null ? ` in GW${plan.gw}` : "")));
         solverCard.appendChild(line);
       }

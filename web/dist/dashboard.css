@@ -56,22 +56,30 @@
 .db-verdict { border-left: 3px solid var(--s1); }
 .vd-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
 .vd-head h2 { margin: 0; }
-.vd-row { display: flex; align-items: center; gap: 12px; padding: 8px 10px;
-          border-top: 1px solid var(--line); cursor: pointer; }
+/* Two-column grid: question label | content. Picks flow on the first
+   content line, the numbers line always gets the full width beneath them,
+   and the state/dissent chips wrap on their own line below — nothing is
+   squeezed into a tall one-word column by a right-anchored chip rail. */
+.vd-row { display: grid; grid-template-columns: 84px minmax(0, 1fr);
+          column-gap: 12px; row-gap: 7px; align-items: start;
+          padding: 10px; border-top: 1px solid var(--line); cursor: pointer; }
 .vd-row:hover { background: var(--raised); border-radius: 8px; }
-.vd-q { flex: none; width: 74px; color: var(--faint); font-size: 10.5px;
-        letter-spacing: .08em; text-transform: uppercase; font-weight: 650; }
-.vd-main { min-width: 0; flex: 1; display: flex; align-items: center;
-           gap: 10px; flex-wrap: wrap; font-size: 13px; }
-.vd-movestrip { display: inline-flex; align-items: center; gap: 6px; }
+.vd-q { grid-column: 1; padding-top: 3px; color: var(--faint);
+        font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase;
+        font-weight: 650; }
+.vd-main { grid-column: 2; min-width: 0; display: flex; align-items: center;
+           gap: 8px 16px; flex-wrap: wrap; font-size: 13px; }
+.vd-movestrip { display: inline-flex; align-items: center; gap: 6px;
+                white-space: nowrap; }
 .vd-movestrip .avatar { margin-right: 0; }
 .vd-out { color: var(--muted);
           text-decoration-color: color-mix(in oklab, var(--bad) 60%, transparent); }
 .vd-face { display: inline-flex; }
-.vd-nums { font: 600 11.5px var(--mono); color: var(--muted);
-           font-variant-numeric: tabular-nums; }
-.vd-side { display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
-           justify-content: flex-end; margin-left: auto; }
+.vd-nums { flex-basis: 100%; font: 600 11.5px var(--mono);
+           color: var(--muted); font-variant-numeric: tabular-nums; }
+.vd-side { grid-column: 2; display: flex; align-items: center; gap: 6px;
+           flex-wrap: wrap; justify-content: flex-start; }
+.vd-side:empty { display: none; }
 .vd-dissent { border: 1px solid var(--line); background: var(--surface);
               color: var(--muted); font: 600 10.5px var(--mono);
               border-radius: 999px; padding: 2px 9px; cursor: pointer; }
@@ -80,8 +88,8 @@
 .vd-how summary { cursor: pointer; color: var(--faint); font-size: 11px; }
 .vd-prec { margin: 6px 0 0; color: var(--muted); font-size: 12px; }
 @media (max-width: 640px) {
-  .vd-row { flex-wrap: wrap; }
-  .vd-side { margin-left: 84px; justify-content: flex-start; }
+  .vd-row { grid-template-columns: minmax(0, 1fr); }
+  .vd-q, .vd-main, .vd-side { grid-column: 1; }
 }
 
 /* the briefing item's cross-reference chip: the same decision seen by the

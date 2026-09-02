@@ -1,45 +1,107 @@
 {
- "generated_at": "2026-09-02T07:12:41.916280+00:00",
+ "generated_at": "2026-09-02T14:56:02.974530+00:00",
  "model": "opus",
- "meta_prompt_hash": "06be881653ed",
+ "meta_prompt_hash": "0a3c460b40f8",
  "input_as_of": {
-  "squad_overview": "2026-09-01T10:33:35.266294+00:00",
-  "projection_table": "2026-09-01T10:33:35.266294+00:00",
-  "ownership_eo": "2026-09-01T10:33:35.266294+00:00",
-  "fixture_board": "2026-09-02T07:12:43.872468+00:00",
-  "creator_board": "2026-09-02T07:12:44.020956+00:00",
-  "price_radar": "2026-09-01T10:33:35.266294+00:00",
-  "dashboard_brief": "2026-09-01T10:00:22.815905+00:00"
+  "squad_overview": "2026-09-02T10:33:06.595805+00:00",
+  "projection_table": "2026-09-02T10:33:06.595805+00:00",
+  "ownership_eo": "2026-09-02T10:33:06.595805+00:00",
+  "fixture_board": "2026-09-02T14:56:06.030731+00:00",
+  "creator_board": "2026-09-02T14:56:06.204793+00:00",
+  "price_radar": "2026-09-02T10:33:06.595805+00:00",
+  "dashboard_brief": "2026-09-02T10:00:21.362679+00:00"
  },
  "items": [
   {
-   "headline": "Haaland: 70.1% owned, 114.6% predicted EO, and you don't own him — the biggest single rank risk",
-   "why": "ownership_eo has Haaland at 70.1% global own, 114.6% predicted EO, 117.3% top-10k EO, in_squad false. projection_table 6.042 xPts, dashboard_brief 21.96 xPts GW3–6 vs Isak 12.09. Not owning a 100%+ EO forward is a standing short against the field.",
+   "headline": "Two free bench swaps add 2.36 xPts for GW3: Verbruggen for Kinsky, Ndiaye for Ødegaard",
+   "why": "Verbruggen 3.42 xPts against Kinsky 1.962, Ndiaye 4.682 against Ødegaard 3.78 (squad_overview, 10:33Z). dashboard_brief suggested_xi totals +2.36 xPts for the two swaps, with no transfer and no hit.",
    "severity": 1,
    "numbers": [
+    {
+     "value": 3.42,
+     "unit": "xPts GW3 (Verbruggen)",
+     "source_panel": "squad_overview",
+     "as_of": "2026-09-02T10:33:06.595805+00:00"
+    },
+    {
+     "value": 1.962,
+     "unit": "xPts GW3 (Kinsky)",
+     "source_panel": "squad_overview",
+     "as_of": "2026-09-02T10:33:06.595805+00:00"
+    },
+    {
+     "value": 4.682,
+     "unit": "xPts GW3 (Ndiaye)",
+     "source_panel": "squad_overview",
+     "as_of": "2026-09-02T10:33:06.595805+00:00"
+    },
+    {
+     "value": 3.78,
+     "unit": "xPts GW3 (Ødegaard)",
+     "source_panel": "dashboard_brief",
+     "as_of": "2026-09-02T10:00:21.362679+00:00"
+    },
+    {
+     "value": 2.36,
+     "unit": "xPts swing, suggested XI",
+     "source_panel": "dashboard_brief",
+     "as_of": "2026-09-02T10:00:21.362679+00:00"
+    }
+   ],
+   "codes": [
+    489639,
+    485055,
+    440993,
+    184029
+   ],
+   "drill": {
+    "tab": "squad"
+   },
+   "source_panels": [
+    "squad_overview",
+    "dashboard_brief"
+   ]
+  },
+  {
+   "headline": "Haaland 70.6% owned globally, 58.7% in the elite cohort (n=310), and not in your 15",
+   "why": "ownership_eo has him at 70.6% global own, 58.7% elite own and 114.6% predicted EO (10:33Z). dashboard_brief prices him at 22.16 xPts GW3-6 against Isak 12.06, your weakest forward starter, and creator_board logs 5 armband calls for him.",
+   "severity": 1,
+   "numbers": [
+    {
+     "value": 70.6,
+     "unit": "% global own",
+     "source_panel": "ownership_eo",
+     "as_of": "2026-09-02T10:33:06.595805+00:00"
+    },
+    {
+     "value": 58.7,
+     "unit": "% elite own (n=310)",
+     "source_panel": "ownership_eo",
+     "as_of": "2026-09-02T10:33:06.595805+00:00"
+    },
     {
      "value": 114.6,
      "unit": "% predicted EO",
      "source_panel": "ownership_eo",
-     "as_of": "2026-09-01T10:33:35.266294+00:00"
+     "as_of": "2026-09-02T10:33:06.595805+00:00"
     },
     {
-     "value": 117.3,
-     "unit": "% top-10k EO",
-     "source_panel": "ownership_eo",
-     "as_of": "2026-09-01T10:33:35.266294+00:00"
-    },
-    {
-     "value": 21.96,
+     "value": 22.16,
      "unit": "xPts GW3-6",
      "source_panel": "dashboard_brief",
-     "as_of": "2026-09-01T10:00:22.815905+00:00"
+     "as_of": "2026-09-02T10:00:21.362679+00:00"
     },
     {
-     "value": 12.09,
-     "unit": "xPts GW3-6 (Isak, weakest FWD starter)",
+     "value": 12.06,
+     "unit": "xPts GW3-6 (Isak)",
      "source_panel": "dashboard_brief",
-     "as_of": "2026-09-01T10:00:22.815905+00:00"
+     "as_of": "2026-09-02T10:00:21.362679+00:00"
+    },
+    {
+     "value": 5,
+     "unit": "creator armband calls",
+     "source_panel": "creator_board",
+     "as_of": "2026-09-02T14:56:06.204793+00:00"
     }
    ],
    "codes": [
@@ -51,203 +113,206 @@
    },
    "source_panels": [
     "ownership_eo",
-    "projection_table",
     "dashboard_brief",
-    "squad_overview"
+    "creator_board"
    ]
   },
   {
-   "headline": "Free XI swaps worth +2.35 xPts before the 4 Sep deadline — bench inversions plus armband",
-   "why": "dashboard_brief suggested_xi: Verbruggen 3.325 for Kinsky 1.966 (+1.359) and Ndiaye 4.069 for Ødegaard 3.252 (+0.817) = +2.18, plus captain change +0.17. watch_log flags 2 bench inversions as firing. Costs nothing but clicks.",
+   "headline": "Solver names Isak captain under 3xc; consensus rates him 3.547 xPts against B.Fernandes 6.947",
+   "why": "dashboard_brief solve_plan (03:06Z, 11.8h old, 31.66% optimality gap) prices Isak at 6.73 for GW3, 3.18 above the 3.547 consensus. B.Fernandes holds elite captaincy 77.4% (n=310, GW2) in ownership_eo and 6.947 consensus xPts.",
    "severity": 1,
    "numbers": [
     {
-     "value": 2.35,
-     "unit": "total delta xPts",
+     "value": 6.73,
+     "unit": "solver xPts GW3 (Isak)",
      "source_panel": "dashboard_brief",
-     "as_of": "2026-09-01T10:00:22.815905+00:00"
+     "as_of": "2026-09-02T10:00:21.362679+00:00"
     },
     {
-     "value": 1.359,
-     "unit": "xPts swing (Verbruggen for Kinsky)",
+     "value": 3.547,
+     "unit": "consensus xPts GW3 (Isak)",
      "source_panel": "dashboard_brief",
-     "as_of": "2026-09-01T10:00:22.815905+00:00"
+     "as_of": "2026-09-02T10:00:21.362679+00:00"
     },
     {
-     "value": 0.817,
-     "unit": "xPts swing (Ndiaye for Ødegaard)",
+     "value": 3.18,
+     "unit": "xPts solver vs consensus",
      "source_panel": "dashboard_brief",
-     "as_of": "2026-09-01T10:00:22.815905+00:00"
+     "as_of": "2026-09-02T10:00:21.362679+00:00"
+    },
+    {
+     "value": 6.947,
+     "unit": "xPts GW3 (B.Fernandes)",
+     "source_panel": "dashboard_brief",
+     "as_of": "2026-09-02T10:00:21.362679+00:00"
+    },
+    {
+     "value": 31.66,
+     "unit": "% optimality gap",
+     "source_panel": "dashboard_brief",
+     "as_of": "2026-09-02T10:00:21.362679+00:00"
+    },
+    {
+     "value": 77.4,
+     "unit": "% elite cap share (n=310)",
+     "source_panel": "ownership_eo",
+     "as_of": "2026-09-02T10:33:06.595805+00:00"
     }
    ],
    "codes": [
-    489639,
-    485055,
-    440993,
-    184029
-   ],
-   "drill": {
-    "tab": "squad_overview"
-   },
-   "source_panels": [
-    "dashboard_brief",
-    "squad_overview"
-   ]
-  },
-  {
-   "headline": "Keep the B.Fernandes armband: elite cohort captains him 77.7%, top1k 100% — Gabriel is the mean-only pick",
-   "why": "ownership_eo: elite cap 77.7%, top1k cap 100%, elite EO 165.0 and rising (GW1 160.7 → GW2 181.7 in selected cohort). dashboard_brief prefers Gabriel on mean (5.587 vs 5.415) but B.Fernandes wins on haul odds 0.177 vs 0.1505. For rank, not owning the field's captain is the risk.",
-   "severity": 1,
-   "numbers": [
-    {
-     "value": 77.7,
-     "unit": "% elite captaincy",
-     "source_panel": "ownership_eo",
-     "as_of": "2026-09-01T10:33:35.266294+00:00"
-    },
-    {
-     "value": 181.7,
-     "unit": "% selected-cohort EO GW2 (from 160.7 in GW1)",
-     "source_panel": "ownership_eo",
-     "as_of": "2026-09-01T10:33:35.266294+00:00"
-    },
-    {
-     "value": 0.177,
-     "unit": "p_haul B.Fernandes",
-     "source_panel": "squad_overview",
-     "as_of": "2026-09-01T10:33:35.266294+00:00"
-    },
-    {
-     "value": 0.1505,
-     "unit": "p_haul Gabriel",
-     "source_panel": "projection_table",
-     "as_of": "2026-09-01T10:33:35.266294+00:00"
-    }
-   ],
-   "codes": [
-    141746,
-    226597
+    219168,
+    141746
    ],
    "drill": {
     "drawer": 141746
    },
    "source_panels": [
+    "dashboard_brief",
+    "ownership_eo"
+   ]
+  },
+  {
+   "headline": "Ødegaard 3.78 xPts: your EO 100%, field EO 2.3% (6 of 262 squads)",
+   "why": "ownership_eo diff reads 2.3% field own over 262 GW2 squads against your 100% in a GW3 squad, so the two sides are different gameweeks. dashboard_brief coverage_gap offers Dewsbury-Hall at 4.474 xPts and 6.5 for a 6.6 sale.",
+   "severity": 2,
+   "numbers": [
+    {
+     "value": 100.0,
+     "unit": "% your EO",
+     "source_panel": "ownership_eo",
+     "as_of": "2026-09-02T10:33:06.595805+00:00"
+    },
+    {
+     "value": 2.3,
+     "unit": "% field EO (n=262)",
+     "source_panel": "ownership_eo",
+     "as_of": "2026-09-02T10:33:06.595805+00:00"
+    },
+    {
+     "value": 6,
+     "unit": "field owners of 262",
+     "source_panel": "ownership_eo",
+     "as_of": "2026-09-02T10:33:06.595805+00:00"
+    },
+    {
+     "value": 3.78,
+     "unit": "xPts GW3 (Ødegaard)",
+     "source_panel": "dashboard_brief",
+     "as_of": "2026-09-02T10:00:21.362679+00:00"
+    },
+    {
+     "value": 4.474,
+     "unit": "xPts GW3 (Dewsbury-Hall)",
+     "source_panel": "dashboard_brief",
+     "as_of": "2026-09-02T10:00:21.362679+00:00"
+    }
+   ],
+   "codes": [
+    184029,
+    215413
+   ],
+   "drill": {
+    "drawer": 215413
+   },
+   "source_panels": [
     "ownership_eo",
-    "squad_overview",
-    "projection_table",
     "dashboard_brief"
    ]
   },
   {
-   "headline": "Cherki is the fastest riser on the board (+9013.8/hr) with 2 creator buys — decide before he prices up",
-   "why": "price_radar has Cherki net +6043 in a 0.67h window, 9013.8/hr, top riser, own 22.2%. creator_board consensus: buy n=2 (FPL Harry, FPL Raptor), net +2, sell 0, and you don't own him. Flow is observed, not a predicted change — but it is the largest in the panel.",
+   "headline": "Palmer 19.23 and Saka 19.2 xPts GW3-6 against Ødegaard 11.62, neither owned",
+   "why": "Both clear dashboard_brief's +3.0 standout gate over your weakest midfield starter (Ødegaard 11.62). ownership_eo has Saka at 10.5% global own and 1.6% elite own (n=310), so the elite field is not holding him either.",
    "severity": 2,
    "numbers": [
     {
-     "value": 9013.8,
-     "unit": "net transfers/hr",
-     "source_panel": "price_radar",
-     "as_of": "2026-09-01T10:33:35.266294+00:00"
-    },
-    {
-     "value": 6043,
-     "unit": "net transfers in 0.67h",
-     "source_panel": "price_radar",
-     "as_of": "2026-09-01T10:33:35.266294+00:00"
-    },
-    {
-     "value": 2,
-     "unit": "creator buy count",
-     "source_panel": "creator_board",
-     "as_of": "2026-09-02T07:12:44.020956+00:00"
-    }
-   ],
-   "codes": [
-    466052
-   ],
-   "drill": {
-    "drawer": 466052
-   },
-   "source_panels": [
-    "price_radar",
-    "creator_board"
-   ]
-  },
-  {
-   "headline": "Palmer projects 19.18 xPts GW3–6 vs Ødegaard's 11.64 — the clearest same-position upgrade you hold",
-   "why": "dashboard_brief xpts_standout: Palmer Σ GW3–6 19.18 against your weakest MID starter Ødegaard at 11.64, a 7.5 gap. ownership_eo diff shows Ødegaard at field EO 2.3% (owned by 6 of 262) — you are alone on him and the projection does not reward it.",
-   "severity": 2,
-   "numbers": [
-    {
-     "value": 19.18,
+     "value": 19.23,
      "unit": "xPts GW3-6 (Palmer)",
      "source_panel": "dashboard_brief",
-     "as_of": "2026-09-01T10:00:22.815905+00:00"
+     "as_of": "2026-09-02T10:00:21.362679+00:00"
     },
     {
-     "value": 11.64,
+     "value": 19.2,
+     "unit": "xPts GW3-6 (Saka)",
+     "source_panel": "dashboard_brief",
+     "as_of": "2026-09-02T10:00:21.362679+00:00"
+    },
+    {
+     "value": 11.62,
      "unit": "xPts GW3-6 (Ødegaard)",
      "source_panel": "dashboard_brief",
-     "as_of": "2026-09-01T10:00:22.815905+00:00"
+     "as_of": "2026-09-02T10:00:21.362679+00:00"
     },
     {
-     "value": 2.3,
-     "unit": "% field EO (Ødegaard, 262 managers)",
+     "value": 10.5,
+     "unit": "% global own (Saka)",
      "source_panel": "ownership_eo",
-     "as_of": "2026-09-01T10:33:35.266294+00:00"
+     "as_of": "2026-09-02T10:33:06.595805+00:00"
+    },
+    {
+     "value": 1.6,
+     "unit": "% elite own (n=310)",
+     "source_panel": "ownership_eo",
+     "as_of": "2026-09-02T10:33:06.595805+00:00"
     }
    ],
    "codes": [
     244851,
+    223340,
     184029
    ],
    "drill": {
-    "drawer": 244851
+    "drawer": 223340
    },
    "source_panels": [
     "dashboard_brief",
-    "ownership_eo",
-    "projection_table"
+    "ownership_eo"
    ]
   },
   {
-   "headline": "Arsenal's run turns: CHE at home then bha away ranks 33rd defensively — Calafiori/Gabriel clean sheets thin out by GW5",
-   "why": "fixture_board: ARS horizon defence rank 4 but the GW5 trip to BHA carries opponent defence_ease -0.2367, defence rank 30, p_clean_sheet 0.1971 and p_concede_2plus 0.4828. You hold Calafiori (4.106 xPts). Gabriel is also bleeding -1925.7 net/hr in the brief's market alerts.",
-   "severity": 3,
+   "headline": "Solver's 11.44 xPts gain comes from Davis to Egan and Kinsky to Tzolakis at a 31.66% gap",
+   "why": "dashboard_brief reports gain_over_roll 11.44, 0 hits, 2 free transfers, plan age 11.8h, and both moves sit in 4.0 and 4.5 slots. The plan's own note flags objective_mode expected_points as ignoring ownership and variance.",
+   "severity": 2,
    "numbers": [
     {
-     "value": 0.1971,
-     "unit": "p_clean_sheet ARS at BHA GW5",
-     "source_panel": "fixture_board",
-     "as_of": "2026-09-02T07:12:43.872468+00:00"
-    },
-    {
-     "value": 0.4828,
-     "unit": "p_concede_2plus ARS at BHA GW5",
-     "source_panel": "fixture_board",
-     "as_of": "2026-09-02T07:12:43.872468+00:00"
-    },
-    {
-     "value": -1925.7,
-     "unit": "net transfers/hr (Gabriel)",
+     "value": 11.44,
+     "unit": "xPts gain over roll",
      "source_panel": "dashboard_brief",
-     "as_of": "2026-09-01T10:33:35.266294+00:00"
+     "as_of": "2026-09-02T10:00:21.362679+00:00"
+    },
+    {
+     "value": 31.66,
+     "unit": "% optimality gap",
+     "source_panel": "dashboard_brief",
+     "as_of": "2026-09-02T10:00:21.362679+00:00"
+    },
+    {
+     "value": 11.8,
+     "unit": "hours plan age",
+     "source_panel": "dashboard_brief",
+     "as_of": "2026-09-02T10:00:21.362679+00:00"
+    },
+    {
+     "value": 2,
+     "unit": "free transfers",
+     "source_panel": "dashboard_brief",
+     "as_of": "2026-09-02T10:00:21.362679+00:00"
     }
    ],
    "codes": [
-    466075,
-    226597
+    455084,
+    108416,
+    485055,
+    473284
    ],
    "drill": {
-    "tab": "fixture_board"
+    "tab": "solver"
    },
    "source_panels": [
-    "fixture_board",
-    "squad_overview",
     "dashboard_brief"
    ]
   }
  ],
- "rejected_n": 2,
- "duration_s": 52.89
+ "rejected_n": 0,
+ "rejected_reasons": [],
+ "duration_s": 98.06
 }

@@ -54,6 +54,12 @@ import time
 from pathlib import Path
 from typing import Any
 
+from fpl_edge.platform.prose_style import (
+    STYLE_RULES,
+    normalize_prose,
+    slop_findings,
+)
+
 UTC = dt.UTC
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -117,12 +123,11 @@ def collect_panels(wh, *, season: str,
     own schema, and a failing panel degrades to the honest-empty shape rather
     than killing the pass. Nothing here re-implements a metric.
     """
-    from fpl_edge.platform import registry as panel_registry
-
     # Registration IS the import: the web server has these loaded, but the
     # scheduler's process does not, and an empty registry here turned every
     # panel into "no panel script named ..." on the 07:40 firing.
     import fpl_edge.platform.scripts  # noqa: F401 - imported for side effect
+    from fpl_edge.platform import registry as panel_registry
 
     out: dict[str, dict[str, Any]] = {}
     for name in panels:
@@ -332,8 +337,12 @@ def load_meta_prompt(path: Path = META_PROMPT_PATH) -> tuple[str, str]:
 
 def build_prompt(meta_text: str, context: dict[str, Any],
                  input_as_of: dict[str, str | None]) -> str:
+    # The style rule ships from code, not from the meta-prompt file: it is
+    # mechanically enforced downstream, and the model must read the same
+    # words the validator applies. The chat analyst gets the identical block.
     return (
         meta_text
+        + "\n\n" + STYLE_RULES
         + "\n\n## Panel as-of instants\n```json\n"
         + json.dumps(input_as_of, ensure_ascii=False, indent=1, default=str)
         + "\n```\n\n## Panel inputs (the ONLY facts you may cite)\n```json\n"
@@ -476,7 +485,17 @@ def _valid_drill(drill: Any, codes: set[int]) -> bool:
 
 def _valid_item(item: Any, panels: set[str], codes: set[int],
                 values: dict[str, list[float]] | None = None) -> bool:
-    """One item against the contract. Pure; every rule mirrors the meta-prompt.
+    """True when the item is contract-clean. See :func:`item_problem`."""
+    return item_problem(item, panels, codes, values) is None
+
+
+def item_problem(item: Any, panels: set[str], codes: set[int],
+                 values: dict[str, list[float]] | None = None) -> str | None:
+    """The FIRST contract violation in one item, named, or None if clean.
+
+    A count of rejections tells the owner something is wrong; a named reason
+    tells him what to fix, in the meta-prompt or in the rule. Pure; every
+    branch mirrors the meta-prompt.
 
     When ``values`` is given (panel -> the numeric values it actually
     served), the numeric-token rule applies: every number chip's value must
@@ -485,49 +504,50 @@ def _valid_item(item: Any, panels: set[str], codes: set[int],
     percent/fraction pairs accepted. A prose number the input never served
     is an invented stat, however plausible."""
     if not isinstance(item, dict):
-        return False
+        return "not an object"
     if not (isinstance(item.get("headline"), str)
             and 0 < len(item["headline"]) <= HEADLINE_MAX):
-        return False
+        return f"headline missing or over {HEADLINE_MAX} chars"
     if not (isinstance(item.get("why"), str) and 0 < len(item["why"]) <= WHY_MAX):
-        return False
+        return f"why missing or over {WHY_MAX} chars"
     sev = item.get("severity")
     if not (isinstance(sev, int) and not isinstance(sev, bool) and sev in (1, 2, 3)):
-        return False
+        return "severity not 1, 2 or 3"
     numbers = item.get("numbers")
     if not (isinstance(numbers, list) and numbers):
-        return False
+        return "no number chips"
     for n in numbers:
         if not isinstance(n, dict):
-            return False
+            return "number chip is not an object"
         if not _is_num(n.get("value")):
-            return False
+            return "number chip has no numeric value"
         if not isinstance(n.get("unit"), str):
-            return False
+            return "number chip has no unit"
         # A number citing a panel that was not in the input is an invented
         # source — the exact dishonesty this validator exists to catch.
         if n.get("source_panel") not in panels:
-            return False
+            return f"chip cites unknown panel {n.get('source_panel')!r}"
         if not (n.get("as_of") is None or isinstance(n.get("as_of"), str)):
-            return False
+            return "chip as_of is not a string"
     item_codes = item.get("codes")
     if not isinstance(item_codes, list):
-        return False
+        return "codes is not a list"
     for c in item_codes:
         if not (isinstance(c, int) and not isinstance(c, bool) and c in codes):
-            return False
+            return f"code {c!r} is not in the input"
     sps = item.get("source_panels")
     if not (isinstance(sps, list) and sps
             and all(isinstance(p, str) for p in sps)
             and set(sps) <= panels):
-        return False
+        return "source_panels missing or names a panel not in the input"
     if values is not None:
         # every chip value must exist in the panel it names
         for n in numbers:
             v = float(n["value"])
             if not _num_in(v, _decimals_of(v),
                            values.get(n["source_panel"]) or []):
-                return False
+                return (f"chip value {v} not served by "
+                        f"{n['source_panel']}")
         # every numeric token in the PROSE must exist in a cited panel —
         # the seam R2 found: chips validated, sentences did not.
         cited: list[float] = []
@@ -536,8 +556,31 @@ def _valid_item(item: Any, panels: set[str], codes: set[int],
         for v, d in prose_numbers(
                 str(item["headline"]) + " " + str(item["why"])):
             if not _num_in(v, d, cited):
-                return False
-    return _valid_drill(item.get("drill"), codes)
+                return f"prose number {v} appears in no cited panel"
+    if not _valid_drill(item.get("drill"), codes):
+        return "drill target missing or not in the input"
+    return None
+
+
+def _destyled(item: Any) -> dict[str, Any] | None:
+    """Apply the house prose rule to one item's text.
+
+    Formatting tics (em-dashes) are rewritten in place — losslessly, so a
+    true finding is never lost to punctuation. Rhetorical constructions are
+    a rejection: they are the "AI slop" the owner named, and no rewrite
+    turns a judgment about the manager into an observation about the squad.
+    """
+    if not isinstance(item, dict):
+        return item, None
+    out = dict(item)
+    for field in ("headline", "why"):
+        text = out.get(field)
+        if isinstance(text, str):
+            out[field] = normalize_prose(text)
+            found = slop_findings(out[field])
+            if found:
+                return None, f"{field}: {found[0]}"
+    return out, None
 
 
 def validate_items(
@@ -549,24 +592,49 @@ def validate_items(
 ) -> tuple[list[dict[str, Any]], int]:
     """Keep only contract-clean items; count everything dropped.
 
-    Rejects are counted — dropped loudly into ``rejected_n``, never
-    silently — and the survivors are severity-sorted (1 first) and capped at
+    Thin wrapper over :func:`validate_items_verbose` for callers that want
+    the counts only.
+    """
+    kept, rejected, _ = validate_items_verbose(
+        raw_items, panels=panels, codes=codes, values=values)
+    return kept, rejected
+
+
+def validate_items_verbose(
+    raw_items: list[Any],
+    *,
+    panels: set[str],
+    codes: set[int],
+    values: dict[str, list[float]] | None = None,
+) -> tuple[list[dict[str, Any]], int, list[str]]:
+    """Keep contract-clean items; count AND NAME everything dropped.
+
+    Rejects are dropped loudly into ``rejected_n``, never silently, and each
+    one now says which rule bit. A bare count told the owner something was
+    wrong; the reason tells him whether to fix the meta-prompt or the rule,
+    and a whole briefing lost to one over-eager pattern is visible instead
+    of mysterious. Survivors are severity-sorted (1 first) and capped at
     :data:`MAX_ITEMS`; overflow past the cap counts as rejected too.
     ``values`` (from :func:`known_values`) arms the numeric-token rule over
     chips AND headline/why prose; None skips it (schema-only validation).
     """
     kept: list[dict[str, Any]] = []
-    rejected = 0
+    reasons: list[str] = []
     for item in raw_items:
-        if _valid_item(item, panels, codes, values):
-            kept.append(item)
+        clean, style_problem = _destyled(item)
+        if clean is None:
+            reasons.append(style_problem or "house prose rule")
+            continue
+        problem = item_problem(clean, panels, codes, values)
+        if problem is None:
+            kept.append(clean)
         else:
-            rejected += 1
+            reasons.append(problem)
     kept.sort(key=lambda i: int(i["severity"]))
     if len(kept) > MAX_ITEMS:
-        rejected += len(kept) - MAX_ITEMS
+        reasons.extend(["over the item cap"] * (len(kept) - MAX_ITEMS))
         kept = kept[:MAX_ITEMS]
-    return kept, rejected
+    return kept, len(reasons), reasons
 
 
 # --------------------------------------------------------------------------
@@ -679,13 +747,16 @@ def generate(
 
     text = (run_model or _run_model)(prompt)
     items = parse_items(text)
-    kept, rejected_n = validate_items(
+    kept, rejected_n, reasons = validate_items_verbose(
         items, panels=set(context), codes=known_codes(context),
         values=known_values(context))
     if not kept:
+        tally = ", ".join(
+            f"{r} x{reasons.count(r)}" if reasons.count(r) > 1 else r
+            for r in dict.fromkeys(reasons))
         raise BriefingIntelError(
             f"zero valid items survived validation ({rejected_n} rejected of "
-            f"{len(items)} returned); nothing was written")
+            f"{len(items)} returned); nothing was written. Reasons: {tally}")
 
     artefact: dict[str, Any] = {
         "generated_at": now.isoformat(),
@@ -694,6 +765,9 @@ def generate(
         "input_as_of": input_as_of,
         "items": kept,
         "rejected_n": rejected_n,
+        # What the drops were, so "2 rejected" is readable on the card
+        # instead of merely honest.
+        "rejected_reasons": sorted(set(reasons)),
         "duration_s": round(time.monotonic() - started, 2),
     }
     if dropped:
