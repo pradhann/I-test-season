@@ -25,56 +25,38 @@
  *     provider names and freshness all come from the payload, because the
  *     panel can report top1k under the same keys it reports elite under.
  *
- * FOUR THINGS THE PAGE GREW AFTER THE FIRST CUT
+ * WHAT THE PAGE IS NOW, AND WHAT IT STOPPED BEING
  *
- *   1. SEGMENTS. "The 311 managers in the elite crawl pool" is not one thing:
- *      it is a curated list, the owner's own mini-league, past winners and a
- *      handful of named managers, and the reader should be able to say which of
- *      those he is racing. The chips below the field row do that, and the
- *      default leaves out the mini-league — 49 managers whose picks correlate
- *      with the owner's own, and the one set his own entry is in.
+ *   MOVES FIRST. The header is one line naming the field, its n, its gameweek,
+ *   its as-of and the deadline; the tools half ranks the moves; only then does
+ *   the page describe the field. Everything explanatory sits below the fold
+ *   behind a summary that states its own finding.
  *
- *      Recomputing EO over a subset is arithmetic only the panel can do (it
- *      holds the picks), so this control is CAPABILITY-GATED and PAYLOAD-LED.
- *      It reads ownership_eo's params schema from /api/panels and only offers
- *      the control when a segment parameter is actually there; where the panel
- *      publishes `segments[]` and `selection`, every label, count, trust
- *      judgement, default and denominator on the row comes from those and the
- *      chip states are read off `selection.segments` rather than remembered
- *      from the request — so the chips describe the numbers, never the wish.
- *      Where it publishes neither, the older `fields[].composition` is still
- *      disclosed and the row says plainly that all of it is in the numbers
- *      above. It never pretends to have re-cut anything.
+ *   THE TEMPLATE IS DRAWN, NOT DISTRIBUTED. The beeswarm answered "what is the
+ *   spread of ownership within a position", a question nobody has at a
+ *   deadline. The XV pitch answers "what IS the template" by drawing it, sorted
+ *   by started_by / n rather than ownership — the field's spare goalkeeper is
+ *   64.9% owned and 3.8% started, and sorting by ownership gives him the shirt.
  *
- *   2. THE SWARM. The map answers "how far is this player from the game"; it
- *      does not answer "what does the template LOOK like". A beeswarm of every
- *      measured player along the field's own axis, one row per position, does:
- *      the template turns out to be a handful of spikes over a dense floor, and
- *      which positions have a floor and which have spikes is the actual answer
- *      to "who is template". Context-aware, in the Opta sense — the tooltip
- *      reports a percentile WITHIN THE POSITION, because 20% EO means something
- *      different for a goalkeeper than for a midfielder.
+ *   THREE STATES, NOT TWO. Matched, owned-but-you-bench-him, and missing. Only
+ *   the last two cost anything, so only they carry a number.
  *
- *   3. DISAGREEMENT. Two informed fields agreeing tells you nothing you did not
- *      already know. Where they disagree is where the edge is. The compare card
- *      is a dumbbell on ONE shared axis, sorted by the size of the split, so the
- *      long connectors are the story and the short ones are visibly noise.
+ *   ONE EXPOSURE EXPLANATION. The meaning of the minus sign is written once,
+ *   on the exposure strip, from the selected field's own head counts; every
+ *   other multiplier on the page links to it. And the headline is the quantity
+ *   that wants to be SMALL — field EO you do not cover — because Σ over your
+ *   15 rises when your uncovered exposure rises.
  *
- *   4. MOMENTUM, HONESTLY. Per-gameweek EO movement needs two observations. As
- *      of this build there is exactly one — every crawled cohort is GW1, and
- *      LiveFPL's GW2 rows are byte-identical re-stamps of GW1, which the panel
- *      measures and reports as `same_values_as_gw`. So the card draws the
- *      OBSERVATION LEDGER rather than a line: which field has been measured at
- *      which gameweek, which of those are re-stamps, and when the next real
- *      point lands. A flat line across one point would be a claim of stability
- *      that nothing in the warehouse supports. The panel's own `momentum` view
- *      (`available`, `reason`, `gws`, `series`) drives it where present — its
- *      reason is printed verbatim, and the slope chart below is live code that
- *      takes over the moment two distinct gameweeks are on the wire.
+ *   CAPTAINCY, NOT OWNERSHIP MOMENTUM. Ownership moves ~1pp a week and the old
+ *   card spent a screen apologising for it. The armband moved 21 points off one
+ *   player and onto another in the same window. Only that is drawn.
+ *
+ *   SEGMENTS ARE NOT A SECOND FILTER. The composer builds exactly one field, so
+ *   it lives inside that field's row in the selector and nowhere else.
  */
 
 import { runPanel, getJSON, el, emptyBox, errBox, provenance, faceImg,
-         fmtPrice, fmt1, fmt2 } from "/js/app.js";
+         playerCard, fmtPrice, fmt1, fmt2 } from "/js/app.js";
 import { renderTools } from "/js/views/template-tools.js";
 // the cross-tab player strip: what the panel owns, said and noticed about him
 import { chatterStrip } from "/js/components/chatter.js";
@@ -165,35 +147,6 @@ function median(xs) {
   if (!xs.length) return null;
   const s = [...xs].sort((a, b) => a - b), h = s.length >> 1;
   return s.length % 2 ? s[h] : (s[h - 1] + s[h]) / 2;
-}
-
-/* Beeswarm placement. Points arrive sorted by x; each one takes the lane
-   closest to the row's centre line that clears every mark already placed
-   within 2r horizontally. `placed` is in x order, so the scan can stop as soon
-   as it walks past 2r — that is what keeps ~200 marks a frame-cheap layout
-   rather than an O(n²) one. Past the lane cap a mark is allowed to sit on a
-   neighbour: the 2px surface ring keeps the pair separable and the caption
-   says the row is saturated rather than pretending it is not. */
-function beeswarm(xs, r, lanes) {
-  const step = r * 2.05, out = new Array(xs.length), placed = [];
-  for (let i = 0; i < xs.length; i++) {
-    const x = xs[i];
-    let y = 0;
-    for (let k = 0; k <= lanes * 2; k++) {
-      const cand = k === 0 ? 0 : (k % 2 ? 1 : -1) * Math.ceil(k / 2) * step;
-      let ok = true;
-      for (let j = placed.length - 1; j >= 0; j--) {
-        const q = placed[j];
-        if (x - q.x >= 2 * r) break;
-        if (Math.hypot(x - q.x, cand - q.y) < 2 * r) { ok = false; break; }
-      }
-      y = cand;
-      if (ok) break;
-    }
-    out[i] = y;
-    placed.push({ x, y });
-  }
-  return out;
 }
 
 /* A hover layer every chart on this page shares, so a tooltip means and looks
@@ -338,17 +291,28 @@ export default async function view(host) {
   /* Order is an argument: the field, then its shape, then YOUR position in it,
      then the two comparisons that need all three, then the raw table, then the
      tools that act on what the reader just concluded. */
-  const head = el("section", "card");
-  const mapCard = el("section", "card");
-  const swarmCard = el("section", "card");
-  const ledgerCard = el("section", "card");
-  const compareCard = el("section", "card");
-  const momentumCard = el("section", "card");
-  const tableCard = el("section", "card");
+  /* MOVES FIRST. The page's job is a decision, so the thing that changes the
+     decision goes at the top: the header line says which field is being read,
+     the tools half ranks the moves, and only then does the page describe the
+     field it just ranked moves against. Everything that explains rather than
+     decides sits below the fold, each behind a summary that states its own
+     finding so the fold costs the reader nothing he needed. */
+  const head = el("section", "card hdr");
   const toolsHost = el("div", "tools-host");
+  const pitchCard = el("section", "card");
+  const stripCard = el("section", "card");
+  const armCard = el("section", "card");
+  const mapCard = el("details", "card fold");
+  const compareCard = el("details", "card fold");
+  const tableCard = el("details", "card fold");
   const foot = el("div");
-  host.append(head, mapCard, swarmCard, ledgerCard, compareCard, momentumCard,
-              tableCard, toolsHost, foot);
+  host.append(head, toolsHost, pitchCard, stripCard, armCard,
+              mapCard, compareCard, tableCard, foot);
+  /* A fold that snaps shut every time a chip is clicked is a fold nobody can
+     use, so each one remembers whether the reader opened it. */
+  const foldOpen = { map: false, cmp: false, tbl: false };
+  for (const [k, c] of [["map", mapCard], ["cmp", compareCard], ["tbl", tableCard]])
+    c.addEventListener("toggle", () => { foldOpen[k] = c.open; });
 
   const drawer = el("aside", "drawer");
   document.body.appendChild(drawer);
@@ -358,24 +322,6 @@ export default async function view(host) {
     chatter?.cancel(); chatter = null;   // a closed drawer stops rendering
   };
   addEventListener("keydown", e => { if (e.key === "Escape") closeDrawer(); });
-
-  head.appendChild(el("h2", null, "The field you're racing"));
-  const teach = el("div", "teach");
-  head.appendChild(teach);
-  const measureRow = el("div", "toolbar");
-  const fieldRow = el("div", "toolbar");
-  const segRow = el("div", "toolbar segrow");
-  /* The FIELD radio (the measured cohort every chart reads) and WHO IS IN IT
-     (the segment selection behind diff/what-if) are two populations answering
-     to one word — the payload's `field_distinction` names both, and this box
-     draws them as ONE control group so a level from one and a trend from the
-     other can never be read as the same population (R2). */
-  const fieldGroup = el("div", "fieldgroup");
-  const fgCap = el("div", "fgcap");
-  fieldGroup.append(fieldRow, segRow, fgCap);
-  const compRow = el("div", "toolbar comp");
-  const tiles = el("div", "stats");
-  head.append(measureRow, fieldGroup, compRow, tiles);
 
   const PARAMS = { limit: 200 };
 
@@ -444,13 +390,18 @@ export default async function view(host) {
   const pickable = m => allFields.filter(f => f.role === "field" && has(f, m));
   const baseOf = m => allFields.find(f => f.role === "baseline" && has(f, m));
 
-  let measure = pickable("eo").length && baseOf("eo") ? "eo"
-              : pickable("own").length && baseOf("own") ? "own" : "eo";
-  /* The default field skips any cohort under MIN_N: a 4-manager sample must
-     be asked for, never handed out. */
-  let fieldKey = (pickable(measure).find(f => f.kind === "cohort" && !lowN(f))
-                  || pickable(measure).find(f => f.kind === "cohort")
-                  || pickable(measure)[0] || {}).key;
+  /* The default field is the one the reader composes — the segment selection —
+     then any crawl above the floor, then whatever publishes EO. A cohort under
+     MIN_N is never handed out; it cannot even be picked.
+
+     The measure is no longer a control. It FOLLOWS the field, because a field
+     either publishes effective ownership or it does not, and the old second
+     radio only let the two disagree. */
+  let fieldKey = (allFields.find(f => f.kind === "segments" && !lowN(f))
+                  || allFields.find(f => f.kind === "cohort" && !lowN(f))
+                  || allFields.find(f => f.role === "field" && !lowN(f))
+                  || allFields[0] || {}).key;
+  let measure = (byKey[fieldKey]?.measures || []).includes("eo") ? "eo" : "own";
   let rowset = "template";           // template | diff
   let pos = "", team = "", search = "", mineOnly = false, band = "all";
   let sortBy = { kind: "gap" }, sortDir = -1;
@@ -759,219 +710,162 @@ export default async function view(host) {
   }
 
   // ---- header ---------------------------------------------------------
-  function renderTeach() {
-    teach.textContent = "";
-    const eq = el("div", "identity");
-    eq.append(
-      el("span", "eq-lead", "rank move"),
-      el("span", "eq-op", "≈"),
-      el("span", "eq-sum", "Σ"),
-      el("span", "eq-term mine", "your multiplier"),
-      el("span", "eq-op", "−"),
-      el("span", "eq-term theirs", "the field's EO"),
-      el("span", "eq-op", "×"),
-      el("span", "eq-lead", "points"));
-    teach.appendChild(eq);
-    caption(teach,
-      "Template holdings cancel out of that sum — the number that carries " +
-      "information is the GAP between the field you are racing and the game.",
-      ["A player the field is loaded on is insurance, not upside: owning him " +
-       "moves you almost nothing, missing him is ruinous. That is why this " +
-       "page is a comparison of two fields everywhere, never a single " +
-       "ownership column — and why every chart below positions players by " +
-       "the gap rather than by raw ownership."],
-      "why the gap, not ownership");
+  // ---- header: one line, everything else folded under it ----------------
+  /* NAMING BY WHO PRODUCED THE NUMBER. FPL publishes a share, LiveFPL models
+     one, and we crawled the rest — so the selector groups by producer and a
+     crawled field is named by its n, which is also the only thing that tells
+     two crawls apart. "elite" survives ONLY inside LiveFPL's own product name;
+     it is never this page's word for a pool it crawled itself.
 
-    const key = el("div", "zonekey");
-    const zone = (cls, name, text) => {
-      const d = el("div", "zone " + cls);
-      d.appendChild(el("span", "sw"));
-      d.appendChild(el("b", null, name));
-      d.appendChild(el("span", null, text));
-      return d;
+     The second filter stops being a filter. The seven-segment composer builds
+     exactly one field and nothing else, so it lives INSIDE that field's row as
+     a `change who` disclosure rather than as a second control the reader has to
+     relate to the first. Pick another field and there is no composer, because
+     there is nothing it could compose. */
+  const LFPL_NAME = { eo_predicted: "LFPL pred EO", eo_top10k: "LFPL 10k EO",
+                      eo_elite: "LFPL elite EO" };
+  const isCrawl = f => !!f && (f.kind === "cohort" || f.kind === "segments");
+  function fieldName(f) {
+    if (!f) return "—";
+    if (isCrawl(f)) return f.n != null ? `crawl ${f.n}` : `crawl ${f.key}`;
+    if (f.provider === "livefpl")
+      return LFPL_NAME[f.metric] || LFPL_NAME[f.key] || `LFPL ${f.metric || f.key}`;
+    if (f.kind === "fpl") return "FPL own%";
+    return f.short || f.label;
+  }
+  const GROUPS = [
+    ["FPL publishes", f => f.kind === "fpl"],
+    ["LiveFPL models", f => f.provider === "livefpl"],
+    ["We crawled", isCrawl],
+  ];
+  /* The measure follows the field rather than sitting beside it as a second
+     radio: a field either publishes effective ownership or it does not, and
+     asking the reader to hold both facts in his head bought nothing. */
+  const measureOf = f => (f?.measures || []).includes("eo") ? "eo" : "own";
+  const shortDate = iso => {
+    const d = iso ? new Date(String(iso).replace(" ", "T")) : null;
+    return d && !isNaN(d)
+      ? d.toLocaleDateString(undefined, { day: "numeric", month: "short" })
+      : "date unknown";
+  };
+  /* Every row prints n, gw and as-of. A crawl under the floor prints why it is
+     not quotable INSTEAD of a count that could be read as one. */
+  function fieldStamp(f) {
+    return [f.n != null ? (lowN(f) ? `n=${f.n} — too small to quote`
+                                   : `${f.n} managers`)
+                        : (f.kind === "fpl" ? "share, not a count" : null),
+            f.gw != null ? `GW${f.gw}` : "no gameweek stamp",
+            shortDate(f.as_of)].filter(Boolean).join(" · ");
+  }
+
+  let deadline = null;               // {gw, deadline_utc} once fetched
+  let selOpen = false;               // the folded selector's state, kept
+  let composerOpen = false;          // across the redraws a recompute causes
+
+  function renderHeader() {
+    head.textContent = "";
+    const f = byKey[fieldKey];
+
+    const d = el("details", "fieldsel");
+    d.open = selOpen;
+    d.addEventListener("toggle", () => { selOpen = d.open; });
+    const s = el("summary");
+    const a = f ? ageInfo(f.as_of) : null;
+    s.append(el("span", "tlabel", "Field"),
+             el("b", "fnow", fieldName(f)),
+             a ? el("span", "freshdot " + a.cls) : "",
+             el("span", "hstamp", f ? fieldStamp(f) : "none measurable"));
+    if (deadline?.gw != null && deadline.deadline_utc) {
+      const w = new Date(deadline.deadline_utc);
+      s.appendChild(el("span", "hstamp dl", !isNaN(w)
+        ? `GW${deadline.gw} deadline ${w.toUTCString().slice(0, 22)} UTC`
+        : `GW${deadline.gw}`));
+    }
+    d.appendChild(s);
+
+    for (const [title, pred] of GROUPS) {
+      const list = allFields.filter(pred);
+      if (!list.length) continue;
+      d.appendChild(el("div", "fgroup", title));
+      for (const g of list) d.appendChild(fieldRowEl(g));
+    }
+    head.appendChild(d);
+  }
+
+  function fieldRowEl(g) {
+    const wrap = el("div", "frow" + (g.key === fieldKey ? " on" : ""));
+    const small = lowN(g);
+    const b = el("button", "fpick" + (small ? " lown" : ""));
+    b.setAttribute("role", "radio");
+    b.setAttribute("aria-checked", String(g.key === fieldKey));
+    const a = ageInfo(g.as_of);
+    b.append(el("span", "fmark", g.key === fieldKey ? "●" : "○"),
+             el("span", "fnm", fieldName(g)),
+             el("span", "freshdot " + a.cls),
+             el("span", "fstamp" + (small ? " bad" : ""), fieldStamp(g)));
+    b.title = `${g.label}\n% of: ${g.denominator}\n` +
+      `${g.players ?? "?"} players measured · ${a.text}` +
+      (small
+        ? `\n\nn=${g.n}: below the ${MIN_N}-manager floor — every share is a ` +
+          `multiple of ${(100 / g.n).toFixed(0)}%, so this field cannot be ` +
+          `quoted and is not selectable.`
+        : "") +
+      (g.same_values_as_gw != null
+        ? `\nValues are byte-identical to GW${g.same_values_as_gw}: the feed ` +
+          `re-stamped a settled gameweek, it is not a fresh forecast.`
+        : "") +
+      (g.mini_league_n
+        ? `\n\nIncludes ${g.mini_league_n} of your own mini-league rivals, ` +
+          `whose picks correlate with yours and pull every gap towards zero.`
+        : "") +
+      (g.note ? `\n${g.note}` : "");
+    b.setAttribute("aria-label", `${g.label}` +
+      (g.n != null ? `, ${g.n} managers` : "") +
+      (small ? ", too small to quote, not selectable" : "") +
+      (g.key === fieldKey ? ", selected" : ""));
+    b.disabled = small;
+    if (!small) b.onclick = () => {
+      fieldKey = g.key;
+      measure = measureOf(g);
+      renderAll();
     };
-    key.append(
-      zone("heavy", "Template",
-        `field is ${BAND}pp+ heavier than the game — cover it or carry the risk`),
-      zone("mid", "Neutral", "field and game agree — this holding is noise"),
-      zone("light", "Fade",
-        `field is ${BAND}pp+ lighter — a real differential lives here`));
-    teach.appendChild(key);
-  }
+    wrap.appendChild(b);
+    if (g.mini_league_n)
+      wrap.appendChild(el("span", "cnt ml", `incl. ${g.mini_league_n} mini-league`));
 
-  function renderMeasure() {
-    measureRow.textContent = "";
-    measureRow.appendChild(el("span", "tlabel", "Measure"));
-    const seg = el("span", "seg");
-    for (const m of ["eo", "own"]) {
-      const usable = pickable(m).length && baseOf(m);
-      const b = el("button", m === measure ? "on" : "", MEASURE[m].label);
-      b.title = usable ? MEASURE[m].blurb
-        : `No field publishes ${MEASURE[m].label.toLowerCase()} in this warehouse yet.`;
-      if (!usable) b.disabled = true;
-      else b.onclick = () => {
-        measure = m;
-        if (!pickable(m).some(f => f.key === fieldKey))
-          fieldKey = (pickable(m)[0] || {}).key;
-        renderAll();
-      };
-      seg.appendChild(b);
-    }
-    measureRow.appendChild(seg);
-    measureRow.appendChild(el("span", "sub", MEASURE[measure].blurb));
-  }
-
-  function renderFields() {
-    fieldRow.textContent = "";
-    fieldRow.appendChild(el("span", "tlabel", "Field"));
-    const options = pickable(measure);
-    if (!options.length) {
-      fieldRow.appendChild(el("span", "sub",
-        "No field beyond the whole game can be measured yet."));
-      return;
-    }
-    for (const f of options) {
-      const on = f.key === fieldKey;
-      const a = ageInfo(f.as_of);
-      const small = lowN(f);
-      const chip = el("button", "chip src" + (on ? " on" : "") +
-                      (small ? " lown" : ""));
-      chip.append(on ? "✓ " : "", el("span", "freshdot " + a.cls),
-                  ` ${f.short || f.label}`);
-      if (f.n != null) chip.appendChild(el("span", "cnt" + (small ? " bad" : ""),
-        small ? `n=${f.n} — too small to quote` : `n=${f.n}`));
-      if (f.mini_league_n)
-        chip.appendChild(el("span", "cnt ml", `incl. ${f.mini_league_n} mini-league`));
-      chip.title =
-        `${f.label}\n% of: ${f.denominator}\n` +
-        (f.gw != null ? `gameweek ${f.gw}` : "no gameweek stamp") +
-        ` · ${f.players ?? "?"} players measured · ${a.text}` +
-        (small
-          ? `\nn=${f.n}: below the ${MIN_N}-manager floor — every share is a ` +
-            `multiple of ${(100 / f.n).toFixed(0)}%, so it is excluded from ` +
-            `every default view. Pick it and the charts watermark themselves.`
-          : "") +
-        (f.same_values_as_gw != null
-          ? `\nValues are byte-identical to GW${f.same_values_as_gw}: the feed ` +
-            `re-stamped a settled gameweek, it is not a fresh forecast.`
-          : "") +
-        (f.note ? `\n${f.note}` : "");
-      chip.setAttribute("aria-label", `${f.label}` +
-        (f.n != null ? `, ${f.n} managers` : "") +
-        (small ? ", too small to quote" : "") +
-        (f.mini_league_n ? `, includes ${f.mini_league_n} of your ` +
-                           `mini-league rivals` : "") +
-        (on ? ", selected" : ""));
-      chip.onclick = () => {
-        fieldKey = f.key;
-        renderAll();
-        /* When the selector is scoped to a pool rather than global — the older
-           composition fallback — moving to another pool has to carry that
-           pool's own selection with it, or the row sits there saying the
-           numbers were served for some other pool's tags: true, and useless.
-           A no-op when the panel takes no segment parameter, and a no-op when
-           the selection is global (the panel's own `segments` contract). */
-        const m = segModel();
-        if (segParam && m && m.key === f.key) applySegments(f.key);
-      };
-      fieldRow.appendChild(chip);
-    }
-    const b = baseOf(measure);
-    const bf = ageInfo(b?.as_of);
-    const baseline = el("span", "baseline");
-    /* The stamp travels WITH the label: under EO the baseline is LiveFPL's
-       predicted EO with its own capture instant, under own% it is FPL's
-       marginal ownership — the header must change when the measure does. */
-    /* The label already names the measure ("Whole game — predicted EO"), so
-       only the capture stamp is appended here — never the measure twice. */
-    const bd = b ? baselineDesc(b) : null;
-    const stamp = bd && bd.includes("(") ? bd.slice(bd.indexOf("(")) : null;
-    baseline.append("compared against ", el("b", null, b ? b.label : "—"),
-                    stamp ? ` ${stamp}` : "",
-                    " ", el("span", "freshdot " + bf.cls));
-    if (b) baseline.title = `% of: ${b.denominator}` +
-      (b.gw != null ? ` · gameweek ${b.gw}` : "") + ` · ${bf.text}`;
-    fieldRow.appendChild(baseline);
-  }
-
-  /* The caption that ties the group together: field_distinction, verbatim
-     numbers, and the mini-league conflict named where the number is used. */
-  function renderFieldGroupCap() {
-    fgCap.textContent = "";
-    const fd = res.field_distinction;
-    const f = byKey[fieldKey];
-    if (fd && fd.measured_cohort && fd.selection) {
-      const mc = fd.measured_cohort, sel = fd.selection;
-      const line = el("p", "sub fgline");
-      line.append(el("b", null, "One box, two populations. "),
-        `The FIELD radio is the measured cohort` +
-        (mc.n != null ? ` (${mc.n} managers` +
-          (mc.gw != null ? `, GW${mc.gw}` : "") + `)` : "") +
-        ` behind every chart and elite column above; WHO IS IN IT is the ` +
-        `segment selection` +
-        (sel.n != null ? ` (${sel.n} managers)` : "") +
-        ` behind the diff and the what-if simulator below. They are ` +
-        `different sets — a level from one and a trend from the other never ` +
-        `share a sentence.`);
-      if (fd.note) line.title = fd.note;
-      fgCap.appendChild(line);
-    }
-    const mlN = f?.mini_league_n ?? fd?.measured_cohort?.mini_league_n;
-    if (mlN && f?.kind === "cohort")
-      fgCap.appendChild(el("p", "sub fgml",
-        `This measured cohort includes your ${mlN} mini-league rivals — a ` +
-        `set the default selection excludes. Their picks correlate with ` +
-        `yours, which pulls every gap here towards zero.`));
-    fgCap.appendChild(el("p", "sub glyphkey",
-      "Marks on the set chips: ✓ = in the field · * = read with a caveat " +
-      "(sentence below) · ! = untrustworthy, never in a default."));
-  }
-
-  /* ---- the segment selector ------------------------------------------
-     "The 311 managers in the elite crawl pool" is several different populations
-     wearing one number. This row breaks them out and lets the reader choose
-     which of them he is racing.
-
-     Three rules it exists to keep:
-       - THE DENOMINATOR COMES FROM THE PAYLOAD. Per-set counts are shown, and
-         the sets OVERLAP — entries carry two tags — so adding them up gives a
-         number larger than the field. The headline is `selection.n` (DISTINCT
-         managers) with `selection.denominator` in the panel's own words, and
-         when the panel reports the overlap explicitly that is what is printed.
-       - THE STATE SHOWN IS THE STATE SERVED. A chip is "in" when the numbers on
-         screen were computed with it in — read off `selection.segments`, not
-         remembered from the request. While a recompute is in flight the row
-         says so; if the panel takes no segment parameter, the chips are inert
-         and the row says every set is inside every number above.
-       - AN UNTRUSTWORTHY SET IS FLAGGED, NEVER QUIETLY DROPPED. A set with
-         `trusted: false` is offered, marked, and carries the panel's own
-         reason. A missing checkbox teaches nobody why not to click it. */
-  function renderSegments() {
-    segRow.textContent = "";
-    const f = byKey[fieldKey];
-    if (!f) return;
+    /* The composer belongs to the one field it composes. */
     const m = segModel();
-
-    if (!m || (f.kind !== "cohort" && m.key !== fieldKey)) {
-      segRow.appendChild(el("span", "tlabel", "Sets"));
-      segRow.appendChild(el("span", "sub", f.kind === "cohort"
-        ? "This pool reports no crawl-source breakdown, so there is nothing " +
-          "to select between."
-        : `${f.label} is ${f.provider || "the provider"}'s own sample, defined ` +
-          `and drawn on their side. It cannot be re-cut here — pick a crawled ` +
-          `pool to choose who is in the field.`));
-      return;
+    if (m && m.key === g.key) {
+      const c = composerEl(m, g);
+      if (c) wrap.appendChild(c);
     }
+    return wrap;
+  }
+
+  /* ---- the segment composer, demoted into its own row -----------------
+     Three rules it exists to keep, unchanged from when it was a filter:
+       - THE DENOMINATOR COMES FROM THE PAYLOAD. The sets OVERLAP, so adding
+         their counts gives a number larger than the field; the headline is
+         `selection.n` with `selection.denominator` in the panel's own words.
+       - THE STATE SHOWN IS THE STATE SERVED, read off `selection.segments`
+         rather than remembered from the request.
+       - AN UNTRUSTWORTHY SET IS FLAGGED, NEVER QUIETLY DROPPED. */
+  function composerEl(m, f) {
     const universe = m.universe;
+    if (!universe?.length) return null;
     const sel = selectionFor(m.key);
     const live = !!segParam;
     const served = live && sameSet(sel, m.applied);
-    /* When the page cannot re-cut, a chip's state is simply "is this set in the
-       numbers" — and it is, all of them. */
     const isOn = c => live ? sel.has(c.tag) : m.applied.has(c.tag);
 
-    segRow.appendChild(el("span", "tlabel", "Who is in it"));
+    const box = el("details", "composer");
+    box.open = composerOpen;
+    box.addEventListener("toggle", () => { composerOpen = box.open; });
+    box.appendChild(el("summary", null, "change who"));
+    const body = el("div", "cbody");
+    box.appendChild(body);
 
+    const chips = el("div", "toolbar segrow");
     for (const c of universe) {
       const danger = tagDanger(c), caveat = tagCaveat(c), on = isOn(c);
       const chip = el("button",
@@ -996,20 +890,15 @@ export default async function view(host) {
         (live ? `\n\nClick to ${on ? "take out of" : "put into"} the field.`
               : "\n\nThis build cannot re-cut the pool, so the set is in the " +
                 "numbers above whether or not you want it there.");
-      /* Deliberately NOT disabled while a recompute is in flight. Locking the
-         chips for the ~1s the panel takes made the second and third click of a
-         quick edit silently do nothing; the request token is what makes fast
-         clicking safe, and the status line plus the dimmed cards say a
-         recompute is running. */
       chip.disabled = !live;
       if (live) chip.onclick = () => {
         if (sel.has(c.tag)) sel.delete(c.tag); else sel.add(c.tag);
-        renderSegments();
+        composerOpen = true; selOpen = true;
+        renderHeader();
         applySegments(m.key);
       };
-      segRow.appendChild(chip);
+      chips.appendChild(chip);
     }
-
     if (live) {
       const reset = el("button", "chip seg ghost", "curated elite (default)");
       const defNames = [...m.def].map(t => nameOf(m, t)).join(", ");
@@ -1021,25 +910,24 @@ export default async function view(host) {
       reset.disabled = sameSet(sel, m.def);
       reset.onclick = () => {
         segSel[m.key] = new Set(m.def);
-        renderSegments(); applySegments(m.key);
+        composerOpen = true; selOpen = true;
+        renderHeader(); applySegments(m.key);
       };
-      segRow.appendChild(reset);
+      chips.appendChild(reset);
       const all = el("button", "chip seg ghost", "everyone");
       all.title = "Every set the crawl produced, flagged ones included.";
       all.disabled = sel.size === universe.length;
       all.onclick = () => {
         segSel[m.key] = new Set(universe.map(c => c.tag));
-        renderSegments(); applySegments(m.key);
+        composerOpen = true; selOpen = true;
+        renderHeader(); applySegments(m.key);
       };
-      segRow.appendChild(all);
+      chips.appendChild(all);
     }
+    body.appendChild(chips);
 
-    /* Status line. This is the sentence that stops the page lying about which
-       managers are behind the numbers. */
     const status = el("div", "segstatus");
     if (!live) {
-      // Name the sets the reader would most want out, from the payload's own
-      // descriptors — this pool may have no mini-league in it at all.
       const flag = universe.filter(tagWarns).map(c => c.label || c.tag);
       status.className = "segstatus warn";
       status.append(el("b", null, "Sets are disclosed, not selectable. "),
@@ -1075,26 +963,21 @@ export default async function view(host) {
         `in the field: ${m.denominator || f.denominator}.` +
         (m.isDefault === true ? " This is the default selection." : ""));
     }
-    segRow.appendChild(status);
+    body.appendChild(status);
 
-    /* Names the panel could not match. Reported, never silently dropped: a
-       request that quietly narrows the field is how a reader ends up comparing
-       himself against the wrong people. */
     if (m.unknown.length)
-      segRow.appendChild(el("div", "segstatus bad",
+      body.appendChild(el("div", "segstatus bad",
         `The panel matched no crawl source for ${m.unknown.join(", ")}, so ` +
         `${m.unknown.length === 1 ? "that set is" : "those sets are"} in ` +
         `nothing above.`));
 
     /* The overlap disclosure sits next to the counts, because the counts are
-       exactly what invites the wrong arithmetic. The panel's own numbers are
-       used where it publishes them; otherwise the sets in the field are summed
-       here purely to show that the sum is NOT the denominator. */
+       exactly what invites the wrong arithmetic. */
     const inField = universe.filter(isOn);
     const sum = m.sumOfSets ?? inField.reduce((a, c) => a + (c.n || 0), 0);
     const n = m.n ?? f.n;
     if (m.overlaps || m.overlap || f.overlaps || (n != null && sum > n))
-      segRow.appendChild(el("span", "sub",
+      body.appendChild(el("p", "sub",
         `The ${inField.length} sets in the field carry ${sum} memberships ` +
         `between them over ${n ?? "an unstated number of"} distinct managers` +
         (m.overlap ? ` — ${m.overlap} entries hold two tags and are counted ` +
@@ -1103,199 +986,92 @@ export default async function view(host) {
         `. The denominator is the distinct count, never the sum.`));
 
     if (m.includesYou === true)
-      segRow.appendChild(el("div", "segnote",
+      body.appendChild(el("div", "segnote",
         "Your own entry is inside this field. You are part of the average you " +
         "are measuring yourself against, which pulls every gap you read here " +
         "towards zero."));
     if (m.unresolved)
-      segRow.appendChild(el("span", "sub",
+      body.appendChild(el("p", "sub",
         `${m.unresolved} entries in the union hold at least one pick this ` +
         `engine could not resolve to a player — a hole in the crawl, counted ` +
         `rather than hidden.`));
-    if (m.note) segRow.appendChild(el("span", "sub", m.note));
+    if (m.note) body.appendChild(el("p", "sub", m.note));
 
-    /* An untrustworthy set that is IN the field gets the loud box, because the
-       reader has to be stopped. Everything else that merely needs a sentence
-       gets the sentence, quietly, under one heading. */
     for (const c of universe.filter(x => tagDanger(x) && isOn(x))) {
       const w = el("div", "segnote danger");
       w.append(el("span", "chip warn", (c.label || c.tag) + " is in the field"),
                el("span", null, " " + (tagWhy(c) ||
                  "the crawl marks this set untrustworthy.")));
-      segRow.appendChild(w);
+      body.appendChild(w);
     }
     const caveats = universe.filter(x => tagCaveat(x) && isOn(x) && tagWhy(x));
     if (caveats.length) {
-      const box = el("div", "segcaveats");
-      box.appendChild(el("span", "tlabel", "Read with"));
+      const cb = el("div", "segcaveats");
+      cb.appendChild(el("span", "tlabel", "Read with"));
       for (const c of caveats) {
         const line = el("div", "cav");
         line.append(el("b", null, (c.label || c.tag) + " — "), tagWhy(c));
-        box.appendChild(line);
+        cb.appendChild(line);
       }
-      segRow.appendChild(box);
+      body.appendChild(cb);
     }
+    body.appendChild(el("p", "sub glyphkey",
+      "Marks on the set chips: ✓ = in the field · * = read with a caveat " +
+      "(sentence above) · ! = untrustworthy, never in a default."));
+    return box;
   }
 
-  /* Composition is a disclosure, not decoration: a cohort that is 16% the
-     owner's own mini-league opponents is not an independent read of the
-     field, and the page has to say so where the number is used. */
-  function renderComposition() {
-    compRow.textContent = "";
-    const f = byKey[fieldKey];
-    if (!f) return;
-
-    /* The two mismatches that would otherwise be read as a real difference:
-       a field measured at a different gameweek from its baseline, and a feed
-       that re-published a settled week under a new number. */
-    const gws = [];
-    const b = baseOf(measure);
-    if (f.gw != null && b && b.gw != null && f.gw !== b.gw)
-      gws.push(`field is GW${f.gw}, baseline is GW${b.gw} — different gameweeks`);
-    if (f.same_values_as_gw != null)
-      gws.push(`values identical to GW${f.same_values_as_gw} (a re-stamped feed)`);
-    if (gws.length) compRow.appendChild(el("span", "tlabel", "Mind"));
-    for (const g of gws) compRow.appendChild(el("span", "chip warn", g));
-
-    /* The proportion strip. Emphasis, not a four-colour breakdown: the story is
-       not "here are the tag proportions", it is "this share of the pool is a
-       conflict of interest", so flagged tags take the warning token — a status
-       colour with a label beside it — and everything else stays neutral. The
-       tag NAMES and counts live in the selector above; this is the shape only.
-       Segments the reader has taken out are drawn hollow, so the strip shows
-       what was removed as well as what is left. */
-    const m = segModel();
-    const comp = (m && m.key === f.key ? m.universe : null)
-                 || tagUniverse[f.key] || f.composition;
-    if (!comp?.length) return;
-    const sel = m && m.key === f.key ? selectionFor(f.key) : null;
-    const live = !!segParam && !!sel;
-    const total = comp.reduce((a, c) => a + (c.n || 0), 0) || 1;
-    const strip = el("div", "compstrip");
-    strip.title = "the crawl tags behind this pool, by share of the tag total";
-    for (const c of comp) {
-      const inField = !live || sel.has(c.tag);
-      const seg = el("span", "cseg" + (tagWarns(c) ? " flag" : "") +
-                             (inField ? "" : " out"));
-      seg.style.width = `${(100 * (c.n || 0) / total).toFixed(2)}%`;
-      seg.title = `${c.n} — ${c.label || c.tag}` +
-                  (inField ? "" : " — not in the field");
-      strip.appendChild(seg);
-    }
-    compRow.appendChild(strip);
-    if (live && [...comp].some(c => !sel.has(c.tag)))
-      compRow.appendChild(el("span", "sub", "hollow = taken out of the field"));
-  }
-
-  /* Tiles answer the ten-second question. Every one of them states the basis
-     it is computed over; none of them is a rate with an unnamed denominator. */
-  const TOP_N = 20;
-  function topField() {
-    return [...sourceRows()]
-      .filter(r => val(r, fieldKey, measure) != null)
-      .sort((a, b) => val(b, fieldKey, measure) - val(a, fieldKey, measure))
-      .slice(0, TOP_N);
-  }
-  function renderTiles() {
-    tiles.textContent = "";
-    const f = byKey[fieldKey];
-    const top = topField();
-    if (!top.length) {
-      tiles.appendChild(el("p", "sub",
-        "No player has a value on this field yet, so nothing can be summarised."));
-      return;
-    }
-    const tile = (v, k, cls, title) => {
-      const d = el("div", "stat" + (cls ? " " + cls : ""));
-      d.appendChild(el("div", "v", v));
-      d.appendChild(el("div", "k", k));
-      if (title) d.title = title;
-      tiles.appendChild(d);
-      return d;
-    };
-
-    if (res.squad?.readable) {
-      const owned = top.filter(r => r.in_squad === true).length;
-      tile(`${owned}/${top.length}`, `top-${TOP_N} template you own`,
-           owned >= top.length * 0.6 ? "good" : "bad",
-           `Of the ${TOP_N} players with the highest ${MEASURE[measure].label}` +
-           ` in ${f.label}, you hold ${owned}.`);
-
-      // Net exposure over that same stated basis, in the identity's own units.
-      let net = 0, known = 0, assumed = 0;
-      for (const r of top) {
-        const e = exposureOf(r);
-        if (e == null) continue;
-        net += e; known++; if (myMult(r).assumed) assumed++;
-      }
-      if (known) tile(signed(net), `net EO exposure over those ${known}`,
-           net >= 0 ? "good" : "bad",
-           "Σ (your multiplier − field EO) over the same top-" + TOP_N +
-           " basis — always EO, never ownership, because a multiplier minus a " +
-           "head-count share is not a number. Negative means the field is " +
-           "ahead of you on the template: for every point those players score " +
-           "you lose " + Math.abs(net).toFixed(1) + " to it." +
-           (assumed ? `\n${assumed} of these use a multiplier inferred from ` +
-                      "your squad role, not one the read supplied." : ""));
-
-      const holes = top.filter(r => r.in_squad === false);
-      if (holes.length) {
-        const worst = holes[0];
-        const t = tile(dispName(worst),
-             `biggest hole · ${pct(val(worst, fieldKey, measure))}`,
-             "bad",
-             `The highest-${MEASURE[measure].short} player in ${f.label} that ` +
-             `you do not own. If he hauls, the field gains and you do not.`);
-        /* The bridge to the action: what to sell to fund him lives on the
-           Dashboard's verdict/solver card, and nothing connected them (R1). */
-        const go = el("a", "coverlink", "cover this hole →");
-        go.href = "#home";
-        go.title = "Opens the Dashboard and focuses the verdict/solver card " +
-                   "— the plan that says what to sell to fund him.";
-        go.addEventListener("click", focusDashboardPlan);
-        t.appendChild(go);
-      } else {
-        tile("none", `top-${TOP_N} template fully covered`, "good",
-             "You hold every player in the stated basis.");
-      }
-
-      const bets = [...sourceRows()]
-        .filter(r => r.in_squad === true && exposureOf(r) != null)
-        .sort((a, b) => exposureOf(b) - exposureOf(a));
-      if (bets.length) {
-        const b0 = bets[0];
-        tile(dispName(b0), `furthest ahead · ${signed(exposureOf(b0))}`, "good",
-             "Where your multiplier most exceeds the field's EO, over every " +
-             "player shown. It is not necessarily a differential — a captain " +
-             "the field also owns can land here.");
-      }
-    } else {
-      tile("unreadable", "your squad", "bad", res.squad?.note || "");
-    }
-
-    const heavy = top.filter(r => (gapOf(r, fieldKey, measure) ?? 0) >= BAND).length;
-    tile(String(heavy), `of top ${TOP_N} are ${BAND}pp+ above the game`, null,
-         `How concentrated this field is relative to ${baseOf(measure)?.label}.`);
-  }
-
+  /* The old call sites (a segment recompute, and the default reconcile at the
+     bottom of the file) still ask for the segment row by name; the row is now
+     part of the header, so this is where that name resolves. */
+  function renderSegments() { renderHeader(); }
   // ---- the field map --------------------------------------------------
+  /* A fold whose summary states its own finding, so closing it costs the reader
+     the picture and never the conclusion. */
+  function foldHead(card, text) {
+    card.textContent = "";
+    const s = el("summary", null, text);
+    card.appendChild(s);
+    return s;
+  }
+
   function renderMap() {
-    mapCard.textContent = "";
     const f = byKey[fieldKey], b = baseOf(measure);
-    mapCard.appendChild(el("h2", null, "The field map"));
-    if (!f || !b) {
+    if (!f || !b || f.key === b.key) {
+      foldHead(mapCard, "Field map: nothing to compare it against");
       mapCard.appendChild(emptyBox(
         "no two comparable fields",
-        "The map needs a field and a same-measure baseline. Ingest the " +
-        "LiveFPL ownership feed or run the manager picks crawl."));
+        f && b && f.key === b.key
+          ? `${fieldName(f)} IS the baseline under this measure, so plotting ` +
+            `it against itself would draw the diagonal and nothing else. Pick ` +
+            `a field to compare with the game.`
+          : "The map needs a field and a same-measure baseline. Ingest the " +
+            "LiveFPL ownership feed or run the manager picks crawl."));
       return;
     }
+    const off = sourceRows()
+      .filter(r => Math.abs(gapOf(r, fieldKey, measure) ?? 0) >= BAND).length;
+    foldHead(mapCard,
+      `Field map: ${off} players sit ${BAND}pp+ off the game`);
     mapCard.appendChild(el("p", "sub",
       `Every player, positioned by what the game holds (horizontal) against ` +
       `what ${f.label} holds (vertical) — same measure, same units on both ` +
       `axes. The diagonal is where the two agree; distance from it IS the ` +
       `gap, so the template, the neutral middle and the fades are places on ` +
       `the page rather than numbers to compare.`));
+    const key = el("div", "zonekey");
+    const zone = (cls, name, text) => {
+      const z = el("div", "zone " + cls);
+      z.append(el("span", "sw"), el("b", null, name), el("span", null, text));
+      return z;
+    };
+    key.append(
+      zone("heavy", "Template",
+        `field is ${BAND}pp+ heavier than the game — cover it or carry the risk`),
+      zone("mid", "Neutral", "field and game agree — this holding is noise"),
+      zone("light", "Fade",
+        `field is ${BAND}pp+ lighter — a real differential lives here`));
+    mapCard.appendChild(key);
 
     const pts = sourceRows()
       .map(r => ({ r, x: val(r, b.key, measure), y: val(r, f.key, measure) }))
@@ -1491,339 +1267,416 @@ export default async function view(host) {
                  `out rather than drawn as one blob.` : "")]);
   }
 
-  // ---- the swarm: what the template LOOKS like ------------------------
-  /* The map answers "how far is this player from the game". It does not answer
-     "what shape is the template", because a scatter of 180 players against a
-     diagonal hides the one fact that decides a squad: the field's weight is not
-     spread evenly across the positions. One row per position, every measured
-     player as a mark on the field's own axis, packed sideways so nothing hides
-     behind anything, and the answer is legible in a second — a couple of spikes
-     over a dense floor, and which positions HAVE a spike.
+  // ---- the template XV, drawn ------------------------------------------
+  /* "What IS the template" is a question about a SQUAD, and a squad is a shape
+     every manager already reads. So the answer is drawn as one.
 
-     Opta's radars work because a number is placed against its own population
-     rather than shown raw; the same idea applies here at the level of a single
-     mark, so the tooltip reports the player's percentile WITHIN HIS POSITION on
-     this field. 20% EO is unremarkable for a midfielder and enormous for a
-     goalkeeper, and a reader should not have to know that already.
+     SORTED BY START SHARE, NOT OWNERSHIP. Verbruggen is owned by 64.9% of the
+     262 and started by 3.8% of them: he is the field's spare goalkeeper.
+     Rank by ownership and he takes the shirt; rank by started_by / n and
+     Kinsky takes it, correctly. The share is exact from the payload's own
+     head counts, never inferred from EO.
 
-     Colour is the same diverging gap encoding as the map, anchored at the same
-     90th percentile, so warm still means "heavier than the game" everywhere on
-     the page. Fill still means "you own him". Neither channel is alone: the
-     position on the axis is the value, and the tooltip prints every number. */
-  const POS_ORDER = ["GKP", "DEF", "MID", "FWD"];
-  const SPIKE = 30;                  // pp — the "this is template" line, stated
+     THREE STATES PER SHIRT, and the third is the point. You match him; you own
+     him but leave him on your bench; or you do not own him at all. Only the
+     last two cost anything, so only the last two carry a number — three pills
+     on a pitch rather than eleven. Calvert-Lewin's −0.81 is unreadable as a
+     row in a ranked list and obvious as an amber pill on a shirt you own. */
+  const SHAPE  = { GKP: 2, DEF: 5, MID: 5, FWD: 3 };
+  const XI_MIN = { GKP: 1, DEF: 3, MID: 2, FWD: 1 };
+  const XI_MAX = { GKP: 1, DEF: 5, MID: 5, FWD: 3 };
+  const POS_ROWS = ["GKP", "DEF", "MID", "FWD"];
+  const CAP_FLOOR = 25;              // pp — below this the field has no armband
 
-  function renderSwarm() {
-    swarmCard.textContent = "";
-    const f = byKey[fieldKey], b = baseOf(measure);
-    swarmCard.appendChild(el("h2", null, "The shape of the template"));
-    if (!f) {
-      swarmCard.appendChild(emptyBox("no field selected"));
-      return;
+  const startShare = (r, key) => {
+    const f = r.fields?.[key];
+    return f && f.started_by != null && f.n ? 100 * f.started_by / f.n : null;
+  };
+
+  function poolFor(key) {
+    const seen = new Set(), out = [];
+    for (const r of (res.rows || []).concat(res.differentials || [])) {
+      if (seen.has(r.code)) continue;
+      seen.add(r.code);
+      out.push(r);
     }
-    const ms = MEASURE[measure].short;
-    const all = sourceRows()
-      .map(r => ({ r, v: val(r, fieldKey, measure), g: gapOf(r, fieldKey, measure) }))
-      .filter(p => p.v != null);
-    if (!all.length) {
-      swarmCard.appendChild(emptyBox(
-        `${f.label} publishes no ${MEASURE[measure].label.toLowerCase()} for any ` +
-        `player in this set`,
-        "Pick another field or another measure — the row set on screen and the " +
-        "field have to overlap before a distribution exists."));
-      return;
-    }
-
-    const groups = POS_ORDER
-      .map(p => ({ pos: p, pts: all.filter(x => x.r.pos === p) }))
-      .filter(gp => gp.pts.length);
-    const unknown = all.filter(x => !POS_ORDER.includes(x.r.pos));
-    if (unknown.length) groups.push({ pos: "?", pts: unknown });
-
-    const spikes = all.filter(p => p.v >= SPIKE).length;
-    swarmCard.appendChild(el("p", "sub",
-      `Every player ${f.label} measures, along that field's ` +
-      `${MEASURE[measure].label.toLowerCase()} axis, one row per position. ` +
-      `${spikes} of ${all.length} sit at ${SPIKE}% or more — those are the ` +
-      `holdings that cancel out of your rank move. The rest is the ` +
-      `floor, and a position with a wide floor and no spike is a position where ` +
-      `a differential costs you almost nothing to take.`));
-
-    const W = 840, L = 54, R = 172, T = 30, B = 46;
-    const rowH = Math.max(72, Math.min(100, 352 / groups.length));
-    const H = T + B + rowH * groups.length;
-    const hi = Math.max(20, ...all.map(p => p.v));
-    const dom = Math.ceil(hi / 20) * 20;
-    const rt = v => Math.sqrt(Math.max(0, v)) / Math.sqrt(dom);
-    const sx = v => L + (W - L - R) * rt(v);
-    const TICKS = [0, 5, 10, 20, 40, 60, 80, 120, 160, 240]
-      .filter(v => v <= dom).concat(dom);
-
-    const wrap = el("div", "chartwrap");
-    const svg = sv("svg", { viewBox: `0 0 ${W} ${H}`, class: "fieldmap swarm",
-                            role: "img" });
-    svg.appendChild(sv("title", {},
-      `${all.length} players by ${ms} in ${f.label}, split by position`));
-
-    for (const v of new Set(TICKS)) {
-      svg.appendChild(sv("line", { x1: sx(v), x2: sx(v), y1: T - 8, y2: H - B,
-                                   class: "grid" }));
-      svg.appendChild(sv("text", { x: sx(v), y: H - B + 16, class: "tick" },
-                         `${v}%`));
-    }
-    svg.appendChild(sv("text", { x: (L + W - R) / 2, y: H - 8, class: "axis" },
-      `${f.short || f.label} ${ms} %  ·  square-root spaced, so the crowded ` +
-      `low end is readable`));
-
-    // The stated template line, drawn once and labelled in words.
-    if (SPIKE <= dom) {
-      svg.appendChild(sv("line", { x1: sx(SPIKE), x2: sx(SPIKE), y1: T - 8,
-                                   y2: H - B, class: "diag" }));
-      svg.appendChild(sv("text", { x: sx(SPIKE) + 5, y: T - 14,
-                                   class: "diaglabel" },
-        `${SPIKE}% — template from here right`));
-    }
-
-    const scale = rampScale();
-    const tip = makeTip(wrap);
-    const labels = [];               // {x, y, w, text, mine} placed last
-
-    groups.forEach((gp, i) => {
-      const cy = T + rowH * i + rowH / 2;
-      const half = rowH / 2 - 8;
-      svg.appendChild(sv("line", { x1: L, x2: W - R, y1: cy, y2: cy,
-                                   class: "swarmbase" }));
-      svg.appendChild(sv("text", { x: L - 8, y: cy + 4, class: "swarmpos end" },
-                         gp.pos));
-
-      const sorted = [...gp.pts].sort((a, c) => a.v - c.v);
-      const xs = sorted.map(p => sx(p.v));
-      const r = 4.2;
-      const lanes = Math.max(1, Math.floor(half / (r * 2.05)));
-      const ys = beeswarm(xs, r, lanes);
-
-      // Median tick: where half this position sits, printed as a number too.
-      const med = median(sorted.map(p => p.v));
-      if (med != null) {
-        svg.appendChild(sv("line", { x1: sx(med), x2: sx(med),
-                                     y1: cy - half - 2, y2: cy + half + 2,
-                                     class: "swarmmed" }));
-      }
-
-      sorted.forEach((p, k) => {
-        const mine = p.r.in_squad === true;
-        const cyy = cy + Math.max(-half, Math.min(half, ys[k]));
-        const c = sv("circle", {
-          cx: xs[k], cy: cyy, r: mine ? r + 1.2 : r,
-          class: "mark" + (mine ? " mine" : " out"),
-        });
-        if (mine) c.setAttribute("fill", rampColor(p.g, scale));
-        else {
-          c.setAttribute("fill", "none");
-          c.setAttribute("stroke", rampColor(p.g, scale));
-        }
-        const pctile = Math.round(100 * k / Math.max(1, sorted.length - 1));
-        const showT = () =>
-          tip.show(svg, W, H, xs[k], cyy, (t, line) => {
-            t.appendChild(el("b", null, dispName(p.r)));
-            t.appendChild(el("div", "sub",
-              [p.r.pos, p.r.team, fmtPrice(p.r.price)].filter(Boolean).join(" · ")));
-            line(`${f.short || f.label} ${ms}`, pct(p.v));
-            if (b) line(`${b.short || b.label} ${ms}`, pct(val(p.r, b.key, measure)));
-            if (p.g != null) line("gap", `${signed(p.g)}pp`);
-            line(`among ${gp.pos}`, `${pctile}th pctile`);
-            line("you", p.r.in_squad == null ? "unknown"
-              : p.r.in_squad === false ? "not owned" : (p.r.your_role || "owned"));
-          });
-        c.addEventListener("mouseenter", showT);
-        c.addEventListener("mouseleave", tip.hide);
-        c.addEventListener("click", () => showDetail(p.r));
-        accessMark(c,
-          `${dispName(p.r)}: ${f.short || f.label} ${ms} ${pct(p.v)}, ` +
-          `${pctile}th percentile among ${gp.pos}` +
-          (p.r.in_squad === true ? ", in your squad" : ""),
-          () => showDetail(p.r), showT, tip.hide);
-        svg.appendChild(c);
-      });
-
-      /* Row annotation, direct-labelled at the right rather than legended.
-         Three short lines rather than one long one: at 375px the chart scales
-         down with its viewBox, and a single 44-character string would be the
-         thing that decides the plot's width. */
-      const nSpike = gp.pts.filter(p => p.v >= SPIKE).length;
-      const held = gp.pts.filter(p => p.r.in_squad === true).length;
-      const ax = W - R + 12;
-      svg.appendChild(sv("text", { x: ax, y: cy - 8, class: "swarmann" },
-        nSpike ? `${nSpike} at ${SPIKE}%+` : `no ${SPIKE}%+ player`));
-      svg.appendChild(sv("text", { x: ax, y: cy + 6, class: "swarmsub" },
-        `${gp.pts.length} measured`));
-      svg.appendChild(sv("text", { x: ax, y: cy + 19, class: "swarmsub" },
-        `median ${med == null ? "–" : med.toFixed(1)}%` +
-        (res.squad?.readable ? ` · you ${held}` : "")));
-
-      // Name the spikes: the two or three that carry the position.
-      const top = [...gp.pts].sort((a, c) => c.v - a.v).slice(0, 3);
-      for (const p of top) {
-        if (p.v < SPIKE) break;
-        const k = sorted.indexOf(p);
-        labels.push({ x: sx(p.v), y: cy - half - 5, text: dispName(p.r),
-                      my: cy + Math.max(-half, Math.min(half, ys[k])),
-                      mine: p.r.in_squad === true });
-      }
-    });
-
-    watermark(svg, W, H, f);
-
-    /* Selective direct labels, collision-tested, each with a hairline leader
-       back to its own mark — the label sits above the row and the mark can be
-       anywhere in the band, so without the leader the reader has to guess which
-       dot it belongs to. Never a name on every mark. */
-    const placed = [];
-    for (const lb of labels) {
-      const w = lb.text.length * 5.8 + 8;
-      const left = lb.x > W - R - 80;
-      const x0 = left ? lb.x - w : lb.x;
-      if (x0 < L || x0 + w > W - R + 2) continue;
-      const box = { x: x0, y: lb.y - 10, w, h: 13 };
-      if (placed.some(q => !(box.x + box.w < q.x || q.x + q.w < box.x ||
-                             box.y + box.h < q.y || q.y + q.h < box.y))) continue;
-      placed.push(box);
-      svg.appendChild(sv("line", { x1: lb.x, y1: lb.y + 3, x2: lb.x,
-                                   y2: lb.my - 6, class: "swarmlead" }));
-      svg.appendChild(sv("text",
-        { x: lb.x, y: lb.y, class: "plabel" + (left ? " end" : "") +
-                                    (lb.mine ? " mine" : "") }, lb.text));
-    }
-
-    wrap.appendChild(svg);
-    swarmCard.appendChild(wrap);
-
-    const leg = el("div", "maplegend");
-    const ramp = el("div", "ramp");
-    for (let i = -6; i <= 6; i++) {
-      const s = el("span");
-      s.style.background = rampColor(i / 6 * scale, scale);
-      ramp.appendChild(s);
-    }
-    leg.append(
-      el("span", "tlabel", "gap vs the game"),
-      el("span", "sub", `≤ −${scale.toFixed(0)}pp`), ramp,
-      el("span", "sub", `≥ +${scale.toFixed(0)}pp`),
-      el("span", "legkey mine-key", ""), el("span", "sub", "you own him"),
-      el("span", "legkey out-key", ""), el("span", "sub", "you do not"),
-      el("span", "legkey med-key", ""), el("span", "sub", "position median"));
-    swarmCard.appendChild(leg);
-    caption(swarmCard,
-      "Horizontal position is the whole of the value · hover or focus a mark " +
-      "for its numbers and within-position percentile · every value is also " +
-      "in the table below.",
-      [`Marks are nudged off the row's centre line only enough to stop them ` +
-       `covering each other — the vertical position carries nothing. Where a ` +
-       `row is too crowded for even that, near the floor, marks do overlap ` +
-       `and the ring around each one is what keeps them countable; that ` +
-       `crowding is itself the finding.`]);
+    return out;
   }
 
-  // ---- your exposure ledger ------------------------------------------
-  function renderLedger() {
-    ledgerCard.textContent = "";
-    ledgerCard.appendChild(el("h2", null, "Your exposure"));
+  /* Greedy under the FPL shape: the 15 highest start shares that still make a
+     legal squad, then the best legal XI out of those 15. The formation is
+     whatever falls out, and it is printed rather than assumed. */
+  function buildXV(key) {
+    const pool = [];
+    for (const r of poolFor(key)) {
+      const s = startShare(r, key);
+      if (s == null || !SHAPE[r.pos]) continue;
+      pool.push({ r, s });
+    }
+    pool.sort((a, b) => b.s - a.s);
+    const squad = [], cnt = { GKP: 0, DEF: 0, MID: 0, FWD: 0 };
+    for (const p of pool) {
+      if (squad.length === 15) break;
+      if (cnt[p.r.pos] >= SHAPE[p.r.pos]) continue;
+      cnt[p.r.pos]++; squad.push(p);
+    }
+    if (squad.length < 15) return null;
+    const gk = squad.find(p => p.r.pos === "GKP");
+    const xi = [gk], xc = { GKP: 1, DEF: 0, MID: 0, FWD: 0 };
+    for (const p of squad) {
+      if (xi.length === 11) break;
+      if (p === gk || p.r.pos === "GKP") continue;
+      if (xc[p.r.pos] >= XI_MAX[p.r.pos]) continue;
+      // never spend a slot a still-unmet minimum needs
+      const need = ["DEF", "MID", "FWD"].reduce((a, k) => a +
+        Math.max(0, XI_MIN[k] - (xc[k] + (k === p.r.pos ? 1 : 0))), 0);
+      if (11 - xi.length - 1 < need) continue;
+      xc[p.r.pos]++; xi.push(p);
+    }
+    const inXi = new Set(xi.map(p => p.r.code));
+    const bench = squad.filter(p => !inXi.has(p.r.code))
+      .sort((a, b) => (a.r.pos === "GKP" ? -1 : b.r.pos === "GKP" ? 1 : b.s - a.s));
+    return { squad, xi, bench, xc, formation: `${xc.DEF}-${xc.MID}-${xc.FWD}` };
+  }
+
+  /* Your relationship to a shirt is three-valued, not two. */
+  function shirtState(r) {
+    if (r.in_squad !== true) return "missing";
+    return myMult(r).v === 0 ? "benched" : "matched";
+  }
+
+  function renderPitch() {
+    pitchCard.textContent = "";
+    pitchCard.appendChild(el("h2", null, "The template XV"));
+    const f = byKey[fieldKey];
+    if (!f) { pitchCard.appendChild(emptyBox("no field selected")); return; }
+
+    const xv = buildXV(fieldKey);
+    if (!xv) {
+      pitchCard.appendChild(emptyBox(
+        `${fieldName(f)} publishes no per-manager start counts`,
+        `The XV is the field's most-STARTED players, which needs started_by ` +
+        `and n on every row. ${f.provider || "This provider"} serves a modelled ` +
+        `share and no head counts, so a template drawn from it would be a ` +
+        `guess. Pick a crawled field to see the XV.`));
+      return;
+    }
+
+    const state = new Map(xv.squad.map(p => [p.r.code, shirtState(p.r)]));
+    const matched = xv.squad.filter(p => state.get(p.r.code) === "matched").length;
+    const benched = xv.squad.filter(p => state.get(p.r.code) === "benched").length;
+    const missing = xv.squad.filter(p => state.get(p.r.code) === "missing").length;
+
+    /* The armband, from the field's own captaincy share. */
+    const capOf = p => p.r.fields?.[fieldKey]?.cap ?? null;
+    const skipper = xv.xi
+      .filter(p => capOf(p) != null)
+      .sort((a, b) => capOf(b) - capOf(a))[0];
+    const armband = skipper && capOf(skipper) >= CAP_FLOOR ? skipper : null;
+
+    pitchCard.appendChild(el("p", "sub capline",
+      `Most-started XV of ${fieldName(f)}, ${xv.formation}. ` +
+      `You match ${matched}, bench ${benched}, miss ${missing}.`));
+
+    const pitch = el("div", "pitch tmpl-xv");
+    for (const pos of POS_ROWS) {
+      const line = xv.xi.filter(p => p.r.pos === pos);
+      if (!line.length) continue;
+      const row = el("div", "row");
+      for (const p of line) row.appendChild(shirt(p, armband === p));
+      pitch.appendChild(row);
+    }
+    pitchCard.appendChild(pitch);
+
+    const bench = el("div", "bench");
+    bench.appendChild(el("span", "tlabel", "Their bench"));
+    for (const p of xv.bench) bench.appendChild(shirt(p, false));
+    pitchCard.appendChild(bench);
+
+    if (!armband)
+      pitchCard.appendChild(el("p", "sub",
+        `No player in this XI is captained by ${CAP_FLOOR}% of the field, so ` +
+        `no armband is drawn.`));
+
+    renderShelf(xv);
+
+    function shirt(p, isCap) {
+      const st = state.get(p.r.code);
+      const e = exposureOf(p.r);
+      const capPct = capOf(p);
+      const card = playerCard(
+        { ...p.r, name: dispName(p.r) },
+        { mark: isCap ? "C" : null,
+          sub: `${p.s.toFixed(0)} start${isCap && capPct != null
+                ? ` · ${capPct.toFixed(0)} C` : ""}` });
+      card.classList.add("tst-" + st);
+      if (st !== "matched" && e != null) {
+        const pill = el("span", "term " + (e < 0 ? "neg" : "pos"), signed(e));
+        card.appendChild(pill);
+      }
+      const av = availChip(p.r.status);
+      if (av) card.appendChild(av);
+      card.tabIndex = 0;
+      card.setAttribute("role", "button");
+      const words = st === "matched"
+        ? "you start him too, so he costs you nothing"
+        : st === "benched"
+          ? "you own him and leave him on your bench, so you carry his EO " +
+            "without his points"
+          : "you do not own him, so every point he scores moves the field ahead";
+      card.setAttribute("aria-label",
+        `${dispName(p.r)}, ${p.s.toFixed(0)}% of the field start him, ${words}` +
+        (e != null ? `, exposure ${signed(e)}` : ""));
+      card.title = `${dispName(p.r)}: ${p.s.toFixed(0)}% of ${f.n ?? "?"} ` +
+        `start him${capPct != null ? `, ${capPct.toFixed(0)}% captain him` : ""}` +
+        `\n${words}.` +
+        (e != null ? `\nExposure ${signed(e)} — see the exposure strip below ` +
+                     `for what that number means.` : "");
+      const open = () => showDetail(p.r);
+      card.onclick = open;
+      card.onkeydown = ev => {
+        if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); open(); }
+      };
+      return card;
+    }
+  }
+
+  /* The differential shelf: high-EO players who just missed the XV. Inclusion
+     is the field's top 20 by EO minus the fifteen drawn above; the order is the
+     captaincy swing first, because that is the channel that actually moved
+     between the two gameweeks on the wire, and EO as the tie-break. */
+  function renderShelf(xv) {
+    const inXv = new Set(xv.squad.map(p => p.r.code));
+    const ranked = poolFor(fieldKey)
+      .map(r => ({ r, eo: val(r, fieldKey, "eo") }))
+      .filter(p => p.eo != null)
+      .sort((a, b) => b.eo - a.eo)
+      .slice(0, 20)
+      .filter(p => !inXv.has(p.r.code));
+    if (!ranked.length) return;
+    const sw = capSwings();
+    const dcap = new Map((sw?.list || []).map(x => [x.code, x.d]));
+    const shelf = ranked.map(p => ({ ...p, d: dcap.get(p.r.code) ?? null }))
+      .sort((a, b) => (Math.abs(b.d ?? 0) - Math.abs(a.d ?? 0)) || (b.eo - a.eo));
+
+    const lab = el("p", "sub capline",
+      `Just outside: the field's top 20 by EO, not in that XV.`);
+    lab.title = "Ordered by how far the field's captaincy on each moved " +
+      "between the two stored gameweeks, then by EO. Owned or not is marked " +
+      "on the card, because the field arriving at a player you already hold " +
+      "is good news this page could not previously deliver.";
+    pitchCard.appendChild(lab);
+
+    const row = el("div", "shelf");
+    row.setAttribute("role", "list");
+    for (const p of shelf) {
+      const st = shirtState(p.r);
+      const c = playerCard({ ...p.r, name: dispName(p.r) },
+        { sub: `${p.eo.toFixed(0)} EO` });
+      c.classList.add("tst-" + st);
+      c.setAttribute("role", "listitem");
+      c.tabIndex = 0;
+      if (p.d != null && Math.abs(p.d) >= MIN_SWING)
+        c.appendChild(el("span", "dcap " + (p.d < 0 ? "neg" : "pos"),
+          `${signed(p.d)}pp C`));
+      c.title = `${dispName(p.r)}: ${pct(p.eo)} EO in ${fieldName(byKey[fieldKey])}` +
+        (p.d != null ? `, captaincy ${signed(p.d)}pp between the two stored ` +
+                       `gameweeks` : "") +
+        `\n${st === "missing" ? "You do not own him."
+                              : "You own him already."}`;
+      c.onclick = () => showDetail(p.r);
+      c.onkeydown = ev => {
+        if (ev.key === "Enter" || ev.key === " ") {
+          ev.preventDefault(); showDetail(p.r);
+        }
+      };
+      row.appendChild(c);
+    }
+    pitchCard.appendChild(row);
+  }
+
+  // ---- exposure: one signed strip, and the page's only explanation ------
+  /* THE DIRECTION FIX. The page used to headline "Σ (your multiplier − field
+     EO) over your 15" as though a bigger number were better. It is not, and the
+     identity says why: Σ field EO over ALL players is a constant (12.437 on
+     today's wire), any legal squad spends exactly 12.0 multiplier units, so
+
+         Σ over your 15  =  12.0 − (field EO you DO cover)
+                         =  −0.437 + (field EO you do NOT cover)
+
+     — it RISES when your uncovered exposure rises. Headlining it rewarded the
+     reader for being more exposed. So the headline is now the thing that
+     actually wants to be small: the field EO sitting on players you do not
+     own. The Σ is kept, behind the fold, carrying that identity.
+
+     THE EXPLANATION APPEARS ONCE. It is attached to the first minus sign on the
+     page and repeated nowhere else; every other multiplier on the page links
+     back here rather than restating it. */
+  function uncoveredBasis() {
+    const w = res.whatif;
+    if (w && Array.isArray(w.players) && w.players.length && w.field === fieldKey)
+      return {
+        list: w.players.map(p => ({ eo: p.field_eo_pct, mine: p.in_squad === true })),
+        exact: true,
+        basis: `all ${w.players.length} current-season players`,
+      };
+    const seen = new Set(), list = [];
+    for (const r of (res.rows || []).concat(res.differentials || [])) {
+      if (seen.has(r.code)) continue;
+      seen.add(r.code);
+      const v = eoVal(r);
+      if (v == null) continue;
+      list.push({ eo: v, mine: r.in_squad === true });
+    }
+    return { list, exact: false,
+             basis: `the ${list.length} players this panel serves` };
+  }
+
+  /* The one explanation, built from the selected field's own head counts and
+     the page's own worst hole — never a hard-coded example. */
+  function worstHole() {
+    const holes = sourceRows()
+      .filter(r => r.in_squad === false)
+      .map(r => ({ r, f: r.fields?.[fieldKey], e: exposureOf(r) }))
+      .filter(p => p.f && p.e != null)
+      .sort((a, b) => a.e - b.e);
+    /* Prefer a hole this field can explain with head counts, because the count
+       IS the explanation. A modelled field publishes a share and no people, so
+       it gets the same sentence without the arithmetic it cannot show. */
+    return holes.find(p => p.f.n && p.f.captained_by != null) || holes[0] || null;
+  }
+
+  function renderStrip() {
+    stripCard.textContent = "";
+    stripCard.id = "tpl-exposure";
     const f = byKey[fieldKey];
     if (!res.squad?.readable) {
-      ledgerCard.appendChild(emptyBox(
+      stripCard.appendChild(el("h2", null, "Your exposure"));
+      stripCard.appendChild(emptyBox(
         res.squad?.note || "your squad could not be read",
         "Run `fpl myteam auth` once, or text /setsquad with your 15. Until " +
         "then this page can describe the field but not your position in it."));
       return;
     }
     if (!hasEo()) {
-      ledgerCard.appendChild(emptyBox(
-        `${f.label} publishes no effective ownership`,
+      stripCard.appendChild(el("h2", null, "Your exposure"));
+      stripCard.appendChild(emptyBox(
+        `${fieldName(f)} publishes no effective ownership`,
         "Exposure is your multiplier minus the field's EO. This field only " +
         "reports head-count ownership, and a multiplier minus a head count " +
         "is not a number — pick a field that publishes EO."));
       return;
     }
-    ledgerCard.appendChild(el("p", "sub",
-      `Each bar is one term of the rank identity: your multiplier minus ` +
-      `${f.label}'s effective ownership — always EO, whichever measure the ` +
-      `map above is showing. Negative means you concede that much for every ` +
-      `point he scores; positive means you gain it. Squad read via ${res.squad.source}` +
-      (res.squad.gw != null ? ` at GW${res.squad.gw}` : "") +
-      (res.squad.has_multipliers ? "."
-        : ", which supplies roles but not multipliers — captain is taken as " +
-          "2× and a triple-captain chip would make it 3×. Every multiplier " +
-          "inferred that way is marked ×*.")));
 
+    const b = uncoveredBasis();
+    const uncovered = b.list.reduce((a, p) => a + (p.mine ? 0 : p.eo), 0) / 100;
+    const covered = b.list.reduce((a, p) => a + (p.mine ? p.eo : 0), 0) / 100;
+
+    stripCard.appendChild(el("h2", null, "Field EO you don't cover"));
+    const stats = el("div", "stats");
+    const t = el("div", "stat " + (uncovered > 3 ? "bad" : "good"));
+    t.appendChild(el("div", "v", uncovered.toFixed(2)));
+    t.appendChild(el("div", "k", "lower is safer"));
+    t.title = `Σ of ${fieldName(f)}'s effective ownership over the players you ` +
+      `do NOT hold, measured across ${b.basis}` +
+      (b.exact ? "" : ". This field publishes no all-player list, so the " +
+                      "sum is over the rows this panel served") +
+      `. You cover ${covered.toFixed(2)} of the ${(uncovered + covered).toFixed(2)} ` +
+      `the field carries in total.`;
+    stats.appendChild(t);
+    stripCard.appendChild(stats);
+
+    /* THE minus sign, and the only place its meaning is written down. */
+    const w = worstHole();
+    if (w) {
+      const nm = dispName(w.r), n = w.f.n;
+      const benched = !!w.f.benched_by;
+      const cnt = benched ? w.f.started_by : w.f.owned_by;
+      const s = Math.abs(w.e).toFixed(2);
+      const counted = n != null && w.f.captained_by != null && cnt != null;
+      stripCard.appendChild(el("p", "sub means",
+        (counted
+          ? `${cnt} of the ${n} ${benched ? "start" : "own"} ${nm} and ` +
+            `${w.f.captained_by} captain him, so the average rival has `
+          : `${fieldName(f)} puts ${pct(w.v ?? val(w.r, fieldKey, "eo"))} ` +
+            `effective ownership on ${nm}, so the average rival has `) +
+        `${s} of a ${nm}. You have none, so his every point moves the field ` +
+        `${s} further ahead of you. That is what −${s} means.`));
+      const go = el("a", "coverlink", "cover this hole →");
+      go.href = "#home";
+      go.title = "Opens the Dashboard and focuses the verdict/solver card — " +
+                 "the plan that says what to sell to fund him.";
+      go.addEventListener("click", focusDashboardPlan);
+      stripCard.appendChild(go);
+    }
+
+    /* One signed strip: every term of the identity on one axis, zero in the
+       middle, sorted from what costs you most to what gains you most. The old
+       two-column ledger drew the same numbers twice under two headings. */
     const scored = sourceRows()
       .map(r => ({ r, v: eoVal(r), m: myMult(r), e: exposureOf(r) }))
-      .filter(p => p.e != null);
+      .filter(p => p.e != null && Math.abs(p.e) >= 0.08)
+      .sort((a, b2) => a.e - b2.e);
     if (!scored.length) {
-      ledgerCard.appendChild(emptyBox(
-        `no player has a ${f.short || f.label} EO and a readable squad role`));
+      stripCard.appendChild(el("p", "sub",
+        "No player has both a readable multiplier and an EO on this field."));
       return;
     }
     const max = Math.max(...scored.map(p => Math.abs(p.e)), 0.1);
-    const holes = scored.filter(p => p.e < 0).sort((a, b) => a.e - b.e).slice(0, 8);
-    const bets = scored.filter(p => p.e > 0).sort((a, b) => b.e - a.e).slice(0, 8);
-
-    const cols = el("div", "ledger");
-    /* Titled by the SIGN of the term, not by ownership: a captain the field
-       is also loaded on still lands on the "ahead" side, and calling that
-       column "your differentials" would be a lie about what the bar shows. */
-    cols.append(
-      column("Behind the field — it is heavier on him than you", holes, "heavy",
-             "Sorted by how much you concede for every point he scores."),
-      column("Ahead of the field — you are heavier on him than it", bets, "light",
-             "Sorted by how much you gain for every point he scores."));
-    ledgerCard.appendChild(cols);
-
-    function column(title, list, cls, why) {
-      const c = el("div", "lcol");
-      c.appendChild(el("h3", null, title));
-      c.appendChild(el("p", "sub", why));
-      if (!list.length) {
-        c.appendChild(el("p", "sub", "none — nothing on this side of zero."));
-        return c;
-      }
-      for (const p of list) {
-        const row = el("div", "lrow " + cls);
-        row.appendChild(faceImg(p.r.code, "avatar"));
-        const id = el("div", "lid");
-        id.appendChild(el("div", "lname", dispName(p.r)));
-        /* xPts beside the exposure term: "you concede −0.7 per point" is half
-           a multiplication — the expected points finish the thought (R1). The
-           value is the table's own consensus xpts column, no new joins; the
-           spread rides along because it is already on the row. */
-        id.appendChild(el("div", "sub",
-          `${p.r.pos ?? "?"} · ${p.r.team ?? "?"} · ${fmtPrice(p.r.price)} · ` +
-          `${f.short || f.label} EO ${pct(p.v)}` +
-          ` · you ${p.m.v}×${p.m.assumed ? "*" : ""}` +
-          (p.r.xpts != null
-            ? ` · ${fmt1(p.r.xpts)} xPts` +
-              (p.r.xpts_spread != null ? `±${fmt1(p.r.xpts_spread)}` : "") +
-              (res.xpts_gw != null ? ` gw${res.xpts_gw}` : "")
-            : "")));
-        const idTitle = [
-          p.m.assumed ? "multiplier inferred from your squad role" : null,
-          p.r.xpts != null
-            ? `consensus xPts across ${p.r.n_sources ?? "?"} sources — ` +
-              `the same column the table below shows`
-            : null,
-        ].filter(Boolean).join("\n");
-        if (idTitle) id.title = idTitle;
-        row.appendChild(id);
-        const barwrap = el("div", "lbar");
-        const bar = el("span");
-        bar.style.width = `${Math.max(3, Math.round(100 * Math.abs(p.e) / max))}%`;
-        barwrap.appendChild(bar);
-        row.appendChild(barwrap);
-        row.appendChild(el("div", "lval", signed(p.e)));
-        row.onclick = () => showDetail(p.r);
-        c.appendChild(row);
-      }
-      return c;
+    const strip = el("div", "xstrip");
+    let assumed = 0;
+    for (const p of scored) {
+      const neg = p.e < 0;
+      if (p.m.assumed) assumed++;
+      const row = el("div", "xrow " + (neg ? "neg" : "pos"));
+      row.appendChild(faceImg(p.r.code, "avatar"));
+      row.appendChild(el("span", "xnm", dispName(p.r)));
+      const track = el("span", "xtrack");
+      const fill = el("span", "xfill " + (neg ? "neg" : "pos"));
+      fill.style.width = `${Math.max(2, Math.round(50 * Math.abs(p.e) / max))}%`;
+      track.appendChild(fill);
+      row.appendChild(track);
+      row.appendChild(el("span", "xval " + (neg ? "neg" : "pos"), signed(p.e)));
+      row.title = `${dispName(p.r)}: you ${p.m.v}×${p.m.assumed ? " (inferred)" : ""}, ` +
+        `${fieldName(f)} EO ${pct(p.v)}` +
+        (p.r.xpts != null ? `, ${fmt1(p.r.xpts)} xPts` +
+          (res.xpts_gw != null ? ` gw${res.xpts_gw}` : "") : "") +
+        `\n${neg ? "You lose" : "You gain"} ${Math.abs(p.e).toFixed(2)} for ` +
+        `every point he scores.`;
+      row.tabIndex = 0;
+      row.setAttribute("role", "button");
+      row.setAttribute("aria-label", row.title);
+      row.onclick = () => showDetail(p.r);
+      row.onkeydown = ev => {
+        if (ev.key === "Enter" || ev.key === " ") {
+          ev.preventDefault(); showDetail(p.r);
+        }
+      };
+      strip.appendChild(row);
     }
+    stripCard.appendChild(strip);
+
+    const sum15 = scored.filter(p => p.r.in_squad === true)
+      .reduce((a, p) => a + p.e, 0);
+    caption(stripCard, null, [
+      `Every bar is one term of the rank identity: your multiplier minus ` +
+      `${f.label}'s effective ownership, always EO whichever measure the ` +
+      `charts below are showing. Squad read via ${res.squad.source}` +
+      (res.squad.gw != null ? ` at GW${res.squad.gw}` : "") +
+      (res.squad.has_multipliers ? "."
+        : ", which supplies roles but not multipliers — captain is taken as 2× " +
+          "and a triple-captain chip would make it 3×.") +
+      (assumed ? ` ${assumed} multipliers here are inferred from your squad ` +
+                 `role rather than read.` : ""),
+      `Σ over the players you hold is ${signed(sum15)}. Read it with the ` +
+      `identity, not as a score: every legal squad spends exactly 12 ` +
+      `multiplier units, so that sum equals 12 minus the field EO you DO ` +
+      `cover, and it RISES when the field EO you do not cover rises. The ` +
+      `headline above is the half of it that varies in the direction you ` +
+      `actually want to watch.`,
+      `Bars under 0.08 are left out: at that size the term is smaller than ` +
+      `the rounding on the field's own share.`,
+    ], "how exposure is computed");
   }
 
   // ---- cohort vs cohort: where the informed fields disagree -----------
@@ -1876,10 +1729,19 @@ export default async function view(host) {
     }
   }
 
+  const SPLIT = 20;                  // pp — what counts as a real disagreement
   function renderCompare() {
-    compareCard.textContent = "";
-    compareCard.appendChild(el("h2", null, "Where the informed fields disagree"));
     const opts = informedFields(measure);
+    ensureComparePair();
+    const splits = opts.length >= 2 ? sourceRows()
+      .map(r => ({ a: val(r, cmpA, measure), b: val(r, cmpB, measure) }))
+      .filter(p => p.a != null && p.b != null &&
+                   Math.abs(p.a - p.b) >= SPLIT).length : 0;
+    foldHead(compareCard, opts.length < 2
+      ? "Informed fields: only one publishes this measure"
+      : splits
+        ? `Informed fields split over ${SPLIT}pp on ${splits} players`
+        : `Informed fields agree inside ${SPLIT}pp on every player`);
     if (opts.length < 2) {
       compareCard.appendChild(emptyBox(
         `only ${opts.length} field publishes ${MEASURE[measure].label.toLowerCase()}`,
@@ -2122,396 +1984,127 @@ export default async function view(host) {
        `nonlinear axis would make identical splits look different sizes.`]);
   }
 
-  // ---- ownership momentum ---------------------------------------------
-  /* Per-gameweek EO movement, when there is more than one gameweek.
+  // ---- the armband swing -----------------------------------------------
+  /* OWNERSHIP MOMENTUM IS DEAD, AND MEASURED DEAD. Across the two stored
+     gameweeks the largest move in ownership anywhere in this selection is
+     1.1pp — noise wearing a trend's clothes, and the old card spent a whole
+     screen apologising for it. The CAPTAINCY channel moved 21 points in the
+     same window, off one player and onto another, and that is the live
+     question at a deadline. So this card draws cap% only, from
+     momentum.series[].points[].cap_pct, and states both gameweeks and the
+     population every time. */
+  const MIN_SWING = 1.0;             // pp — below this it is rounding
 
-     As of this build there is not. Every crawled cohort holds GW1 squads and
-     nothing else; LiveFPL's GW2 rows are byte-identical re-stamps of GW1, which
-     the panel measures rather than assumes and reports as `same_values_as_gw`.
-     One observation has no direction, so this card draws the OBSERVATION LEDGER
-     — which field has been measured at which gameweek, which of those are
-     copies, and when the next real point lands — instead of a line. A flat line
-     across a single point is a claim of stability, and nothing in the warehouse
-     supports that claim.
-
-     The movement path below is live code, not a placeholder: as soon as a field
-     ships per-gameweek values on the rows, the card switches to the slope
-     chart. It reads several plausible shapes because the key that will carry
-     them does not exist yet. */
-  let deadline = null;               // {gw, deadline_utc} once fetched
-  let momOpen = false;               // the folded ledger's open state, kept
-                                     // across redraws (deadline fetch redraws)
-
-  /* The panel's own momentum view when it publishes one: `available`, a
-     `reason` in its words, the gameweeks it has, and one series per player with
-     `own_pct` / `eo_pct` per gameweek. Normalised to [{r, s:[{gw, v}]}] so the
-     slope chart does not care which source it came from. */
-  function panelSeries() {
+  function capSwings() {
     const mo = res.momentum;
     if (!mo || !Array.isArray(mo.series) || !mo.series.length) return null;
-    const key = measure === "own" ? "own_pct" : "eo_pct";
-    const out = [];
+    const gws = [...new Set(mo.gws || [])].map(Number)
+      .filter(isFinite).sort((a, b) => a - b);
+    if (gws.length < 2) return null;
+    const a = gws[gws.length - 2], b = gws[gws.length - 1];
+    const list = [];
     for (const sr of mo.series) {
-      const pts = (sr.points || [])
-        .map(p => ({ gw: Number(p.gw), v: p[key] }))
-        .filter(p => isFinite(p.gw) && p.v != null)
-        .sort((a, b) => a.gw - b.gw);
-      if (pts.length < 2) continue;
-      out.push({ r: rowByCode(sr.code) ||
-                    { code: sr.code, name: sr.name || `#${sr.code}` }, s: pts });
+      const pa = (sr.points || []).find(p => Number(p.gw) === a);
+      const pb = (sr.points || []).find(p => Number(p.gw) === b);
+      if (!pa || !pb || pa.cap_pct == null || pb.cap_pct == null) continue;
+      list.push({ code: sr.code, name: sr.name || `#${sr.code}`,
+                  from: pa.cap_pct, to: pb.cap_pct,
+                  d: pb.cap_pct - pa.cap_pct,
+                  n: pb.n_managers ?? pa.n_managers ?? null });
     }
-    return out.length ? out : null;
+    list.sort((x, y) => Math.abs(y.d) - Math.abs(x.d));
+    return { a, b, list };
   }
 
-  function eoSeries(r, key) {
-    const m = r.fields?.[key] || {};
-    const raw = m.by_gw || m.series || m.history ||
-                (r.series && r.series[key]) || (r.by_gw && r.by_gw[key]) || null;
-    if (!raw) return null;
-    let pts = [];
-    if (Array.isArray(raw)) {
-      pts = raw.map(o => ({
-        gw: Number(o.gw ?? o.gameweek),
-        v: o[measure] ?? o.value ?? (typeof o === "number" ? o : null),
-      }));
-    } else if (typeof raw === "object") {
-      pts = Object.entries(raw).map(([gw, o]) => ({
-        gw: Number(gw),
-        v: typeof o === "number" ? o : (o?.[measure] ?? o?.value ?? null),
-      }));
-    }
-    pts = pts.filter(p => isFinite(p.gw) && p.v != null)
-             .sort((a, b) => a.gw - b.gw);
-    return pts.length >= 2 ? pts : null;
-  }
-
-  function renderMomentum() {
-    momentumCard.textContent = "";
-    momentumCard.appendChild(el("h2", null, "Ownership momentum"));
-    const f = byKey[fieldKey];
-    if (!f) { momentumCard.appendChild(emptyBox("no field selected")); return; }
-
-    const moving = panelSeries() || sourceRows()
-      .map(r => ({ r, s: eoSeries(r, fieldKey) }))
-      .filter(p => p.s);
-    if (moving.length >= 4) {
-      /* A trend exists — but of 38 gameweeks it may be ONE delta between the
-         first two, mostly fringe players. Until four gameweeks are observed
-         the section collapses to a line and the slopes live behind it
-         (R1+R3); at 4+ observations it opens itself for good. */
-      const gwObs = new Set(moving.flatMap(p => p.s.map(x => x.gw)));
-      if (gwObs.size >= 4) { renderSlopes(f, moving); return; }
-      const fold = el("details", "momfold");
-      fold.open = momOpen;
-      fold.addEventListener("toggle", () => { momOpen = fold.open; });
-      fold.appendChild(el("summary", null,
-        `${gwObs.size} of 4 gameweek observations — one early delta, thin ` +
-        `evidence of direction. Collapsed until four gameweeks are on file; ` +
-        `open for the early movers.`));
-      const mom = el("div");
-      fold.appendChild(mom);
-      momentumCard.appendChild(fold);
-      renderSlopes(f, moving, mom);
+  function renderArmband() {
+    armCard.textContent = "";
+    armCard.appendChild(el("h2", null, "The armband swing"));
+    const sw = capSwings();
+    if (!sw) {
+      const mo = res.momentum || {};
+      armCard.appendChild(emptyBox(
+        "one gameweek of stored squads, so nothing has moved yet",
+        (mo.reason ? mo.reason + " " : "") +
+        `A swing needs two stored gameweeks of the same managers' picks; a ` +
+        `flat line across one point would be a claim of stability nothing in ` +
+        `the warehouse supports.` +
+        (mo.next_gw != null ? ` The next point lands after GW${mo.next_gw}.` : "")));
       return;
     }
-
-    /* ---- the honest state: an observation ledger ---------------------- */
-    const mo = res.momentum || null;
-    const season = res.season;
-    const cov = (res.gws_covered || []).filter(c => c.season === season);
-    /* One lane per field the page can actually measure. A field's observed
-       gameweeks come from `gws_covered` where the panel names a metric for it,
-       and from its own `gw` stamp otherwise — the crawled cohorts have no
-       coverage row because they are not a provider feed. */
-    const lanes = allFields.map(fd => {
-      const rows = fd.metric
-        ? cov.filter(c => c.metric === fd.metric &&
-                          (!fd.provider || !c.provider || c.provider === fd.provider))
-        : [];
-      const gws = [...new Set(rows.map(c => c.gw)
-        .concat(fd.gw != null ? [fd.gw] : []))].sort((a, b) => a - b);
-      return { f: fd, gws };
-    }).filter(l => l.gws.length);
-    if (!lanes.length) {
-      momentumCard.appendChild(emptyBox(
-        "no field carries a gameweek stamp",
-        "Movement is measured between gameweeks; nothing on this page is " +
-        "stamped with one yet."));
+    const movers = sw.list.filter(x => Math.abs(x.d) >= MIN_SWING).slice(0, 6);
+    const n = sw.list.find(x => x.n != null)?.n ?? null;
+    if (!movers.length) {
+      armCard.appendChild(el("p", "sub capline",
+        `Between GW${sw.a} and GW${sw.b} no player's captaincy share among ` +
+        `the ${n ?? "measured"} managers moved as much as ${MIN_SWING}pp.`));
       return;
     }
+    const down = movers.filter(x => x.d < 0)[0];
+    const up = movers.filter(x => x.d > 0)[0];
+    armCard.appendChild(el("p", "sub capline",
+      up && down
+        ? `GW${sw.a} to GW${sw.b}: the ${n ?? "field's"} managers took the ` +
+          `armband off ${down.name} (${signed(down.d)}pp) and put it on ` +
+          `${up.name} (${signed(up.d)}pp).`
+        : `GW${sw.a} to GW${sw.b}: the field's captaincy moved most on ` +
+          `${movers[0].name} (${signed(movers[0].d)}pp of the ` +
+          `${n ?? "measured"} managers).`));
 
-    /* Two different scarcities, and conflating them was the first mistake this
-       card made. The WAREHOUSE may hold several gameweeks of a provider feed;
-       the PAYLOAD carries one value per player per field — the latest — so
-       there is nothing on the wire to difference against. Separately, the
-       crawled pools genuinely have one gameweek, because that is all that has
-       been played and stored. Both are stated, neither is dressed as the
-       other. */
-    const distinct = new Set();
-    for (const l of lanes)
-      for (const g of l.gws)
-        if (!(l.f.same_values_as_gw != null && g === l.f.gw)) distinct.add(g);
-    const crawlGws = [...new Set(lanes.filter(l => l.f.kind === "cohort")
-      .flatMap(l => l.gws))].sort((a, b) => a - b);
-    const restamped = lanes.filter(l => l.f.same_values_as_gw != null);
-    const nextGw = mo?.next_gw ?? deadline?.gw ?? (Math.max(...distinct, 0) + 1);
-    /* The panel's own deadline for that gameweek outranks the app-wide chip. */
-    const nextDeadline = mo?.next_deadline_utc ||
-      (deadline && deadline.gw === nextGw ? deadline.deadline_utc : null);
-    const needed = mo?.min_gws_for_a_trend ?? 2;
-    const have = mo?.gws?.length ?? 1;
-    const maxGw = Math.max(nextGw, ...lanes.flatMap(l => l.gws));
-    const minGw = Math.min(...lanes.flatMap(l => l.gws));
-
-    /* Under 4 observed movers there is no trend to draw, so the SECTION
-       COLLAPSES to one honest line (R1+R3): of 38 gameweeks this is one
-       delta at best, and a full card this early is distraction wearing a
-       chart. The observation ledger survives, behind the fold, unchanged. */
-    const fold = el("details", "momfold");
-    fold.open = momOpen;
-    fold.addEventListener("toggle", () => { momOpen = fold.open; });
-    fold.appendChild(el("summary", null,
-      `No trend yet — ${have} of ${needed} gameweeks measured. This card ` +
-      `becomes a movement chart at the second distinct observation` +
-      (nextGw != null ? ` (GW${nextGw})` : "") +
-      `; open for the observation ledger.`));
-    const mom = el("div");
-    fold.appendChild(mom);
-    momentumCard.appendChild(fold);
-
-    const tl = el("div", "stats");
-    const tile = (v, k, cls, title) => {
-      const d = el("div", "stat" + (cls ? " " + cls : ""));
-      d.appendChild(el("div", "v", v));
-      d.appendChild(el("div", "k", k));
-      if (title) d.title = title;
-      tl.appendChild(d);
-    };
-    tile(`${have} of ${needed}`, "gameweeks the field can be measured at", "bad",
-         "A direction needs two values for the same player on the same field. " +
-         "There is one, so there is nothing to difference against — whatever " +
-         "the warehouse holds behind it.");
-    tile(crawlGws.length
-      ? (crawlGws.length === 1 ? `GW${crawlGws[0]}` : `GW${crawlGws[0]}–${crawlGws[crawlGws.length - 1]}`)
-      : "none", "gameweeks of crawled squads",
-         crawlGws.length < 2 ? "bad" : null,
-         "Stored squads are the only observed field on this page; the rest are " +
-         "provider models. There is one week of them.");
-    tile(String(distinct.size), "gameweeks in the warehouse", null,
-         restamped.length
-           ? `Re-stamps are not counted: ${restamped[0].f.label} is stamped ` +
-             `GW${restamped[0].f.gw} but republishes ` +
-             `GW${restamped[0].f.same_values_as_gw}'s values unchanged, which ` +
-             `is one observation wearing two numbers.`
-           : "Counted across every field the page can measure.");
-    tile(`GW${nextGw}`, "next crawled point", null,
-         "When squads for this gameweek lock and the crawl stores them, this " +
-         "card becomes a movement chart on its own.");
-    mom.appendChild(tl);
-
-    /* The panel's own account of why, verbatim, when it gives one — it knows
-       what it looked for and did not find. The page adds only the argument for
-       drawing nothing at all rather than a line through a single point. */
-    const warn = el("p", "warnline");
-    warn.append(el("b", null, "No trend is drawn here. "),
-      mo?.reason
-        ? mo.reason + " "
-        : "This payload carries a single value per player per field, so no " +
-          "difference can be taken — and the crawled pools have only ever " +
-          "stored GW1 squads, while the LiveFPL series stamped GW2 carry GW1's " +
-          "values unchanged, which the panel checks byte for byte rather than " +
-          "trusting the stamp. ",
-      "A flat line across one observation would say “ownership is stable”; " +
-      "nothing here supports that claim, so nothing here draws it.");
-    mom.appendChild(warn);
-    mom.appendChild(el("p", "sub",
-      "What can be shown honestly instead: every gameweek each field has " +
-      "actually been measured at. Solid means a distinct observation; hollow " +
-      "with a tie-back means the feed republished an earlier week under a new " +
-      "number; the ring marks the values this page is using right now; dashed " +
-      "means not measured yet."));
-
-    const W = 860, L = 236, R = 34, T = 40, B = 44, ROW = 30;
-    const H = T + B + ROW * lanes.length;
-    const span = Math.max(1, maxGw - minGw);
-    const sx = g => L + (W - L - R) * ((g - minGw) / span);
-
-    const wrap = el("div", "chartwrap");
-    const svg = sv("svg", { viewBox: `0 0 ${W} ${H}`, class: "fieldmap ledgerchart",
-                            role: "img" });
-    svg.appendChild(sv("title", {},
-      `gameweeks each field has been measured at, ${season}`));
-
-    for (let g = minGw; g <= maxGw; g++) {
-      svg.appendChild(sv("line", { x1: sx(g), x2: sx(g), y1: T - 14,
-                                   y2: H - B + 2, class: "grid" }));
-      svg.appendChild(sv("text", { x: sx(g), y: H - B + 18, class: "tick" },
-                         `GW${g}`));
-    }
-    svg.appendChild(sv("text", { x: (L + W - R) / 2, y: H - 6, class: "axis" },
-      `gameweek · ${season}`));
-
-    /* The future column: where the next observation lands. Drawn when at least
-       one lane is still missing that gameweek, and never as a data mark — it is
-       the one dashed rule on the page and it means exactly "not yet". */
-    if (lanes.some(l => !l.gws.includes(nextGw)) && nextGw <= maxGw) {
-      svg.appendChild(sv("line", { x1: sx(nextGw), x2: sx(nextGw), y1: T - 14,
-                                   y2: H - B + 2, class: "futureline" }));
-      svg.appendChild(sv("text", { x: sx(nextGw), y: T - 20, class: "diaglabel end" },
-        nextDeadline
-          ? `GW${nextGw} squads lock ${new Date(nextDeadline)
-              .toUTCString().slice(5, 22)} UTC`
-          : `GW${nextGw} — not measured yet`));
-    }
-
-    lanes.forEach((l, i) => {
-      const cy = T + ROW * i + ROW / 2;
-      svg.appendChild(sv("line", { x1: L, x2: W - R, y1: cy, y2: cy,
-                                   class: "swarmbase" }));
-      const nm = sv("text", { x: L - 12, y: cy + 4, class: "dname end" },
-                    l.f.short || l.f.label);
-      nm.appendChild(sv("title", {}, `${l.f.label}\n% of: ${l.f.denominator}`));
-      svg.appendChild(nm);
-
-      const stamped = l.f.gw, copy = l.f.same_values_as_gw;
-      for (const g of l.gws) {
-        const isCopy = copy != null && g === stamped;
-        if (isCopy && l.gws.includes(copy))
-          svg.appendChild(sv("line", { x1: sx(copy), x2: sx(g), y1: cy, y2: cy,
-                                       class: "copyline" }));
-        const c = sv("circle", { cx: sx(g), cy, r: 5,
-                                 class: "obs" + (isCopy ? " copy" : "") });
-        c.appendChild(sv("title", {}, isCopy
-          ? `${l.f.label}: stamped GW${g}, values byte-identical to GW${copy} — ` +
-            `a republished settled week, not a new observation`
-          : `${l.f.label}: measured at GW${g}`));
-        svg.appendChild(c);
-        if (g === stamped)
-          svg.appendChild(sv("circle", { cx: sx(g), cy, r: 9, class: "served" }));
+    const scale = Math.max(...movers.map(x => Math.max(x.from, x.to)), 10);
+    const grid = el("div", "swing");
+    for (const x of movers) {
+      const row = el("div", "srow");
+      row.appendChild(el("span", "snm", x.name));
+      const bars = el("span", "sbars");
+      for (const [gw, v] of [[sw.a, x.from], [sw.b, x.to]]) {
+        const b = el("span", "sbar" + (gw === sw.b ? " now" : ""));
+        const fill = el("span");
+        fill.style.width = `${Math.max(1, Math.round(100 * v / scale))}%`;
+        b.append(el("span", "sgw", `GW${gw}`), fill,
+                 el("span", "sv", `${v.toFixed(1)}%`));
+        bars.appendChild(b);
       }
-      // A crawled pool will get its next point once GW squads lock.
-      if (l.f.kind === "cohort" && !l.gws.includes(nextGw))
-        svg.appendChild(sv("circle", { cx: sx(nextGw), cy, r: 5,
-                                       class: "obs future" }));
-    });
-
-    wrap.appendChild(svg);
-    mom.appendChild(wrap);
-
-    const leg = el("div", "maplegend");
-    leg.append(
-      el("span", "legkey obs-key", ""), el("span", "sub", "distinct observation"),
-      el("span", "legkey copy-key", ""), el("span", "sub", "re-stamp of an earlier week"),
-      el("span", "legkey served-key", ""), el("span", "sub", "the values on screen"),
-      el("span", "legkey future-key", ""), el("span", "sub", "not measured yet"));
-    mom.appendChild(leg);
-
-    const dl = el("p", "sub");
-    dl.append("This card turns into a movement chart the moment a second " +
-      "distinct observation exists on the same field. ");
-    if (nextDeadline) {
-      const when = new Date(nextDeadline);
-      dl.append("The GW", el("b", null, String(nextGw)),
-        " deadline is ", el("b", null, when.toUTCString().slice(0, 22) + " UTC"),
-        "; squads lock then and the crawl can store a second week.");
-    } else {
-      dl.append("No deadline is on the wire, so no date is claimed here.");
+      row.appendChild(bars);
+      row.appendChild(el("span", "sd " + (x.d < 0 ? "neg" : "pos"),
+        `${signed(x.d)}pp`));
+      row.title = `${x.name}: captained by ${x.from.toFixed(1)}% of the ` +
+        `${n ?? "?"} at GW${sw.a} and ${x.to.toFixed(1)}% at GW${sw.b}. ` +
+        `Both bars are the same population measured twice.`;
+      const r = rowByCode(x.code);
+      if (r) {
+        row.tabIndex = 0;
+        row.setAttribute("role", "button");
+        row.setAttribute("aria-label", row.title);
+        row.onclick = () => showDetail(r);
+        row.onkeydown = ev => {
+          if (ev.key === "Enter" || ev.key === " ") {
+            ev.preventDefault(); showDetail(r);
+          }
+        };
+      }
+      grid.appendChild(row);
     }
-    mom.appendChild(dl);
-    mom.appendChild(el("p", "sub",
-      `One thing the ledger shows that the rest of the page cannot: the ` +
-      `warehouse already holds earlier gameweeks for the provider feeds, but ` +
-      `this panel serves only the latest value per player, so the earlier ones ` +
-      `are not on the wire. Per-gameweek values on rows[].fields[…] would light ` +
-      `this card up without waiting for GW${nextGw}.`));
-  }
+    armCard.appendChild(grid);
 
-  /* The live path. One line per player between the last two gameweeks he was
-     measured at, coloured by the direction of the move, names direct-labelled
-     at the end each line arrives at — a slope chart, not a spaghetti of 200. */
-  function renderSlopes(f, moving, host2 = momentumCard) {
-    const ms = MEASURE[measure].short;
-    const items = moving.map(p => {
-      const s = p.s, a = s[s.length - 2], b2 = s[s.length - 1];
-      return { r: p.r, from: a, to: b2, d: b2.v - a.v };
-    }).filter(x => isFinite(x.d));
-    const top = [...items].sort((a, b2) => Math.abs(b2.d) - Math.abs(a.d))
-      .slice(0, 14);
-    const gwA = top[0].from.gw, gwB = top[0].to.gw;
-
-    host2.appendChild(el("p", "sub",
-      `How ${f.label}'s ${MEASURE[measure].label.toLowerCase()} moved between ` +
-      `GW${gwA} and GW${gwB}, for the ${top.length} players it moved most. A ` +
-      `player the field is piling into is a hole opening up; a player it is ` +
-      `leaving is a differential becoming cheap.`));
-
-    const W = 800, L = 90, R = 190, T = 30, B = 34;
-    const H = 420;
-    const hi = Math.max(10, ...top.flatMap(x => [x.from.v, x.to.v]));
-    const dom = Math.ceil(hi / 10) * 10;
-    const sy = v => H - B - (H - B - T) * (Math.max(0, v) / dom);
-    const xA = L + 40, xB = W - R - 40;
-    /* Anchored at the 90th percentile of the DISPLAYED rows, not of all
-       movers: anchored on the full set, every displayed row (they are the
-       biggest movers by construction) sat past saturation and the colour
-       channel carried nothing (R3). */
-    const ds = top.map(x => Math.abs(x.d)).sort((a, b2) => a - b2);
-    const dScale = Math.max(2, ds[Math.floor(ds.length * 0.9)] ?? ds[ds.length - 1]);
-
-    const wrap = el("div", "chartwrap");
-    const svg = sv("svg", { viewBox: `0 0 ${W} ${H}`, class: "fieldmap slopes",
-                            role: "img" });
-    const step = dom > 120 ? 40 : dom > 60 ? 20 : 10;
-    for (let v = 0; v <= dom; v += step) {
-      svg.appendChild(sv("line", { x1: L, x2: W - R, y1: sy(v), y2: sy(v),
-                                   class: "grid" }));
-      svg.appendChild(sv("text", { x: L - 8, y: sy(v) + 4, class: "tick end" },
-                         `${v}%`));
-    }
-    svg.appendChild(sv("text", { x: xA, y: T - 10, class: "dhead",
-                                 "text-anchor": "middle" }, `GW${gwA}`));
-    svg.appendChild(sv("text", { x: xB, y: T - 10, class: "dhead",
-                                 "text-anchor": "middle" }, `GW${gwB}`));
-    svg.appendChild(sv("text", { x: 0, y: 0, class: "axis",
-      transform: `translate(15 ${(T + H - B) / 2}) rotate(-90)` },
-      `${f.short || f.label} ${ms} %`));
-
-    const tip = makeTip(wrap);
-    const placed = [];
-    for (const x of [...top].sort((a, b2) => b2.to.v - a.to.v)) {
-      const col = rampColor(x.d, dScale);
-      const l = sv("line", { x1: xA, y1: sy(x.from.v), x2: xB, y2: sy(x.to.v),
-                             class: "slope", stroke: col });
-      l.addEventListener("mouseenter", () =>
-        tip.show(svg, W, H, xB, sy(x.to.v), (t, line) => {
-          t.appendChild(el("b", null, dispName(x.r)));
-          line(`GW${gwA}`, pct(x.from.v));
-          line(`GW${gwB}`, pct(x.to.v));
-          line("move", `${signed(x.d)}pp`);
-        }));
-      l.addEventListener("mouseleave", tip.hide);
-      l.addEventListener("click", () => showDetail(x.r));
-      svg.appendChild(l);
-      svg.appendChild(sv("circle", { cx: xA, cy: sy(x.from.v), r: 4,
-                                     class: "dend b" }));
-      svg.appendChild(sv("circle", { cx: xB, cy: sy(x.to.v), r: 4.5,
-                                     class: "dend a", fill: col }));
-      let y = sy(x.to.v) + 4;
-      while (placed.some(q => Math.abs(q - y) < 13)) y += 13;
-      placed.push(y);
-      svg.appendChild(sv("text", { x: xB + 10, y,
-        class: "plabel" + (x.r.in_squad === true ? " mine" : "") },
-        `${dispName(x.r)}  ${signed(x.d)}`));
-    }
-    wrap.appendChild(svg);
-    host2.appendChild(wrap);
-    caption(host2,
-      `The number is printed beside every name — colour is never the only ` +
-      `channel.`,
-      [`Colour saturates at ±${dScale.toFixed(0)}pp, the 90th percentile of ` +
-       `the move across the ${top.length} rows DRAWN (of ${items.length} ` +
-       `players with two observations) — rescaled to the displayed set so ` +
-       `the biggest movers, the only rows on screen, still differ in tint.`]);
+    caption(armCard, null, [
+      `Captaincy share only. Over the same window the largest move in ` +
+      `OWNERSHIP anywhere in this selection is ` +
+      `${(() => {
+        const mo = res.momentum;
+        let m = 0;
+        for (const sr of mo.series || []) {
+          const pa = (sr.points || []).find(p => Number(p.gw) === sw.a);
+          const pb = (sr.points || []).find(p => Number(p.gw) === sw.b);
+          if (pa && pb && pa.own_pct != null && pb.own_pct != null)
+            m = Math.max(m, Math.abs(pb.own_pct - pa.own_pct));
+        }
+        return m.toFixed(1);
+      })()}pp, which is why no ownership series is drawn: it would be a ` +
+      `chart of rounding. ${res.momentum?.reason || ""}`,
+      `Both gameweeks are the same ${n ?? "measured"} managers' stored squads, ` +
+      `so the two bars in a row are one population measured twice, never two ` +
+      `different fields on one axis.`,
+    ], "why captaincy and not ownership");
   }
 
   // ---- the table ------------------------------------------------------
@@ -2519,8 +2112,8 @@ export default async function view(host) {
   const bandRow = el("div", "toolbar");
   const tbody = el("div");
   function renderTableShell() {
-    tableCard.textContent = "";
-    tableCard.appendChild(el("h2", null, "Every player"));
+    foldHead(tableCard,
+      `Every player: ${sourceRows().length} rows, sortable`);
     tableCard.appendChild(el("p", "sub",
       "Sort by any column, filter down to the question you actually have, " +
       "click a name for where every field has him."));
@@ -2885,13 +2478,23 @@ export default async function view(host) {
         el("span", "eq-res " + (e >= 0 ? "pos" : "neg"),
            `${e > 0 ? "+" : e < 0 ? "−" : ""}${Math.abs(e).toFixed(2)}`));
       drawer.appendChild(line);
-      drawer.appendChild(el("p", "sub",
-        e >= 0
-          ? `For every point he scores you gain ${e.toFixed(2)} on ${f.label}.`
-          : `For every point he scores you lose ${Math.abs(e).toFixed(2)} to ` +
-            `${f.label}. That is the cost of not matching them` +
-            (r.in_squad === false ? "" : " at their multiplier") + `.` +
-        (m.assumed ? " (Multiplier inferred from your squad role.)" : "")));
+      /* The meaning of that minus sign is written down ONCE, on the exposure
+         strip. Every other multiplier on the page links to it rather than
+         saying it again in slightly different words. */
+      const line2 = el("p", "sub");
+      line2.append(
+        `For every point he scores you ${e >= 0 ? "gain" : "lose"} ` +
+        `${Math.abs(e).toFixed(2)}${e >= 0 ? " on " : " to "}${fieldName(f)}.` +
+        (m.assumed ? " (Multiplier inferred from your squad role.) " : " "));
+      const q = el("a", "coverlink", "what does this mean?");
+      q.href = "#template";
+      q.onclick = () => {
+        closeDrawer();
+        document.getElementById("tpl-exposure")
+          ?.scrollIntoView({ block: "center" });
+      };
+      line2.appendChild(q);
+      drawer.appendChild(line2);
     }
     if (r.xpts != null)
       drawer.appendChild(el("p", "sub",
@@ -2926,6 +2529,35 @@ export default async function view(host) {
         `${c.metric} · ${c.season} GW${c.gw} · ${c.players ?? "?"} players · ` +
         (c.live ? "live" : "last season")));
     body.appendChild(chips);
+    /* THE ONE DISCLOSURE RAIL. Four copies of this material used to sit beside
+       four different charts; nothing is deleted, it is all here, once. */
+    const fd = res.field_distinction;
+    if (fd?.measured_cohort && fd?.selection) {
+      const mc = fd.measured_cohort, sl = fd.selection;
+      const line = el("p", "sub");
+      line.append(el("b", null, "One box, two populations. "),
+        `The FIELD selector picks the measured cohort` +
+        (mc.n != null ? ` (${mc.n} managers` +
+          (mc.gw != null ? `, GW${mc.gw}` : "") + `)` : "") +
+        ` behind every chart and elite column above; the composer inside it ` +
+        `sets the segment selection` +
+        (sl.n != null ? ` (${sl.n} managers)` : "") +
+        ` behind the diff and the what-if simulator. They are different sets ` +
+        `— a level from one and a trend from the other never share a sentence.`);
+      if (fd.note) body.appendChild(el("p", "sub", fd.note));
+      body.appendChild(line);
+    }
+    const mlF = byKey[fieldKey];
+    const mlN = mlF?.mini_league_n ?? fd?.measured_cohort?.mini_league_n;
+    if (mlN && isCrawl(mlF))
+      body.appendChild(el("p", "sub",
+        `The field on screen includes your ${mlN} mini-league rivals — a set ` +
+        `the default selection excludes. Their picks correlate with yours, ` +
+        `which pulls every gap here towards zero.`));
+    body.appendChild(el("p", "sub",
+      `A crawled pool under ${MIN_N} managers is not selectable at all: with ` +
+      `n=4 every share is a multiple of 25% and the bars are quantization ` +
+      `noise wearing full visual weight.`));
     if (res.metrics_note) body.appendChild(el("p", "sub", res.metrics_note));
     if (res.cohort_note) body.appendChild(el("p", "sub", res.cohort_note));
     if (res.squad_note) body.appendChild(el("p", "sub", res.squad_note));
@@ -3004,21 +2636,22 @@ export default async function view(host) {
 
   // ---- go -------------------------------------------------------------
   function renderAll() {
-    renderTeach(); renderMeasure(); renderFields(); renderSegments();
-    renderFieldGroupCap();
-    renderComposition(); renderTiles();
-    renderMap(); renderSwarm(); renderLedger();
-    renderCompare(); renderMomentum();
-    renderTableShell(); renderFilters(); renderBands(); renderBody();
+    renderHeader();
     mountTools();
+    renderPitch(); renderStrip(); renderArmband();
+    renderMap(); renderCompare();
+    renderTableShell(); renderFilters(); renderBands(); renderBody();
+    mapCard.open = foldOpen.map;
+    compareCard.open = foldOpen.cmp;
+    tableCard.open = foldOpen.tbl;
   }
   renderAll();
   renderFoot();
 
-  /* The deadline only decorates the momentum ledger, so it is fetched after the
-     page is up and the card is redrawn if it arrives. */
-  getJSON("/api/deadline").then(d => { deadline = d; renderMomentum(); })
-    .catch(() => { /* the card already says no date is claimed */ });
+  /* The deadline is a stamp on the header line, so it is fetched after the page
+     is up and the line is redrawn if it arrives. */
+  getJSON("/api/deadline").then(d => { deadline = d; renderHeader(); })
+    .catch(() => { /* the line simply carries no deadline */ });
 
   /* The default field is the curated elite WITHOUT the owner's own mini-league.
      A panel that publishes `selection` has already applied its own default on

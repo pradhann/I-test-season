@@ -22,11 +22,7 @@
   --tpl-mid: var(--faint);   /* neutral midpoint: the two agree               */
 }
 
-/* ---- the teaching band -------------------------------------------------- */
-
-.teach { margin-bottom: 12px; }
-.teach > .sub { color: var(--muted); font-size: 12.5px; line-height: 1.55;
-                max-width: 78ch; margin: 8px 0 0; }
+/* ---- the identity, now only inside the drawer --------------------------- */
 
 .identity { display: flex; flex-wrap: wrap; align-items: center; gap: 7px;
             font-size: 14px; }
@@ -57,22 +53,7 @@
 .chip .cnt { margin-left: 6px; font-family: var(--mono); font-size: 10.5px;
              color: var(--faint); }
 .chip.src.on .cnt { color: inherit; opacity: .85; }
-.baseline { color: var(--muted); font-size: 12px; display: inline-flex;
-            align-items: center; gap: 5px; }
-.baseline b { color: var(--ink); font-weight: 600; }
 .chip.dim { color: var(--faint); }
-
-.toolbar.comp { align-items: center; }
-.compstrip { display: flex; gap: 2px; height: 9px; width: min(280px, 100%);
-             border-radius: 999px; overflow: hidden; }
-.cseg { background: color-mix(in oklab, var(--muted) 45%, var(--surface));
-        min-width: 2px; }
-.cseg.flag { background: var(--warn); }
-.chip.comp { font-size: 11px; }
-.cdot { display: inline-block; width: 7px; height: 7px; border-radius: 2px;
-        background: color-mix(in oklab, var(--muted) 45%, var(--surface));
-        vertical-align: middle; }
-.cdot.flag { background: var(--warn); }
 
 /* ---- the field map ------------------------------------------------------ */
 
@@ -130,30 +111,42 @@ svg.fieldmap .mark:hover { stroke: var(--ink); }
                                                           0 0 0 3px var(--line); }
 .legkey.out-key { border: 2px solid var(--tpl-mid); }
 
-/* ---- your exposure ledger ---------------------------------------------- */
+/* ---- exposure: one signed strip ----------------------------------------
+   Zero is a LINE down the middle, not a column boundary: a term that costs you
+   grows left of it and a term that pays you grows right of it, so the sign is
+   spatial before it is numeric and the old two-column ledger's duplicate
+   headings are unnecessary. Colour follows the same diverging pair as every
+   other gap on the page. */
 
-.ledger { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 26px; }
-@media (max-width: 900px) { .ledger { grid-template-columns: 1fr; } }
-.lcol h3 { margin: 6px 0 2px; font-size: 12px; letter-spacing: .04em;
-           color: var(--ink); }
-.lcol > .sub { color: var(--faint); font-size: 11.5px; margin: 0 0 8px; }
-.lrow { display: grid; grid-template-columns: 26px minmax(0, 1fr) 26% 52px;
-        align-items: center; gap: 9px; padding: 5px 7px; border-radius: 8px;
-        cursor: pointer; }
-.lrow:hover { background: var(--raised); }
-.lid { min-width: 0; }
-.lname { color: var(--ink); font-size: 13px; font-weight: 600;
-         white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.lid .sub { color: var(--faint); font-size: 10.5px; white-space: nowrap;
-            overflow: hidden; text-overflow: ellipsis; }
-.lbar { height: 8px; background: var(--raised); border-radius: 999px;
-        display: flex; overflow: hidden; }
-.lrow.heavy .lbar { justify-content: flex-end; }   /* grows against you */
-.lbar span { display: block; border-radius: 999px; }
-.lrow.heavy .lbar span { background: var(--tpl-heavy); }
-.lrow.light .lbar span { background: var(--tpl-light); }
-.lval { font: 600 13px/1 var(--mono); font-variant-numeric: tabular-nums;
-        text-align: right; color: var(--ink); }
+.means { color: var(--ink); font-size: 13px; line-height: 1.6;
+         max-width: 74ch; margin: 6px 0 2px;
+         padding: 9px 12px; border-radius: 9px;
+         background: var(--raised);
+         border-left: 3px solid var(--tpl-heavy); }
+.coverlink { display: inline-block; margin: 0 0 10px; font-size: 11.5px;
+             color: var(--s1); text-decoration: none; }
+.coverlink:hover { text-decoration: underline; }
+
+.xstrip { display: flex; flex-direction: column; gap: 1px; margin: 8px 0 2px; }
+.xrow { display: grid; align-items: center; gap: 8px;
+        grid-template-columns: 24px minmax(0, 128px) minmax(0, 1fr) 52px;
+        padding: 2px 4px; border-radius: 7px; cursor: pointer; }
+.xrow:hover, .xrow:focus-visible { background: var(--raised); outline: none; }
+.xrow:focus-visible { box-shadow: inset 0 0 0 1.5px var(--s1); }
+.xnm { color: var(--ink); font-size: 12.5px; font-weight: 600;
+       white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* The track is two equal halves with the zero rule between them. */
+.xtrack { position: relative; height: 9px; border-radius: 999px;
+          background: var(--raised); display: block; }
+.xtrack::after { content: ""; position: absolute; left: 50%; top: -2px;
+                 bottom: -2px; width: 1px; background: var(--line); }
+.xfill { position: absolute; top: 0; bottom: 0; border-radius: 999px; }
+.xfill.neg { right: 50%; background: var(--tpl-heavy); }
+.xfill.pos { left: 50%; background: var(--tpl-light); }
+.xval { font: 600 12.5px/1 var(--mono); font-variant-numeric: tabular-nums;
+        text-align: right; }
+.xval.neg { color: var(--tpl-heavy); }
+.xval.pos { color: var(--tpl-light); }
 
 /* ---- the table ---------------------------------------------------------- */
 
@@ -251,11 +244,6 @@ td.held .frac { margin-right: 4px; }
 .segcaveats .cav { color: var(--muted); font-size: 11.5px; line-height: 1.55; }
 .segcaveats .cav b { color: var(--ink); font-weight: 600; }
 
-/* Segments the reader took out stay in the strip as an outline, so the strip
-   shows what was removed as well as what is left. */
-.cseg.out { background: transparent;
-            box-shadow: inset 0 0 0 1px var(--line); }
-
 /* Hold the previous render while the panel recomputes — never a skeleton
    flash, never a layout jump. */
 .refetching .card { opacity: .55; transition: opacity .12s ease; }
@@ -272,27 +260,9 @@ td.held .frac { margin-right: 4px; }
             background: color-mix(in oklab, var(--warn) 8%, var(--surface));
             border: 1px solid color-mix(in oklab, var(--warn) 26%, var(--line)); }
 
-/* ---- the swarm ---------------------------------------------------------- */
-
-/* The map's `.end` rule lists its own four classes by name. Every chart added
-   since uses the same convention, so the modifier is generalised here rather
-   than re-listed per class — a right-aligned label that silently renders
-   left-aligned overprints the plot, which is exactly what it did once. */
+/* The map's `.end` rule lists its own four classes by name, so the modifier is
+   generalised here rather than re-listed per class. */
 svg.fieldmap text.end { text-anchor: end; }
-
-svg.fieldmap.swarm { max-height: 460px; }
-/* Leader from a direct label to its own mark. One shade above the grid — it has
-   to be followable, but it is chrome, not data. */
-svg.fieldmap .swarmlead { stroke: var(--faint); stroke-width: 1; opacity: .55; }
-svg.fieldmap .swarmbase { stroke: var(--line); stroke-width: 1; }
-svg.fieldmap .swarmmed { stroke: var(--muted); stroke-width: 2; opacity: .55; }
-svg.fieldmap .swarmpos { fill: var(--ink); font: 600 12px/1 var(--mono);
-                         letter-spacing: .06em; }
-svg.fieldmap .swarmann { fill: var(--ink); font-size: 11px; font-weight: 600; }
-svg.fieldmap .swarmsub { fill: var(--faint); font-size: 10px;
-                         font-family: var(--mono); }
-.legkey.med-key { width: 3px; height: 13px; border-radius: 1px;
-                  background: var(--muted); }
 
 /* ---- cohort vs cohort: the dumbbell ------------------------------------- */
 
@@ -321,27 +291,33 @@ svg.fieldmap .rowhit:hover { fill: color-mix(in oklab, var(--ink) 6%, transparen
 .legkey.a-key { background: var(--muted); }
 .legkey.b-key { background: var(--surface); border: 2px solid var(--muted); }
 
-/* ---- the observation ledger & the slope chart --------------------------- */
+/* ---- the armband swing -------------------------------------------------
+   Two bars per player, one per gameweek, on ONE shared scale — the same
+   population measured twice, never two fields sharing an axis. The delta
+   carries its own sign and its own colour, so neither channel is alone. */
 
-svg.fieldmap.ledgerchart { max-height: 340px; }
-svg.fieldmap .obs { fill: var(--good); stroke: var(--surface); stroke-width: 2; }
-svg.fieldmap .obs.copy { fill: var(--surface); stroke: var(--warn); }
-svg.fieldmap .obs.future { fill: var(--surface); stroke: var(--faint);
-                           stroke-dasharray: 3 3; }
-svg.fieldmap .served { fill: none; stroke: var(--s1); stroke-width: 1.5; }
-svg.fieldmap .copyline { stroke: var(--warn); stroke-width: 1.5; opacity: .5; }
-/* The one dashed rule on the page, and it means exactly "this has not happened
-   yet" — the grid stays solid everywhere. */
-svg.fieldmap .futureline { stroke: var(--faint); stroke-width: 1;
-                           stroke-dasharray: 4 4; }
-.legkey.obs-key { background: var(--good); }
-.legkey.copy-key { background: var(--surface); border: 2px solid var(--warn); }
-.legkey.served-key { background: transparent; box-shadow: 0 0 0 2px var(--s1); }
-.legkey.future-key { background: var(--surface);
-                     border: 2px dashed var(--faint); }
-
-svg.fieldmap .slope { stroke-width: 2; cursor: pointer; fill: none; }
-svg.fieldmap .slope:hover { stroke-width: 3.5; }
+.swing { display: flex; flex-direction: column; gap: 6px; margin: 8px 0 2px; }
+.srow { display: grid; align-items: center; gap: 10px;
+        grid-template-columns: minmax(0, 120px) minmax(0, 1fr) 62px;
+        padding: 3px 4px; border-radius: 7px; }
+.srow:hover, .srow:focus-visible { background: var(--raised); outline: none; }
+.srow:focus-visible { box-shadow: inset 0 0 0 1.5px var(--s1); }
+.snm { color: var(--ink); font-size: 12.5px; font-weight: 600;
+       white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sbars { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.sbar { display: grid; align-items: center; gap: 7px;
+        grid-template-columns: 34px minmax(0, 1fr) 46px; }
+.sbar > span:nth-child(2) { height: 9px; border-radius: 999px;
+                            background: color-mix(in oklab, var(--muted) 42%,
+                                                  var(--surface)); }
+.sbar.now > span:nth-child(2) { background: var(--s2); }
+.sgw { color: var(--faint); font: 10.5px/1 var(--mono); }
+.sv { color: var(--muted); font: 10.5px/1 var(--mono);
+      font-variant-numeric: tabular-nums; text-align: right; }
+.sd { font: 600 13px/1 var(--mono); font-variant-numeric: tabular-nums;
+      text-align: right; }
+.sd.neg { color: var(--tpl-heavy); }
+.sd.pos { color: var(--tpl-light); }
 
 /* ---- narrow screens ----------------------------------------------------- */
 /* The charts are viewBox-scaled, so they shrink rather than clip; below this
@@ -350,8 +326,7 @@ svg.fieldmap .slope:hover { stroke-width: 3.5; }
 @media (max-width: 620px) {
   .chartwrap { overflow-x: auto; }
   .chartwrap > svg.fieldmap { min-width: 560px; }
-  .chartwrap > svg.fieldmap.dumbbell,
-  .chartwrap > svg.fieldmap.ledgerchart { min-width: 640px; }
+  .chartwrap > svg.fieldmap.dumbbell { min-width: 640px; }
   .toolbar.cmp select { max-width: 100%; }
   .segstatus, .segnote { font-size: 11.5px; }
 }
@@ -377,24 +352,56 @@ svg.fieldmap .slope:hover { stroke-width: 3.5; }
 .availline { display: flex; align-items: center; gap: 2px; }
 .availline .avail { margin-left: 2px; }
 
-/* ---- the field/selection control group (R2) ------------------------------
-   The FIELD radio and WHO IS IN IT drawn as ONE bordered group, so the two
-   populations wearing the word "field" are visibly one linked choice. */
-.fieldgroup { border: 1px solid var(--line); border-radius: 10px;
-              padding: 8px 12px 10px; margin: 8px 0 10px;
-              background: color-mix(in oklab, var(--raised) 45%, var(--surface));
-              display: flex; flex-direction: column; gap: 2px; }
-.fieldgroup > .toolbar { margin: 4px 0; }
-.fgcap { display: flex; flex-direction: column; gap: 2px; }
-.fgcap .fgline { margin: 4px 0 0; max-width: 110ch; }
-.fgcap .fgml { margin: 2px 0 0; color: var(--warn); max-width: 104ch; }
-.fgcap .glyphkey { margin: 2px 0 0; color: var(--faint); font-size: 11px; }
+/* ---- the one-line field selector ---------------------------------------
+   The whole control is one summary line; the rows behind it are grouped by who
+   produced the number, and the segment composer is nested inside the single row
+   it composes rather than sitting beside it as a second filter. */
+
+.card.hdr { padding-top: 10px; padding-bottom: 10px; }
+details.fieldsel > summary { cursor: pointer; display: flex; flex-wrap: wrap;
+                             align-items: center; gap: 8px; padding: 2px 0;
+                             list-style: none; }
+details.fieldsel > summary::-webkit-details-marker { display: none; }
+details.fieldsel > summary::after { content: "▾"; color: var(--faint);
+                                    font-size: 11px; }
+details.fieldsel[open] > summary::after { content: "▴"; }
+details.fieldsel > summary:hover .fnow { color: var(--s1); }
+.fnow { color: var(--ink); font-size: 14px; font-weight: 650; }
+.hstamp { color: var(--muted); font: 11.5px/1.5 var(--mono);
+          font-variant-numeric: tabular-nums; }
+.hstamp.dl { color: var(--faint); }
+
+.fgroup { color: var(--faint); font-size: 10.5px; letter-spacing: .09em;
+          text-transform: uppercase; font-weight: 650; margin: 10px 0 2px; }
+.frow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.frow.on { background: color-mix(in oklab, var(--s1) 8%, transparent);
+           border-radius: 8px; }
+.fpick { display: flex; align-items: center; gap: 8px; width: 100%;
+         text-align: left; background: transparent; border: 1px solid transparent;
+         border-radius: 8px; padding: 5px 8px; cursor: pointer;
+         color: var(--muted); font: inherit; font-size: 12.5px; }
+.fpick:hover:not(:disabled) { border-color: var(--line); color: var(--ink); }
+.fpick:focus-visible { outline: 2px solid var(--s1); outline-offset: -2px; }
+.fmark { color: var(--s1); font-size: 11px; width: 10px; flex: none; }
+.fnm { color: var(--ink); font-weight: 600; min-width: 8.5em; }
+.fstamp { color: var(--faint); font: 11px/1.4 var(--mono);
+          font-variant-numeric: tabular-nums; }
+.fstamp.bad { color: var(--bad); }
+.fpick.lown { opacity: .6; cursor: default; }
+.fpick.lown .fnm { color: var(--muted); }
+
+details.composer { flex: 1 1 100%; margin: 0 0 6px 26px; }
+details.composer > summary { cursor: pointer; color: var(--s1);
+                             font-size: 11.5px; }
+details.composer > summary::after { content: " ▸"; color: var(--faint); }
+details.composer[open] > summary::after { content: " ▾"; }
+details.composer > summary:hover { text-decoration: underline; }
+.cbody { border-left: 2px solid var(--line); padding: 4px 0 4px 10px;
+         margin-top: 4px; display: flex; flex-direction: column; gap: 2px; }
+.cbody .glyphkey { color: var(--faint); font-size: 11px; margin: 4px 0 0; }
 
 /* ---- low-n guard (tri-consensus) ---------------------------------------- */
-.chip.src.lown { opacity: .55; }
-.chip.src.lown.on { opacity: .85; }
 .chip .cnt.bad { color: var(--bad); }
-.chip.src.on .cnt.bad { color: var(--bad); opacity: 1; }
 .chip .cnt.ml { color: var(--warn); }
 svg.fieldmap .lownwm { fill: var(--warn); opacity: .32;
                        font: 700 36px/1 var(--mono); letter-spacing: .06em; }
@@ -408,11 +415,19 @@ details.howto > summary { cursor: pointer; color: var(--faint);
 details.howto > summary:hover { color: var(--muted); }
 details.howto p.sub { margin: 6px 0 0 14px; max-width: 88ch; }
 
-/* ---- the collapsed momentum fold (R1+R3) --------------------------------- */
-details.momfold > summary { cursor: pointer; color: var(--muted);
-                            font-size: 12.5px; line-height: 1.5;
-                            max-width: 96ch; padding: 2px 0 6px; }
-details.momfold > summary:hover { color: var(--ink); }
+/* ---- the below-the-fold cards -------------------------------------------
+   Each summary states the card's own finding, so the fold costs the reader the
+   picture and never the conclusion. */
+details.card.fold > summary { cursor: pointer; color: var(--ink);
+                              font-size: 14px; font-weight: 650;
+                              line-height: 1.5; padding: 2px 0;
+                              list-style: none; display: flex; gap: 8px;
+                              align-items: baseline; }
+details.card.fold > summary::-webkit-details-marker { display: none; }
+details.card.fold > summary::before { content: "▸"; color: var(--faint);
+                                      font-size: 11px; }
+details.card.fold[open] > summary::before { content: "▾"; }
+details.card.fold > summary:hover { color: var(--s1); }
 
 /* ---- table craft --------------------------------------------------------- */
 /* Persistent sort affordance: the sorted column carries its direction, every
@@ -425,11 +440,61 @@ table.eotable th:focus-visible { outline: 2px solid var(--s1);
                                  outline-offset: -2px; }
 td.held .hsep { color: var(--faint); margin: 0 4px 0 0; }
 
-/* the tile's bridge to the Dashboard plan */
-.stat .coverlink { display: block; margin-top: 5px; font-size: 11px;
-                   color: var(--s1); text-decoration: none; }
-.stat .coverlink:hover { text-decoration: underline; }
-
 /* accessible marks: a focused circle shows the same emphasis hover does */
 svg.fieldmap .mark:focus-visible { outline: none; stroke: var(--ink);
                                    stroke-width: 2.5; }
+
+/* ---- the template XV ----------------------------------------------------
+   The pitch, the cards, the bench and the captain ring are app.css's own
+   (.pitch / .pcard / .bench / .pcard.cap) unmodified — this page adds only the
+   three ownership states and the exposure pill.
+
+   COLOUR ENCODES THE STATE, NOT THE SIZE. The number on the pill carries its
+   own sign and its own magnitude; the ring says which of the three
+   relationships you have with the shirt, and the two never compete. */
+
+.tmpl-xv .pcard, .shelf .pcard { transition: transform .12s; cursor: pointer; }
+.tmpl-xv .pcard:hover, .shelf .pcard:hover { transform: translateY(-3px); }
+.pcard:focus-visible { outline: 2px solid var(--s1); outline-offset: 2px; }
+
+/* matched: you start him too, so the shirt is simply correct and quiet */
+.pcard.tst-matched { box-shadow: 0 0 0 2px var(--good), var(--shadow); }
+/* you own him and bench him: you carry his EO without his points */
+.pcard.tst-benched { box-shadow: 0 0 0 2px var(--warn), var(--shadow);
+                     opacity: .82; }
+/* missing: the field starts him and you do not hold him at all */
+.pcard.tst-missing { box-shadow: 0 0 0 2px var(--bad), var(--shadow);
+                     opacity: .7; }
+.pcard.tst-missing .face { filter: grayscale(1); }
+/* the captain ring must still win where a state ring would cover it */
+.pcard.cap.tst-matched { box-shadow: 0 0 0 2px var(--warn),
+                                     0 0 0 4px var(--good), var(--shadow); }
+
+.pcard .term { display: block; margin: 2px 4px 0; border-radius: 5px;
+               font: 700 11px/1.6 var(--mono);
+               font-variant-numeric: tabular-nums; }
+.pcard .term.neg { color: var(--bad);
+                   background: color-mix(in oklab, var(--bad) 15%, var(--surface)); }
+.pcard .term.pos { color: var(--good);
+                   background: color-mix(in oklab, var(--good) 15%, var(--surface)); }
+.pcard .avail { margin: 2px 4px 0; font-size: 9.5px; }
+
+.tmpl-xv + .bench { align-items: center; }
+.bench .tlabel { min-width: 0; }
+
+/* the differential shelf: the same cards, smaller, on one scrolling row */
+.shelf { display: flex; gap: 8px; overflow-x: auto; padding: 8px 2px 6px; }
+.shelf .pcard { width: 74px; flex: none; cursor: pointer; }
+.shelf .pcard .face { height: 52px; }
+.shelf .dcap { display: block; margin: 2px 4px 0; border-radius: 5px;
+               font: 700 10px/1.6 var(--mono); }
+.shelf .dcap.neg { color: var(--tpl-heavy);
+                   background: color-mix(in oklab, var(--tpl-heavy) 15%, var(--surface)); }
+.shelf .dcap.pos { color: var(--tpl-light);
+                   background: color-mix(in oklab, var(--tpl-light) 15%, var(--surface)); }
+
+@media (max-width: 620px) {
+  .xrow { grid-template-columns: 24px minmax(0, 92px) minmax(0, 1fr) 46px; }
+  .srow { grid-template-columns: minmax(0, 84px) minmax(0, 1fr) 54px; }
+  .fpick { flex-wrap: wrap; }
+}

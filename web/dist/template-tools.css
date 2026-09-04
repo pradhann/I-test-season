@@ -1,64 +1,136 @@
-/* Squad-vs-field diff and what-if simulator. Owned by template-tools.js.
+/* The Move Card. Owned by template-tools.js.
  *
  * THEMES. Every colour here resolves to a token app.css defines for BOTH
  * themes — it declares the palette dark-first on bare :root and redefines it
  * under @media (prefers-color-scheme: light) plus [data-theme="light"] and
  * [data-theme="dark"], so all three theme states are covered. Nothing below
  * hard-codes a hex, which is what keeps the "readable in one theme only" bug
- * out of this file. Verified in the browser under both the attribute toggle
- * and the bare OS preference.
+ * out of this file.
  *
- * THE DIVERGING PAIR. The identity's term is diverging around zero, so it gets
- * two hues and a NEUTRAL GRAY midpoint — never a hue in the middle, never two
- * cool hues. Same pair, same meaning as the field map and the ledger above:
- * --s2 (warm) is "the field is ahead of you", --s1 (cool) is "you are ahead of
- * the field", --faint is the nothing-to-see midpoint. Re-checked with the
- * dataviz validator against both surfaces (all-pairs): worst ΔE 24.7 protan /
- * 33.6 normal on #ffffff, 25.9 / 30.4 on #16181b; lightness band, chroma
- * floor and contrast all PASS in both.
+ * THE ONE PLACE COLOUR ASSERTS A DIRECTION. Tracking exposure is a distance,
+ * so a move that grows it and a move that shrinks it are genuinely opposite —
+ * that is the single earned diverging encoding on this tab. It reuses the pair
+ * the rest of the page already teaches: --s2 (warm) is "further from the
+ * field", --s1 (cool) is "closer to it". The direction is ALSO spelled in the
+ * word beside the arrow and in the arrow's own shape, so nothing here is
+ * reachable by hue alone.
  *
- * WHY THE MARKS ARE NOT COLOURED. The dumbbell carries two quantities that are
- * the same KIND of number (your multiplier, the field's EO as a multiplier),
- * so they sit on one axis. Their identity is carried by SHAPE — a hollow ring
- * for the field, a filled square for you — with a legend and the value printed
- * on every row. The hue channel is spent entirely on the term, which is the
- * one thing the reader cannot see from position alone. Colouring the two
- * endpoints instead would have needed an accent/warm pair whose worst CVD
- * separation is ΔE 7.9 (deutan) on the dark surface: floor-grade, and there
- * was no reason to spend it.
+ * WHY THE DUMBBELL MARKS ARE NOT COLOURED. The two marks carry the same KIND
+ * of number (your multiplier, the field's EO as a multiplier), so they sit on
+ * one axis and their identity is carried by SHAPE — a hollow ring for the
+ * field, a filled square for you — with a legend and the value printed on
+ * every row.
  *
- * These class names are deliberately prefixed `tt`. The tab's two halves are
- * built in parallel and this file must not collide with, or depend on, a rule
- * in template.css.
+ * These class names are deliberately prefixed `tt` / `rm`. The tab's two
+ * halves are built in parallel and this file must not collide with, or depend
+ * on, a rule in template.css.
  */
 
 .tt {
-  --ttl-heavy: var(--s2);    /* the field is AHEAD of you: a hole            */
-  --ttl-light: var(--s1);    /* you are AHEAD of the field: a differential   */
+  --ttl-heavy: var(--s2);    /* the field is AHEAD of you                    */
+  --ttl-light: var(--s1);    /* you are AHEAD of the field                   */
   --ttl-mid: var(--faint);   /* neutral midpoint: the two agree              */
 }
 
 .tt h3 { margin: 16px 0 2px; font-size: 12px; letter-spacing: .04em;
          color: var(--ink); }
-.tt > .sub, .tt .ttcol > .sub { color: var(--faint); font-size: 12px;
-                                margin: 0 0 10px; line-height: 1.55; }
+.tt > .sub { color: var(--faint); font-size: 12px; margin: 0 0 10px;
+             line-height: 1.55; }
 .tt p.sub { max-width: 82ch; }
 .tt button.chip { font: inherit; font-size: 11px; font-weight: 600;
                   cursor: pointer; }
 .tt button.chip:hover { border-color: var(--muted); }
 
-/* ---- the dumbbell rows -------------------------------------------------- */
+/* ---- the move card ------------------------------------------------------ */
 
-.ttcols { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 26px; }
-@media (max-width: 1100px) { .ttcols { grid-template-columns: 1fr; } }
-.ttcol { min-width: 0; }
+.rm-lede { color: var(--muted); font-size: 13px; line-height: 1.6;
+           margin: 0 0 12px; max-width: 74ch; }
+.rm-lede .big { font: 650 19px/1 var(--mono); color: var(--ink);
+                font-variant-numeric: tabular-nums; cursor: help; }
+
+table.rm-moves { width: 100%; border-collapse: collapse; font-size: 12.5px;
+                 margin: 4px 0 8px; }
+.rm-moves th { text-align: left; font: 600 10px/1.6 inherit;
+               letter-spacing: .06em; text-transform: uppercase;
+               color: var(--faint); border-bottom: 1px solid var(--line);
+               padding: 0 8px 5px; }
+.rm-moves th.n, .rm-moves td.n { text-align: right; white-space: nowrap; }
+.rm-moves td { padding: 7px 8px; border-bottom: 1px solid var(--line);
+               vertical-align: top; }
+.rm-moves td.n { font-family: var(--mono); font-variant-numeric: tabular-nums;
+                 color: var(--ink); padding-top: 9px; }
+
+/* The rule between the two directions. It is a row, not a colour change, so
+   the split survives a monochrome print and a screen reader reads it. */
+.rm-sep td { font: 600 10px/1.6 inherit; letter-spacing: .06em;
+             text-transform: uppercase; color: var(--faint);
+             padding: 12px 8px 4px; border-bottom: 1px solid var(--line); }
+.rm-moves tr:first-child.rm-sep td { padding-top: 6px; }
+
+.rm-names { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.rm-names .arw { color: var(--faint); font-family: var(--mono); flex: none; }
+
+/* Each name is its own button into the drawer — the row is two players, and a
+   reader who wants one of them should not have to guess which the row opens. */
+.rm-p { display: inline-flex; align-items: center; gap: 5px; min-width: 0;
+        background: none; border: 1px solid transparent; border-radius: 7px;
+        padding: 2px 6px 2px 2px; cursor: pointer; color: var(--ink);
+        font: inherit; }
+.rm-p:hover { background: var(--raised); border-color: var(--line); }
+.rm-p:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.rm-p .avatar { width: 20px; height: 20px; flex: none; }
+.rm-p .n { font-weight: 600; white-space: nowrap; overflow: hidden;
+           text-overflow: ellipsis; max-width: 15ch; }
+.rm-p .m { font-family: var(--mono); font-size: 11px; color: var(--muted);
+           flex: none; }
+/* The man going out is struck through: he is leaving, and that is structure,
+   not decoration. His multiplier stays legible beside it. */
+.rm-p.out .n { text-decoration: line-through;
+               text-decoration-color: var(--faint); color: var(--muted); }
+
+.rm-who { color: var(--faint); font-size: 10.5px; font-family: var(--mono);
+          margin-top: 3px; padding-left: 4px; display: flex; gap: 6px;
+          flex-wrap: wrap; }
+.rm-who span { cursor: help; }
+.rm-who .dot { cursor: default; }
+
+/* The direction. Shape (▲/▼), word ("higher"/"lower") and hue all say the
+   same thing, so any one of the three is enough. */
+.rm-moves td.d { color: var(--ink); }
+.rm-moves td.d .arrow { font-size: 11px; margin-right: 3px; }
+.rm-moves td.d .mag { font-weight: 700; }
+.rm-moves td.d .w { display: block; font-family: inherit; font-size: 10px;
+                    letter-spacing: .04em; color: var(--muted);
+                    text-transform: uppercase; margin-top: 2px; }
+.rm-up td.d .arrow, .rm-up td.d .mag { color: var(--ttl-heavy); }
+.rm-down td.d .arrow, .rm-down td.d .mag { color: var(--ttl-light); }
+/* No movement claims no direction: neutral ink, no arrow, and the word says it. */
+.rm-flat td.d .mag { color: var(--faint); font-weight: 600; }
+
+.rm-moves tbody tr:not(.rm-sep):hover td { background: var(--raised); }
+/* the reader's own swap, answered in the same encoding as the generated rows */
+.rm-mine td { background: color-mix(in oklab, var(--accent) 9%, transparent); }
+.rm-mysep td { color: var(--accent-ink); }
+
+.rm-gen { color: var(--faint); font-size: 11.5px; line-height: 1.5;
+          margin: 0 0 8px; max-width: 82ch; }
+.rm-guard { color: var(--muted); font-size: 11.5px; margin: 10px 0 0; }
+
+.rm-manual { margin-top: 10px; }
+.rm-manual > summary, .howto > summary, .ttrail > summary {
+  cursor: pointer; color: var(--muted); font-size: 12px;
+  list-style-position: outside; padding: 3px 0; }
+.rm-manual > summary:hover, .howto > summary:hover, .ttrail > summary:hover {
+  color: var(--ink); }
+.howto { margin: 2px 0 4px; }
+
+/* ---- the dumbbell rows (the manual swap's before/after) ----------------- */
 
 .ttrow { display: grid; grid-template-columns: 26px minmax(0, 1fr) 30% 58px;
          align-items: center; gap: 9px; padding: 5px 7px; border-radius: 8px;
          cursor: pointer; }
 .ttrow:hover { background: var(--raised); }
 .ttrow:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.ttrow.flat { cursor: default; }
 
 .ttid { min-width: 0; }
 .ttname { display: flex; align-items: center; gap: 6px; min-width: 0; }
@@ -100,7 +172,7 @@
 .ttterm { font: 600 13px/1 var(--mono); font-variant-numeric: tabular-nums;
           text-align: right; color: var(--ink); }
 
-/* the shared multiplier scale, drawn once above each list */
+/* the shared multiplier scale, drawn once above the pair */
 .ttrow.ttaxrow { cursor: default; padding-bottom: 0; }
 .ttrow.ttaxrow:hover { background: none; }
 .ttscale { height: 16px; }
@@ -114,74 +186,22 @@
 .tttick:first-of-type i { transform: translateX(0); }
 .tttick:last-of-type i { transform: translateX(-100%); }
 
+.ttmoved { margin: 8px 0 6px; }
+
 /* ---- legend ------------------------------------------------------------- */
 
 .ttlegend { display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
-            margin: 10px 0 4px; }
-/* --muted: the legend names the ends of the colour scale, so it is read, not
-   glanced at. (6.0:1 light / 6.9:1 dark against the card.) */
+            margin: 6px 0 4px; }
+/* --muted: the legend names the marks, so it is read, not glanced at.
+   (6.0:1 light / 6.9:1 dark against the card.) */
 .ttlegend .sub { color: var(--muted); font-size: 11px; font-family: var(--mono); }
 .ttkey { display: inline-block; flex: none; margin-left: 8px; }
 .ttkey.field { width: 12px; height: 12px; border-radius: 50%;
                border: 2px solid var(--muted); background: var(--surface); }
 .ttkey.mine { width: 11px; height: 11px; border-radius: 2px;
               background: var(--ink); }
-.ttsep { width: 1px; align-self: stretch; min-height: 14px; flex: none;
-          background: var(--line); margin: 0 6px 0 14px; }
-.ttramp { display: flex; height: 10px; border-radius: 3px; overflow: hidden; }
-.ttramp span { width: 15px; }
 
-/* ---- the concentration swarm -------------------------------------------- */
-
-.ttchart { position: relative; margin: 6px 0 4px; }
-svg.ttswarm { width: 100%; height: auto; display: block; max-height: 300px;
-              overflow: visible; }
-
-svg.ttswarm .ttgrid { stroke: var(--line); stroke-width: 1; }
-/* --muted, not --faint: these ticks are the only way to read a dot's value
-   without hovering, so they clear 4.5:1 on both surfaces (6.0 light / 6.9
-   dark) rather than sitting at the 3.2 a decorative gray would give. The grid
-   lines behind them stay recessive on --line. */
-svg.ttswarm .tttickt { fill: var(--muted); font-size: 10px; text-anchor: middle;
-                       font-family: var(--mono); }
-svg.ttswarm .ttaxist { fill: var(--muted); font-size: 11px; text-anchor: middle;
-                       letter-spacing: .02em; }
-/* the quiet context layer: a 10% wash, never a saturated block */
-svg.ttswarm .ttband { fill: var(--accent); opacity: .1; }
-svg.ttswarm .ttmed { stroke: var(--accent); stroke-width: 2; opacity: .6; }
-svg.ttswarm .ttcap { fill: var(--muted); font-size: 10.5px; text-anchor: middle;
-                     letter-spacing: .08em; text-transform: uppercase; }
-svg.ttswarm .ttcap.sm { fill: var(--faint); font-size: 10px; letter-spacing: 0;
-                        text-transform: none; font-family: var(--mono); }
-/* Text wears text tokens; the mark beside it carries the value. */
-svg.ttswarm .ttlabel { fill: var(--muted); font-size: 11px; }
-svg.ttswarm .ttlabel.mine { fill: var(--ink); font-weight: 600; }
-svg.ttswarm .ttlabel.end { text-anchor: end; }
-svg.ttswarm .ttlabel.mid { text-anchor: middle; }
-/* Owned = filled, not owned = hollow — the same shape language as the field
-   map, so the hue channel stays free for the term. The 2px surface ring keeps
-   overlapping marks separable without drawing borders around them. */
-svg.ttswarm .ttdot { stroke-width: 2; }
-svg.ttswarm .ttdot.mine { stroke: var(--surface); }
-svg.ttswarm .ttdot.on { stroke: var(--ink); }
-svg.ttswarm .tthit { fill: transparent; cursor: pointer; }
-
-.tttip { position: absolute; pointer-events: none; opacity: 0;
-         transition: opacity .09s ease; min-width: 176px;
-         background: var(--raised); border: 1px solid var(--line);
-         border-radius: 9px; padding: 8px 10px; box-shadow: var(--shadow);
-         font-size: 12px; z-index: 5; }
-.tttip.on { opacity: 1; }
-.tttip b { color: var(--ink); font-size: 13px; }
-.tttip .sub { color: var(--faint); font-size: 11px; margin-bottom: 5px; }
-.tttip .tl { display: flex; justify-content: space-between; gap: 14px;
-             line-height: 1.6; }
-.tttip .tk { color: var(--muted); }
-.tttip .tv { color: var(--ink); font-family: var(--mono);
-             font-variant-numeric: tabular-nums; }
-@media (prefers-reduced-motion: reduce) { .tttip { transition: none; } }
-
-/* ---- the simulator ------------------------------------------------------ */
+/* ---- the candidate picker ----------------------------------------------- */
 
 .ttcands { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
            gap: 6px; margin: 4px 0 10px; }
@@ -197,56 +217,15 @@ svg.ttswarm .tthit { fill: transparent; cursor: pointer; }
 .ttcand .sub { color: var(--faint); font-size: 10.5px; white-space: nowrap;
                overflow: hidden; text-overflow: ellipsis; }
 
-.ttpair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
-          margin: 4px 0 12px; }
-@media (max-width: 760px) { .ttpair { grid-template-columns: 1fr; } }
-.ttside { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
-          background: var(--surface); min-width: 0; }
-.ttside.heavy { border-left: 3px solid var(--ttl-heavy); }
-.ttside.light { border-left: 3px solid var(--ttl-light); }
-.ttside .hd { display: flex; align-items: center; gap: 9px; margin-bottom: 8px;
-              min-width: 0; }
-.ttside .hd > div { min-width: 0; }
-.ttside .hd .n { font-size: 14px; font-weight: 700; color: var(--ink);
-                 white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ttside .hd .sub { color: var(--faint); font-size: 10.5px; white-space: nowrap;
-                   overflow: hidden; text-overflow: ellipsis; }
-.ttside .hd .chip { margin-left: auto; flex: none; }
+/* ---- the one honesty rail ----------------------------------------------- */
 
-/* the identity, one player at a time — same shapes and same colour meanings
-   as the equation the page teaches at the top, restated locally so this file
-   depends on no rule it does not own */
-.tteq { display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
-        font-size: 12px; margin: 3px 0; opacity: .6; }
-.tteq.lead { opacity: 1; font-size: 13.5px; }
-.tteq .l { color: var(--muted); font-size: 10.5px; letter-spacing: .08em;
-           text-transform: uppercase; width: 38px; flex: none; }
-.tteq .op { color: var(--faint); font-family: var(--mono); }
-.tteq .term { padding: 2px 8px; border-radius: 6px; font-weight: 600;
-              color: var(--ink); border: 1px solid var(--line);
-              font-family: var(--mono); }
-.tteq .term.mine { background: color-mix(in oklab, var(--accent) 22%, var(--surface)); }
-.tteq .term.theirs { background: color-mix(in oklab, var(--ttl-heavy) 22%, var(--surface)); }
-.tteq .res { font-family: var(--mono); font-weight: 700; padding: 2px 8px;
-             border-radius: 6px; border: 1px solid var(--line); color: var(--ink); }
-.tteq .res.pos { background: color-mix(in oklab, var(--ttl-light) 20%, var(--surface)); }
-.tteq .res.neg { background: color-mix(in oklab, var(--ttl-heavy) 20%, var(--surface)); }
-
-.ttmoved { margin: 2px 0 6px; }
-
-/* ---- the rail of things this tool does not model ------------------------ */
-
-.ttcaveats { border-top: 1px solid var(--line); margin-top: 14px;
-             padding-top: 10px; display: grid; gap: 6px; }
-/* The rail's heading is real prose, not a decorative label: --ink clears
-   4.5:1 on both surfaces where the app's --faint .tlabel sits at 3.2. */
-.ttcaveats .tlabel { color: var(--ink); }
+.ttcaveats { margin-top: 8px; display: grid; gap: 6px; }
 .ttcav { color: var(--muted); font-size: 11.5px; line-height: 1.5;
          max-width: 88ch; }
 .ttcav b { color: var(--ink); font-weight: 600; }
 /* The panel's own sentences about what may be recomputed client-side. The
    "may" list is behind a fold because it is reassurance, not a warning; the
-   "may not" list is never folded. */
+   "may not" list is never folded once the rail is open. */
 .ttsafe { margin-top: 4px; }
 .ttsafe > summary { cursor: pointer; color: var(--muted); font-size: 11.5px;
                     list-style-position: outside; }
@@ -267,7 +246,8 @@ svg.ttswarm .tthit { fill: transparent; cursor: pointer; }
   .ttrow.ttaxrow { grid-template-columns: 1fr; }
   .ttrow.ttaxrow > span { display: none; }
   .ttrow.ttaxrow > .tttrack { grid-column: 1 / -1; }
-  .tt .stats .stat { flex: 1 1 132px; }
   .ttlegend { gap: 6px; }
   .ttkey { margin-left: 2px; }
+  .rm-moves th, .rm-moves td { padding-left: 4px; padding-right: 4px; }
+  .rm-p .n { max-width: 10ch; }
 }
