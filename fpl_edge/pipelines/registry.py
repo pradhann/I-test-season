@@ -540,6 +540,28 @@ def run_content_analyse_backlog(ctx: TaskContext) -> TaskResult:
     return _run_analyse(ctx, since_days=0, label="full backlog")
 
 
+def run_forecast_refresh(ctx: TaskContext) -> TaskResult:
+    """Roll the committed points forecast forward to the next open horizon.
+
+    ``fpl recommend`` (the squad-anchored solver behind the dashboard) reads
+    ``forecast.parquet``, and only ``fpl solve`` writes it. Nothing scheduled
+    that, so on 2026-09-07 the forecast still covered GW3-7 while the solve
+    wanted GW4-8 and refused to score 32 unprojected players as zero. The
+    same never-scheduled-artefact failure as claim extraction and the
+    ratings refit. Points objective with a 30s MILP cap: the forecast is the
+    model fit, not the MILP, and the from-scratch plan this also writes is
+    read by nothing on the dashboard. Local warehouse only; no network gate.
+    """
+    step = run_step(
+        "forecast_refresh",
+        [ctx.python, "-m", "fpl_edge.cli.main", "solve", "--db", str(ctx.db_path),
+         "--mode", "points", "--seconds", "30", "--horizon", "5"],
+        timeout=1800,
+    )
+    outcome = "quiet" if step.ok else "error"
+    return TaskResult(outcome=outcome, detail=step.detail[-300:], steps=[step])
+
+
 def run_fixture_ratings_refit(ctx: TaskContext) -> TaskResult:
     """Refit the Dixon-Coles club split the Fixtures board colours from.
 
@@ -845,6 +867,14 @@ TASKS: tuple[Task, ...] = (
         stale_window=dt.timedelta(hours=3),
         run=run_fast_rss,
         family="content",
+    ),
+    Task(
+        id="forecast_refresh",
+        description="Daily model fit + committed points forecast for the next "
+                    "open horizon, the artefact the squad-anchored solver reads.",
+        due=Calendar(hour_utc=11, minute=30),
+        stale_window=dt.timedelta(hours=23),
+        run=run_forecast_refresh,
     ),
     Task(
         id="fixture_ratings_refit",
