@@ -143,3 +143,18 @@ def test_the_transfers_mode_maps_to_fpl_recommend_in_the_runner():
         "uv run fpl recommend --commit"
     # the existing modes still route to fpl solve, untouched
     assert solve_runner._default_command("both") == "uv run fpl solve --mode both"
+
+
+def test_the_artefact_records_whether_chips_were_allowed():
+    """The dashboard runs --no-chips (chips are the owner's decision); a plan
+    must say which regime it was solved under so a wildcard plan and a
+    transfer plan are never confused."""
+    import datetime as dt
+
+    from fpl_edge.cli.recommend import serialize_recommendation
+    rec = _rec() if "_rec" in globals() else None
+    assert rec is not None, "test module needs its recommendation fixture"
+    now = dt.datetime(2026, 9, 7, tzinfo=dt.UTC)
+    assert serialize_recommendation(rec, generated_at=now, max_candidates=20, seconds=150.0)["chips_allowed"] is True
+    assert serialize_recommendation(rec, generated_at=now, max_candidates=20, seconds=150.0,
+                                    chips_allowed=False)["chips_allowed"] is False

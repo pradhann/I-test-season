@@ -56,6 +56,7 @@ def _serialize_move(move) -> dict[str, Any]:
 def serialize_recommendation(
     rec,
     *,
+    chips_allowed: bool = True,
     generated_at: dt.datetime,
     max_candidates: int,
     seconds: float,
@@ -94,6 +95,9 @@ def serialize_recommendation(
         "n_candidates_screened": int(rec.n_candidates_screened),
         "n_candidates_solved": int(rec.n_candidates_solved),
         "solve_seconds": float(rec.solve_seconds),
+        # Whether the optimiser was allowed to spend a chip; a plan that plays one
+        # is a different decision from a transfer plan and renders as such.
+        "chips_allowed": bool(chips_allowed),
         "bounds": (
             f"candidates capped at {int(max_candidates)}/position, "
             f"{seconds:.0f}s per MILP; a capped solve is best-found, "
@@ -116,6 +120,13 @@ def recommend_cmd(
     ),
     candidates: int = typer.Option(
         8, "--candidates", help="Screened candidate moves that get a full solve."
+    ),
+    chips: bool = typer.Option(
+        True, "--chips/--no-chips",
+        help="Let the optimiser play a chip inside the horizon. Chips are the "
+             "owner's decision, not the objective's: with them allowed, the first "
+             "GW4 run proposed a 10-change wildcard for +51 xPts. The dashboard "
+             "runs --no-chips and shows chip plans separately.",
     ),
     commit: bool = typer.Option(
         True, "--commit/--no-commit",
@@ -178,11 +189,14 @@ def recommend_cmd(
             gw = int(state.gw)
         gws = list(range(gw, gw + horizon))
 
-        cfg = OptimizerConfig(
+        cfg_kwargs: dict[str, object] = dict(
             mode=ObjectiveMode.EXPECTED_POINTS,
             max_candidates_per_position=int(max_candidates),
             solver=SolverConfig(time_limit_s=float(seconds), mip_gap_rel=5e-3),
         )
+        if not chips:
+            cfg_kwargs["allowed_chips"] = frozenset()
+        cfg = OptimizerConfig(**cfg_kwargs)
         typer.echo(
             f"Solving GW{gws[0]}..{gws[-1]} — free optimum, roll, and "
             f"{int(candidates)} candidate moves (≤{seconds:.0f}s each)…"
@@ -218,7 +232,7 @@ def recommend_cmd(
     if commit:
         payload = serialize_recommendation(
             rec, generated_at=now, max_candidates=int(max_candidates),
-            seconds=float(seconds),
+            seconds=float(seconds), chips_allowed=bool(chips),
         )
         out = root / "data" / "warehouse" / TRANSFER_PLAN_NAME
         out.parent.mkdir(parents=True, exist_ok=True)

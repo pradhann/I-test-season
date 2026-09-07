@@ -149,7 +149,13 @@ def _default_command(mode: str) -> str:
     # "transfers" is `fpl recommend`: the current-squad transfer plan, not the
     # from-scratch ideal-squad solve. Same runner, same single-flight rules.
     if mode == "transfers":
-        return "uv run fpl recommend --commit"
+        # Squad-anchored solver. 60s per MILP found no incumbent on the GW4-8
+        # problem (2026-09-07); 150s x 20 candidates solved all nine in 238s.
+        # --no-chips: chips are the owner's decision, not the objective's (with
+        # them allowed it wildcarded for +51 on the first run). The forecast it
+        # reads is refreshed daily by forecast_refresh, never here.
+        return ("uv run fpl recommend --commit --seconds 150 "
+                "--max-candidates 20 --no-chips")
     return f"uv run fpl solve --mode {shlex.quote(mode)}"
 
 
