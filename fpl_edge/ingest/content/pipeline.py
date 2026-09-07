@@ -8,6 +8,8 @@ Run it with::
     uv run python -m fpl_edge.ingest.content.pipeline transcribe --dry-run
     uv run python -m fpl_edge.ingest.content.pipeline transcribe --limit 5 --budget-s 900
     uv run python -m fpl_edge.ingest.content.pipeline analyze --since 21 --budget-s 1800
+    uv run python -m fpl_edge.ingest.content.pipeline repair-index
+    uv run python -m fpl_edge.ingest.content.pipeline repair-index --apply
     uv run python -m fpl_edge.ingest.content.pipeline link-identities
     uv run python -m fpl_edge.ingest.content.pipeline score
     uv run python -m fpl_edge.ingest.content.pipeline consensus --gw 1
@@ -378,12 +380,73 @@ def _writer(db: str):
     return LeasedWarehouse(db, lock_timeout_s=120.0)
 
 
+#: Substrings that mean "somebody else holds the write lock" -- the one
+#: condition worth retrying. Matched against the lowercased exception text.
+#:
+#: This list is deliberately specific. It used to be the two words ``lock``
+#: and ``conflict``, and ``conflict`` matched DuckDB's own internal machinery:
+#: a genuine ``INTERNAL Error: Invalid node type for GetChildInternal: 48``
+#: raised from ``ART::VerifyConstraint`` -> ``ConflictManager`` contains the
+#: substring "conflict", so an index failure was retried five times as if it
+#: were contention and then reported as ``could not take the write lock`` --
+#: a message naming the wrong cause, which is worse than no message.
+#: Both DuckDB's own wording ("Could not set lock on file ... Conflicting
+#: lock is held", verified against a real cross-process collision) and
+#: ``warehouse.WarehouseLockedError``'s wrapper are covered, because the
+#: wrapper is what this package actually sees.
+_CONTENTION_MARKERS: tuple[str, ...] = (
+    "could not set lock on file",
+    "conflicting lock is held",
+    "is locked by another process",
+    "database is locked",
+    "lock timeout",
+    "waiting for the lock",
+    "transactioncontext error",
+    "write-write conflict",
+)
+
+
+#: Engine faults that a fresh connection has a real chance of surviving.
+#:
+#: DuckDB checks a primary key through an ART index that is rebuilt from the
+#: WAL when the file is opened. On 2026-09-03 that index answered
+#: ``INTERNAL Error: Invalid node type for GetChildInternal: 48`` and
+#: ``Failed to delete all rows from index`` for ``content_analysis`` on three
+#: consecutive attempts, and round-tripped perfectly twenty minutes later on
+#: the same file (``pipeline repair-index`` is the check). Every write here
+#: opens its own short-lived connection, so a retry is a genuinely different
+#: attempt rather than the same broken handle used twice -- and the first of
+#: these errors is FATAL, which means NOT retrying costs the whole run.
+#:
+#: This is a retry, not a repair. If every attempt fails, the error is raised
+#: with its real text and ``pipeline repair-index --apply`` rebuilds the
+#: table; nothing here pretends the write succeeded.
+_TRANSIENT_ENGINE_MARKERS: tuple[str, ...] = (
+    "invalid node type",
+    "failed to delete all rows from index",
+    "database has been invalidated",
+)
+
+
+def _is_contention(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return any(marker in text for marker in _CONTENTION_MARKERS)
+
+
+def _is_transient_engine_fault(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return any(marker in text for marker in _TRANSIENT_ENGINE_MARKERS)
+
+
 def _write_with_retry(db: str, fn, *, attempts: int = 5) -> None:
     """Run ``fn(warehouse)`` inside a short lease, retrying on contention.
 
     Losing a race for the write lock is expected here, not exceptional, so it
     backs off and tries again instead of throwing away a model call that has
-    already been paid for.
+    already been paid for. Anything that is NOT contention is raised
+    immediately and unchanged -- a corrupted index, a constraint violation and
+    a busy neighbour are three different problems and only one of them is
+    fixed by waiting.
     """
     import random
     import time
@@ -393,15 +456,44 @@ def _write_with_retry(db: str, fn, *, attempts: int = 5) -> None:
         lease = _writer(db)
         try:
             fn(lease)
+            # Fold the WAL into the database file before releasing the lease.
+            #
+            # This is the mitigation for the failure that cost 2026-09-01
+            # through -09-03: DuckDB rebuilds a primary-key ART index by
+            # REPLAYING the WAL every time the file is opened for writing, and
+            # on 2026-09-03 that replay started answering ``Corrupted unique
+            # ART index "PRIMARY_content_analysis_4": encountered an existing
+            # gated leaf`` -- fatally, to every writer, so the whole warehouse
+            # became unopenable until the WAL was quarantined. A checkpoint
+            # ends each write with the index materialised in the file, so the
+            # next open has almost no index replay to get wrong.
+            #
+            # Best-effort on purpose: a checkpoint that cannot run (another
+            # reader mid-query) must not undo a write that succeeded.
+            try:
+                lease.sql("CHECKPOINT")
+            except Exception as ckpt:  # noqa: BLE001 - write already committed
+                print(f"  note  checkpoint after the write did not run "
+                      f"({type(ckpt).__name__}: {str(ckpt)[:100]}); the write "
+                      f"itself is committed", flush=True)
             return
         except Exception as exc:  # retried on contention, re-raised otherwise
             last = exc
-            if "lock" not in str(exc).lower() and "conflict" not in str(exc).lower():
+            if not (_is_contention(exc) or _is_transient_engine_fault(exc)):
                 raise
             time.sleep(min(30.0, 2.0 ** attempt) * (0.5 + random.random()))
         finally:
             lease.release()
-    raise RuntimeError(f"could not take the write lock after {attempts} tries") from last
+    # Name the error that actually kept happening. "could not take the write
+    # lock after 5 tries" on its own has sent two investigations to the wrong
+    # place; the last exception is chained AND quoted.
+    what = ("the write lock was busy" if _is_contention(last)
+            else "the database engine kept failing "
+                 "(try `pipeline repair-index --apply`)")
+    raise RuntimeError(
+        f"gave up writing after {attempts} tries: {what}. The last attempt "
+        f"failed with {type(last).__name__}: {str(last)[:300]}"
+    ) from last
 
 
 def cmd_analyze(args: argparse.Namespace) -> int:
@@ -547,6 +639,16 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         default_gw = int(inferred[1]) if inferred else 1
         season = inferred[0] if inferred else "2026-27"
         claims = []
+        # Initialised here, not only inside the branch below. `_write` closes
+        # over `insights`, and a non-scoreable item (every show-notes row --
+        # 432 of the 643 in this backlog) skipped the branch entirely, so the
+        # closure raised ``NameError: cannot access free variable 'insights'``
+        # and, before the per-item guard in the loop, took the whole run down
+        # with it. An analyse pass could therefore never get past its first
+        # show-notes item, which is the second reason -- alongside there being
+        # no scheduled analyse task at all -- that this backlog sat at 122
+        # analyses for a week.
+        insights: list = []
         if is_scoreable(row.text_source):
             item = ContentItem(
                 item_id=row.item_id, source_key=row.source_key, creator=row.creator,
@@ -629,7 +731,19 @@ def cmd_analyze(args: argparse.Namespace) -> int:
                     print(f"  none  {took:5.1f}s  {row.depth:<10} "
                           f"{row.creator[:22]:<22} {row.title[:44]}", flush=True)
                     continue
-                persist(row, analysis)
+                try:
+                    persist(row, analysis)
+                except Exception as exc:  # noqa: BLE001 - one bad write
+                    # The same rule the model call already follows: one item
+                    # that cannot be stored is one item, not the end of the
+                    # run. Losing the remaining budget to a single failed
+                    # write is how a 644-item backlog stays a 644-item
+                    # backlog. Nothing was stored, so the item is still
+                    # queued and the next firing retries it.
+                    failed += 1
+                    print(f"  FAIL  store {type(exc).__name__}: "
+                          f"{str(exc)[:160]}", flush=True)
+                    continue
                 print(f"  ok    {took:5.1f}s  {row.depth:<10} "
                       f"{row.creator[:22]:<22} {row.title[:44]}", flush=True)
             for future in pending:
@@ -1034,6 +1148,7 @@ def cmd_transcribe(args: argparse.Namespace) -> int:
     asr_wall = 0.0
     segments_written = 0
     stale_dropped = 0
+    stale_cleanup_failed = 0
     refused: str | None = None
     # The gate's below-threshold verdicts ride the same skip-ledger write as
     # the loop's own skips (the finally block below).
@@ -1128,12 +1243,31 @@ def cmd_transcribe(args: argparse.Namespace) -> int:
                 continue
 
             def _write(wh, _id=item_id, _res=result, _der=derivation):
-                nonlocal segments_written, stale_dropped
+                nonlocal segments_written
                 segments_written += asr.store_transcription(
                     wh, _id, _res, derivation=_der)
-                stale_dropped += asr.stale_analyses(wh, _id)
 
             _write_with_retry(args.db, _write)
+
+            # Deliberately a SECOND lease, not part of the write above. The
+            # transcript is the expensive thing -- minutes of GPU per episode
+            # -- and dropping the now-stale show-notes analysis is a tidy-up
+            # that costs nothing to defer. Sharing one transaction meant a
+            # failure inside content_analysis rolled the transcript back and
+            # exited the whole run: that is what the 2026-09-01 and -09-02
+            # nightly failures were, both of them ~40 minutes in.
+            def _drop_stale(wh, _id=item_id):
+                nonlocal stale_dropped
+                stale_dropped += asr.stale_analyses(wh, _id)
+
+            try:
+                _write_with_retry(args.db, _drop_stale)
+            except Exception as exc:  # noqa: BLE001 - tidy-up, never the run
+                stale_cleanup_failed += 1
+                print(f"  warn  transcript stored; stale-analysis cleanup "
+                      f"failed ({type(exc).__name__}: {str(exc)[:120]}). "
+                      f"Re-run `analyze --retry-skipped` to refresh it.",
+                      flush=True)
             done += 1
             print(f"  ok    {derivation:<8} {str(row.published_at)[:10]}  "
                   f"{row.creator[:20]:<20} {result.render()}", flush=True)
@@ -1161,6 +1295,10 @@ def cmd_transcribe(args: argparse.Namespace) -> int:
     print(f"skipped:         {skipped} items with no audio or no captions")
     print(f"stale analyses:  {stale_dropped} show-notes reads deleted so "
           f"`analyze` re-reads the transcript (re-run analyze to refill)")
+    if stale_cleanup_failed:
+        print(f"cleanup failed:  {stale_cleanup_failed} items kept their "
+              f"transcript but not their stale-analysis deletion; those items "
+              f"still show a show-notes read until analyze re-reads them")
     if asr_wall > 0:
         print(f"ASR rate:        {audio_s / 60:.1f} min of audio in "
               f"{asr_wall / 60:.1f} min of transcription = "
@@ -1190,6 +1328,169 @@ def cmd_retention(args: argparse.Namespace) -> int:
     if args.dry_run:
         print("\n--dry-run: nothing deleted")
     return 0
+
+
+#: Tables this package owns that carry a primary key, and therefore an ART
+#: index that can rot. Verified and repaired by ``repair-index``.
+_INDEXED_TABLES: tuple[str, ...] = (
+    "content_item", "content_claim", "content_analysis", "content_insight",
+    "content_analysis_skip", "content_transcribe_skip", "content_source",
+    "transcript_segment", "transcript_provenance", "content_item_asset",
+)
+
+
+def _index_is_healthy(con, table: str) -> tuple[bool, str]:
+    """Round-trip ONE existing row through the primary-key index, then undo it.
+
+    DuckDB checks a primary key by walking an ART index that is persisted
+    alongside the data, and that index can end up disagreeing with the rows
+    it points at. When it does, reads and appends of untouched key ranges
+    keep working, so every count and every SELECT says the table is fine --
+    the failure only appears the moment something DELETEs or REPLACEs a row
+    that lives in the broken part of the tree, and it appears as
+    ``Invalid Input Error: Failed to delete all rows from index. Only deleted
+    0 out of 1 rows``, which is FATAL: it invalidates the connection and takes
+    the whole process with it.
+
+    So the probe has to be a real delete. It is wrapped in a transaction that
+    is always rolled back, and it is the only way to answer the question
+    without waiting for a nightly job to answer it for us.
+    """
+    cols = [r[0] for r in con.execute(
+        "SELECT column_name FROM duckdb_constraints() c, "
+        "  UNNEST(c.constraint_column_names) AS t(column_name) "
+        "WHERE c.table_name = ? AND c.constraint_type = 'PRIMARY KEY'",
+        [table]).fetchall()]
+    if not cols:
+        return True, "no primary key"
+    where = " AND ".join(f"{c} IS NOT DISTINCT FROM ?" for c in cols)
+    row = con.execute(
+        f"SELECT {', '.join(cols)} FROM {table} LIMIT 1").fetchone()
+    if row is None:
+        return True, "empty table"
+    try:
+        con.execute("BEGIN")
+        con.execute(f"DELETE FROM {table} WHERE {where}", list(row))
+        con.execute("ROLLBACK")
+        return True, f"index round-trip ok on {dict(zip(cols, row))}"
+    except Exception as exc:  # noqa: BLE001 - the failure IS the answer
+        return False, f"{type(exc).__name__}: {str(exc)[:200]}"
+
+
+def _rebuild_table(con, table: str) -> int:
+    """Recreate ``table`` from its own rows, so its indexes are built fresh.
+
+    The DDL is DuckDB's own ``duckdb_tables().sql``, not a copy of the
+    migration, so a table that has been ALTERed since is rebuilt as it
+    actually is rather than as it was first written.
+    """
+    ddl = con.execute(
+        "SELECT sql FROM duckdb_tables() WHERE table_name = ?",
+        [table]).fetchone()
+    if ddl is None:
+        raise KeyError(f"no table {table!r}")
+    tmp = f"{table}__rebuild"
+    create = ddl[0].replace(f"CREATE TABLE {table}(", f"CREATE TABLE {tmp}(", 1)
+    if tmp not in create:
+        raise RuntimeError(f"could not retarget the DDL for {table!r}: {ddl[0][:120]}")
+    con.execute(f"DROP TABLE IF EXISTS {tmp}")
+    con.execute("BEGIN")
+    con.execute(create)
+    con.execute(f"INSERT INTO {tmp} SELECT * FROM {table}")
+    n = con.execute(f"SELECT count(*) FROM {tmp}").fetchone()[0]
+    con.execute(f"DROP TABLE {table}")
+    con.execute(f"ALTER TABLE {tmp} RENAME TO {table}")
+    con.execute("COMMIT")
+    con.execute("CHECKPOINT")
+    return int(n)
+
+
+def cmd_repair_index(args: argparse.Namespace) -> int:
+    """Verify -- and with --apply, rebuild -- the primary-key indexes.
+
+    Written because a corrupt index on ``content_analysis`` cost this project
+    a week of stale data and gave no usable error while doing it. The nightly
+    transcription failed on 2026-09-01 and -09-02 forty minutes in, with a
+    ledger note that was three lines of a DuckDB DataChunk dump; the analyse
+    step failed the same way. Both were the same delete-through-a-broken-ART,
+    and nothing in the system could say so.
+
+    Verification is the default and it writes nothing. ``--apply`` rebuilds
+    only the tables that failed, and reports the row count each way so a
+    rebuild that lost a row is visible immediately rather than later.
+    """
+    from fpl_edge.store.warehouse import LeasedWarehouse
+
+    tables = ([t.strip() for t in args.table.split(",") if t.strip()]
+              if args.table else list(_INDEXED_TABLES))
+    lease = LeasedWarehouse(args.db, lock_timeout_s=120.0)
+    broken: list[tuple[str, str]] = []
+    try:
+        con = lease._con
+        present = {r[0] for r in con.execute(
+            "SELECT table_name FROM duckdb_tables()").fetchall()}
+        for table in tables:
+            if table not in present:
+                print(f"  --      {table:<26} not in this warehouse")
+                continue
+            ok, why = _index_is_healthy(con, table)
+            print(f"  {'ok' if ok else 'BROKEN':<7} {table:<26} {why}")
+            if not ok:
+                broken.append((table, why))
+            elif args.force:
+                # A round-trip that passes is NOT proof the index is sound:
+                # this corruption is key-range-local, so a probe on a healthy
+                # branch says "ok" while a delete two keys away is still
+                # fatal. --force rebuilds anyway, which is what you want after
+                # recovering a warehouse whose WAL replay failed on this index.
+                broken.append((table, "forced rebuild"))
+        print()
+        if not broken:
+            print(f"{len(tables)} table(s) checked, every primary-key index "
+                  f"round-tripped. Nothing to repair.")
+            return 0
+        failed = [t for t, why in broken if why != "forced rebuild"]
+        if failed:
+            print(f"{len(failed)} table(s) have an unusable primary-key index: "
+                  f"{', '.join(failed)}")
+        forced = [t for t, why in broken if why == "forced rebuild"]
+        if forced:
+            print(f"{len(forced)} table(s) queued for a forced rebuild: "
+                  f"{', '.join(forced)}")
+        if not args.apply:
+            print("Nothing was changed. Re-run with --apply to rebuild them.")
+            return 1
+    finally:
+        if not broken or not args.apply:
+            lease.release()
+
+    # A FATAL index error invalidates the connection, so the repair takes a
+    # fresh one rather than reusing the one that just probed the damage.
+    lease.release()
+    repaired: list[str] = []
+    for table, _ in broken:
+        lease = LeasedWarehouse(args.db, lock_timeout_s=120.0)
+        try:
+            before = int(lease._con.execute(
+                f"SELECT count(*) FROM {table}").fetchone()[0])
+            after = _rebuild_table(lease._con, table)
+            print(f"  rebuilt {table:<26} {before} rows in, {after} rows out"
+                  + ("" if before == after else "  <-- ROW COUNT CHANGED"))
+            repaired.append(table)
+        finally:
+            lease.release()
+
+    lease = LeasedWarehouse(args.db, lock_timeout_s=120.0)
+    try:
+        still: list[str] = []
+        for table in repaired:
+            ok, why = _index_is_healthy(lease._con, table)
+            print(f"  {'ok' if ok else 'STILL BROKEN':<7} {table:<26} {why}")
+            if not ok:
+                still.append(table)
+    finally:
+        lease.release()
+    return 1 if still else 0
 
 
 def cmd_link_identities(args: argparse.Namespace) -> int:
@@ -1443,6 +1744,21 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--dry-run", action="store_true",
                    help="report what would be deleted; delete nothing")
     p.set_defaults(func=cmd_retention)
+
+    p = sub.add_parser(
+        "repair-index",
+        help="verify (and with --apply, rebuild) primary-key indexes")
+    p.add_argument("--table", default=None,
+                   help="comma-separated table names; default: every content "
+                        "table that carries a primary key")
+    p.add_argument("--apply", action="store_true",
+                   help="rebuild the tables that fail the check. Without it "
+                        "this command writes nothing.")
+    p.add_argument("--force", action="store_true",
+                   help="with --apply, rebuild every named table even if its "
+                        "check passed. The probe only round-trips ONE key, and "
+                        "this corruption is local to part of the key space.")
+    p.set_defaults(func=cmd_repair_index)
 
     p = sub.add_parser("link-identities",
                        help="link creators to verified FPL entries; never guess")

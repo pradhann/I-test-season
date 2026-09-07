@@ -288,11 +288,12 @@ def test_stored_analysis_carries_the_depth_of_what_it_read() -> None:
 
     class _Wh:
         def sql(self, sql, binds):
-            written.append(binds)
+            written.append((sql, binds))
 
     store_analysis(_Wh(), "item_1", sample_analysis(),
                    text_source="description", chars=1266, substantive_chars=300)
-    payload = _json.loads(written[0][3])
+    inserted = [b for sql, b in written if sql.lstrip().upper().startswith("INSERT")]
+    payload = _json.loads(inserted[0][3])
     ev = payload[analyze.EVIDENCE_KEY]
     assert ev == {"text_source": "description", "depth": "notes", "thin": True,
                   "scoreable": False, "chars": 1266, "substantive_chars": 300}
@@ -325,10 +326,14 @@ def test_store_analysis_without_a_text_source_stamps_nothing() -> None:
 
     class _Wh:
         def sql(self, sql, binds):
-            written.append(binds)
+            written.append((sql, binds))
 
     store_analysis(_Wh(), "item_1", sample_analysis())
-    assert analyze.EVIDENCE_KEY not in _json.loads(written[0][3])
+    # store_analysis is a DELETE then an INSERT (see the note there on the
+    # ART index); the payload is the INSERT's.
+    inserted = [b for sql, b in written if sql.lstrip().upper().startswith("INSERT")]
+    assert len(inserted) == 1
+    assert analyze.EVIDENCE_KEY not in _json.loads(inserted[0][3])
 
 
 def test_a_barren_read_is_recognised_rather_than_stored_as_a_take() -> None:

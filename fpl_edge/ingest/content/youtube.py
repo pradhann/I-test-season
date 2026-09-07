@@ -165,6 +165,13 @@ PANEL_CREATORS: frozenset[str] = frozenset({
     "FPL BlackBox",          # Mark Sutherns, Az Phillips
     "Fantasy Football Hub",  # Ben Crellin, FPL Salah
     "Solio Analytics",       # Cay, Currie, Gjaerum, Palmer
+    # Added 2026-09-03: the owner named her directly ("add FPL Fran") while
+    # asking which shows are fetched regularly, which is the same act of
+    # curation every other name here came from. Her channel is registered in
+    # sources.py as ``yt_fplfran``, verified by a real 200 on
+    # youtube.com/@FPLFran/videos; naming her here is what puts that channel
+    # on the 4-hourly fast tier and inside the caption ceiling.
+    "FPL Fran",              # Fran
 })
 
 #: Panel members with no source in the registry. Reported, not fetched.

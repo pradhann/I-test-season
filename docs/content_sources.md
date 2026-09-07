@@ -457,3 +457,50 @@ uv run python -m fpl_edge.ingest.content.pipeline consensus --season 2026-27 --g
    more seasons of claims accumulate — which is the correct outcome, and is why
    the machinery is built now rather than the weights being assumed.
 7. **r/FantasyPL contributes nothing** pending Reddit OAuth credentials (§3).
+
+---
+
+## 10. Per-source STATE (added 2026-09-03)
+
+§2's table is a snapshot of one probe run. It cannot answer the question the
+Creators panel actually asks — *is this source working right now* — and when
+the panel tried to answer it anyway, it printed a list of 25 "excluded ingested
+sources" on a day when 39 of the 41 registered sources had answered HTTP 200.
+Working feeds were being reported as switched off.
+
+`fpl_edge/ingest/content/source_state.py` replaces that word with one measured
+state per source, derived from `content_source`'s probe columns and
+`content_item`'s counts:
+
+| state | means |
+| --- | --- |
+| `live` | fetched inside the window and has published inside it |
+| `quiet` | fetched inside the window and answering; creator has not posted |
+| `stale` | has items, but nothing has fetched it inside the window |
+| `empty` | reached, and has never yielded a single item |
+| `failing` | last probe did not answer 200, or recorded an error |
+| `unprobed` | registered and fetchable; nothing has ever probed it |
+| `disabled` | registered with no verified URL (`Source.disabled_reason`) |
+| `blocked` | refused on policy — X/Twitter, r/FantasyPL |
+| `legacy` | `user_link` / `user-shared`: pasted by hand, not a feed |
+
+Read it in code with `source_state.source_states(wh)`, or over HTTP:
+
+```
+GET  /api/content/sources                       # every source + counts
+POST /api/content/sources/{source_key}/fetch    # fetch just this one (202)
+GET  /api/content/sources/{source_key}/fetch_state
+```
+
+Measured against the live warehouse on 2026-09-03: `live` 24, `quiet` 10,
+`empty` 5, `unprobed` 1, `blocked` 2, `legacy` 1, `stale` 0, `failing` 0.
+
+**FPL Fran** was added the same day at the owner's request, as
+`yt_fplfran`. `GET https://www.youtube.com/@FPLFran/videos` answered **200**
+with `<title>FPL Fran - YouTube</title>`; the channel id
+`UCVLnEmwu-Ajei-wvk9SA8rw` is that page's own `externalId`, resolved the same
+way as every other row in `sources.py` and not guessed. **No podcast feed was
+found**: the iTunes Search API (`term=FPL Fran`, `Fran FPL`, `FPLFran`,
+`Fran fantasy premier league`, media=podcast) returned no result whose
+collection or artist name contains "Fran". Rather than invent a plausible feed
+URL, the podcast side is simply absent and recorded here as absent.

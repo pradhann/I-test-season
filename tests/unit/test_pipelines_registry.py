@@ -344,8 +344,162 @@ def test_post_gw_failure_becomes_the_same_titled_alert(tmp_path, monkeypatch):
 
     monkeypatch.setattr(post_gw, "_run", fake_run)
     res = registry.run_post_gw_settlement(_ctx(tmp_path))
-    assert res.outcome == "delivered" and res.kind == "alert"
+    # ``error``, not ``delivered``: the alert still goes out (``delivers`` is
+    # true for both), but only ``error`` reaches the ledger as a failure.
+    assert res.outcome == "error" and res.kind == "alert"
+    assert res.delivers is True
     assert "settle_results" in res.title and res.title.startswith("post_gw FAILED")
+
+
+# -- failure honesty: a failed step is never an ok ledger row ----------------
+#
+# The defect this pins, measured 2026-09-03: `run_transcribe_nightly` returned
+# ``delivered`` when its step failed, `runner.LEDGER_STATUS` maps ``delivered``
+# to ``ok``, and three consecutive nightly failures (09-01, 09-02, 09-03) sit
+# in ``fetch_run`` with status ``ok`` and a note beginning "delivered:
+# transcribe failed:". The Pipelines panel showed green for a week.
+#
+# Written as a sweep over EVERY subprocess-shaped registry task rather than a
+# test of the one that was broken, because the bug was a copy of a pattern and
+# the next copy would be just as silent.
+
+_SUBPROCESS_TASKS = (
+    "post_gw_settlement",
+    "fpl_core_insights",
+    "content_transcribe",
+    "content_fast_rss",
+    "content_analyse",
+    "content_analyse_backlog",
+)
+
+
+@pytest.mark.parametrize("task_id", _SUBPROCESS_TASKS)
+def test_a_failing_step_never_lands_as_an_ok_ledger_row(
+        task_id, tmp_path, monkeypatch):
+    monkeypatch.setenv("FPL_EDGE_DISABLE_NETWORK_INGEST", "0")
+    monkeypatch.setattr(runner, "LOG_DIR", tmp_path / "logs")
+
+    def failing_step(name, argv, *, timeout=None):
+        return dag.Step(name=name, ok=False, seconds=1.0,
+                        detail="boom: the step exited non-zero")
+
+    monkeypatch.setattr(registry, "run_step", failing_step)
+
+    def failing_post_gw(report, name, argv):
+        report.steps.append(post_gw.StepResult(
+            name=name, ok=False, seconds=0.0, detail="boom"))
+
+    monkeypatch.setattr(post_gw, "_run", failing_post_gw)
+
+    db = tmp_path / f"{task_id}.duckdb"
+    Warehouse(db).close()
+    out = runner.run_task(task_id, db_path=db, trigger="cli")
+
+    assert out.result.outcome == "error", (
+        f"{task_id} reported {out.result.outcome!r} for a failed step")
+    assert out.record.status == "error"
+
+    with Warehouse(db) as wh:
+        rows = wh.sql("SELECT status, note FROM fetch_run WHERE pipeline = ?",
+                      [task_id])
+    assert len(rows) == 1
+    assert rows.iloc[0]["status"] == "error"
+    assert not rows.iloc[0]["note"].startswith("delivered:")
+
+
+@pytest.mark.parametrize("task_id", _SUBPROCESS_TASKS)
+def test_a_clean_step_still_lands_as_ok(task_id, tmp_path, monkeypatch):
+    """The other half: the fix must not turn healthy runs red."""
+    monkeypatch.setenv("FPL_EDGE_DISABLE_NETWORK_INGEST", "0")
+    monkeypatch.setattr(runner, "LOG_DIR", tmp_path / "logs")
+    monkeypatch.setattr(
+        registry, "run_step",
+        lambda name, argv, *, timeout=None: dag.Step(
+            name=name, ok=True, seconds=1.0, detail="fine"))
+    monkeypatch.setattr(
+        post_gw, "_run",
+        lambda report, name, argv: report.steps.append(
+            post_gw.StepResult(name=name, ok=True, seconds=0.0)))
+
+    db = tmp_path / f"{task_id}-ok.duckdb"
+    Warehouse(db).close()
+    out = runner.run_task(task_id, db_path=db, trigger="cli")
+    assert out.record.status == "ok"
+    assert out.result.delivers is False
+
+
+def test_an_error_result_still_delivers_its_alert():
+    """Honesty in the ledger must not cost the notification."""
+    res = dag.TaskResult(outcome="error", kind="alert", title="X FAILED",
+                         body="why")
+    assert res.delivers is True
+    assert dag.TaskResult(outcome="error", detail="no title").delivers is False
+
+
+# -- the analyse rung --------------------------------------------------------
+
+
+def test_content_analyse_is_registered_twice_and_budgeted():
+    """The missing rung. Two firings a day, both bounded, both UI-triggerable."""
+    daily = registry.by_id("content_analyse")
+    backlog = registry.by_id("content_analyse_backlog")
+    assert daily is not None and backlog is not None
+    for task in (daily, backlog):
+        assert task.family == "content"
+        assert task.enabled and not task.scheduled_by_dag
+        assert task.budget_s == registry.ANALYSE_BUDGET_S
+        # Free: the analysis backend is the Max-plan CLI, so a UI trigger
+        # must not be gated behind a credit confirm nobody can satisfy.
+        assert task.credits_estimate == 0.0 and task.confirm_required is False
+        assert registry.runner_for(task.id) is not None
+    # After the 12:00 transcription slot, and again 12 hours later.
+    assert isinstance(daily.due, registry.Calendar)
+    assert (daily.due.hour_utc, daily.due.minute) == (13, 30)
+    assert (backlog.due.hour_utc, backlog.due.minute) == (1, 30)
+    transcribe = registry.by_id("content_transcribe")
+    assert transcribe.due.hour_utc < daily.due.hour_utc
+
+
+def test_the_analyse_step_is_budgeted_and_resumable(tmp_path, monkeypatch):
+    """Budget goes to the command; no --limit, so the queue is the resume."""
+    monkeypatch.setenv("FPL_EDGE_DISABLE_NETWORK_INGEST", "0")
+    monkeypatch.setenv("FPL_EDGE_ANALYSE_BUDGET_S", "123")
+    seen: list[list[str]] = []
+
+    def capture(name, argv, *, timeout=None):
+        seen.append(argv)
+        return dag.Step(name=name, ok=True, seconds=1.0, detail="done")
+
+    monkeypatch.setattr(registry, "run_step", capture)
+    registry.run_content_analyse(_ctx(tmp_path))
+    registry.run_content_analyse_backlog(_ctx(tmp_path))
+
+    for argv in seen:
+        assert argv[-4:-2] == ["--since"] or "--since" in argv
+        assert "analyze" in argv
+        assert float(argv[argv.index("--budget-s") + 1]) == 123.0
+        # A --limit would make the run non-resumable in the way that matters:
+        # the queue is "items with no analysis row", and a limit truncates it
+        # the same way every firing, so the tail would never be reached.
+        assert "--limit" not in argv
+    assert seen[0][seen[0].index("--since") + 1] == str(registry.ANALYSE_SINCE_DAYS)
+    assert seen[1][seen[1].index("--since") + 1] == "0"
+
+
+@pytest.mark.parametrize("fn", [
+    registry.run_content_analyse,
+    registry.run_content_analyse_backlog,
+])
+def test_analyse_honours_the_network_kill_switch(fn, tmp_path, monkeypatch):
+    """It calls a model, so it leaves the machine, so the switch gates it."""
+    monkeypatch.setenv("FPL_EDGE_DISABLE_NETWORK_INGEST", "1")
+
+    def forbidden(*a, **k):
+        raise AssertionError("a gated task tried to run a step")
+
+    monkeypatch.setattr(registry, "run_step", forbidden)
+    res = fn(_ctx(tmp_path))
+    assert res.outcome == "no_source"
 
 
 # -- the runner seam ---------------------------------------------------------

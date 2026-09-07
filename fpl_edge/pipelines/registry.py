@@ -65,6 +65,37 @@ _EPOCH = dt.datetime(1970, 1, 1, tzinfo=UTC)
 #: Overridable per-deploy with FPL_EDGE_TRANSCRIBE_BUDGET_S.
 TRANSCRIBE_BUDGET_S = 3600.0
 
+#: How much longer than its budget the transcription PROCESS is allowed to
+#: live before ``run_step`` kills it.
+#:
+#: The budget is checked between items, never inside one, so the worst-case
+#: overrun is exactly the longest single item. Measured on this machine
+#: 2026-09-03: MLX-Whisper runs at 11.7-12.3x realtime (107.5 min of audio in
+#: 549s; 26.8 min in 131s), and the panel's longest regular episodes run past
+#: two hours -- 150 min of audio is ~770s of ASR before the download. The old
+#: grace was 900s, which a single long episode can exceed on its own, and
+#: that is what the 2026-09-03 ledger row "timed out after 4500s" was: not a
+#: hung process, a budget of 3600s plus one episode that did not fit in the
+#: 900s left for it. 1800s covers the longest episode in the registry with
+#: room for its download.
+TRANSCRIBE_GRACE_S = 1800.0
+
+#: Default wall-clock budget for ONE claim-extraction pass, seconds.
+#: Overridable per-deploy with FPL_EDGE_ANALYSE_BUDGET_S.
+#:
+#: 30 minutes is a bound, not a target. ``pipeline analyze`` is resumable by
+#: construction -- its queue is "items with no content_analysis row for this
+#: model", and every finished item writes one -- so a run that stops at the
+#: budget leaves the rest of the backlog for the next firing instead of
+#: needing one enormous run. Two firings a day at 30 minutes is what drains a
+#: backlog without ever holding the machine for an hour.
+ANALYSE_BUDGET_S = 1800.0
+
+#: How many days back the daily analyse pass looks. The catch-up firing
+#: overrides this to 0 -- "every stored item, oldest gap first" -- which is
+#: the row that actually eats a backlog.
+ANALYSE_SINCE_DAYS = 21
+
 
 # --------------------------------------------------------------------------
 # Due shapes
@@ -336,6 +367,12 @@ def run_post_gw_settlement(ctx: TaskContext) -> TaskResult:
     alert that arrives nightly is an alert nobody reads); a run with failed
     steps DELIVERS the same titled alert ``post_gw.notify_failures`` sends,
     through the DAG's own outbox path.
+
+    The failing outcome is ``error``, not ``delivered``. Both deliver -- see
+    ``TaskResult.delivers`` -- but only ``error`` maps to an ``error`` row in
+    the ledger (``runner.LEDGER_STATUS``). Returning ``delivered`` here sent
+    the alert AND wrote status ``ok``, so the Pipelines panel showed green
+    for a settlement chain that had failed steps.
     """
     if _network_disabled():
         return _GATED
@@ -351,7 +388,7 @@ def run_post_gw_settlement(ctx: TaskContext) -> TaskResult:
     if report.ok:
         return TaskResult(outcome="quiet", detail=detail, steps=steps)
     title, body = post_gw.alert_text(report)
-    return TaskResult(outcome="delivered", kind="alert", title=title, body=body,
+    return TaskResult(outcome="error", kind="alert", title=title, body=body,
                       detail=detail, steps=steps)
 
 
@@ -359,7 +396,15 @@ def run_transcribe_nightly(ctx: TaskContext) -> TaskResult:
     """Nightly budgeted transcription: captions first (they are near-free and
     the queue serves panel YouTube alongside podcasts), podcast ASR under a
     wall-clock budget, the deterministic relevance gate deciding what is
-    worth the GPU (pipeline.py, ``--min-relevance``)."""
+    worth the GPU (pipeline.py, ``--min-relevance``).
+
+    A failed step is ``error``. It used to be ``delivered``, which
+    ``runner.LEDGER_STATUS`` maps to ledger status ``ok`` -- so three
+    consecutive nights of failure (2026-09-01, -02, -03) are recorded in
+    ``fetch_run`` as successful runs whose note begins "delivered: transcribe
+    failed:". The alert still goes out: ``TaskResult.delivers`` admits
+    ``error`` precisely so honesty in the ledger does not cost a
+    notification."""
     if _network_disabled():
         return _GATED
     budget = float(os.environ.get("FPL_EDGE_TRANSCRIBE_BUDGET_S",
@@ -368,17 +413,130 @@ def run_transcribe_nightly(ctx: TaskContext) -> TaskResult:
         "content_transcribe",
         [ctx.python, "-m", "fpl_edge.ingest.content.pipeline", "transcribe",
          "--budget-s", str(budget)],
-        timeout=budget + 900,
+        timeout=budget + TRANSCRIBE_GRACE_S,
     )
     if step.ok:
         return TaskResult(outcome="quiet", detail=step.detail[-300:], steps=[step])
     return TaskResult(
-        outcome="delivered", kind="alert", steps=[step],
+        outcome="error", kind="alert", steps=[step],
         detail=f"transcribe failed: {step.detail[-200:]}",
         title="Nightly transcription FAILED",
         body=f"content_transcribe exited non-zero after {step.seconds}s.\n\n"
              f"{step.detail}",
     )
+
+
+def _table_rows(ctx: TaskContext, table: str) -> int | None:
+    """``count(*)`` for one table, or None if the warehouse cannot be read.
+
+    Used to turn a subprocess step into a ledger count. The steps here write
+    through their own connections, so nothing they do is visible to the
+    TaskResult unless it is measured either side -- which is why
+    ``content_fast_rss`` has 21 ledger rows all reading ``rows_written 0``
+    while the same runs were landing items.
+    """
+    try:
+        with ctx.read() as wh:
+            exists = int(wh.sql(
+                "SELECT count(*) c FROM information_schema.tables "
+                "WHERE table_name = ?", [table]).iloc[0]["c"])
+            if not exists:
+                return 0
+            return int(wh.sql(f"SELECT count(*) c FROM {table}").iloc[0]["c"])
+    except Exception:  # noqa: BLE001 - a count is not worth failing a run over
+        return None
+
+
+def _grew_by(before: int | None, after: int | None) -> int:
+    if before is None or after is None or after < before:
+        return 0
+    return after - before
+
+
+def _content_analysis_rows(ctx: TaskContext) -> int | None:
+    """How many rows ``content_analysis`` holds, or None if unreadable.
+
+    Read either side of the analyse step so the ledger's ``rows_written``
+    is a measured delta rather than a number scraped out of stdout. An
+    unreadable warehouse yields None and the ledger simply records no count;
+    it never blocks or fails the run.
+    """
+    return _table_rows(ctx, "content_analysis")
+
+
+def _run_analyse(ctx: TaskContext, *, since_days: int, label: str) -> TaskResult:
+    """One budgeted, resumable claim-extraction pass over stored text.
+
+    THE missing rung. Discovery (``content_fast_rss``, ``post_gw_settlement``)
+    and transcription (``content_transcribe``) were both scheduled; the step
+    that turns stored text into ``content_analysis`` / ``content_claim`` rows
+    never was, so it only ever ran when somebody typed it. On 2026-09-03 that
+    showed as 773 stored items, 122 analyses, and a newest analysis dated
+    2026-08-27 -- a week of "the Creators tab is stale" caused entirely by a
+    missing registry row.
+
+    Three properties make this safe to schedule rather than run by hand:
+
+    * **Bounded.** ``--budget-s`` is a wall-clock stop checked between items,
+      so the firing cannot run into the next one.
+    * **Resumable.** ``pipeline analyze`` queues exactly the items with no
+      ``content_analysis`` row for this model and no
+      ``content_analysis_skip`` verdict, so a run that stops at the budget
+      leaves a smaller queue behind and the next firing continues from there.
+      Draining a backlog is many bounded runs, never one giant one.
+    * **Free of metered credits.** The backend is the Max-plan ``claude``
+      CLI (``ingest/content/analyze.py``), so ``credits_estimate`` is 0 and
+      the cost that matters is the wall clock, which is what is budgeted.
+
+    The model call leaves the machine, so the network kill-switch gates this
+    exactly as it gates the fetchers.
+    """
+    if _network_disabled():
+        return _GATED
+    budget = float(os.environ.get("FPL_EDGE_ANALYSE_BUDGET_S", ANALYSE_BUDGET_S))
+    before = _content_analysis_rows(ctx)
+    step = run_step(
+        "content_analyse",
+        [ctx.python, "-m", "fpl_edge.ingest.content.pipeline", "analyze",
+         "--since", str(since_days), "--budget-s", str(budget)],
+        # The command stops itself at the budget between items; the process
+        # timeout is the backstop for one call that hangs, never the plan.
+        timeout=budget + 600,
+    )
+    after = _content_analysis_rows(ctx)
+    written = _grew_by(before, after)
+    detail = f"{label}; +{written} analyses; {step.detail[-200:]}"
+    if step.ok:
+        return TaskResult(outcome="quiet", detail=detail, steps=[step],
+                          ledger_written=written)
+    return TaskResult(
+        outcome="error", kind="alert", steps=[step], detail=detail,
+        ledger_written=written,
+        title="Claim extraction FAILED",
+        body=f"content_analyse exited non-zero after {step.seconds}s.\n\n"
+             f"{step.detail}",
+    )
+
+
+def run_content_analyse(ctx: TaskContext) -> TaskResult:
+    """The daily pass: the last three weeks, right after transcription.
+
+    Fresh-first. The transcription slot is 12:00 UTC with a 3600s budget, so
+    13:30 is after it on any night it behaves and still before the evening.
+    """
+    return _run_analyse(ctx, since_days=ANALYSE_SINCE_DAYS,
+                        label=f"last {ANALYSE_SINCE_DAYS}d")
+
+
+def run_content_analyse_backlog(ctx: TaskContext) -> TaskResult:
+    """The second pass, overnight: no window at all, so it eats the backlog.
+
+    Same runner, same budget, one different flag. ``--since 0`` drops the
+    21-day filter, which is what lets the 644 never-analysed items -- some of
+    them seasons old, and the only place a creator's *measured* hit rate can
+    come from before a gameweek is played -- actually get read.
+    """
+    return _run_analyse(ctx, since_days=0, label="full backlog")
 
 
 def run_fpl_core_insights(ctx: TaskContext) -> TaskResult:
@@ -415,6 +573,7 @@ def run_fast_rss(ctx: TaskContext) -> TaskResult:
     if not sources:
         return TaskResult(outcome="no_source", detail="no fast-tier sources registered")
     keys = ",".join(s.key for s in sources)
+    before = _table_rows(ctx, "content_item")
     steps = [run_step(
         "ingest_fast_rss",
         [ctx.python, "-m", "fpl_edge.ingest.content.pipeline", "ingest",
@@ -426,9 +585,17 @@ def run_fast_rss(ctx: TaskContext) -> TaskResult:
          "--kinds", "youtube", "--since", "2", "--budget-s", "300"],
         timeout=600,
     ))
-    detail = f"{len(sources)} fast-tier sources; " + _steps_detail(steps)
+    # Measured, not assumed. Every one of this task's 21 ledger rows to
+    # 2026-09-03 says rows_written 0, because the items are written by the
+    # subprocess through its own connection and nothing here ever counted
+    # them. A ledger column that is structurally always zero teaches a reader
+    # to ignore it.
+    landed = _grew_by(before, _table_rows(ctx, "content_item"))
+    detail = (f"{len(sources)} fast-tier sources; +{landed} items; "
+              + _steps_detail(steps))
     outcome = "quiet" if all(s.ok for s in steps) else "error"
-    return TaskResult(outcome=outcome, detail=detail, steps=steps)
+    return TaskResult(outcome=outcome, detail=detail, steps=steps,
+                      ledger_written=landed)
 
 
 def run_briefing_intel(ctx: TaskContext) -> TaskResult:
@@ -564,6 +731,29 @@ TASKS: tuple[Task, ...] = (
         stale_window=dt.timedelta(hours=6),
         run=run_transcribe_nightly,
         budget_s=TRANSCRIBE_BUDGET_S,
+        family="content",
+    ),
+    Task(
+        id="content_analyse",
+        description="Claim extraction over the last 21 days, 30m budget, "
+                    "resumable; runs after the nightly transcription slot",
+        due=Calendar(hour_utc=13, minute=30),
+        # Shorter than the 12h gap to the backlog firing: a slept-through
+        # analyse is dropped and the next one does the work, because the
+        # queue it reads is the same either way.
+        stale_window=dt.timedelta(hours=6),
+        run=run_content_analyse,
+        budget_s=ANALYSE_BUDGET_S,
+        family="content",
+    ),
+    Task(
+        id="content_analyse_backlog",
+        description="Second daily claim-extraction pass with no date window, "
+                    "30m budget: chews the never-analysed backlog",
+        due=Calendar(hour_utc=1, minute=30),
+        stale_window=dt.timedelta(hours=6),
+        run=run_content_analyse_backlog,
+        budget_s=ANALYSE_BUDGET_S,
         family="content",
     ),
     Task(

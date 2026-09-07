@@ -551,11 +551,16 @@ def test_store_analysis_writes_the_insights_key(tmp_path) -> None:
 
     class _Wh:
         def sql(self, sql, binds):
-            written.append(binds)
+            written.append((sql, binds))
 
     analyze.store_analysis(_Wh(), "item_1", _analysis([_insight()]),
                            text_source="transcript")
-    payload = json.loads(written[0][3])
+    # store_analysis is a DELETE followed by an INSERT; the payload is the
+    # INSERT's. See the note in store_analysis for why it is not one
+    # INSERT OR REPLACE.
+    inserted = [b for sql, b in written if sql.lstrip().upper().startswith("INSERT")]
+    assert len(inserted) == 1
+    payload = json.loads(inserted[0][3])
     assert payload["insights"][0]["quote"].startswith("Semenyo is playing")
     # The evidence block keeps its established shape; insights are a sibling.
     assert payload[analyze.EVIDENCE_KEY]["depth"] == "transcript"

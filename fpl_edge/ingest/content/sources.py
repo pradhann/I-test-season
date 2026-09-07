@@ -89,6 +89,23 @@ class Source:
     #: Set when the feed body carries only an excerpt and the item link must be
     #: fetched to obtain the text a claim could be extracted from.
     excerpt_only: bool = False
+    #: False for a creator we WANT but have no verified feed for. The row
+    #: exists so the panel can say "registered, not fetchable, and here is
+    #: why" instead of the creator being silently absent -- and so nobody
+    #: invents a plausible-looking URL to fill the gap. A disabled source is
+    #: never fetched: :func:`fetchable` excludes it exactly as a FORBIDDEN
+    #: policy does.
+    enabled: bool = True
+    #: Required when ``enabled`` is False: what is missing, measured. Written
+    #: to ``content_source.note`` by the registry upsert, so the reason
+    #: survives into the warehouse rather than living only in this file.
+    disabled_reason: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.enabled and not self.disabled_reason:
+            raise ValueError(
+                f"source {self.key!r} is disabled with no recorded reason; a "
+                f"source that cannot be fetched must say what is missing")
 
 
 def _yt(key: str, creator: str, channel_id: str, handle: str) -> Source:
@@ -138,6 +155,12 @@ YOUTUBE_SOURCES: tuple[Source, ...] = (
     # verified entry id, and the brand itself deliberately has none.
     _yt("yt_solioanalytics", "Solio Analytics", "UC0LJwjL2pK4VVPnhN28FeMw",
         "SolioAnalytics"),
+    # Added 2026-09-03 at the owner's request ("add FPL Fran"). Verified the
+    # way every other row here was: GET https://www.youtube.com/@FPLFran/videos
+    # answered 200 with <title>FPL Fran - YouTube</title>, and the channel id
+    # below is that page's own ``externalId``. Not guessed, not derived from
+    # the handle.
+    _yt("yt_fplfran", "FPL Fran", "UCVLnEmwu-Ajei-wvk9SA8rw", "FPLFran"),
 )
 
 #: Podcast RSS. Feed URLs came from the iTunes Search API (a documented public
@@ -229,8 +252,16 @@ BY_KEY: dict[str, Source] = {s.key: s for s in ALL_SOURCES}
 
 
 def fetchable() -> tuple[Source, ...]:
-    """Sources the loader is allowed to hit."""
-    return tuple(s for s in ALL_SOURCES if s.policy is AccessPolicy.OPEN)
+    """Sources the loader is allowed to hit.
+
+    Two gates, and they mean different things. ``policy is OPEN`` is a
+    permission question -- may we fetch this at all. ``enabled`` is a
+    capability question -- do we have a verified URL to fetch. Both must
+    hold, and a source failing either stays in :data:`ALL_SOURCES` so the
+    panel can name it and say which gate it failed.
+    """
+    return tuple(s for s in ALL_SOURCES
+                 if s.policy is AccessPolicy.OPEN and s.enabled)
 
 
 #: Content tiers (PIPELINES.md §5 decision 3). "fast" sources are polled on

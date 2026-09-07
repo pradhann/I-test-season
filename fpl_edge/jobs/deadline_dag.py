@@ -491,7 +491,17 @@ class TaskResult:
 
     @property
     def delivers(self) -> bool:
-        return self.outcome == "delivered" and bool(self.title)
+        """Does this result have an alert the outbox should send?
+
+        ``error`` is here alongside ``delivered`` because those are two
+        different questions and one flag was answering both. A failed task
+        that wants to alert used to have to return ``delivered``, which
+        ``pipelines.runner.LEDGER_STATUS`` maps to ledger status ``ok`` -- so
+        every nightly transcription failure since 2026-09-01 sits in
+        ``fetch_run`` as a successful run. Outcome now says what happened;
+        the presence of a title says whether to tell anyone.
+        """
+        return self.outcome in ("delivered", "error") and bool(self.title)
 
 
 def run_step(name: str, argv: list[str], *, timeout: float = STEP_TIMEOUT_S) -> Step:

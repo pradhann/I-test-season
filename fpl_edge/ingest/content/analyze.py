@@ -604,9 +604,27 @@ def store_analysis(wh, item_id: str, analysis: TranscriptAnalysis,
             text_source=text_source, chars=chars,
             substantive_chars=substantive_chars,
         )
+    # DELETE then INSERT rather than INSERT OR REPLACE. DuckDB compiles
+    # INSERT OR REPLACE into a MERGE INTO whose conflict handling verifies
+    # the (item_id, model) ART index inside the sink, and that is the frame
+    # this warehouse died in on 2026-09-03: ``INTERNAL Error: Invalid node
+    # type for GetChildInternal: 48`` from ART::VerifyConstraint ->
+    # ConflictManager -> PhysicalMergeInto::Sink.
+    #
+    # Honest about what this does and does not buy. The underlying fault was
+    # a corrupted unique ART index that DuckDB named on WAL replay
+    # ("PRIMARY_content_analysis_4 ... an existing gated leaf"), and no
+    # statement shape here would have prevented that; ``pipeline
+    # repair-index`` is the cure and the CHECKPOINT in pipeline.py's
+    # ``_write_with_retry`` is the prevention. What this pair does buy is one
+    # fewer code path through the on-conflict machinery, and the same shape
+    # store_provenance already uses for the same reason.
+    model_id = validate_model_id(model)
+    wh.sql("DELETE FROM content_analysis WHERE item_id = ? AND model = ?",
+           [item_id, model_id])
     wh.sql(
-        "INSERT OR REPLACE INTO content_analysis VALUES (?, ?, ?, ?)",
-        [item_id, validate_model_id(model), dt.datetime.now(dt.timezone.utc),
+        "INSERT INTO content_analysis VALUES (?, ?, ?, ?)",
+        [item_id, model_id, dt.datetime.now(dt.timezone.utc),
          json.dumps(payload)],
     )
 
