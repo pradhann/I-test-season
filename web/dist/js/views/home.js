@@ -1728,7 +1728,8 @@ export default async function home(host) {
         solverCard.appendChild(line);
       }
 
-      if (!plan.is_roll) unconstrainedLine(solverCard);
+      // shown for a roll too: 'bank it' beside 'if hits were free, +40' is the trade
+      unconstrainedLine(solverCard);
 
       // hits, only when the plan actually spends points
       if ((plan.hits ?? 0) > 0) {
