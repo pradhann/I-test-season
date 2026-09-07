@@ -19,6 +19,7 @@ from __future__ import annotations
 import datetime as dt
 
 import pytest
+from types import SimpleNamespace
 
 from fpl_edge.jobs import deadline_dag as dag
 from fpl_edge.jobs import post_gw
@@ -677,3 +678,23 @@ def test_month_credits_sums_the_local_ledger(tmp_path):
         assert health.month_credits(wh, "odds_refresh") == pytest.approx(14.0)
     finally:
         wh.close()
+
+
+def test_audio_retention_sweeps_the_cache_beside_the_runs_database(tmp_path, monkeypatch):
+    """A tmp-warehouse run must never walk the repo's real audio cache: the
+    directory is derived from the database the run used. 312 test runs had
+    swept data/raw/content/asr_audio before this was pinned."""
+    from fpl_edge.ingest.content import asr
+    seen = {}
+
+    def fake_sweep(wh, *, dry_run=False, cache_dir=None):
+        seen["cache_dir"] = cache_dir
+        return SimpleNamespace(deleted=[], summary=lambda: "deleted 0 file(s)")
+
+    monkeypatch.setattr(asr, "sweep_audio_cache", fake_sweep)
+    db = tmp_path / "warehouse" / "t.duckdb"
+    db.parent.mkdir()
+    Warehouse(db).close()
+    runner.run_task("audio_retention", db_path=db, trigger="cli")
+    assert seen["cache_dir"] == tmp_path / "raw" / "content" / "asr_audio"
+    assert not str(seen["cache_dir"]).startswith("data/")

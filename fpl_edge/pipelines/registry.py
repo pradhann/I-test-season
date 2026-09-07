@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import datetime as dt
 import os
+from pathlib import Path
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from zoneinfo import ZoneInfo
@@ -695,8 +696,15 @@ def run_audio_retention(ctx: TaskContext) -> TaskResult:
     """
     from fpl_edge.ingest.content import asr
 
+    # The cache dir follows the DATABASE THE RUN USED. asr.AUDIO_CACHE is a
+    # repo-relative constant, so a unit test ticking this task against a tmp
+    # warehouse swept the REAL data/raw/content/asr_audio (312 such runs by
+    # 2026-09-07); only the rule "delete nothing without a provenance row"
+    # kept those sweeps at zero deletions. The real database resolves to the
+    # real directory unchanged.
+    cache_dir = Path(ctx.db_path).parent.parent / "raw" / "content" / "asr_audio"
     with ctx.read() as wh:
-        sweep = asr.sweep_audio_cache(wh, dry_run=False)
+        sweep = asr.sweep_audio_cache(wh, dry_run=False, cache_dir=cache_dir)
     return TaskResult(
         outcome="quiet",
         detail=sweep.summary(),
