@@ -193,6 +193,11 @@ class GwPicks:
     value: Money | None
     event_transfers: int
     event_transfers_cost: int
+    #: FPL's automatic substitutions for a FINISHED gameweek, as
+    #: (element_out, element_in). The picks payload's ``position`` field is
+    #: post-substitution once the gameweek ends, so the as-selected XI must be
+    #: rebuilt by reversing these. Empty before kick-off and during play.
+    automatic_subs: tuple[tuple[int, int], ...] = ()
 
 
 # -- parsing -----------------------------------------------------------------
@@ -310,6 +315,12 @@ def parse_picks(gw: int, body: dict[str, Any]) -> GwPicks:
         value=_money(hist.get("value")),
         event_transfers=int(hist.get("event_transfers") or 0),
         event_transfers_cost=int(hist.get("event_transfers_cost") or 0),
+        # Present only once the gameweek has finished; see GwPicks.automatic_subs.
+        automatic_subs=tuple(
+            (int(a["element_out"]), int(a["element_in"]))
+            for a in (body.get("automatic_subs") or [])
+            if a.get("element_out") is not None and a.get("element_in") is not None
+        ),
     )
 
 

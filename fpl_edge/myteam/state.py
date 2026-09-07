@@ -505,14 +505,25 @@ def picks_from_public(public: GwPicks, index: PlayerIndex) -> tuple[Pick, ...]:
     chip and the captaincy, both of which are carried separately, and reading the
     XI off multiplier > 0 breaks under Bench Boost.
     """
+    # After a FINISHED gameweek the payload's slot order is post-automatic-
+    # substitution: a benched vice who did not play sits at 13 and the man
+    # who came on sits in the XI. The squad the manager SELECTED is what a
+    # reconstruction must return (the validator rightly insists captain and
+    # vice start), so each recorded substitution is reversed here. On
+    # 2026-09-07 the un-reversed order aborted every solve with "captain and
+    # vice must be in the starting XI".
+    slot = {p.element: int(p.position) for p in public.picks}
+    for element_out, element_in in public.automatic_subs:
+        if element_out in slot and element_in in slot:
+            slot[element_out], slot[element_in] = slot[element_in], slot[element_out]
     out = []
-    for p in sorted(public.picks, key=lambda x: x.position):
+    for p in sorted(public.picks, key=lambda x: slot[x.element]):
         code = index.code(p.element)
         out.append(
             Pick(
                 code=code,
                 position=index.position[code],
-                order=int(p.position),
+                order=slot[p.element],
                 is_captain=bool(p.is_captain),
                 is_vice=bool(p.is_vice_captain),
             )

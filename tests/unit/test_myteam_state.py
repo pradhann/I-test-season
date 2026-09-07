@@ -463,3 +463,35 @@ def test_element_id_is_translated_to_a_stable_code(index) -> None:
 def test_an_unknown_element_id_is_a_stale_warehouse_not_a_new_player(index) -> None:
     with pytest.raises(ReconstructionError, match="per-season and reassigned"):
         index.code(999_999)
+
+
+def test_public_picks_reverse_automatic_substitutions_to_the_selected_xi(warehouse, index) -> None:
+    """After a finished gameweek FPL's picks payload carries POST-substitution
+    slots: on 2026-09-07 the owner's vice (did not play) sat at 13 and the
+    substitute at his XI slot, so the validator's "captain and vice must be
+    in the starting XI" aborted every solve. Reversing automatic_subs
+    restores the squad the manager selected, and reconstruct() validates."""
+    import dataclasses
+    from fpl_edge.myteam.state import picks_from_public
+    picks = _picks(_legal_squad(index), index)
+    public = _public(picks, index)
+    vice = next(p for p in public.picks if p.is_vice_captain)
+    sub = next(p for p in public.picks if p.position == 12)
+    after = dataclasses.replace(
+        public,
+        picks=tuple(dataclasses.replace(p, position=sub.position if p is vice
+                                        else vice.position if p is sub else p.position)
+                    for p in public.picks),
+        automatic_subs=((vice.element, sub.element),),
+    )
+    out = {p.code: p for p in picks_from_public(after, index)}
+    assert out[index.code(vice.element)].order == vice.position <= 11
+    assert out[index.code(sub.element)].order == 12
+    # the real regression: the reconstruction must validate, not abort
+    state = reconstruct(
+        warehouse.snapshot_at(NOW), entry_id=4490171, season=SEASON, entry=_entry(),
+        history=EntryHistory((), (), ()), transfers=(), picks=after,
+    )
+    assert len(state.picks) == 15
+    # an un-substituted payload translates exactly as before
+    assert [p.order for p in picks_from_public(public, index)] == list(range(1, 16))
