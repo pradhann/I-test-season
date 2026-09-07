@@ -497,3 +497,104 @@ def test_no_raw_html_from_model_or_panel_output() -> None:
             assert rhs.startswith('"') or rhs.startswith("'") or rhs.startswith("`") and "${" not in rhs, (
                 f"view {name} assigns dynamic innerHTML: {rhs[:60]}"
             )
+
+
+# -- the dashboard after GW4: one lineup, no stale guidance, gaps first -------
+
+
+_JS_STRING = re.compile(
+    r'"(?:[^"\\\n]|\\.)*"|\'(?:[^\'\\\n]|\\.)*\'|`(?:[^`\\]|\\.)*`', re.S)
+
+
+def test_the_pitch_draws_one_lineup_with_no_toggle_and_no_arrows() -> None:
+    """The owner: "just show the best XI, no arrows". The pitch reads the
+    brief's best_xi block and nothing suggests a second lineup."""
+    src = _strip_comments(VIEWS["home"])
+    for gone in ("As picked", "Suggested XI", "db-toggle", "pp-mark", "⇄",
+                 "suggested_xi", "pitchMode"):
+        assert gone not in src, f"the two-lineup pitch is back: {gone!r}"
+    for read in ("best_xi", "captain_candidates", "close_call", "n_differs",
+                 "captain_close_call_xpts"):
+        assert read in src, f"the pitch must read best_xi.{read}"
+
+
+def test_the_best_xi_and_squad_source_read_only_schema_fields() -> None:
+    src = _strip_comments(VIEWS["home"])
+    for var, node in (("bestXi", "best_xi"), ("squadSource", "squad_source")):
+        allowed = _schema_props("dashboard_brief", node)
+        used = set(re.findall(rf"\b{var}\.(\w+)", src))
+        unknown = used - allowed
+        assert not unknown, (
+            f"{var} reads {sorted(unknown)}, which the brief's {node} schema "
+            f"does not carry (it has {sorted(allowed)})")
+
+
+def test_a_stale_or_missing_plan_renders_no_plan_content() -> None:
+    """With solve.state stale/missing the card is state, reason, age and
+    Re-run. Plan fields are read only inside renderSolver, behind the
+    fresh/aging guard; nothing else on the page touches them."""
+    src = _strip_comments(VIEWS["home"])
+    body = _nested_fn_body(src, "renderSolver")
+    guard = re.search(r'const plan = \(S && \(S\.state === "fresh" \|\| '
+                      r'S\.state === "aging"\)\)', body)
+    assert guard, "the plan body must be null unless the plan is fresh/aging"
+    outside = src.replace(body, "")
+    leaks = re.findall(r"\bplan\.(captain|moves|alternatives|gain_over_roll)",
+                       outside)
+    assert not leaks, f"plan content rendered outside the solver card: {leaks}"
+    assert "free_transfers_state" in src and '"?"' in src, (
+        "a stale plan's free-transfer count must print as unknown")
+
+
+def test_haul_odds_are_gated_on_the_simulation_date() -> None:
+    """Haul odds come from a simulation with a date; they render only when
+    it is newer than the last deadline, else the omission carries a tooltip
+    naming the simulation date. Never a number from an older world."""
+    src = _strip_comments(VIEWS["home"])
+    assert "p_haul_generated" in src and "last_deadline_utc" in src
+    assert "haul odds unavailable (last simulation" in src
+    # every p_haul render site sits behind the freshness flag
+    for m in re.finditer(r"Math\.round\((\w+(?:\.\w+)*)\s*\*\s*100\)", src):
+        expr = m.group(1)
+        if "haul" not in expr:
+            continue
+        # the gate is either an inline `haulFresh &&` or an early return
+        # a few lines up; one render site per ~500 chars in this file
+        window = src[max(0, m.start() - 520):m.start()]
+        assert "haulFresh" in window, (
+            f"a haul percentage renders without the freshness gate: {expr}")
+
+
+def test_the_gaps_strip_is_payload_derived_and_names_every_fix() -> None:
+    src = _strip_comments(VIEWS["home"])
+    body = _nested_fn_body(src, "renderGaps")
+    assert "Before you read this" in body
+    # the squad fix is the brief's own command, never typed here
+    assert "squadSource.fix" in body
+    assert "myteam auth" not in src, "the fix command comes from the payload"
+    # every gap kind reads its own source
+    for read in ("squadSource.live", "S.state", "solveStatus", "intelOutdated()",
+                 "xpts_as_of", "haulFresh"):
+        assert read in body, f"the gaps strip must read {read}"
+    # the wired fixes
+    assert "rerunButton(" in body and 'generateBtn("Regenerate")' in body
+    # nothing renders when there is no gap
+    assert "gapStrip.hidden = true" in body
+
+
+def test_an_outdated_briefing_folds_and_never_renders_items_as_current() -> None:
+    src = _strip_comments(VIEWS["home"])
+    body = _nested_fn_body(src, "renderIntel")
+    assert "intelOutdated()" in body and "ib-outdated" in body
+    assert "Briefing outdated (written" in src
+    # the items go into the fold (body), not the card, when outdated
+    assert re.search(r"body\.appendChild\(\s*intelItem", body)
+
+
+def test_no_em_dashes_in_dashboard_strings() -> None:
+    """The owner's prose rule (prose_style.py) applies to the UI: no em-dash
+    asides in any string the dashboard prints."""
+    src = VIEWS["home"]
+    bad = [m.group(0)[:60] for m in _JS_STRING.finditer(_strip_comments(src))
+           if "—" in m.group(0)]
+    assert not bad, f"em-dashes in dashboard strings: {bad}"

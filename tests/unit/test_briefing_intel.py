@@ -536,3 +536,86 @@ def test_the_ui_trigger_route_knows_the_task(db):
     state = client.get("/api/pipelines/briefing_intel/run_state")
     assert state.status_code == 200
     assert state.json()["task_id"] == "briefing_intel"
+
+
+# -- the freshness rule: outdated against the PRESENT, not the artefact -------
+
+
+def _artefact(generated, inputs):
+    return {"generated_at": generated.isoformat(), "model": bi.MODEL,
+            "meta_prompt_hash": "abc123abc123",
+            "input_as_of": {k: v.isoformat() for k, v in inputs.items()},
+            "items": [], "rejected_n": 0, "duration_s": 1.0}
+
+
+def test_freshness_is_outdated_when_a_current_panel_as_of_moved_past_the_window():
+    """The old rule compared stored input as-ofs against the artefact's own
+    generated_at and could never fire once the artefact was written: a
+    briefing from 4 Sep data read on 7 Sep said inputs_moved False. The rule
+    now compares against the panels' CURRENT as-of."""
+    written = dt.datetime(2026, 9, 5, 6, 48, tzinfo=UTC)
+    inputs = {"squad_overview": dt.datetime(2026, 9, 4, 13, 20, tzinfo=UTC),
+              "projection_table": dt.datetime(2026, 9, 4, 13, 20, tzinfo=UTC)}
+    now = dt.datetime(2026, 9, 7, 19, 0, tzinfo=UTC)
+    current = {"last_deadline_utc": dt.datetime(2026, 9, 4, 17, 30, tzinfo=UTC).isoformat(),
+               "as_of": {"squad_overview": dt.datetime(2026, 9, 7, 10, 33, tzinfo=UTC).isoformat(),
+                         "projection_table": None}}
+    f = bi.freshness(_artefact(written, inputs), now=now, current=current)
+    assert f["outdated"] is True and f["inputs_moved"] is True
+    assert f["deadline_passed"] is False, "written AFTER the 4 Sep deadline"
+    assert any("squad_overview now 2026-09-07" in r for r in f["outdated_reasons"])
+    assert f["written_from_as_of"] == inputs["squad_overview"].isoformat()
+    assert f["current_as_of"]["squad_overview"] == current["as_of"]["squad_overview"]
+    # a current as-of inside the window is quiet
+    current["as_of"]["squad_overview"] = (
+        inputs["squad_overview"] + dt.timedelta(hours=bi.INPUTS_MOVED_H - 1)).isoformat()
+    f = bi.freshness(_artefact(written, inputs), now=now, current=current)
+    assert f["outdated"] is False and f["inputs_moved"] is False
+    assert f["outdated_reasons"] == []
+
+
+def test_freshness_is_outdated_when_a_deadline_passed_since_it_was_written():
+    written = dt.datetime(2026, 9, 3, 8, 0, tzinfo=UTC)
+    inputs = {"squad_overview": dt.datetime(2026, 9, 3, 7, 0, tzinfo=UTC)}
+    now = dt.datetime(2026, 9, 5, 8, 0, tzinfo=UTC)
+    current = {"last_deadline_utc": "2026-09-04T17:30:00+00:00", "as_of": {}}
+    f = bi.freshness(_artefact(written, inputs), now=now, current=current)
+    assert f["outdated"] is True and f["deadline_passed"] is True
+    assert f["inputs_moved"] is False, "the panels did not move; the calendar did"
+    assert f["outdated_reasons"] == ["a deadline has passed (2026-09-04)"]
+    assert f["last_deadline_utc"] == "2026-09-04T17:30:00+00:00"
+    # a deadline BEFORE the writing is not a reason
+    current["last_deadline_utc"] = "2026-09-02T17:30:00+00:00"
+    f = bi.freshness(_artefact(written, inputs), now=now, current=current)
+    assert f["outdated"] is False and f["deadline_passed"] is False
+
+
+def test_briefing_response_reads_the_present_from_the_warehouse(db):
+    """The route's `current` comes from a read copy: dim_event's last passed
+    deadline and max(as_of) per input table, never a panel run."""
+    import pandas as pd
+
+    wh = Warehouse(db)
+    wh.append("dim_event", pd.DataFrame([
+        {"season": "2026-27", "gw": 3, "is_finished": True,
+         "deadline_utc": pd.Timestamp("2026-09-04 17:30", tz="UTC"),
+         "as_of": pd.Timestamp("2026-09-01 00:00", tz="UTC")},
+        {"season": "2026-27", "gw": 4, "is_finished": False,
+         "deadline_utc": pd.Timestamp("2099-09-12 12:30", tz="UTC"),
+         "as_of": pd.Timestamp("2026-09-01 00:00", tz="UTC")},
+    ]))
+    wh.close()
+    cur = bi.current_inputs(db, now=dt.datetime(2026, 9, 7, tzinfo=UTC))
+    assert cur["note"] is None
+    assert cur["last_deadline_utc"] == "2026-09-04T17:30:00+00:00"
+    assert set(cur["as_of"]) == set(bi.CURRENT_AS_OF_TABLES)
+    assert cur["as_of"]["squad_overview"] is None, "empty table, null not zero"
+    written = dt.datetime(2026, 9, 3, 8, 0, tzinfo=UTC)
+    bi.write_artefact(bi.artefact_path(db), _artefact(
+        written, {"squad_overview": written - dt.timedelta(hours=1)}))
+    body = bi.briefing_response(db, now=dt.datetime(2026, 9, 7, tzinfo=UTC))
+    assert body["outdated"] is True and body["deadline_passed"] is True
+    assert "freshness_note" not in body
+    # a missing warehouse degrades to the stored-as-of rule with a note
+    cur = bi.current_inputs(db.parent / "nope.duckdb")
+    assert cur["note"] and cur["as_of"] == {}

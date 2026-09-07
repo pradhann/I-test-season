@@ -50,6 +50,35 @@
   @keyframes sk-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
 }
 
+/* ---- BEFORE YOU READ THIS: the live gaps and their fixes ----
+   The --warn rail is the risk channel: these rows say which data behind the
+   page is not what it looks like. The strip is absent when there is no gap. */
+.db-gaps { border-left: 3px solid var(--warn);
+           background: color-mix(in oklab, var(--warn) 6%, var(--surface)); }
+.db-gaps[hidden] { display: none; }
+.gap-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+            margin-bottom: 6px; }
+.gap-head h2 { margin: 0; }
+.gap-row { display: grid; grid-template-columns: 84px minmax(0, 1fr) auto;
+           column-gap: 12px; row-gap: 4px; align-items: start;
+           padding: 8px 4px; border-top: 1px solid var(--line);
+           font-size: 13px; }
+.gap-kind { color: var(--faint); font-size: 10.5px; letter-spacing: .08em;
+            text-transform: uppercase; font-weight: 650; padding-top: 3px; }
+.gap-text { min-width: 0; color: var(--ink); }
+.gap-fix { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+           justify-self: end; }
+.gap-fix:empty { display: none; }
+.gap-cmd { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.gap-cmd code { font: 600 12px var(--mono); color: var(--ink);
+                background: var(--raised); border-radius: 6px; padding: 3px 8px;
+                user-select: all; }
+.gap-fix .chip { cursor: pointer; text-decoration: none; }
+@media (max-width: 640px) {
+  .gap-row { grid-template-columns: 64px minmax(0, 1fr); }
+  .gap-fix { grid-column: 2; justify-self: start; }
+}
+
 /* ---- THE VERDICT ("This week"): one pick per question, dissent beside ----
    The card PICKS by the printed precedence; dissent chips carry the other
    voices in their own currencies and drill to their evidence. */
@@ -104,9 +133,20 @@
 .sv-cost { font-size: 11px; }
 
 /* the armband 2×2 micro-table (mean vs haul, never blended) */
-.db-armband2 { margin-top: 8px; }
+/* the captain block under the pitch: top three of the best XI, each with
+   its consensus number and its opponent; the haul column exists only when
+   the simulation is newer than the last deadline */
+.db-capblock { margin-top: 10px; border-top: 1px solid var(--line);
+               padding-top: 8px; }
+.db-armband { font: 12.5px var(--mono); margin: 0 0 6px; color: var(--muted); }
+.db-armband b { color: var(--ink); }
 .db-captbl { width: auto; min-width: 300px; }
 .db-captbl th { position: static; }
+.db-captbl td .avatar { margin-right: 6px; vertical-align: middle; }
+.db-capsrc { font-size: 11px; }
+.db-xiline { font-family: var(--mono); font-size: 11.5px; }
+/* an omitted measure keeps a hover target so the reason is one hover away */
+.chip.db-omit { color: var(--faint); border-style: dashed; }
 
 /* ---- the agent briefing (model voice, clearly labelled) ---- */
 .ib-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
@@ -134,6 +174,13 @@
              padding-top: 6px; }
 .ib-detailrow { margin: 2px 0; font: 11px var(--mono); color: var(--muted); }
 .ib-empty { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+/* an outdated briefing folds under one dated line; its items are history */
+.ib-outdated { border: 1px dashed var(--line); border-radius: 9px;
+               padding: 8px 12px; }
+.ib-outdated summary { cursor: pointer; font: 600 12.5px var(--mono);
+                       color: var(--warn); }
+.ib-outdated[open] summary { margin-bottom: 6px; }
+.ib-outdated .ib-item { opacity: .75; }
 
 /* ---- alert rows (P0 = bad rail, P1 = warn rail — the risk channel) ---- */
 .db-alerts { display: flex; flex-direction: column; gap: 8px; }
@@ -243,11 +290,6 @@
 .pp-opp.fx-h3 { background: var(--fx-h3); }
 .pp-opp i, .pp-min i { color: inherit; opacity: .6; }
 .pp-min { background: var(--raised); color: var(--muted); }
-/* the suggested-change marker: "⇄ for Kinsky" */
-.pp-mark { display: block; margin: 3px 3px 0; padding: 1px 3px;
-           border-radius: 4px; font: 600 9px var(--mono); color: #fff;
-           background: color-mix(in oklab, var(--s1) 72%, #000);
-           white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* pitch markings: boundary, halfway line, centre circle — a decoration
    layer that never intercepts a click */
@@ -268,13 +310,8 @@
 .db-pitchhead { display: flex; align-items: center; gap: 10px;
                 justify-content: space-between; flex-wrap: wrap;
                 margin: 0 0 10px; }
+.db-pitchhead { justify-content: flex-start; }
 .db-pitchdelta { font-weight: 650; font-size: 13px; }
-.db-toggle { display: inline-flex; border: 1px solid var(--line);
-             border-radius: 999px; overflow: hidden; }
-.db-tog { border: 0; background: var(--surface); color: var(--muted);
-          font: 600 11.5px var(--mono); padding: 4px 12px; cursor: pointer; }
-.db-tog.on { background: var(--raised); color: var(--ink); }
-.db-armband { font-family: var(--mono); }
 
 /* the bench: a visually distinct dark tray below the pitch */
 .bench.db-benchtray { margin-top: 14px; padding: 12px 12px 10px;

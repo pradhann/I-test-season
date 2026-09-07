@@ -1105,3 +1105,117 @@ def test_radar_no_rows_is_the_distinct_empty_shape(db):
     assert res.get("empty") is True
     assert "fact_player_match_stats" in res["reason"]
     assert "131" in res["reason"]
+
+
+# ------------------------------------------ the best XI (ONE lineup) --------
+
+
+def _legal_xi_brute(pool):
+    """An independent brute force over the twelve legal formations, so the
+    test does not trust the helper's own enumeration."""
+    import itertools
+    xv = lambda p: p["xpts"] if p["xpts"] is not None else 0.0  # noqa: E731
+    by = {k: sorted([p for p in pool if p["pos"] == k], key=xv, reverse=True)
+          for k in ("GKP", "DEF", "MID", "FWD")}
+    best = None
+    for d, m, f in itertools.product((3, 4, 5), (2, 3, 4, 5), (1, 2, 3)):
+        if 1 + d + m + f != 11:
+            continue
+        if len(by["DEF"]) < d or len(by["MID"]) < m or len(by["FWD"]) < f:
+            continue
+        xi = by["GKP"][:1] + by["DEF"][:d] + by["MID"][:m] + by["FWD"][:f]
+        tot = sum(xv(p) for p in xi)
+        if best is None or tot > best[0]:
+            best = (tot, {p["code"] for p in xi}, f"{d}-{m}-{f}")
+    return best
+
+
+def test_best_xi_is_the_formation_legal_max_by_consensus_xpts(db):
+    """The pitch draws ONE lineup: the best legal XI from the 15 by the
+    consensus xPts squad_overview serves, captain = its highest xPts, the
+    bench in xPts order, and the locked picks named where they differ."""
+    sq = run_script("squad_overview", {}, db=db).result
+    brief = run_script("dashboard_brief", {}, db=db).result
+    bx = brief["best_xi"]
+    assert bx is not None and bx["reason"] is None
+    pool = sq["starters"] + sq["bench"]
+    by_code = {p["code"]: p for p in pool}
+    tot, codes, formation = _legal_xi_brute(pool)
+    assert set(bx["xi_codes"]) == codes and len(bx["xi_codes"]) == 11
+    assert bx["formation"] == formation
+    assert bx["xi_xpts"] == pytest.approx(round(tot, 2))
+    # formation law on the served codes
+    n = {k: sum(1 for c in bx["xi_codes"] if by_code[c]["pos"] == k)
+         for k in ("GKP", "DEF", "MID", "FWD")}
+    assert n["GKP"] == 1 and 3 <= n["DEF"] <= 5 and 2 <= n["MID"] <= 5 \
+        and 1 <= n["FWD"] <= 3
+    # the bench is the other four, in xPts order (nulls last)
+    assert set(bx["bench_codes"]) == set(by_code) - codes
+    bx_x = [by_code[c]["xpts"] if by_code[c]["xpts"] is not None else 0.0
+            for c in bx["bench_codes"]]
+    assert bx_x == sorted(bx_x, reverse=True)
+    # captain = highest consensus xPts IN the XI; candidates are its top 3
+    xi_ranked = sorted((by_code[c] for c in codes
+                        if by_code[c]["xpts"] is not None),
+                       key=lambda p: p["xpts"], reverse=True)
+    assert bx["captain"]["code"] == xi_ranked[0]["code"]
+    assert [c["player"]["code"] for c in bx["captain_candidates"]] == \
+        [p["code"] for p in xi_ranked[:3]]
+    for c in bx["captain_candidates"]:
+        assert c["xpts"] == by_code[c["player"]["code"]]["xpts"]
+        assert c["p_haul"] == by_code[c["player"]["code"]]["p_haul"]
+    lead = round(xi_ranked[0]["xpts"] - xi_ranked[1]["xpts"], 2)
+    assert bx["captain_lead_xpts"] == pytest.approx(lead)
+    gate = brief["thresholds"]["captain_close_call_xpts"]
+    assert bx["close_call"] == (lead < gate)
+    # the locked starters not in this XI come first in `differs`, counted
+    locked = {p["code"] for p in sq["starters"]}
+    out = [c for c in locked if c not in codes]
+    assert bx["n_differs"] == len(out)
+    assert {d["code"] for d in bx["differs"][:bx["n_differs"]]} == set(out)
+    assert {d["code"] for d in bx["differs"][bx["n_differs"]:]} == codes - locked
+    # the seeded GK inversion: BenchGK (3.6) starts, StartGK (2.0) sits
+    assert 101 in bx["xi_codes"] and 100 in bx["bench_codes"]
+    assert bx["source_panel"] == "squad_overview"
+    assert bx["source_as_of"] == sq["as_of"].replace(" ", "T")
+
+
+def test_best_legal_xi_helper_refuses_an_illegal_squad_and_honours_the_law():
+    from fpl_edge.platform.scripts.brief import best_legal_xi
+
+    mk = lambda code, pos, x: {"code": code, "pos": pos, "xpts": x}  # noqa: E731
+    # five forwards, no midfielders: no legal XI exists
+    squad = ([mk(1, "GKP", 4.0), mk(2, "GKP", 3.0)]
+             + [mk(10 + i, "DEF", 4.0) for i in range(5)]
+             + [mk(30 + i, "FWD", 6.0) for i in range(5)]
+             + [mk(40, "MID", 1.0), mk(41, "MID", 1.0), mk(42, "MID", 1.0)])
+    # 3 mids is legal (5-3-2 / 4-3-3 / 3-3-... ); remove two to break it
+    found = best_legal_xi(squad[:-2])
+    assert found is None
+    # a 5-4-1 forced by strong defenders and weak forwards
+    squad = ([mk(1, "GKP", 4.0), mk(2, "GKP", 3.0)]
+             + [mk(10 + i, "DEF", 5.0) for i in range(5)]
+             + [mk(20 + i, "MID", 5.0) for i in range(4)]
+             + [mk(30, "FWD", 1.0), mk(31, "FWD", 1.0), mk(32, "FWD", None)]
+             + [mk(40, "MID", 0.5)])
+    found = best_legal_xi(squad)
+    assert found["formation"] == "5-4-1"
+    assert {p["code"] for p in found["xi"]} == {1, 10, 11, 12, 13, 14,
+                                                 20, 21, 22, 23, 30}
+    # a null xPts counts as 0 and sits last on the bench
+    assert found["bench"][-1]["code"] == 32
+
+
+def test_squad_source_names_the_public_read_and_its_one_fix(db):
+    """The 15 came from public picks: the last closed GW's team, not the one
+    being built. The payload says so as a fact the page can act on, with the
+    exact command that turns the read live."""
+    sq = run_script("squad_overview", {}, db=db).result
+    brief = run_script("dashboard_brief", {}, db=db).result
+    src = brief["squad_source"]
+    assert src["label"] == sq["provenance_source"]
+    assert src["live"] is False
+    assert src["picks_gw"] == 2, "public picks are the LAST closed GW's team"
+    assert src["fix"] == "uv run fpl myteam auth"
+    assert src["as_of"] == sq["as_of"].replace(" ", "T")
+    assert "captain_close_call_xpts" in brief["thresholds"]

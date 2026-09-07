@@ -664,13 +664,121 @@ def _parse_ts(s: Any) -> dt.datetime | None:
     return d.astimezone(UTC)
 
 
+#: The input panels whose CURRENT as-of the freshness rule can read cheaply,
+#: mapped to the warehouse table each panel stamps its own ``as_of`` from
+#: (squad_overview: fact_player_state; projection_table: fact_projection).
+#: A max(as_of) over a read copy costs a file copy, never a panel run.
+CURRENT_AS_OF_TABLES: dict[str, str] = {
+    "squad_overview": "fact_player_state",
+    "projection_table": "fact_projection",
+}
+
+
+def current_inputs(db_path: Path | str,
+                   *, now: dt.datetime | None = None) -> dict[str, Any]:
+    """The cheap present: last passed deadline + max(as_of) per input table.
+
+    Never raises: a missing warehouse or table yields nulls plus a ``note``,
+    so the route stays a read and the rule degrades to the stored-as-of
+    comparison alone.
+    """
+    from fpl_edge.platform.query import read_copy
+
+    now = (now or dt.datetime.now(UTC)).astimezone(UTC)
+    out: dict[str, Any] = {"last_deadline_utc": None, "as_of": {}, "note": None}
+    db_path = Path(db_path)
+    if not db_path.exists():
+        out["note"] = f"no warehouse at {db_path.name}"
+        return out
+    try:
+        with read_copy(db_path) as wh:
+            row = wh.sql(
+                "SELECT max(deadline_utc) AS d FROM dim_event "
+                "WHERE deadline_utc <= ?", [now])
+            if not row.empty and row.iloc[0]["d"] is not None:
+                d = _parse_ts(row.iloc[0]["d"])
+                out["last_deadline_utc"] = d.isoformat() if d else None
+            for panel, table in CURRENT_AS_OF_TABLES.items():
+                df = wh.sql(f"SELECT max(as_of) AS a FROM {table}")
+                v = None if df.empty else df.iloc[0]["a"]
+                ts = _parse_ts(v) if v is not None else None
+                out["as_of"][panel] = ts.isoformat() if ts else None
+    except Exception as exc:  # noqa: BLE001 - freshness is a read, never a crash
+        out["note"] = f"could not read current inputs: {type(exc).__name__}: {exc}"
+    return out
+
+
+def freshness(artefact: dict[str, Any], *, now: dt.datetime,
+              current: dict[str, Any] | None = None) -> dict[str, Any]:
+    """The freshness verdict on a stored briefing, pure over its inputs.
+
+    ``inputs_moved`` (the older rule): a stored input as-of past the
+    generated_at by more than :data:`INPUTS_MOVED_H`, OR a CURRENT panel
+    as-of (``current["as_of"]``) newer than the as-of the briefing was
+    written from by that same window. ``outdated`` adds the calendar: a
+    deadline (``current["last_deadline_utc"]``) has passed since the
+    briefing was written. ``outdated_reasons`` says which, in words the
+    page prints verbatim.
+    """
+    current = current or {}
+    generated = _parse_ts(artefact.get("generated_at"))
+    stored = {k: _parse_ts(v) for k, v in
+              (artefact.get("input_as_of") or {}).items()}
+    window = dt.timedelta(hours=INPUTS_MOVED_H)
+    reasons: list[str] = []
+    inputs_moved = False
+    if generated is not None:
+        for ts in stored.values():
+            if ts is not None and (ts - generated) > window:
+                inputs_moved = True
+                break
+    moved_panels: list[str] = []
+    for panel, cur_iso in (current.get("as_of") or {}).items():
+        cur = _parse_ts(cur_iso)
+        if cur is None:
+            continue
+        was = stored.get(panel)
+        if was is None or (cur - was) > window:
+            moved_panels.append(
+                f"{panel} now {cur.date().isoformat()}"
+                + (f" (written from {was.date().isoformat()})" if was else ""))
+    if moved_panels:
+        inputs_moved = True
+        reasons.append("inputs moved: " + ", ".join(moved_panels))
+    last_deadline = _parse_ts(current.get("last_deadline_utc"))
+    deadline_passed = bool(generated is not None and last_deadline is not None
+                           and generated < last_deadline)
+    if deadline_passed:
+        reasons.append(
+            f"a deadline has passed ({last_deadline.date().isoformat()})")
+    stored_dates = sorted(t for t in stored.values() if t is not None)
+    return {
+        "age_hours": (round((now - generated).total_seconds() / 3600.0, 2)
+                      if generated is not None else None),
+        "inputs_moved": inputs_moved,
+        "outdated": bool(moved_panels or deadline_passed),
+        "outdated_reasons": reasons,
+        "deadline_passed": deadline_passed,
+        # the OLDEST input the briefing was written from: the honest date
+        # for "written from N Sep data"
+        "written_from_as_of": (stored_dates[0].isoformat()
+                               if stored_dates else None),
+        "current_as_of": dict(current.get("as_of") or {}),
+        "last_deadline_utc": (last_deadline.isoformat()
+                              if last_deadline else None),
+    }
+
+
 def briefing_response(db_path: Path | str,
-                      *, now: dt.datetime | None = None) -> dict[str, Any]:
+                      *, now: dt.datetime | None = None,
+                      current: dict[str, Any] | None = None) -> dict[str, Any]:
     """The GET /api/briefing payload: artefact + freshness, or an honest gap.
 
-    A missing artefact is 404-shaped JSON, never an exception —
-    ``{"empty": true, "reason": …, "task": "briefing_intel"}`` — so the UI
-    can render the gap and offer the pipeline trigger.
+    A missing artefact is 404-shaped JSON, never an exception:
+    ``{"empty": true, "reason": ..., "task": "briefing_intel"}``, so the UI
+    can render the gap and offer the pipeline trigger. ``current`` is the
+    present the freshness rule compares against (see :func:`freshness`);
+    None reads it via :func:`current_inputs`.
     """
     now = (now or dt.datetime.now(UTC)).astimezone(UTC)
     path = artefact_path(db_path)
@@ -687,19 +795,12 @@ def briefing_response(db_path: Path | str,
                           f"{type(exc).__name__}: {exc}",
                 "task": "briefing_intel"}
 
-    generated = _parse_ts(artefact.get("generated_at"))
-    age_hours = (round((now - generated).total_seconds() / 3600.0, 2)
-                 if generated is not None else None)
-    inputs_moved = False
-    if generated is not None:
-        for as_of in (artefact.get("input_as_of") or {}).values():
-            ts = _parse_ts(as_of)
-            if ts is not None and (ts - generated) > dt.timedelta(hours=INPUTS_MOVED_H):
-                inputs_moved = True
-                break
+    if current is None:
+        current = current_inputs(db_path, now=now)
     out = dict(artefact)
-    out["age_hours"] = age_hours
-    out["inputs_moved"] = inputs_moved
+    out.update(freshness(artefact, now=now, current=current))
+    if current.get("note"):
+        out["freshness_note"] = current["note"]
     return out
 
 
@@ -738,7 +839,7 @@ def generate(
 
     if all(res.get("empty") for res in results.values()):
         raise BriefingIntelError(
-            "every input panel is empty — there is nothing to synthesise; "
+            "every input panel is empty; there is nothing to synthesise; "
             + "; ".join(f"{n}: {r.get('reason')}" for n, r in results.items()))
 
     context, input_as_of, dropped = build_context(results)

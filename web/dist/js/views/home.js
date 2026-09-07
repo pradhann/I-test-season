@@ -1,12 +1,17 @@
 /* Dashboard — the front page, fplreview grammar.
 
-   PAGE ORDER, exact: topbar stats + chip ledger → provenance banner → THE
-   VERDICT ("This week": one pick per question — transfer / captain / bench /
+   PAGE ORDER, exact: topbar stats + chip ledger → provenance banner →
+   BEFORE YOU READ THIS (every live data gap with its fix, payload-derived,
+   nothing rendered when there are none) → THE VERDICT ("This week": one pick per question — transfer / captain / bench /
    chip — by the brief's PRINTED precedence, dissent displayed as chips,
    currencies never summed; the precedence text sits behind a "how ties
    break" disclosure) → the AGENT BRIEFING (model-authored salience, clearly
-   labelled, drawer drills only) → THE PITCH (suggested XI rendered by default, one toggle back to
-   the locked picks; price-fall risk badges ride ON the cards) → the WATCH
+   labelled, drawer drills only) → THE PITCH (ONE lineup: the best
+   formation-legal XI by consensus xPts from brief.best_xi, no toggle, no
+   swap arrows; the locked picks are named where they differ; the captain
+   line prints the top three candidates with opponent and venue and calls a
+   lead under the served gate a close call; price-fall and availability
+   badges ride ON the cards) → the WATCH
    strip (own-player price risk, template gaps, rise targets — quiet rows
    below the squad, where they belong) → moves to consider (rule cards, not
    the solver) → the SOLVER CARD (the real transfer_plan move with avatars,
@@ -132,9 +137,18 @@ const CHIP_NAME = { "3xc": "Triple Captain", bboost: "Bench Boost",
 const CHIP_SHORT = { wildcard: "WC", freehit: "FH", bboost: "BB", "3xc": "TC" };
 
 function shortDate(iso) {
+  // UTC, like every clockText "Z" on the page: a 06:48Z artefact is that
+  // day's, not the evening before in the browser's zone
   const d = parseTs(iso);
   if (!d) return null;
-  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  return d.toLocaleDateString("en-GB",
+    { day: "numeric", month: "short", timeZone: "UTC" });
+}
+/* Payload prose from other panels may carry em-dash asides; this page prints
+   none (prose_style.py's rule), so they are rewritten at the point of print. */
+function noDash(s) {
+  return s == null ? s : String(s).replace(/\s+\u2014\s+/g, "; ")
+    .replace(/\u2014/g, ", ");
 }
 
 /* skeleton shells: grey blocks while the four calls are in flight — every
@@ -160,6 +174,7 @@ export default async function home(host) {
   const statsRow = el("div", "stats");
   const chipLedger = el("div", "db-chipledger");
   const provBanner = el("div", "db-prov");
+  const gapStrip = el("section", "card db-gaps");
   const verdictCard = card(null, null);
   verdictCard.classList.add("db-verdict");
   const intelCard = card(null, null);
@@ -169,13 +184,13 @@ export default async function home(host) {
   pitchCard.appendChild(pitchBody);
   const watchStrip = el("div", "db-watchstrip");
   const movesCard = card("Moves to consider",
-    "rule-based — not the solver; every gate echoed by the brief");
+    "rule-based; not the solver; every gate echoed by the brief");
   const movesBody = el("div");
   movesCard.appendChild(movesBody);
   const solverCard = card(null, null);
   solverCard.classList.add("solver");
   const tilesCard = card("Signals",
-    "rule-based voice — deterministic gates over the panels; the Briefing "
+    "rule-based voice; deterministic gates over the panels; the Briefing "
     + "above is the model's voice. Two voices, never merged.");
   const tilesBody = el("div");
   tilesCard.appendChild(tilesBody);
@@ -183,7 +198,7 @@ export default async function home(host) {
   const watchBody = el("div");
   watchCard.appendChild(watchBody);
   const foot = el("div", "db-foot");
-  host.append(statsRow, chipLedger, provBanner, verdictCard, intelCard,
+  host.append(statsRow, chipLedger, provBanner, gapStrip, verdictCard, intelCard,
               pitchCard, watchStrip, movesCard, solverCard, tilesCard,
               watchCard, foot);
 
@@ -214,7 +229,17 @@ export default async function home(host) {
   let solveStatus = stR.ok ? stR.payload : null;
   const thr = brief?.thresholds || {};
   const median = brief?.xi_median_xpts ?? null;
-  const suggested = brief?.suggested_xi || null;
+  const bestXi = brief?.best_xi || null;
+  const squadSource = brief?.squad_source || null;
+  // haul odds are an engine simulation with a date; they render only when
+  // that simulation is newer than the last deadline that passed
+  const lastDeadline = parseTs(brief?.solve?.last_deadline_utc);
+  const haulGen = parseTs(brief?.p_haul_generated);
+  const haulFresh = !!(haulGen && lastDeadline && haulGen > lastDeadline);
+  const haulUnavailable = "haul odds unavailable (last simulation "
+    + (shortDate(brief?.p_haul_generated) || "date unknown") + ")";
+  const squadCodes = new Set(
+    sq ? [...(sq.starters || []), ...(sq.bench || [])].map(x => x.code) : []);
   const teamFix = new Map(
     (brief?.team_fixtures || []).map(tf => [tf.team_code, tf]));
   const minutesBy = new Map(
@@ -318,9 +343,14 @@ export default async function home(host) {
     if (hdr && hdr.free_transfers != null) {
       const staleFt = hdr.free_transfers_state === "stale"
         || hdr.free_transfers_state === "missing";
-      const ft = stat(String(hdr.free_transfers),
-                      "free transfers" + (staleFt ? " (stale plan)" : ""));
-      ft.title = "from the solver plan"
+      // a stale plan's FT count was read before transfers you have since
+      // made; it prints as unknown, never as a number
+      const ft = stat(staleFt ? "?" : String(hdr.free_transfers),
+                      "free transfers" + (staleFt ? " (plan stale)" : ""));
+      ft.title = (staleFt
+          ? `unknown: the solver plan read ${hdr.free_transfers} before a `
+            + "deadline passed; re-run the solve for a current count"
+          : "from the solver plan")
         + (hdr.free_transfers_as_of
             ? ` · read ${hdr.free_transfers_as_of}` : "")
         + (hdr.free_transfers_state
@@ -335,7 +365,7 @@ export default async function home(host) {
       chipTile.title = hdr.chip
         ? `the solver plan spends ${CHIP_NAME[hdr.chip] || hdr.chip}`
         : (hdr.chip_rule === "no_chip_named"
-            ? "no plan stands — hold by default"
+            ? "no plan stands; hold by default"
             : "the solver plan spends no chip");
       statsRow.appendChild(chipTile);
     }
@@ -354,7 +384,7 @@ export default async function home(host) {
     }
     if (median != null) {
       const md = stat(fmt1(median), "XI median xPts · per starter");
-      md.title = "median of the starting XI's per-player xPts — a per-player "
+      md.title = "median of the starting XI's per-player xPts; a per-player "
         + "number, not comparable to the Σ tile";
       statsRow.appendChild(md);
     }
@@ -388,7 +418,7 @@ export default async function home(host) {
       }
     } else if (sq) {
       chipLedger.appendChild(el("span", "db-chiplbl",
-        "chips: unknown — this squad source serves no chip ledger"));
+        "chips: unknown; this squad source serves no chip ledger"));
     }
   }
 
@@ -397,21 +427,14 @@ export default async function home(host) {
     provBanner.textContent = "";
     if (!sq) {
       provBanner.classList.add("warn");
-      provBanner.textContent = "squad unreadable — the pitch below explains.";
+      provBanner.textContent = "squad unreadable; the pitch below explains.";
     } else {
       const asOf = sq.as_of ? clockText(sq.as_of) : "unknown";
-      const nextGw = brief?.gw ?? null;
-      if (nextGw != null && sq.gw != null && sq.gw < nextGw) {
-        provBanner.classList.add("warn");
-        provBanner.appendChild(el("span", "chip warn",
-          `pitch shows GW${sq.gw} picks`));
-        provBanner.appendChild(document.createTextNode(
-          ` — pending transfers are not visible here. `
-          + `squad: ${sq.provenance_source} · as of ${asOf}`));
-      } else {
-        provBanner.textContent =
-          `squad: ${sq.provenance_source} · as of ${asOf}`;
-      }
+      const picksGw = brief?.squad_source?.picks_gw ?? null;
+      provBanner.textContent =
+        `squad: ${sq.provenance_source}`
+        + (picksGw != null ? ` · GW${picksGw} picks` : "")
+        + ` · as of ${asOf}`;
     }
   }
 
@@ -436,13 +459,22 @@ export default async function home(host) {
           + (n.xpts != null ? ` (${fmt1(n.xpts)} xPts)` : "");
         break;
       case "haul_odds":
+        if (!haulFresh) {
+          const omit = el("span", "chip db-omit", "haul odds not shown");
+          omit.title = haulUnavailable;
+          return omit;
+        }
         txt = `haul odds prefer ${d.player?.name ?? "?"}`
           + (n.p_haul != null
              ? ` (${Math.round(n.p_haul * 100)}%${haulSimTag()})` : "");
         break;
       case "creator_armband":
+        // a creator armband call on a player you do not own is not a
+        // captain option; it is labelled so it cannot read as one
         txt = `creators: ${n.armband_calls ?? "?"} named `
-          + `${d.player?.name ?? "?"}`;
+          + `${d.player?.name ?? "?"}`
+          + (d.player?.code != null && !squadCodes.has(d.player.code)
+             ? " (not owned)" : "");
         break;
       case "rule_moves":
         txt = `rules prefer ${d.out?.name ?? "?"} → ${d.in?.name ?? "?"}`;
@@ -456,7 +488,7 @@ export default async function home(host) {
     }
     const c = el("button", "vd-dissent", txt);
     c.type = "button";
-    c.title = `${d.voice} — its own measure, displayed beside the pick, `
+    c.title = `${d.voice}; its own measure, displayed beside the pick, `
       + `never summed into it · ${d.source_panel}`;
     c.onclick = (e) => { e.stopPropagation(); drillTo(d.drill); };
     return c;
@@ -535,8 +567,37 @@ export default async function home(host) {
         put("no move named: no plan stands and nothing cleared a gate");
         break;
       case "solver_plan_captain":
-      case "mean_xpts_captain":
+      case "mean_xpts_captain": {
+        // no solver plan stands: the line is the best XI's own top three,
+        // each with its consensus number and its opponent, and a lead under
+        // the served gate is a close call, never an asserted pick
+        const cands = (ln.rule === "mean_xpts_captain" && bestXi)
+          ? (bestXi.captain_candidates || []) : [];
+        if (cands.length) {
+          const c0 = cands[0], c1 = cands[1];
+          if (bestXi.close_call && c1) {
+            put(el("b", null, "close call"),
+                `: ${c0.player.name} ${fmt1(c0.xpts)} vs `
+                + `${c1.player.name} ${fmt1(c1.xpts)} consensus xPts`);
+          } else {
+            put(verdictFace(c0.player), el("b", null, c0.player.name));
+          }
+          for (const c of cands)
+            numBits.push(`${c.player.name} ${fmt1(c.xpts)} xPts `
+              + oppText(c.player.team_code));
+          if (bestXi.captain_lead_xpts != null)
+            numBits.push(`lead ${fmt1(bestXi.captain_lead_xpts)} `
+              + `(close-call gate ${thr.captain_close_call_xpts ?? "?"})`);
+          if (haulFresh && c0.p_haul != null)
+            numBits.push(`${Math.round(c0.p_haul * 100)}% haul odds`
+              + haulSimTag());
+          numBits.push("consensus xPts in the best XI; no solver plan stands");
+          break;
+        }
         put(verdictFace(ln.pick), el("b", null, ln.pick?.name ?? "?"));
+        if (ln.pick?.team_code != null) numBits.push(oppText(ln.pick.team_code));
+        if (ln.pick?.code != null && !squadCodes.has(ln.pick.code))
+          numBits.push("not in your 15; enters via the plan's moves");
         // A solver pick is quoted in the solver's OWN currency first; the
         // consensus figure rides beside it, labelled — two sources, never
         // one number wearing the other's name.
@@ -546,25 +607,46 @@ export default async function home(host) {
             + `, solver forecast`);
         if (n.pick_xpts != null)
           numBits.push(`consensus ${fmt1(n.pick_xpts)} xPts`);
-        if (n.pick_p_haul != null)
+        if (n.pick_p_haul != null && haulFresh)
           numBits.push(`${Math.round(n.pick_p_haul * 100)}% haul odds`
             + haulSimTag());
         numBits.push(ln.rule === "solver_plan_captain"
           ? "solver plan" : "consensus pick, no solver plan");
         break;
+      }
       case "no_captain_named":
         put("no captain named: neither a plan nor a projection stands");
         break;
       case "bench_inversion_applied":
-        put(el("b", null,
-          `${n.n_changes} change${n.n_changes > 1 ? "s" : ""}`),
-          " applied in the suggested XI");
-        if (n.swap_delta_xpts != null)
-          numBits.push(`${fmtSigned(n.swap_delta_xpts, 1)} xPts`);
+      case "bench_confirmed": {
+        // the pitch draws ONE lineup, the best XI; this line says how far
+        // the locked picks sit from it, by name
+        if (bestXi && (bestXi.xi_codes || []).length === 11) {
+          const nd = bestXi.n_differs || 0;
+          const out = (bestXi.differs || []).slice(0, nd).map(d => d.name);
+          const inn = (bestXi.differs || []).slice(nd).map(d => d.name);
+          if (nd) {
+            put(el("b", null, `${nd} locked starter${nd > 1 ? "s" : ""} `
+              + `not in the best XI`), `: ${out.join(", ")}`
+              + (inn.length ? ` (in: ${inn.join(", ")})` : ""));
+          } else {
+            put(el("b", null, "your locked XI is the best XI"));
+          }
+          numBits.push("best XI by consensus xPts"
+            + (bestXi.xi_xpts != null ? `, Σ ${fmt1(bestXi.xi_xpts)}` : ""));
+          break;
+        }
+        if (ln.rule === "bench_inversion_applied") {
+          put(el("b", null,
+            `${n.n_changes} bench change${n.n_changes > 1 ? "s" : ""}`),
+            " by consensus xPts");
+          if (n.swap_delta_xpts != null)
+            numBits.push(`${fmtSigned(n.swap_delta_xpts, 1)} xPts`);
+        } else {
+          put("your bench order stands");
+        }
         break;
-      case "bench_confirmed":
-        put("your bench order stands");
-        break;
+      }
       case "no_bench_named":
         put("no bench read: squad unreadable");
         break;
@@ -597,7 +679,7 @@ export default async function home(host) {
         + `${fmt1(n.pick_xpts)} xPts`);
       dv.title = "the solver's own forecast for this player differs from the "
         + `provider consensus by ${fmtSigned(n.solver_vs_consensus, 2)} xPts `
-        + `(gate ${n.divergence_gate}) — the pick rests on a number the `
+        + `(gate ${n.divergence_gate}); the pick rests on a number the `
         + "market does not share";
       side.appendChild(dv);
     }
@@ -608,6 +690,14 @@ export default async function home(host) {
         "chip " + (ln.state === "aging" ? "warn" : "bad"), ln.state);
       st.title = "the solve state this pick was read under";
       side.appendChild(st);
+    }
+    // one omission chip per line: the haul_odds dissent chip carries it
+    // itself when that voice is present
+    const haulVoice = (ln.dissent || []).some(d => d.voice === "haul_odds");
+    if (n.pick_p_haul != null && !haulFresh && !haulVoice) {
+      const omit = el("span", "chip db-omit", "haul odds not shown");
+      omit.title = haulUnavailable;
+      side.appendChild(omit);
     }
     for (const d of ln.dissent || []) side.appendChild(dissentChip(d));
     row.appendChild(side);
@@ -621,13 +711,13 @@ export default async function home(host) {
     verdictCard.appendChild(head);
     if (!brief) {
       verdictCard.appendChild(namedGap("No verdict to assemble.",
-        "dashboard_brief unavailable — the verdict block rides in it."));
+        "dashboard_brief unavailable; the verdict block rides in it."));
       return;
     }
     const V = brief.verdict;
     if (!V || !(V.lines || []).length) {
       verdictCard.appendChild(namedGap("No verdict served.",
-        "the brief carries no verdict block — a backend gap, not a "
+        "the brief carries no verdict block; a backend gap, not a "
         + "quiet day."));
       return;
     }
@@ -655,7 +745,7 @@ export default async function home(host) {
   function generateBtn(label) {
     const btn = el("button", "chip", label || "Generate");
     btn.type = "button";
-    btn.title = "one model pass over the panels — the briefing appears "
+    btn.title = "one model pass over the panels; the briefing appears "
       + "here when it settles";
     btn.onclick = () => generateIntel(btn);
     return btn;
@@ -681,9 +771,10 @@ export default async function home(host) {
         if (settled && st.state === "error" && intel?.empty)
           intel.reason = `briefing_intel run failed: ${st.detail || "no detail"}`;
         if (!settled && timedOut && intel?.empty)
-          intel.reason = "still running after 5 min — the pipelines tab has "
+          intel.reason = "still running after 5 min; the pipelines tab has "
             + "the ledger; this section will pick the artefact up on reload.";
         renderIntel();
+        renderGaps();
         // the dedupe cross-references key off the fresh briefing's codes
         renderTiles();
         renderMoves();
@@ -724,7 +815,7 @@ export default async function home(host) {
           out.tileSkip.add(ti);
           if (!out.byItem.has(i)) out.byItem.set(i, []);
           out.byItem.get(i).push({
-            label: `also a rule signal — ${String(t.kind).replace(/_/g, " ")}`,
+            label: `also a rule signal; ${String(t.kind).replace(/_/g, " ")}`,
             title: `gate: ${t.gate} · ${t.source_panel}`,
             drill: t.drill,
           });
@@ -736,8 +827,8 @@ export default async function home(host) {
           out.moveSkip.add(mi);
           if (!out.byItem.has(i)) out.byItem.set(i, []);
           out.byItem.get(i).push({
-            label: `also a rule move — ${mv.out?.name} → ${mv.in?.name}`,
-            title: `rule: ${mv.rule} — rule-based, not the solver`,
+            label: `also a rule move; ${mv.out?.name} → ${mv.in?.name}`,
+            title: `rule: ${mv.rule}; rule-based, not the solver`,
             drill: mv.drill,
           });
         }
@@ -780,7 +871,7 @@ export default async function home(host) {
         detail = el("div", "ib-detail");
         for (const n of it.numbers || []) {
           detail.appendChild(el("p", "ib-detailrow",
-            `${n.value}${n.unit} — ${n.source_panel}`
+            `${n.value}${n.unit}; ${n.source_panel}`
             + (n.as_of ? ` · as of ${n.as_of}` : " · no as-of served")));
         }
         detail.appendChild(el("p", "ib-detailrow",
@@ -790,16 +881,35 @@ export default async function home(host) {
     }
     return row;
   }
+  function intelOutdated() {
+    return !!(intel && !intel.empty && (intel.outdated || intel.inputs_moved));
+  }
+  function outdatedSummary() {
+    // "written 5 Sep from 4 Sep data; a deadline has passed": the route's
+    // freshness verdict, dated from the payload, never from this file
+    const written = shortDate(intel.generated_at) || "unknown date";
+    const inputDates = Object.values(intel.input_as_of || {})
+      .map(parseTs).filter(Boolean).sort((a, b) => a - b);
+    const from = shortDate(intel.written_from_as_of)
+      || (inputDates.length ? shortDate(inputDates[0].toISOString()) : null);
+    const why = intel.deadline_passed
+      ? "a deadline has passed"
+      : ((intel.outdated_reasons || []).length
+          ? "the input panels have moved since"
+          : "inputs carry a newer as-of");
+    return `Briefing outdated (written ${written}`
+      + (from ? ` from ${from} data` : "") + `; ${why})`;
+  }
   function renderIntel() {
     intelCard.textContent = "";
     const head = el("div", "ib-head");
     head.appendChild(el("h2", null, "Briefing"));
     if (intel && !intel.empty) head.appendChild(intelProvChip());
-    if (intel && !intel.empty && intel.inputs_moved) {
-      const moved = el("span", "chip warn",
-        "panels have moved since this was written");
-      moved.title = "one or more input panels carries a newer as-of than "
-        + "this briefing's generated_at";
+    if (intelOutdated()) {
+      const moved = el("span", "chip warn", "outdated");
+      moved.title = (intel.outdated_reasons || []).join("; ")
+        || "one or more input panels carries a newer as-of than this "
+           + "briefing's generated_at";
       head.appendChild(moved);
       head.appendChild(generateBtn("Regenerate"));
     }
@@ -821,8 +931,22 @@ export default async function home(host) {
     const dupes = briefingDupes();
     const items = [...(intel.items || [])]
       .sort((a, b) => (a.severity ?? 9) - (b.severity ?? 9));
+    // an outdated briefing folds under one dated summary line; its items
+    // are history, not guidance, and never render as current
+    let body = intelCard;
+    if (intelOutdated()) {
+      const det = el("details", "ib-outdated");
+      const sum = el("summary", null, outdatedSummary() + ". Regenerate above.");
+      sum.title = (intel.outdated_reasons || []).join("; ");
+      det.appendChild(sum);
+      det.appendChild(el("p", "db-quiet",
+        `${items.length} item(s) written from inputs that have since moved; `
+        + "folded here as history, not as this week's guidance."));
+      intelCard.appendChild(det);
+      body = det;
+    }
     for (const it of items)
-      intelCard.appendChild(
+      body.appendChild(
         intelItem(it, dupes.byItem.get((intel.items || []).indexOf(it))));
     if (intel.rejected_n > 0) {
       // A count says something was dropped; the reasons say what to fix.
@@ -837,8 +961,8 @@ export default async function home(host) {
   /* -------------------- watch-strip wording (kept nested for the tests) */
   function claimFor(a) {
     /* Wording keyed by rule id — the brief carries numbers, never prose.
-       Bench order and captaincy have no row here on purpose: they are
-       applied in the suggested XI on the pitch. */
+       Bench order and captaincy have no row here on purpose: the pitch
+       draws the best XI and its captain candidates. */
     const frag = document.createDocumentFragment();
     const P = i => (a.players || [])[i] || { name: String((a.codes || [])[i] ?? "?") };
     const n = a.numbers || {};
@@ -848,12 +972,12 @@ export default async function home(host) {
     switch (a.rule) {
       case "availability":
         add(`${P(0).name} is flagged `, co(String(a.status || "?")));
-        if (a.news) add(` — FPL says: `, el("q", null, a.news));
+        if (a.news) add(`; FPL says: `, el("q", null, a.news));
         break;
       case "own_price_fall":
         add(`${P(0).name} `, co(fmtSigned(n.net_per_hour) + "/hr"),
             ` in the ${fmt2(n.window_h)}h window (net `,
-            co(fmtSigned(n.net)), `) — price watch, observed flow.`);
+            co(fmtSigned(n.net)), `); price watch, observed flow.`);
         break;
       case "solve_stale":
         add("solver: plan predates the deadline. ", a.reason || "");
@@ -895,10 +1019,10 @@ export default async function home(host) {
     const claim = el("span", "al-claim");
     if (t.kind === "template_gap") {
       claim.textContent = `${t.player?.name} ${fmt1(t.number.value)}% owned, `
-        + `you don't — template gap.`;
+        + `you don't; template gap.`;
     } else {
       claim.textContent = `${t.player?.name} ${fmtSigned(t.number.value)}/hr `
-        + `inflow in the ${fmt2(t.number.window_h)}h window — rise watch.`;
+        + `inflow in the ${fmt2(t.number.window_h)}h window; rise watch.`;
     }
     row.appendChild(claim);
     row.appendChild(citeChip(t.source_panel, t.source_as_of));
@@ -911,7 +1035,7 @@ export default async function home(host) {
     watchStrip.textContent = "";
     if (!brief) {
       watchStrip.appendChild(el("p", "db-quiet",
-        "watch list unavailable — dashboard_brief did not answer."));
+        "watch list unavailable; dashboard_brief did not answer."));
       return;
     }
     // solver/pipeline gap alerts: one slim utility row, never a banner
@@ -947,15 +1071,10 @@ export default async function home(host) {
   }
 
   /* ------------------------------------------------------------- pitch */
-  const capDiffers = !!(suggested && suggested.captain && suggested.your_captain
-    && suggested.captain.code !== suggested.your_captain.code);
-  let pitchMode = (suggested && (suggested.n_changes > 0 || capDiffers))
-    ? "suggested" : "picked";
   // per-render context read by pcard (which only ever reads squad fields
   // off its player argument)
   let capCodeCur = null;
   let viceCodeCur = null;
-  let markByCode = new Map();
 
   function pjClass(x) {
     // bins beside the ramp docs in dashboard.css; anchor = XI median
@@ -990,7 +1109,7 @@ export default async function home(host) {
       chip.appendChild(document.createTextNode("–"));
       chip.appendChild(el("i", null, "opp"));
       chip.title = tf
-        ? "blank gameweek — no fixture in the next round"
+        ? "blank gameweek; no fixture in the next round"
         : "no fixture data served for this club";
       return chip;
     }
@@ -1001,7 +1120,7 @@ export default async function home(host) {
     if (kls) chip.classList.add(kls);
     chip.appendChild(document.createTextNode(nx.label));
     chip.appendChild(el("i", null, nx.is_home ? "H" : "A"));
-    chip.title = `${nx.opponent} (${nx.is_home ? "home" : "away"}) — `
+    chip.title = `${nx.opponent} (${nx.is_home ? "home" : "away"}); `
       + (ease != null
           ? `${defensive ? "defence" : "attack"} ease ${fmtSigned(ease, 2)} `
             + `goals vs league average (opponent-only lens, fixture_board)`
@@ -1017,13 +1136,13 @@ export default async function home(host) {
     if (m && m.xmins != null) {
       chip.appendChild(document.createTextNode(String(Math.round(m.xmins))));
       chip.appendChild(el("i", null, "xmin"));
-      chip.title = `${fmt1(m.xmins)} expected minutes — provider consensus `
+      chip.title = `${fmt1(m.xmins)} expected minutes; provider consensus `
         + `(${m.n_sources ?? "?"} source(s))`;
     } else if (m && m.p_appear != null) {
       chip.appendChild(document.createTextNode(
         `${Math.round(m.p_appear * 100)}%`));
       chip.appendChild(el("i", null, "appear"));
-      chip.title = `${Math.round(m.p_appear * 100)}% to appear — provider `
+      chip.title = `${Math.round(m.p_appear * 100)}% to appear; provider `
         + `consensus (${m.n_sources ?? "?"} source(s)); no provider serves `
         + `expected minutes for this gameweek, so none are shown`;
     } else {
@@ -1056,7 +1175,7 @@ export default async function home(host) {
       const dEl = el("span", "pp-drop" + (risk ? " shift" : ""), "↓");
       dEl.title = `price-fall risk: net ${fmtSigned(drop.net)} in the `
         + `${fmt2(drop.window_h)}h window (${fmtSigned(drop.net_per_hour)}/hr)`
-        + ` — observed flow, not a predicted change`;
+        + `; observed flow, not a predicted change`;
       b.appendChild(dEl);
     }
     if (isCap || isVice)
@@ -1090,17 +1209,76 @@ export default async function home(host) {
     rowEl.appendChild(minChip(p.code));
     b.appendChild(rowEl);
 
-    const mark = markByCode.get(p.code);
-    if (mark) {
-      const mk = el("span", "pp-mark", `⇄ for ${mark}`);
-      mk.title = "suggested change vs your locked picks — toggle above to "
-        + "see the squad as picked";
-      b.appendChild(mk);
-    }
-
     b.onclick = () => openDrawer(p.code);
     pitchCardByCode.set(p.code, b);
     return b;
+  }
+  function oppText(teamCode) {
+    // opponent + venue from fixture_board's opponent_only lens, the same
+    // source the pitch's opponent chip reads
+    const tf = teamFix.get(teamCode);
+    if (!tf) return "(no fixture data)";
+    if (!tf.next) return "(blank GW)";
+    return `${tf.next.opponent} (${tf.next.is_home ? "H" : "A"})`;
+  }
+  function captainBlock(lockedCap) {
+    // the top three of the best XI by consensus xPts, each with its number
+    // AND its opponent; a lead under the served gate is a close call
+    const cands = bestXi.captain_candidates || [];
+    const c0 = cands[0], c1 = cands[1];
+    const box = el("div", "db-capblock");
+    const lead = el("p", "db-armband");
+    if (bestXi.close_call && c1) {
+      lead.append(el("b", null, "captain: close call"),
+        document.createTextNode(`; ${c0.player.name} ${fmt1(c0.xpts)} vs `
+          + `${c1.player.name} ${fmt1(c1.xpts)} consensus xPts, lead `
+          + `${fmt1(bestXi.captain_lead_xpts)} under the `
+          + `${thr.captain_close_call_xpts ?? "?"} gate`));
+    } else {
+      lead.append(el("b", null, `captain: ${c0.player.name}`),
+        document.createTextNode(`; ${fmt1(c0.xpts)} consensus xPts`
+          + (c1 && bestXi.captain_lead_xpts != null
+              ? `, ${fmt1(bestXi.captain_lead_xpts)} clear of ${c1.player.name}`
+              : "")));
+    }
+    box.appendChild(lead);
+    const tbl = el("table", "data db-captbl");
+    const hd = el("tr");
+    hd.append(el("th", null, "candidate"), el("th", "num", "consensus xPts"),
+              el("th", null, "opponent"));
+    if (haulFresh) {
+      const haulTh = el("th", "num", "haul odds" + haulSimTag());
+      haulTh.title = brief?.p_haul_source || "engine simulation";
+      hd.appendChild(haulTh);
+    }
+    const thd = el("thead"); thd.appendChild(hd); tbl.appendChild(thd);
+    const tb = el("tbody");
+    for (const c of cands) {
+      const tr = el("tr");
+      const who = el("td");
+      who.appendChild(tinyFace(c.player.code));
+      who.appendChild(document.createTextNode(c.player.name
+        + (lockedCap && lockedCap.code === c.player.code
+            ? " (your locked armband)" : "")));
+      tr.appendChild(who);
+      tr.appendChild(el("td", "num", c.xpts != null ? fmt1(c.xpts) : "–"));
+      tr.appendChild(el("td", null, oppText(c.player.team_code)));
+      if (haulFresh)
+        tr.appendChild(el("td", "num",
+          c.p_haul != null ? `${Math.round(c.p_haul * 100)}%` : "–"));
+      tb.appendChild(tr);
+    }
+    tbl.appendChild(tb);
+    box.appendChild(tbl);
+    const src = el("p", "sub db-capsrc",
+      `xPts: ${noDash(brief?.xpts_source) || "consensus"}`
+      + (brief?.xpts_as_of ? `, as of ${shortDate(brief.xpts_as_of)} `
+          + `${clockText(brief.xpts_as_of)}` : "")
+      + "; opponent: fixture_board"
+      + (!haulFresh ? "; haul odds not shown" : ""));
+    if (!haulFresh) src.title = haulUnavailable;
+    box.appendChild(src);
+    return box;
   }
   renderPitch();
   function renderPitch() {
@@ -1116,51 +1294,55 @@ export default async function home(host) {
     const all = [...(sq.starters || []), ...(sq.bench || [])];
     const byCode = new Map(all.map(x => [x.code, x]));
     const lockedCap = all.find(x => x.is_captain) || null;
-    const lockedVice = all.find(x => x.is_vice) || null;
-    const isSug = pitchMode === "suggested" && !!suggested;
-
-    // header strip: the changes headline + the mode toggle
-    if (suggested && (suggested.n_changes > 0 || capDiffers)) {
-      const head = el("div", "db-pitchhead");
-      const parts = [];
-      if (suggested.n_changes > 0)
-        parts.push(`${suggested.n_changes} change`
-          + `${suggested.n_changes > 1 ? "s" : ""} vs your locked picks`
-          + (suggested.total_delta_xpts != null
-              ? `, ${fmtSigned(suggested.total_delta_xpts, 1)} xPts` : ""));
-      else parts.push("your XI stands; the armband is the one suggestion");
-      head.appendChild(el("span", "db-pitchdelta", parts.join(" ")));
-      const tog = el("span", "db-toggle");
-      const mk = (label, mode) => {
-        const btn = el("button",
-          "db-tog" + (pitchMode === mode ? " on" : ""), label);
-        btn.type = "button";
-        btn.onclick = () => { pitchMode = mode; renderPitch(); };
-        return btn;
-      };
-      tog.append(mk("Suggested XI", "suggested"), mk("As picked", "picked"));
-      head.appendChild(tog);
-      pitchBody.appendChild(head);
-    } else if (suggested && suggested.reason) {
-      pitchBody.appendChild(el("p", "sub", suggested.reason));
-    }
-
-    const xiCodes = isSug && (suggested.xi_codes || []).length
-      ? suggested.xi_codes
+    // ONE lineup: the brief's best formation-legal XI by consensus xPts.
+    // Without it the locked picks draw, labelled as the fallback they are.
+    const usable = !!(bestXi && (bestXi.xi_codes || []).length === 11);
+    const xiCodes = usable ? bestXi.xi_codes
       : (sq.starters || []).map(x => x.code);
-    const benchCodes = isSug && (suggested.bench_codes || []).length
-      ? suggested.bench_codes
+    const benchCodes = usable ? bestXi.bench_codes
       : (sq.bench || []).map(x => x.code);
-    capCodeCur = isSug && suggested.captain
-      ? suggested.captain.code : (lockedCap ? lockedCap.code : null);
-    viceCodeCur = lockedVice ? lockedVice.code : null;
-    markByCode = new Map();
-    if (isSug) {
-      for (const s of suggested.swaps || []) {
-        markByCode.set(s.in.code, s.out.name);   // on the pitch
-        markByCode.set(s.out.code, s.in.name);   // on the bench
+    capCodeCur = usable
+      ? (bestXi.captain ? bestXi.captain.code : null)
+      : (lockedCap ? lockedCap.code : null);
+    viceCodeCur = null;
+
+    const head = el("div", "db-pitchhead");
+    if (usable) {
+      const lead = el("span", "db-pitchdelta",
+        "best XI by consensus xPts"
+        + (bestXi.formation ? ` · ${bestXi.formation}` : "")
+        + (bestXi.xi_xpts != null ? ` · Σ ${fmt1(bestXi.xi_xpts)} xPts` : ""));
+      lead.title = `${bestXi.source_panel}`
+        + (bestXi.source_as_of ? ` as of ${bestXi.source_as_of}` : "")
+        + (brief?.xpts_source ? `; ${brief.xpts_source}` : "");
+      head.appendChild(lead);
+      const nd = bestXi.n_differs || 0;
+      const out = (bestXi.differs || []).slice(0, nd).map(d => d.name);
+      const inn = (bestXi.differs || []).slice(nd).map(d => d.name);
+      const diff = el("span", "chip" + (nd ? " warn" : " s1"),
+        nd ? `your locked picks differ by ${nd}` : "your locked XI is this XI");
+      diff.title = nd
+        ? `locked but benched here: ${out.join(", ") || "none"}; `
+          + `benched by you, starting here: ${inn.join(", ") || "none"}`
+        : "the locked picks and the best XI are the same eleven";
+      head.appendChild(diff);
+      if (squadSource && !squadSource.live) {
+        const src = el("span", "chip warn",
+          `computed on GW${squadSource.picks_gw ?? "?"} public picks`);
+        src.title = `${squadSource.label}; transfers since are not in this `
+          + `15` + (squadSource.fix ? `. Fix: ${squadSource.fix}` : "");
+        head.appendChild(src);
       }
+    } else {
+      head.appendChild(el("span", "db-pitchdelta",
+        "your locked picks (no best XI served)"));
+      const why = el("span", "chip warn",
+        (bestXi && bestXi.reason) || "dashboard_brief served no best_xi block");
+      head.appendChild(why);
     }
+    pitchBody.appendChild(head);
+    if (usable && bestXi.reason)
+      pitchBody.appendChild(el("p", "sub", bestXi.reason));
 
     const pitch = el("div", "pitch db-pitch2");
     const byPos = { GKP: [], DEF: [], MID: [], FWD: [] };
@@ -1176,7 +1358,7 @@ export default async function home(host) {
     }
     pitchBody.appendChild(pitch);
 
-    // the bench: a visually distinct tray below the pitch
+    // the bench: a visually distinct tray below the pitch, in xPts order
     const tray = el("div", "bench db-benchtray");
     tray.appendChild(el("span", "db-benchlbl", "bench"));
     benchCodes.forEach((c, i) => {
@@ -1189,67 +1371,37 @@ export default async function home(host) {
     });
     pitchBody.appendChild(tray);
 
-    // the armband, when the suggestion differs from the lock: a 2×2
-    // micro-table — each measure's pick with BOTH its numbers printed in
-    // columns, never narrated as a sentence, never blended
-    if (isSug && capDiffers) {
-      const cn = suggested.captain_numbers || {};
-      const bm = suggested.captain_by_mean;
-      const bh = suggested.captain_by_haul;
-      const box = el("div", "db-armband2");
-      box.appendChild(el("p", "sub db-armband",
-        `your armband: ${suggested.your_captain.name} — suggested C `
-        + `${suggested.captain.name}`
-        + (suggested.captain_delta_xpts != null
-            ? ` (${fmtSigned(suggested.captain_delta_xpts, 1)} xPts by mean)`
-            : "")
-        + `. Two measures, never blended:`));
-      const tbl = el("table", "data db-captbl");
-      const hd = el("tr");
-      const haulTh = el("th", "num", "haul odds" + haulSimTag());
-      haulTh.title = brief?.p_haul_source
-        || "engine simulation — no provider publishes a haul probability";
-      hd.append(el("th", null, "measure → pick"),
-                el("th", "num", "consensus xPts"),
-                haulTh);
-      const thd = el("thead"); thd.appendChild(hd); tbl.appendChild(thd);
-      const tb = el("tbody");
-      const capRow = (measure, ref, xp, ph) => {
-        if (!ref) return;
-        const tr = el("tr");
-        const who = el("td", null,
-          `${measure}: ${ref.name}`
-          + (suggested.your_captain
-             && ref.code === suggested.your_captain.code ? " (yours)" : ""));
-        tr.appendChild(who);
-        tr.appendChild(el("td", "num", xp != null ? fmt1(xp) : "–"));
-        tr.appendChild(el("td", "num",
-          ph != null ? `${Math.round(ph * 100)}%` : "–"));
-        tb.appendChild(tr);
-      };
-      capRow("consensus mean", bm, cn.mean_pick_xpts, cn.mean_pick_p_haul);
-      capRow("haul odds", bh, cn.haul_pick_xpts, cn.haul_pick_p_haul);
-      tbl.appendChild(tb);
-      if (tb.children.length) box.appendChild(tbl);
-      pitchBody.appendChild(box);
+    // the one line under the lineup, then the captain candidates
+    if (usable) {
+      const nd = bestXi.n_differs || 0;
+      const line = el("p", "sub db-xiline",
+        `best XI by consensus xPts (${bestXi.source_panel}`
+        + (bestXi.source_as_of
+            ? `, as of ${shortDate(bestXi.source_as_of)} `
+              + `${clockText(bestXi.source_as_of)}` : "")
+        + `); your locked picks differ by ${nd}`
+        + (lockedCap && bestXi.captain
+           && lockedCap.code !== bestXi.captain.code
+            ? `; your locked armband is ${lockedCap.name}` : ""));
+      line.title = nd
+        ? (bestXi.differs || []).map(d => d.name).join(", ")
+        : "same eleven";
+      pitchBody.appendChild(line);
+      if ((bestXi.captain_candidates || []).length)
+        pitchBody.appendChild(captainBlock(lockedCap));
     }
 
     const footLine = el("p", "sub");
     footLine.textContent =
       `source: ${sq.provenance_source}`
       + (sq.bank_tenths != null ? ` · bank ${fmtPrice(sq.bank_tenths / 10)}` : "")
-      + (sq.projected_xi_xpts != null
-          ? ` · Σ XI ${fmt1(sq.projected_xi_xpts)} xPts`
-            + (brief?.xpts_as_of
-                ? ` (consensus ${shortDate(brief.xpts_as_of)})` : "")
-          : "")
       + (median != null ? ` · xPts chip colour = vs your XI median ${fmt2(median)}` : "")
       + (easeDom != null
           ? ` · opponent chip colour = fixture ease (fixtures tab's ramp)` : "")
       + (sq.as_of ? ` · as of ${clockText(sq.as_of)}` : "");
     pitchBody.appendChild(footLine);
     pitchBody.appendChild(el("p", "sub db-legendnote",
-      "GK and budget defenders sit below the median by construction — the "
+      "GK and budget defenders sit below the median by construction; the "
       + "tier says who is cheap to upgrade, not who is failing."));
     for (const note of sq.notes || [])
       pitchBody.appendChild(el("p", "sub", note));
@@ -1281,9 +1433,9 @@ export default async function home(host) {
     const n = mv.numbers || {};
     if (mv.rule === "coverage_gap") {
       return `${mv.team} has the #${n.attack_rank} easiest attacking run and `
-        + `you hold ${n.held_count}. ${mv.in.name} — ${fmt1(n.cand_xpts)} xPts `
+        + `you hold ${n.held_count}. ${mv.in.name}; ${fmt1(n.cand_xpts)} xPts `
         + `GW${n.next_gw}, ${n.cand_goals}G+${n.cand_assists}A in `
-        + `GW${gwsText(mv.gws)} — fits for ${mv.out.name} `
+        + `GW${gwsText(mv.gws)}; fits for ${mv.out.name} `
         + `(${fmt1(n.out_xpts)} xPts).`;
     }
     if (mv.rule === "form_upgrade") {
@@ -1315,7 +1467,7 @@ export default async function home(host) {
     const meta = el("span", "t-meta");
     for (const s of mv.sources || [])
       meta.appendChild(citeChip(s.panel, s.as_of));
-    meta.appendChild(el("span", "t-gate", "rule-based — not the solver"));
+    meta.appendChild(el("span", "t-gate", "rule-based; not the solver"));
     box.appendChild(meta);
     box.onclick = () => drillTo(mv.drill);
     box.classList.add("drillable");
@@ -1325,7 +1477,7 @@ export default async function home(host) {
     movesBody.textContent = "";
     if (!brief) {
       movesBody.appendChild(namedGap("dashboard_brief unavailable.",
-        "No move rule ran — this is a gap, not a quiet day."));
+        "No move rule ran; this is a gap, not a quiet day."));
       return;
     }
     const list = brief.moves || [];
@@ -1348,7 +1500,7 @@ export default async function home(host) {
       metaBits.push(`${folded} move${folded > 1 ? "s" : ""} folded into the `
         + `Briefing above (same players, one card)`);
     if (brief.moves_suppressed > 0)
-      metaBits.push(`+${brief.moves_suppressed} more cleared the gates — `
+      metaBits.push(`+${brief.moves_suppressed} more cleared the gates; `
         + `suppressed at the served cap of ${thr.move_cap ?? "?"}`);
     if (metaBits.length)
       movesBody.appendChild(el("p", "sub", metaBits.join(" · ") + "."));
@@ -1399,6 +1551,7 @@ export default async function home(host) {
       }
       renderSolver();
       renderWatchStrip();
+      renderGaps();
     }, 5000);
   }
   function rerunButton(prominent) {
@@ -1406,7 +1559,7 @@ export default async function home(host) {
       "Re-run solve");
     b.type = "button";
     b.title = "runs a fresh solve against your current 15 and commits a "
-      + "new plan — takes ~2–5 min";
+      + "new plan; takes ~2–5 min";
     b.onclick = async () => {
       b.disabled = true;
       b.textContent = "starting…";
@@ -1430,7 +1583,7 @@ export default async function home(host) {
     const line = el("p", "sv-runline");
     line.appendChild(el("span", "sv-spin"));
     line.appendChild(document.createTextNode(
-      `Solving… started ${localClock(solveStatus?.started_utc)} — `
+      `Solving… started ${localClock(solveStatus?.started_utc)}; `
       + `typically 2–5 min`));
     box.appendChild(line);
     solveTickerEl = el("p", "sv-ticker", lastLogLine());
@@ -1441,11 +1594,15 @@ export default async function home(host) {
     solverCard.textContent = "";
     solveTickerEl = null;
     const S = brief?.solve || null;
-    const plan = S?.plan || null;
+    // the plan body renders ONLY under fresh/aging: a stale plan's moves,
+    // captain and alternatives were priced against a squad you no longer
+    // have, and the card shows state, reason, age and Re-run, nothing else
+    const plan = (S && (S.state === "fresh" || S.state === "aging"))
+      ? (S.plan || null) : null;
     const running = solveStatus?.state === "running";
 
     const head = el("div", "sv-head");
-    head.appendChild(el("h2", null, "Solver — your move"));
+    head.appendChild(el("h2", null, "Solver; your move"));
     if (S && S.state !== "missing") {
       const cls = S.state === "fresh" ? " s1"
                 : S.state === "aging" ? " warn" : " bad";
@@ -1459,7 +1616,7 @@ export default async function home(host) {
 
     if (!brief) {
       solverCard.appendChild(namedGap("Solve state unknowable.",
-        "dashboard_brief unavailable — the solve block rides in it."));
+        "dashboard_brief unavailable; the solve block rides in it."));
     } else if (S.state === "missing") {
       solverCard.appendChild(namedGap("No transfer plan artefact.",
         S.reason || "no stored solve for this season."));
@@ -1467,12 +1624,12 @@ export default async function home(host) {
       // honest: a stale plan's moves were priced against a squad you no
       // longer have — the brief serves no plan body for it, on purpose
       solverCard.appendChild(el("p", "sv-stale",
-        (S.reason || "this plan solved for a deadline that has passed — "
+        (S.reason || "this plan solved for a deadline that has passed; "
          + "its moves were priced against a squad you no longer have.")
         + (S.generated_at ? ` (generated ${ageText(S.generated_at)} ago)` : "")));
     } else if (!plan) {
       solverCard.appendChild(namedGap("Plan body absent.",
-        `solve state is "${S.state}" but the brief served no plan payload — `
+        `solve state is "${S.state}" but the brief served no plan payload; `
         + `a backend gap, not a quiet day.`));
     } else {
       const h = plan.horizon_gws || [];
@@ -1486,7 +1643,7 @@ export default async function home(host) {
           `The solved recommendation over ${hSpan}: no move cleared the bar `
           + `vs rolling`
           + (plan.free_transfers != null
-              ? ` — you carry ${plan.free_transfers} free transfer(s) forward.`
+              ? `; you carry ${plan.free_transfers} free transfer(s) forward.`
               : ".")));
         solverCard.appendChild(roll);
       } else if ((plan.moves || []).length) {
@@ -1518,7 +1675,7 @@ export default async function home(host) {
         solverCard.appendChild(box);
       } else {
         solverCard.appendChild(el("p", "sub",
-          "the plan names no paired moves — the Solver tab has the raw sets."));
+          "the plan names no paired moves; the Solver tab has the raw sets."));
       }
 
       // the gain, in the solver's own currency, labelled as such — with the
@@ -1541,7 +1698,7 @@ export default async function home(host) {
               ? ` · ${plan.free_transfers} free transfer(s)` : "")));
         line.title = "the solver's own forecast in its own currency ("
           + (plan.objective_mode || "?")
-          + ") — never blended with the pitch's per-player numbers; the "
+          + "); never blended with the pitch's per-player numbers; the "
           + "gap is how far from proven-best the solve stopped";
         solverCard.appendChild(line);
       }
@@ -1558,7 +1715,7 @@ export default async function home(host) {
             v.justified ? "justified" : "not justified"));
           if (v.expected_gain != null && v.breakeven_gain != null)
             line.appendChild(document.createTextNode(
-              ` — expected ${fmt1(v.expected_gain)} vs breakeven `
+              `; expected ${fmt1(v.expected_gain)} vs breakeven `
               + `${fmt1(v.breakeven_gain)}`));
         }
         solverCard.appendChild(line);
@@ -1583,7 +1740,7 @@ export default async function home(host) {
           && plan.your_captain.code !== plan.captain.code;
         line.appendChild(document.createTextNode(
           `Solver captain: ${plan.captain.name}`
-          + (differs ? ` — yours: ${plan.your_captain.name}` : "")));
+          + (differs ? `; yours: ${plan.your_captain.name}` : "")));
         solverCard.appendChild(line);
       }
 
@@ -1597,7 +1754,7 @@ export default async function home(host) {
           det.appendChild(el("p", "sv-altrow",
             a.summary
             + (a.objective != null
-                ? ` — ${fmt1(a.objective)} ${plan.objective_mode || ""}`
+                ? `; ${fmt1(a.objective)} ${plan.objective_mode || ""}`
                   + ` (solver currency)` : "")
             + (a.hits ? ` · ${a.hits} hit(s)` : "")));
         }
@@ -1624,10 +1781,19 @@ export default async function home(host) {
       // the cost warning rides BESIDE the button, not only in its title —
       // a rusher at T-minus-hours must know the click costs minutes
       controls.appendChild(el("span", "db-quiet sv-cost", "takes ~2–5 min"));
-      if (solveKicked && solveStatus
-          && (solveStatus.state === "failed" || solveStatus.state === "error"))
+      // a failed run is reported only when it is newer than the plan that
+      // stands; an older failure beside a fresh plan is noise
+      const failedAt = parseTs(solveStatus?.finished_utc
+        || solveStatus?.started_utc);
+      const planAt = parseTs(S?.generated_at);
+      const failedNewer = !!(solveStatus
+        && (solveStatus.state === "failed" || solveStatus.state === "error")
+        && (!plan || !planAt || (failedAt && failedAt > planAt)));
+      if (failedNewer)
         controls.appendChild(el("p", "sv-ticker sv-fail",
-          "solve failed — " + (lastLogLine() || "no log tail served")));
+          `${solveKicked ? "solve" : "last solve"} `
+          + (shortDate(solveStatus.finished_utc || solveStatus.started_utc)
+              || "") + " failed: " + noDash(lastLogLine() || "no log tail served")));
       controls.appendChild(fullDetailLink());
     }
     solverCard.appendChild(controls);
@@ -1646,13 +1812,13 @@ export default async function home(host) {
     switch (t.kind) {
       case "xpts_standout":
         return {
-          claim: `${name} projects ${fmt1(t.number.value)} over the window — `
+          claim: `${name} projects ${fmt1(t.number.value)} over the window; `
             + `${ctx.weakest_starter} holds ${fmt1(ctx.weakest_starter_sum)}.`,
           imp: "→ a same-position upgrade path clears the printed margin.",
         };
       case "template_gap":
         return {
-          claim: `${name} is owned by ${fmt1(t.number.value)}% of the game — `
+          claim: `${name} is owned by ${fmt1(t.number.value)}% of the game; `
             + `not by you.`,
           imp: "→ an unowned near-universal player is your largest "
             + "single-GW rank risk.",
@@ -1662,20 +1828,20 @@ export default async function home(host) {
           claim: `${name}: ${fmt1(t.number.value)} xPts next GW at `
             + `${fmt1(ctx.own_pct)}% owned.`,
           imp: `→ clears your XI median (${fmt2(ctx.xi_median)}) with the `
-            + `field absent — two chips, two sources.`,
+            + `field absent; two chips, two sources.`,
         };
       case "fixture_turn":
         return {
           claim: `${t.team}: ${String(ctx.axis || "").replace("_", " ")} `
             + `moves ${ctx.rank_near}→${ctx.rank_far} between windows.`,
-          imp: "→ the run turns — timing context for moves involving "
+          imp: "→ the run turns; timing context for moves involving "
             + `${t.team}.`,
         };
       case "price_rise_target":
         return {
           claim: `${name} net ${fmtSigned(t.number.value)}/hr inflow in the `
             + `${fmt2(t.number.window_h)}h window.`,
-          imp: "→ a named target's flow is against waiting — flow, not a "
+          imp: "→ a named target's flow is against waiting; flow, not a "
             + "prediction.",
         };
       default:
@@ -1724,7 +1890,7 @@ export default async function home(host) {
     tilesBody.textContent = "";
     if (!brief) {
       tilesBody.appendChild(namedGap("dashboard_brief unavailable.",
-        "No gates were checked — this is a gap, not a quiet day."));
+        "No gates were checked; this is a gap, not a quiet day."));
       return;
     }
     const tiles = brief.tiles || [];
@@ -1738,7 +1904,7 @@ export default async function home(host) {
     } else if (!kept.length) {
       tilesBody.appendChild(el("p", "db-quiet",
         `All ${folded} signal(s) today are already argued in the Briefing `
-        + `above — folded there as chips, one card per decision.`));
+        + `above; folded there as chips, one card per decision.`));
     } else {
       const grid = el("div", "tiles");
       const gateSeen = new Set();
@@ -1763,7 +1929,7 @@ export default async function home(host) {
     watchBody.textContent = "";
     if (!brief) {
       watchBody.appendChild(namedGap("The watch did not stand.",
-        "dashboard_brief unavailable — no check ran, which is different "
+        "dashboard_brief unavailable; no check ran, which is different "
         + "from every check coming back clear."));
       return;
     }
@@ -1787,7 +1953,7 @@ export default async function home(host) {
     if (supN > 0)
       det.appendChild(el("p", "sub",
         `suppressed beyond the tile cap: ${Object.entries(sup)
-          .map(([k, v]) => `${v} ${k}`).join(", ")} — the tabs have `
+          .map(([k, v]) => `${v} ${k}`).join(", ")}; the tabs have `
         + `everything.`));
     for (const e of brief.empty_kinds || []) {
       if (e.kind === "moves") continue;   // rendered under Moves to consider
@@ -1809,7 +1975,7 @@ export default async function home(host) {
       tr.appendChild(el("td", "w-detail", w.detail));
       tr.appendChild(el("td", "w-src", w.source_panel));
       const ts = el("td", "w-asof num",
-        w.as_of ? clockText(w.as_of) : "—");
+        w.as_of ? clockText(w.as_of) : ", ");
       if (w.as_of) ts.title = w.as_of;
       tr.appendChild(ts);
       tb.appendChild(tr);
@@ -1820,8 +1986,126 @@ export default async function home(host) {
     det.appendChild(wrap);
     det.appendChild(el("p", "sub",
       "Absence of a signal above means checked-and-clear, never "
-      + "didn't-look — that is what this table is for."));
+      + "didn't-look; that is what this table is for."));
     watchBody.appendChild(det);
+  }
+
+  /* ------------------------------------------- BEFORE YOU READ THIS -----
+     Every live gap in the data behind this page, with its fix, all from the
+     payloads (squad_source, solve, /api/solve/status, /api/briefing's
+     freshness verdict, the consensus and simulation clocks). Renders
+     nothing when there is none. */
+  function gapRow(kind, text, fix, title) {
+    const row = el("div", "gap-row");
+    row.appendChild(el("b", "gap-kind", kind));
+    const body = el("span", "gap-text", text);
+    if (title) body.title = title;
+    row.appendChild(body);
+    const fixEl = el("span", "gap-fix");
+    if (fix) fixEl.appendChild(fix);
+    row.appendChild(fixEl);
+    return row;
+  }
+  function cmdFix(cmd) {
+    const wrap = el("span", "gap-cmd");
+    wrap.appendChild(el("code", null, cmd));
+    const b = el("button", "chip", "copy");
+    b.type = "button";
+    b.onclick = async () => {
+      try { await navigator.clipboard.writeText(cmd); b.textContent = "copied"; }
+      catch { b.textContent = "select the command and copy it"; }
+    };
+    wrap.appendChild(b);
+    wrap.appendChild(el("span", "db-quiet", "then reload"));
+    return wrap;
+  }
+  renderGaps();
+  function renderGaps() {
+    gapStrip.textContent = "";
+    const rows = [];
+    const gwNext = brief?.gw ?? null;
+    const S = brief?.solve || null;
+    // 1. the squad is not the live team
+    if (squadSource && !squadSource.live) {
+      rows.push(gapRow("squad",
+        `Squad is ${squadSource.label}: GW${squadSource.picks_gw ?? "?"} `
+        + `picks, not the team you hold for GW${gwNext ?? "?"}. Transfers `
+        + "made since are not in this 15; the XI, captain and moves below "
+        + "are computed on it. squad_overview as of "
+        + `${shortDate(squadSource.as_of) || "?"} ${clockText(squadSource.as_of)}.`,
+        squadSource.fix ? cmdFix(squadSource.fix) : null,
+        squadSource.fix ? `run: ${squadSource.fix}` : null));
+    } else if (sq && !squadSource && gwNext != null && sq.gw != null
+               && sq.gw < gwNext) {
+      rows.push(gapRow("squad",
+        `Pitch shows GW${sq.gw} picks (${sq.provenance_source}) for a GW`
+        + `${gwNext} decision; the brief served no squad_source block, so `
+        + "the fix command is not known here.", null));
+    }
+    // 2. the solver plan cannot guide
+    if (S && S.state !== "fresh" && S.state !== "aging") {
+      let txt = `Solver plan ${S.state}` + (S.reason ? `: ${noDash(S.reason)}` : ".")
+        + (S.generated_at
+            ? ` Written ${shortDate(S.generated_at)}, ${ageText(S.generated_at)} ago.`
+            : "");
+      if (solveStatus
+          && (solveStatus.state === "failed" || solveStatus.state === "error"))
+        txt += ` Last re-run ${shortDate(solveStatus.finished_utc
+          || solveStatus.started_utc) || ""} failed: `
+          + noDash(lastLogLine() || "no log tail served");
+      rows.push(gapRow("solver", txt,
+        solveStatus?.state === "running"
+          ? el("span", "db-quiet", "solving now")
+          : rerunButton(false),
+        "state from dashboard_brief.solve; last run from /api/solve/status"));
+    } else if (!brief) {
+      rows.push(gapRow("solver",
+        "dashboard_brief did not answer; the solve state is unknown.", null));
+    }
+    // 3. the briefing is not current
+    if (intelOutdated()) {
+      rows.push(gapRow("briefing",
+        outdatedSummary() + "; its items are folded below as history.",
+        generateBtn("Regenerate"),
+        (intel.outdated_reasons || []).join("; ")));
+    } else if (intel && intel.empty) {
+      rows.push(gapRow("briefing",
+        `No briefing artefact: ${intel.reason || "not generated"}`,
+        generateBtn("Generate")));
+    }
+    // 4. the consensus predates the last deadline
+    const xAs = parseTs(brief?.xpts_as_of);
+    if (brief && xAs && lastDeadline && xAs < lastDeadline) {
+      const a = el("a", "chip", "Pipelines tab");
+      a.href = "#pipelines";
+      rows.push(gapRow("consensus",
+        `Consensus xPts are as of ${shortDate(brief.xpts_as_of)} `
+        + `${clockText(brief.xpts_as_of)}, before the last deadline `
+        + `(${shortDate(S?.last_deadline_utc)}); every xPts on this page is `
+        + `that vintage. ${noDash(brief.xpts_source) || ""}`, a));
+    } else if (brief && !xAs) {
+      rows.push(gapRow("consensus",
+        "No consensus xPts as-of served; the xPts chips carry no date.", null));
+    }
+    // 5. the haul simulation predates the last deadline
+    if (brief && brief.p_haul_generated && !haulFresh) {
+      rows.push(gapRow("haul odds",
+        `${haulUnavailable}; older than the last deadline`
+        + (S?.last_deadline_utc ? ` (${shortDate(S.last_deadline_utc)})` : "")
+        + ", so no haul number renders on this page."
+        + (brief.p_haul_source ? ` Source: ${noDash(brief.p_haul_source)}` : ""),
+        null));
+    }
+    if (!rows.length) { gapStrip.hidden = true; return; }
+    gapStrip.hidden = false;
+    const head = el("div", "gap-head");
+    head.append(el("h2", null, "Before you read this"),
+      el("span", "db-quiet",
+        `${rows.length} gap${rows.length > 1 ? "s" : ""} in the data behind `
+        + "this page, each with its fix. Numbers below are computed on what "
+        + "is here, not on what you hold."));
+    gapStrip.appendChild(head);
+    rows.forEach(r => gapStrip.appendChild(r));
   }
 
   /* ---------------------------------------------------------------- foot */

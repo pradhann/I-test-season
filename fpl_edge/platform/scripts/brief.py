@@ -83,7 +83,7 @@ from fpl_edge.platform.scripts.common import (
 from fpl_edge.platform.scripts.fixtures import fixture_board
 from fpl_edge.platform.scripts.ownership import ownership_eo
 from fpl_edge.platform.scripts.prices import price_radar
-from fpl_edge.platform.scripts.squad import squad_overview
+from fpl_edge.platform.scripts.squad import _SOURCE_LABEL, squad_overview
 
 TRANSFER_PLAN_NAME = "transfer_plan.json"
 
@@ -97,9 +97,12 @@ PRECEDENCE = (
     "fresh plan wins ties; a voice may only overrule it through a named "
     "rule. Transfer: the solver plan while fresh or aging; the deterministic "
     "move rules only when the plan is stale or missing. Captain: the solver "
-    "plan's captain, else the mean-xPts pick; dissenting measures are "
-    "printed, never blended. Bench: the bench_inversion swaps applied in the "
-    "suggested XI. Chip: the solver plan's chip, else hold."
+    "plan's captain while fresh or aging, else the highest consensus xPts "
+    "in the best XI, and a lead under captain_close_call_xpts is a close "
+    "call, not a pick; dissenting measures are printed, never blended. "
+    "Bench: the best formation-legal XI by consensus xPts, drawn on the "
+    "pitch; the locked picks are named where they differ. Chip: the solver "
+    "plan's chip, else hold."
 )
 
 #: "31.66% optimality gap" in the solver's own notes — parsed, never
@@ -135,6 +138,10 @@ THRESHOLDS: dict[str, float | int] = {
     # the disagreement is printed — spending a triple captain on a private
     # 2x forecast is exactly the bet that should be made knowingly.
     "captain_divergence_xpts": 1.5,
+    # The captain line asserts a pick only when the best consensus xPts in
+    # the best XI leads the runner-up by at least this; closer is printed as
+    # a close call, never as a confident armband.
+    "captain_close_call_xpts": 0.5,
 }
 
 PARAMS: dict[str, Any] = {
@@ -406,6 +413,65 @@ _SUGGESTED = {
     },
 }
 
+#: The best formation-legal XI from the 15 by consensus xPts: the ONE lineup
+#: the pitch draws. No swap arrows, no "as picked" toggle: the locked picks
+#: differ by ``n_differs`` players, named, and that is the whole comparison.
+#: Captain = highest consensus xPts in that XI; the top three are served
+#: with their numbers so the captain line can print the runner-up and call
+#: a close one a close call (gate: thresholds.captain_close_call_xpts).
+_CAP_CANDIDATE = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["player", "xpts", "p_haul"],
+    "properties": {
+        "player": _PLAYER_REF,
+        "xpts": {"type": ["number", "null"]},
+        "p_haul": {"type": ["number", "null"]},
+    },
+}
+_BEST_XI = {
+    "type": ["object", "null"],
+    "additionalProperties": False,
+    "required": ["xi_codes", "bench_codes", "formation", "captain",
+                 "captain_candidates", "close_call", "differs",
+                 "n_differs", "xi_xpts", "reason", "source_panel",
+                 "source_as_of"],
+    "properties": {
+        "xi_codes": {"type": "array", "items": {"type": "integer"}},
+        "bench_codes": {"type": "array", "items": {"type": "integer"}},
+        "formation": {"type": ["string", "null"]},
+        "captain": {"anyOf": [_PLAYER_REF, {"type": "null"}]},
+        "captain_candidates": {"type": "array", "items": _CAP_CANDIDATE},
+        # lead of the top candidate over the second, in consensus xPts
+        "captain_lead_xpts": {"type": ["number", "null"]},
+        "close_call": {"type": "boolean"},
+        # the locked starters who are NOT in the best XI (and vice versa)
+        "differs": {"type": "array", "items": _PLAYER_REF},
+        "n_differs": {"type": "integer"},
+        "xi_xpts": {"type": ["number", "null"]},
+        "reason": {"type": ["string", "null"]},
+        "source_panel": {"type": "string"},
+        "source_as_of": {"type": ["string", "null"]},
+    },
+}
+
+#: WHERE the 15 came from, as a fact the page can act on. ``live`` is False
+#: for public picks (published after a deadline: the last GW's team, not the
+#: one being built) and for the manual /setsquad entry; ``fix`` is the one
+#: command that turns the read live.
+_SQUAD_SOURCE = {
+    "type": ["object", "null"],
+    "additionalProperties": False,
+    "required": ["label", "live", "picks_gw", "as_of", "fix"],
+    "properties": {
+        "label": {"type": "string"},
+        "live": {"type": "boolean"},
+        "picks_gw": {"type": ["integer", "null"]},
+        "as_of": {"type": ["string", "null"]},
+        "fix": {"type": ["string", "null"]},
+    },
+}
+
 #: One club's next fixture + horizon ranks, copied field-for-field from
 #: fixture_board's opponent_only lens — the pitch's opponent chips and the
 #: solver card's why-line read this, never a re-derived difficulty.
@@ -623,6 +689,8 @@ RESULT: dict[str, Any] = {
         "watch_log": {"type": "array", "items": _WATCH},
         "solve": _SOLVE,
         "suggested_xi": _SUGGESTED,
+        "best_xi": _BEST_XI,
+        "squad_source": _SQUAD_SOURCE,
         "team_fixtures": {"type": "array", "items": _TEAMFIX},
         "squad_projection": {"type": "array", "items": _SQPROJ},
         "projection_gw": {"type": ["integer", "null"]},
@@ -686,6 +754,47 @@ def _ref(p: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+#: Formation law: 1 GK, 3-5 DEF, 2-5 MID, 1-3 FWD, eleven in total.
+_FORMATIONS = tuple(
+    (d, m, f) for d in (3, 4, 5) for m in (2, 3, 4, 5) for f in (1, 2, 3)
+    if 1 + d + m + f == 11)
+
+
+def best_legal_xi(squad15: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The formation-legal XI maximising consensus xPts over the 15.
+
+    Exhaustive over the twelve legal formations (each is a top-k slice per
+    position, so the search is trivially small). A player with no xPts
+    counts as 0 and is only picked when the formation forces it. Returns
+    None when fewer than eleven players carry a position.
+    """
+    by_pos: dict[str, list[dict[str, Any]]] = {"GKP": [], "DEF": [], "MID": [], "FWD": []}
+    for p in squad15:
+        if p.get("pos") in by_pos:
+            by_pos[p["pos"]].append(p)
+    xv = lambda p: float(p["xpts"]) if p.get("xpts") is not None else 0.0  # noqa: E731
+    for pos in by_pos:
+        by_pos[pos].sort(key=xv, reverse=True)
+    best: tuple[float, list[dict[str, Any]], str] | None = None
+    for d, m, f in _FORMATIONS:
+        if (len(by_pos["GKP"]) < 1 or len(by_pos["DEF"]) < d
+                or len(by_pos["MID"]) < m or len(by_pos["FWD"]) < f):
+            continue
+        xi = (by_pos["GKP"][:1] + by_pos["DEF"][:d]
+              + by_pos["MID"][:m] + by_pos["FWD"][:f])
+        total = sum(xv(p) for p in xi)
+        if best is None or total > best[0] + 1e-9:
+            best = (total, xi, f"{d}-{m}-{f}")
+    if best is None:
+        return None
+    total, xi, formation = best
+    xi_codes = {p["code"] for p in xi}
+    bench = sorted((p for p in squad15 if p["code"] not in xi_codes),
+                   key=xv, reverse=True)
+    return {"xi": xi, "bench": bench, "formation": formation,
+            "xi_xpts": round(total, 2)}
+
+
 def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str, Any]:
     """Select-and-threshold over the source panels; one payload, one clock set."""
     now = dt.datetime.now(UTC)
@@ -710,7 +819,7 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
     )
     if deadlines.empty:
         return empty(
-            f"No {season} events in the warehouse — without deadlines the "
+            f"No {season} events in the warehouse; without deadlines the "
             f"brief cannot date a single claim. Run `make ingest` first."
         )
     next_deadline = None
@@ -820,7 +929,7 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
             "check": "bench_order",
             "status": "firing" if inversions else "clear",
             "detail": (f"{inversions} inversion(s), best swing +{best_swing} "
-                       f"— applied in the suggested XI"
+                       f",  applied in the suggested XI"
                        if inversions else
                        f"no bench player beats his starter by ≥ {margin} xPts"),
             "source_panel": "squad_overview", "as_of": sq_as_of,
@@ -867,7 +976,7 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
         else:
             watch.append({
                 "check": "captaincy", "status": "gap",
-                "detail": "no projection artefact cached — p_haul and xPts "
+                "detail": "no projection artefact cached; p_haul and xPts "
                           "are null (run `make solve`)",
                 "source_panel": "squad_overview", "as_of": sq_as_of,
             })
@@ -881,7 +990,7 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
                                      - float(cap["xpts"]), 2)
                                if cap.get("xpts") is not None else None))
         suggested_xi = {
-            "reason": ("no projection artefact cached — the bench and "
+            "reason": ("no projection artefact cached; the bench and "
                        "captain rules cannot rank players (run `make solve`)"
                        if all(p.get("xpts") is None for p in squad15)
                        else None),
@@ -901,6 +1010,70 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
             "source_panel": "squad_overview",
             "source_as_of": sq_as_of,
         }
+
+    # ---- the best XI (ONE lineup for the pitch) + where the 15 came from --
+    best_xi: dict[str, Any] | None = None
+    squad_source: dict[str, Any] | None = None
+    if not sq.get("empty"):
+        sq_as_of_b = _iso(sq.get("as_of"))
+        label = str(sq.get("provenance_source") or "unknown")
+        live = label == _SOURCE_LABEL["PRIVATE_API"]
+        last_gw = None
+        for _, r in deadlines.iterrows():
+            d = _parse_ts(r["deadline_utc"])
+            if d is not None and d <= now:
+                last_gw = int(r["gw"])
+        squad_source = {
+            "label": label,
+            "live": live,
+            # public picks are the LAST closed gameweek's team; a live or
+            # manual read is the one being built for the next deadline
+            "picks_gw": (last_gw if label == _SOURCE_LABEL["PUBLIC_PICKS"]
+                         else g_next),
+            "as_of": sq_as_of_b,
+            "fix": None if live else "uv run fpl myteam auth",
+        }
+        found = best_legal_xi(squad15)
+        if found is None:
+            best_xi = {
+                "xi_codes": [], "bench_codes": [], "formation": None,
+                "captain": None, "captain_candidates": [],
+                "captain_lead_xpts": None, "close_call": False,
+                "differs": [], "n_differs": 0, "xi_xpts": None,
+                "reason": "fewer than eleven players carry a position; "
+                          "no legal XI can be formed from this squad read",
+                "source_panel": "squad_overview", "source_as_of": sq_as_of_b,
+            }
+        else:
+            xi = found["xi"]
+            no_x = all(p.get("xpts") is None for p in squad15)
+            ranked = sorted((p for p in xi if p.get("xpts") is not None),
+                            key=lambda p: float(p["xpts"]), reverse=True)
+            cands = [{"player": _ref(p), "xpts": p["xpts"],
+                      "p_haul": p.get("p_haul")} for p in ranked[:3]]
+            lead = (round(float(ranked[0]["xpts"]) - float(ranked[1]["xpts"]), 2)
+                    if len(ranked) >= 2 else None)
+            close_gate = float(THRESHOLDS["captain_close_call_xpts"])
+            xi_set = {p["code"] for p in xi}
+            locked = {p["code"] for p in starters}
+            differs = ([p for p in starters if p["code"] not in xi_set]
+                       + [p for p in xi if p["code"] not in locked])
+            best_xi = {
+                "xi_codes": [p["code"] for p in xi],
+                "bench_codes": [p["code"] for p in found["bench"]],
+                "formation": found["formation"],
+                "captain": _ref(ranked[0]) if ranked else None,
+                "captain_candidates": cands,
+                "captain_lead_xpts": lead,
+                "close_call": bool(lead is not None and lead < close_gate),
+                "differs": [_ref(p) for p in differs],
+                "n_differs": len([p for p in starters if p["code"] not in xi_set]),
+                "xi_xpts": None if no_x else found["xi_xpts"],
+                "reason": ("no consensus projection cached; the XI below is "
+                           "the formation-legal fallback, not a ranking"
+                           if no_x else None),
+                "source_panel": "squad_overview", "source_as_of": sq_as_of_b,
+            }
 
     squad_codes = {p["code"] for p in squad15}
     squad_team_codes = {p.get("team_code") for p in squad15
@@ -1066,7 +1239,7 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
                     "number": {"value": r["xpts"], "unit": "xPts next GW",
                                "window_h": None},
                     "gate": f"own% ≤ {d_thr:.0f} and next-GW xPts ≥ XI median "
-                            f"{xi_median} + {d_margin} — two gates, two "
+                            f"{xi_median} + {d_margin}; two gates, two "
                             f"sources, numbers never combined",
                     "context": {"own_pct": r.get("own_pct"),
                                 "xi_median": xi_median},
@@ -1091,7 +1264,7 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
             watch.append({
                 "check": "differentials", "status": "gap",
                 "detail": "XI median unavailable (squad or projections "
-                          "missing) — the xPts gate cannot be evaluated",
+                          "missing); the xPts gate cannot be evaluated",
                 "source_panel": "ownership_eo", "as_of": own_as_of,
             })
 
@@ -1186,7 +1359,7 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
             watch.append({
                 "check": "xpts_standouts", "status": "gap",
                 "detail": f"no consensus projections for GW{g_next}+ in the "
-                          f"warehouse — ingest projections",
+                          f"warehouse; ingest projections",
                 "source_panel": "projection_table", "as_of": None,
             })
 
@@ -1301,7 +1474,7 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
                                        "window_h": None},
                             "gate": f"{axis.replace('_', ' ')} moves ≥ {move_thr} "
                                     f"places: {r1} (GW{near_gws[0]}–{near_gws[-1]})"
-                                    f" → {r2} (GW{far_gws[0]}–{far_gws[-1]}) — "
+                                    f" → {r2} (GW{far_gws[0]}–{far_gws[-1]}); "
                                     f"split panel's own ranks, never a blended "
                                     f"difficulty",
                             "context": {"axis": axis, "rank_near": r1,
@@ -1399,12 +1572,12 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
     moves_gap_reason: str | None = None
     settled_gws: list[int] = []
     if sq.get("empty"):
-        moves_gap_reason = "squad unreadable — no out-leg can be priced"
+        moves_gap_reason = "squad unreadable; no out-leg can be priced"
     elif g_next is None:
         moves_gap_reason = "no future deadline known"
     elif not cons_next:
         moves_gap_reason = (f"no consensus projections for GW{g_next} in the "
-                            f"warehouse — the rules cannot price a candidate")
+                            f"warehouse; the rules cannot price a candidate")
     else:
         try:
             sg = q(
@@ -1602,7 +1775,7 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
                 used_out.add(card_["out"]["code"])
                 moves.append(card_)
         elif not moves_gap_reason:
-            moves_gap_reason = ("no settled gameweek in fact_player_fixture — "
+            moves_gap_reason = ("no settled gameweek in fact_player_fixture; "
                                 "the recent-returns gate cannot be evaluated")
 
     cap_moves = int(THRESHOLDS["move_cap"])
@@ -1637,7 +1810,7 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
                   "implementation. The Creators tab has the corpus.",
     })
     watch.append({"check": "creator_shift", "status": "gap",
-                  "detail": "no served change signal — see empty_kinds",
+                  "detail": "no served change signal; see empty_kinds",
                   "source_panel": "creator_board", "as_of": None})
 
     # ---- the solve block -------------------------------------------------
@@ -1681,7 +1854,7 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
                 f"transfer plan generated {gen.date().isoformat()} for "
                 f"GW{h_gws[0] if h_gws else '?'}\u2013"
                 f"{h_gws[-1] if h_gws else '?'}; a deadline has passed since "
-                f"\u2014 its moves were priced against a squad you no longer "
+                f",  its moves were priced against a squad you no longer "
                 f"have."
             )
             alerts.append({
@@ -1695,7 +1868,7 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
             })
             watch.append({"check": "solver", "status": "gap",
                           "detail": f"transfer plan predates "
-                                    f"GW{g_next if g_next else '?'} \u2014 "
+                                    f"GW{g_next if g_next else '?'}; "
                                     f"generated {gen.date().isoformat()}",
                           "source_panel": "solve_plan",
                           "as_of": solve["generated_at"]})
@@ -2058,7 +2231,7 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
             "detail": (
                 f"{cap_pick['name']}: solver "
                 f"{c_numbers['pick_solver_xpts']} vs consensus "
-                f"{c_numbers['pick_xpts']} xPts ({cap_gap:+.2f}) — "
+                f"{c_numbers['pick_xpts']} xPts ({cap_gap:+.2f}); "
                 + ("the armband rests on a forecast the providers do not "
                    "share" if firing else
                    f"inside the {gate_x} gate, the voices broadly agree")),
@@ -2178,6 +2351,8 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
         "watch_log": watch,
         "solve": solve,
         "suggested_xi": suggested_xi,
+        "best_xi": best_xi,
+        "squad_source": squad_source,
         "team_fixtures": team_fixtures,
         "squad_projection": squad_projection,
         "projection_gw": g_next,
@@ -2200,7 +2375,7 @@ register_script(
     params_schema=PARAMS,
     result_schema=RESULT,
     title="Dashboard brief",
-    description="Alerts, gated tiles, watch log and the solve state — "
+    description="Alerts, gated tiles, watch log and the solve state; "
                 "selected and thresholded from the source panels, never "
                 "recomputed. Thresholds echoed; every item cites its source.",
 )
