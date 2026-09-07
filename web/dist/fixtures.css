@@ -268,8 +268,11 @@ button.fx-inchip:focus-visible { outline: 2px solid var(--s1); outline-offset: 1
                display: flex; align-items: center; gap: 5px; }
 .fx-rail .rr { grid-column: 1 / -1; display: flex; align-items: center;
                gap: 5px; }
-.fx-rail .rr i { font: 600 9px/1 var(--mono); color: var(--faint);
-                 font-style: normal; width: 82px; white-space: nowrap; }
+/* the label wraps to two lines ("schedule for" / "your attackers") so the
+   plain words fit the rail without eating the track */
+.fx-rail .rr i { font: 600 9px/1.15 var(--mono); color: var(--faint);
+                 font-style: normal; width: 82px; white-space: normal; }
+.fx-promo { cursor: help; }
 /* club strength on the row, beside the run rank: "elite club, hard run" is a
    fact the row shows, not one the reader assembles */
 .fx-rail .fx-club { grid-column: 1 / -1; font-size: 9.5px; color: var(--faint);

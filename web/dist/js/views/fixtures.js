@@ -65,6 +65,9 @@ const ord = n => {
    "elite club, tough run" before any number. Bands, not a model. */
 const tierClub = r => (r == null ? null : r <= 4 ? "elite" : r <= 8 ? "strong"
   : r <= 12 ? "mid-table" : r <= 16 ? "modest" : "weak");
+/* the promoted tag's meaning, printed on the tag and in the legend */
+const PROMO_NOTE = "promoted this season: few Premier League matches in the fit, "
+  + "so its rating leans on the league average; read its colours gently";
 const tierRun = r => (r == null ? null : r <= 5 ? "easy" : r <= 10 ? "fair"
   : r <= 15 ? "tough" : "hard");
 const cap = s => (s ? s[0].toUpperCase() + s.slice(1) : s);
@@ -836,7 +839,7 @@ export default async function fixtures(host) {
       line.appendChild(document.createTextNode("Fixtures are "));
       line.appendChild(el("b", null, "tie-breakers"));
       line.appendChild(document.createTextNode(
-        `: over ${gws} GWs the best-minus-worst run is worth `));
+        `: over ${gws} GWs the best-minus-worst schedule is worth `));
       line.appendChild(el("b", "fx-cal-hi", `${fmt1(mLo)}–${fmt1(eHi)} pts`));
       line.appendChild(document.createTextNode(" per asset; which club you own is worth "));
       line.appendChild(el("b", "fx-cal-hi",
@@ -1252,9 +1255,10 @@ export default async function fixtures(host) {
     const onBoth = new Set(attTop.filter(t => defTop.includes(t)).map(t => t.code));
 
     const range = M.gws.length ? `GW${M.gws[0]}–GW${M.gws[M.gws.length - 1]}` : "this window";
-    /* Every rank on a chip is the RUN rank: the club's fixture run over the
-       window, 1 = easiest. The chip prints "run" so it can never be read as
-       the club's own strength, which the hover states separately. */
+    /* Every rank on a chip is the SCHEDULE rank: how easy the club's next
+       fixtures are for players you own from it, 1 = easiest of the clubs. The
+       chip prints "schedule" so it can never be read as the club's own
+       strength, which the hover states separately. */
     const shortlist = (label, clubs, rankOf, sumOf, kind, clubRankOf) => {
       const r = el("div", "vrow");
       r.appendChild(el("span", "vlab", label));
@@ -1262,14 +1266,14 @@ export default async function fixtures(host) {
         const chip = el("button", "vchip" + (onBoth.has(t.code) ? " both2" : ""));
         chip.appendChild(crest(t.code, t.short, "s14"));
         chip.appendChild(el("b", null, t.short));
-        chip.appendChild(el("span", "rk", `run ${ord(rankOf(t))}`));
+        chip.appendChild(el("span", "rk", `schedule ${ord(rankOf(t))}`));
         const sum = sumOf(t);
         const pg = (sum != null && t.nFixtures) ? sum / t.nFixtures : null;
         const cr = clubRankOf(t);
         if (onBoth.has(t.code)) chip.appendChild(el("span", "x2", "×2"));
         hover.attach(chip, () => [
-          onBoth.has(t.code) ? "on both shortlists: an easy run for attackers and defenders" : null,
-          `${t.short}: ${ord(rankOf(t))} easiest run of ${nClubs} for ${kind} over ${range}`,
+          onBoth.has(t.code) ? "on both shortlists: an easy schedule for attackers and defenders" : null,
+          `${t.short}: schedule for your ${kind}: ${ord(rankOf(t))} easiest of ${nClubs} clubs over ${range}`,
           `ease summed ${sgn2(sum)} (${sgn2(pg)} a game), ${M.scale.unit}`,
           cr != null ? `club strength, from the fit: ${ord(cr)} best ${kind === "attackers" ? "attack" : "defence"} of ${nClubs}` : null,
           `click to jump to ${t.short}'s row`,
@@ -1280,10 +1284,10 @@ export default async function fixtures(host) {
       return r;
     };
     if (anyRanks) {
-      verdictEl.appendChild(shortlist("easiest runs · attackers", attTop,
+      verdictEl.appendChild(shortlist("easiest schedules · attackers", attTop,
         t => t.attRankH, t => t.attSum, "attackers",
         t => num(t.rating && t.rating.attack_rank)));
-      verdictEl.appendChild(shortlist("easiest runs · defenders", defTop,
+      verdictEl.appendChild(shortlist("easiest schedules · defenders", defTop,
         t => t.defRankH, t => t.defSum, "defenders",
         t => num(t.rating && t.rating.defence_rank)));
     } else {
@@ -1300,11 +1304,14 @@ export default async function fixtures(host) {
       r.appendChild(el("span", "vlab", quiet ? "and the other way" : "the torn opponent"));
       const txt = el("span", "txt");
       txt.appendChild(el("b", null,
-        `${top.is_home ? "hosting" : "visiting"} ${top.opponent}`));
+        `${top.opponent} ${top.is_home ? "home" : "away"}`));
+      /* the population is every opponent at both venues (20 x 2 = 40), not
+         40 fixtures: the bracket says so where the number is printed */
       const pop = num(M.res.scale && M.res.scale.population) || nClubs * 2;
       txt.appendChild(document.createTextNode(
-        `: ${ord(top.attack_rank)} easiest fixture for attackers, `
-        + `${ord(top.defence_rank)} for defenders; `
+        `: ${ord(top.attack_rank)} easiest of ${pop} for your attackers, `
+        + `${ord(top.defence_rank)} easiest of ${pop} for your defenders `
+        + `(every opponent, home and away); `
         + g.map(d => `${d.short_name} GW${d.gw}`).join(" · ")));
       r.appendChild(txt);
       const open = el("button", "chip", "open");
@@ -1334,7 +1341,7 @@ export default async function fixtures(host) {
         const txt = el("span", "txt");
         txt.appendChild(el("b", null, u.t.short));
         txt.appendChild(document.createTextNode(
-          `: ${ord(u.rank)} easiest run for ${u.what}; you hold ${u.names.join(", ")}`));
+          `: schedule for your ${u.what}: ${ord(u.rank)} easiest of ${nClubs}; you hold ${u.names.join(", ")}`));
         r.appendChild(txt);
         const open = el("button", "chip", "open");
         open.title = `jump to ${u.t.short}'s row on the board`;
@@ -1374,7 +1381,7 @@ export default async function fixtures(host) {
     }
 
     /* no caveat line here: the calibration band is the header's one line, and
-       "run Nth = fixture run, 1 = easiest" is in the legend; saying either a
+       "schedule rank, 1st = easiest of the 20 clubs" is in the legend; saying either a
        second time costs the reader words and tells him nothing new */
   }
 
@@ -1512,7 +1519,7 @@ export default async function fixtures(host) {
 
     // header row
     const rh = el("div", "fx-hcell fx-railhead", "club");
-    rh.appendChild(el("span", "d", "run rank over the window, 1 = easiest"));
+    rh.appendChild(el("span", "d", `schedule rank over the window: 1st = easiest of ${M.teams.length} clubs`));
     grid.appendChild(rh);
     for (const g of M.gws) {
       const h = el("div", "fx-hcell");
@@ -1574,8 +1581,8 @@ export default async function fixtures(host) {
         + (t.nBlanks ? `, ${t.nBlanks} blank` : "")
         + (t.nDoubles ? `, ${t.nDoubles} double` : ""),
       M.anySplit && (t.attRankH != null || t.defRankH != null)
-        ? `fixture run: ${ord(t.attRankH)} easiest of ${n} for attackers, `
-          + `${ord(t.defRankH)} for defenders`
+        ? `schedule for your attackers: ${ord(t.attRankH)} easiest of ${n}; `
+          + `for your defenders: ${ord(t.defRankH)} easiest of ${n}`
         : null,
       t.attSum != null
         ? `ease summed: attackers ${sgn2(t.attSum)}, defenders ${sgn2(t.defSum)} (${M.scale.unit})`
@@ -1586,19 +1593,19 @@ export default async function fixtures(host) {
         : null,
       promoted
         ? (t.priorShare != null
-            ? `promoted: ${Math.round(t.priorShare * 100)}% of its rating is the league prior; read its colours gently`
-            : "promoted: few matches in the fit, so its rating leans on the league prior; read its colours gently")
+            ? `promoted this season: ${Math.round(t.priorShare * 100)}% of its rating is the league average, not its own results; read its colours gently`
+            : "promoted this season: few Premier League matches in the fit, so its rating leans on the league average; read its colours gently")
         : null,
       t.tornRows && t.tornRows.length
         ? `${t.tornRows.length} torn fixture${t.tornRows.length === 1 ? "" : "s"}: attack and defence answers point opposite ways`
         : null,
       held ? `you hold ${held.length} here: ${held.join(", ")}` : null,
-      "click for the club's run",
+      "click for the club's schedule",
     ].filter(Boolean).join("\n"));
     d.appendChild(crest(t.code, t.short, "s20"));
     const nm = el("span", "nm");
     nm.appendChild(el("span", null, t.short));
-    if (promoted) nm.appendChild(el("span", "fx-promo", "promoted"));
+    if (promoted) nm.appendChild(promoTag());
     /* the ownership pip: a count, because "you own 2 here" is the fact the
        rusher cross-references from memory today (FFS ticker's my-team pin) */
     if (held) {
@@ -1629,7 +1636,7 @@ export default async function fixtures(host) {
        visible fact on the row and not an inference across two surfaces */
     if (clubLine)
       d.appendChild(el("span", "fx-club",
-        `club: ${ord(rt.attack_rank)} attack, ${ord(rt.defence_rank)} defence`));
+        `club rank: ${ord(rt.attack_rank)} attack, ${ord(rt.defence_rank)} defence`));
 
     /* LENGTH encodes the horizon SUM from a centre line that IS the
        league-average fixture; doubles and blanks handled natively, because
@@ -1640,15 +1647,17 @@ export default async function fixtures(host) {
       const row = el("span", "rr");
       row.appendChild(el("i", null, what));
       row.appendChild(el("b", null, ord(rank)));
+      if (rank != null)
+        row.setAttribute("aria-label", `${what}: ${ord(rank)} easiest of ${n}`);
       row.appendChild(railTrack(sum, railMax, t.nFixtures));
       return row;
     };
     if (M.anySplit) {
-      d.appendChild(rr("run, attackers", t.attRankH, t.attSum));
-      d.appendChild(rr("run, defenders", t.defRankH, t.defSum));
+      d.appendChild(rr("schedule for your attackers", t.attRankH, t.attSum));
+      d.appendChild(rr("schedule for your defenders", t.defRankH, t.defSum));
     } else {
       const v = t.blendMean == null ? null : t.blendMean * t.nFixtures;
-      d.appendChild(rr("blended run", null, v));
+      d.appendChild(rr("blended schedule", null, v));
     }
     d.onclick = () => openClub(t);
     d.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openClub(t); } };
@@ -1732,8 +1741,8 @@ export default async function fixtures(host) {
           ? `blended difficulty ${fmt2(c.blended)} (not split; see the note above)`
           : "no fitted rating for this fixture",
       c.rankAtt != null && c.rankDef != null
-        ? `${c.opponent} as a fixture: ${ord(c.rankAtt)} easiest of ${pop} for attackers, `
-          + `${ord(c.rankDef)} for defenders`
+        ? `${c.opponent} ${venue}: ${ord(c.rankAtt)} easiest of ${pop} for your attackers, `
+          + `${ord(c.rankDef)} easiest of ${pop} for your defenders (every opponent, home and away)`
         : null,
       torn ? String(torn.sentence || "") : null,
       c.marketState
@@ -1796,17 +1805,27 @@ export default async function fixtures(host) {
     if (M.anySplit)
       keys.appendChild(keyItem("seam", "dashed seam = torn: lenses disagree"));
     if (M.anySplit)
-      keys.appendChild(keyItem(null, "run Nth = fixture run, 1 = easiest · club Nth = own strength"));
-    keys.appendChild(keyItem("promo", "= few matches in the fit; the rating leans on the league prior"));
+      keys.appendChild(keyItem(null, `schedule rank = how easy this club's next ${M.gws.length} fixtures are for players you own from it; 1st = easiest of ${M.teams.length} clubs`));
+    if (M.anySplit)
+      keys.appendChild(keyItem(null, `club rank = the club's own fitted strength; 1st = best of ${M.teams.length}`));
+    keys.appendChild(keyItem("promo", PROMO_NOTE));
     keys.appendChild(keyItem(null, "hover a cell for its numbers"));
     L.appendChild(keys);
     return L;
+  }
+  /* the promoted tag, with its meaning on the tag itself: the owner asked
+     what the word meant, so the word now answers */
+  function promoTag() {
+    const s = el("span", "fx-promo", "promoted");
+    s.title = PROMO_NOTE;
+    s.setAttribute("aria-label", PROMO_NOTE);
+    return s;
   }
   function keyItem(kind, text) {
     const k = el("span", "k");
     if (kind === "hatch") k.appendChild(el("span", "fx-swatch-hatch"));
     if (kind === "seam") k.appendChild(el("span", "fx-swatch-seam"));
-    if (kind === "promo") k.appendChild(el("span", "fx-promo", "promoted"));
+    if (kind === "promo") k.appendChild(promoTag());
     k.appendChild(document.createTextNode(text));
     return k;
   }
@@ -1847,7 +1866,7 @@ export default async function fixtures(host) {
       b.appendChild(el("span", null, label));
       b.appendChild(el("span", "arr", on ? (tsort.dir > 0 ? "▲" : "▼") : ""));
       b.title = numeric
-        ? `sort by ${label}; first click puts the easiest run on top`
+        ? `sort by ${label}; first click puts the easiest schedule on top`
         : "sort by club name";
       b.onclick = () => {
         if (on) tsort = { key, dir: -tsort.dir };
@@ -1859,7 +1878,7 @@ export default async function fixtures(host) {
     };
     hr.appendChild(th("club", "club", false));
     for (const g of M.gws) hr.appendChild(th(`gw:${g}`, `GW${g}`, true));
-    hr.appendChild(th("att", M.anySplit ? "Σ att" : "Σ run", true));
+    hr.appendChild(th("att", M.anySplit ? "Σ att" : "Σ schedule", true));
     if (M.anySplit) hr.appendChild(th("def", "Σ def", true));
     thead.appendChild(hr); t.appendChild(thead);
 
@@ -1918,7 +1937,7 @@ export default async function fixtures(host) {
         : `Each cell is the blended ease in ${M.scale.unit}. Positive is easier. `
           + "It is one number, not two."));
     body.appendChild(el("p", "sub",
-      "Σ att / Σ def are the club's fixture run summed over the window, not its strength."));
+      "Σ att / Σ def are the club's schedule summed over the window (how easy its fixtures are for your players), not its strength."));
     body.appendChild(legend());
   }
 
@@ -2157,8 +2176,8 @@ export default async function fixtures(host) {
         num(t.rating.matches_seen) != null
           ? `${t.rating.matches_seen} matches in the fit` : null,
         t.rating.is_promoted
-          ? "promoted: the fit leans on the league prior, so read this mark gently" : null,
-        "click for the club's run",
+          ? "promoted this season: few Premier League matches in the fit, so its rating leans on the league average; read this mark gently" : null,
+        "click for the club's schedule",
       ].filter(Boolean).join("\n"));
       b.onclick = () => openClub(t);
       wrap.appendChild(b);
@@ -2167,7 +2186,7 @@ export default async function fixtures(host) {
     disc.appendChild(el("p", "sub",
       "Both axes are goals versus a league-average opponent, per match, from "
       + "the same fit as every colour above. The crosshair is league average; "
-      + "a dashed ring is a promoted club, whose rating leans on the prior."));
+      + "a dashed ring is a club promoted this season, whose rating leans on the league average because few matches are in the fit."));
   }
 
   /* ------------------------------------------------------- the drawer ---
@@ -2221,7 +2240,9 @@ export default async function fixtures(host) {
       const pop = num(M.res.scale && M.res.scale.population) || M.teams.length * 2;
       r.appendChild(el("span", "lv",
         (v == null ? "–" : sgn2(v))
-        + (rank != null ? ` · opponent is the ${ord(rank)} easiest of ${pop} fixtures` : "")));
+        + (rank != null
+            ? ` · ${c.opponent} ${c.isHome ? "home" : "away"}: ${ord(rank)} easiest of ${pop} for your ${k} (every opponent, home and away)`
+            : "")));
       return r;
     };
     if (c.easeAtt != null || c.easeDef != null) {
@@ -2814,8 +2835,8 @@ export default async function fixtures(host) {
     links.appendChild(mk("#xpoints", `${t.short} projections`,
       "the per-player numbers for this club"));
     links.appendChild(mk("#template", `${t.short} ownership`,
-      "an easy run everyone can see is priced into the field's transfers; the "
-      + "same run on a 2%-owned club is an edge, on a 60%-owned club it is "
+      "an easy schedule everyone can see is priced into the field's transfers; the "
+      + "same schedule on a 2%-owned club is an edge, on a 60%-owned club it is "
       + "insurance"));
     links.appendChild(mk("#creators", "creator coverage",
       "who has said what about these clubs"));
@@ -2853,12 +2874,12 @@ export default async function fixtures(host) {
       const runMean = hasRun ? ((t.attRankH ?? t.defRankH) + (t.defRankH ?? t.attRankH)) / 2 : null;
       const lead = el("p", "fx-lead");
       const words = [hasClub ? `${tierClub(clubMean)} club` : null,
-                     hasRun ? `${tierRun(runMean)} run` : null].filter(Boolean).join(", ");
+                     hasRun ? `${tierRun(runMean)} schedule` : null].filter(Boolean).join(", ");
       lead.appendChild(el("b", null, cap(words) + ": "));
       const parts = [];
       if (hasClub) parts.push(`${ord(ar)} best attack and ${ord(dr)} best defence of ${n} in the fit`);
-      if (hasRun) parts.push(`${hasClub ? "facing " : ""}the ${ord(t.attRankH)} easiest run of ${n} `
-        + `for attackers and ${ord(t.defRankH)} for defenders over ${range}`);
+      if (hasRun) parts.push(`${hasClub ? "facing " : ""}the ${ord(t.attRankH)} easiest schedule of ${n} `
+        + `for your attackers and ${ord(t.defRankH)} easiest for your defenders over ${range}`);
       lead.appendChild(document.createTextNode(parts.join(", ") + "."));
       drawer.appendChild(lead);
     }
@@ -2866,11 +2887,11 @@ export default async function fixtures(host) {
     if (promoted)
       drawer.appendChild(el("p", "sub",
         (t.priorShare != null
-          ? `Promoted: ${Math.round(t.priorShare * 100)}% of this rating is the league prior, not this club's results`
-          : "Promoted: few matches in the fit, so this rating leans on the league prior")
+          ? `Promoted this season: ${Math.round(t.priorShare * 100)}% of this rating is the league average, not this club's own results`
+          : "Promoted this season: few Premier League matches in the fit, so this rating leans on the league average")
         + "; read its colours gently."));
 
-    drawer.appendChild(el("h2", null, "The run"));
+    drawer.appendChild(el("h2", null, "The schedule"));
     const box = el("div", "fx-lens");
     for (const g of M.gws) {
       const slot = t.byGw.get(g);
@@ -2971,8 +2992,8 @@ export default async function fixtures(host) {
       disc.appendChild(kv);
       disc.appendChild(el("p", "sub",
         "These are the club's own strength, which every cell colour holds constant: "
-        + "a colour asks only what the opponent does at that venue. The run ranks "
-        + "above are the fixtures this club faces."));
+        + "a colour asks only what the opponent does at that venue. The schedule ranks "
+        + "above are how easy the fixtures this club faces are for your players."));
       drawer.appendChild(disc);
     }
   }

@@ -237,14 +237,19 @@ export function renderTools(host, ctx) {
   const anyAssumed = mySquad.some(r => myMult(r).assumed);
 
   // ---- the ranking ----------------------------------------------------
-  /* Every (one of yours out) × (anyone this field measures that you do not
-     own) at the inherited multiplier. One row per man going out, and no buy
-     named more than twice, so the list cannot collapse into six near-clones of
-     the same arithmetic. */
+  /* Every (one of yours out) × (anyone of the SAME POSITION this field
+     measures that you do not own) at the inherited multiplier. A transfer
+     cannot change a slot's position, so a MID never pairs with a GKP. One row
+     per man going out, and no buy named more than twice, so the list cannot
+     collapse into six near-clones of the same arithmetic. */
+  const samePos = (a, b) => a.pos != null && b.pos != null && a.pos === b.pos;
   const moves = [];
   for (const out of mySquad) {
     const m = incoming(out), s = sellTerm(out);
-    for (const inn of cands) moves.push({ out, inn, m, d: s + buyTerm(inn, m) });
+    for (const inn of cands) {
+      if (!samePos(out, inn)) continue;
+      moves.push({ out, inn, m, d: s + buyTerm(inn, m) });
+    }
   }
   function take(list) {
     const usedOut = new Set(), usedIn = new Map(), keep = [];
@@ -417,8 +422,9 @@ export function renderTools(host, ctx) {
   }
 
   card.appendChild(el("p", "rm-gen",
-    "One row per player you sell, against every player this field measures " +
-    "that you do not own, at his multiplier."));
+    "One row per player you sell, against every player of the same position " +
+    "this field measures that you do not own, at his multiplier. Same position " +
+    "only: a transfer cannot change a slot's position."));
 
   const howto = el("details", "howto");
   howto.appendChild(el("summary", null, "How this ranking is built"));
@@ -481,6 +487,9 @@ export function renderTools(host, ctx) {
     outSel.onchange = () => {
       outCode = outSel.value ? Number(outSel.value) : null;
       inRole = null;                        // re-inherit from the new outgoing
+      // an incoming man of another position cannot fill the new slot
+      if (inCode != null && outCode != null
+          && !samePos(uni.get(outCode) || {}, uni.get(inCode) || {})) inCode = null;
       renderPickers(); renderResult();
     };
     row1.appendChild(outSel);
@@ -534,16 +543,20 @@ export function renderTools(host, ctx) {
       candWrap.textContent = "";
       if (inCode != null && !query) return;
       const term = query.trim().toLowerCase();
-      let list = cands.slice();
+      // only the outgoing man's position is offered: a transfer keeps the slot
+      const outP = outCode != null ? (uni.get(outCode) || {}).pos : null;
+      const pool = outP ? cands.filter(r => r.pos === outP) : cands;
+      let list = pool.slice();
       if (term) list = list.filter(r =>
         String(r.name || "").toLowerCase().includes(term) ||
         String(r.team || "").toLowerCase().includes(term));
       list.sort((a, b) => eoOf(b) - eoOf(a));
+      const posNote = outP ? ` (${outP} only, the position of the man going out)` : "";
       candWrap.appendChild(el("p", "sub", term
-        ? `${list.length} of the ${cands.length} this field can price match ` +
-          `“${query.trim()}”, heaviest first.`
+        ? `${list.length} of the ${pool.length} this field can price` + posNote +
+          ` match “${query.trim()}”, heaviest first.`
         : `The players ${field.short || field.label} is heaviest on that you ` +
-          `do not own.`));
+          `do not own` + posNote + `.`));
       const grid = el("div", "ttcands");
       for (const r of list.slice(0, 12)) {
         const b = el("button", "ttcand");
@@ -576,6 +589,8 @@ export function renderTools(host, ctx) {
     if (eoOf(out) == null) missing.push(`${field.label} publishes no EO for ${out.name}`);
     if (eoOf(inn) == null) missing.push(`${field.label} publishes no EO for ${inn.name}`);
     if (myMult(out).v == null) missing.push(`your squad read gives no role for ${out.name}`);
+    if (!samePos(out, inn)) missing.push(
+      `${out.name} is a ${out.pos ?? "?"} and ${inn.name} a ${inn.pos ?? "?"}; a transfer cannot change a slot's position`);
     if (missing.length) {
       manBody.appendChild(emptyBox(missing.join("; ") + ".",
         "One side of the subtraction is blank, and blank is not zero. Pick a " +
