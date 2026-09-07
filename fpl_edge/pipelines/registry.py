@@ -539,6 +539,25 @@ def run_content_analyse_backlog(ctx: TaskContext) -> TaskResult:
     return _run_analyse(ctx, since_days=0, label="full backlog")
 
 
+def run_fixture_ratings_refit(ctx: TaskContext) -> TaskResult:
+    """Refit the Dixon-Coles club split the Fixtures board colours from.
+
+    ``fixture_ratings.parquet`` was only ever written by hand
+    (``python -m fpl_edge.platform.scripts.fixtures --build``), so it sat
+    227 hours stale while the nightly job refreshed the DEPRECATED blended
+    file instead. The fit reads the local warehouse only and takes about
+    2.5 seconds, so it runs daily after settlement and on demand. No network
+    gate: nothing here leaves the machine.
+    """
+    step = run_step(
+        "fixture_ratings_refit",
+        [ctx.python, "-m", "fpl_edge.platform.scripts.fixtures", "--build"],
+        timeout=300,
+    )
+    outcome = "quiet" if step.ok else "error"
+    return TaskResult(outcome=outcome, detail=step.detail[-300:], steps=[step])
+
+
 def run_fpl_core_insights(ctx: TaskContext) -> TaskResult:
     """Daily per-match xG from FPL-Core-Insights, after the settlement slot
     so the gameweeks it fetches are the ones settlement just closed."""
@@ -652,6 +671,10 @@ def run_audio_retention(ctx: TaskContext) -> TaskResult:
 # THE registry. Adding authority is adding one row here. Nothing else runs.
 # --------------------------------------------------------------------------
 
+    # Stale windows: a task whose value does not decay within the day keeps a
+    # 23h window, so a tick that slept through the due instant (the Mac lid
+    # was down on Aug 31 and Sep 6) runs late instead of skipping the day.
+    # Time-sensitive tasks (prices, odds, deadline-relative) keep tight ones.
 TASKS: tuple[Task, ...] = (
     # ---- the five original DAG tasks, scheduled by the DAG itself ---------
     # (scheduled_by_dag=True: due instants still come from deadline_dag's own
@@ -710,7 +733,7 @@ TASKS: tuple[Task, ...] = (
         description="Daily settlement chain: live snapshot, results, projections, "
                     "scoring, odds top-up, content ingest, cohort crawls, reports",
         due=Calendar(hour_utc=10, minute=30),
-        stale_window=dt.timedelta(hours=12),
+        stale_window=dt.timedelta(hours=23),
         run=run_post_gw_settlement,
         family="settlement",
     ),
@@ -741,7 +764,7 @@ TASKS: tuple[Task, ...] = (
         # Shorter than the 12h gap to the backlog firing: a slept-through
         # analyse is dropped and the next one does the work, because the
         # queue it reads is the same either way.
-        stale_window=dt.timedelta(hours=6),
+        stale_window=dt.timedelta(hours=23),
         run=run_content_analyse,
         budget_s=ANALYSE_BUDGET_S,
         family="content",
@@ -751,7 +774,7 @@ TASKS: tuple[Task, ...] = (
         description="Second daily claim-extraction pass with no date window, "
                     "30m budget: chews the never-analysed backlog",
         due=Calendar(hour_utc=1, minute=30),
-        stale_window=dt.timedelta(hours=6),
+        stale_window=dt.timedelta(hours=23),
         run=run_content_analyse_backlog,
         budget_s=ANALYSE_BUDGET_S,
         family="content",
@@ -766,6 +789,14 @@ TASKS: tuple[Task, ...] = (
         stale_window=dt.timedelta(hours=3),
         run=run_fast_rss,
         family="content",
+    ),
+    Task(
+        id="fixture_ratings_refit",
+        description="Daily Dixon-Coles refit of the club attack/defence split "
+                    "the Fixtures board reads; 2.5s, local only.",
+        due=Calendar(hour_utc=11, minute=0),
+        stale_window=dt.timedelta(hours=23),
+        run=run_fixture_ratings_refit,
     ),
     Task(
         id="briefing_intel",

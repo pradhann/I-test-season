@@ -34,49 +34,6 @@
   --cx-quiet: var(--faint);
 }
 
-/* ===================================================== the teaching band */
-
-.cx-lead { font-size: 14.5px; line-height: 1.6; max-width: 74ch;
-           margin: 2px 0 12px; color: var(--muted); }
-.cx-lead b { color: var(--ink); font-weight: 650; }
-
-/* Each term is a COLUMN — the term over the unit it is counted in — so the
-   two never drift apart. A flex column's baseline is its first line's, so
-   the × still sits on the terms' baseline rather than between the rows. */
-.cx-identity { display: flex; flex-wrap: wrap; align-items: baseline;
-               gap: 6px 9px; font-size: 14px; margin-top: 2px; }
-.cx-eq-col { display: flex; flex-direction: column; align-items: flex-start;
-             gap: 4px; min-width: 0; }
-.cx-eq-term { padding: 4px 12px; border-radius: 7px; font-weight: 650;
-              color: var(--ink); border: 1px solid var(--line); }
-.cx-eq-term.intent { background: color-mix(in oklab, var(--cx-in) 20%, var(--surface)); }
-.cx-eq-term.mine   { background: color-mix(in oklab, var(--accent) 24%, var(--surface)); }
-.cx-eq-op { color: var(--faint); font-family: var(--mono); font-size: 15px; }
-.cx-eq-gloss { color: var(--faint); font-size: 11.5px; line-height: 1.4;
-               padding-left: 1px; }
-
-.cx-rules { display: flex; flex-direction: column; gap: 4px; margin: 12px 0 10px; }
-/* A grid, not a flex row: as three flex items the bold lead-in became its own
-   column and the sentence wrapped in a narrow gutter beside it once the text
-   had to break. Swatch, then one text run that keeps its lead-in inline. */
-.cx-rule { display: grid; grid-template-columns: 24px minmax(0, 1fr);
-           align-items: baseline; gap: 9px; font-size: 12.5px;
-           color: var(--muted); line-height: 1.55; }
-.cx-rule b { color: var(--ink); }
-.cx-sw { width: 24px; height: 10px; border-radius: 3px; flex: none;
-         border: 1px solid var(--line); }
-.cx-sw.agree { background: color-mix(in oklab, var(--muted) 16%, var(--surface)); }
-.cx-sw.dis { background: color-mix(in oklab, var(--cx-in) 30%, var(--surface)); }
-
-/* THE MEASUREMENT. The hit rate is the governing fact of the whole page, so
-   it is the one number on this card with display weight — everything else on
-   it is prose. The sentence around it stays at reading weight; only the
-   figure is promoted. */
-.cx-record { font-size: 13px; color: var(--muted); margin: 14px 0 6px;
-             max-width: 74ch; line-height: 1.6; }
-.cx-record b { color: var(--ink); font-family: var(--mono); font-size: 19px;
-               font-weight: 700; letter-spacing: -.01em;
-               font-variant-numeric: tabular-nums; margin-right: 2px; }
 /* The panel's own words about that measurement: a QUOTATION, so it reads as
    an aside — a rule down the left rather than eight lines of the faintest
    grey on the page, which is what a bare paragraph gave it. */
@@ -106,15 +63,6 @@
          font-size: 12.5px; line-height: 1.6; max-width: 78ch; }
 .cx-ul li { margin-bottom: 3px; }
 
-.cx-scope { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 10px; }
-.cx-scope-line { font-size: 12.5px; color: var(--muted); line-height: 1.6;
-                 max-width: 82ch; }
-.cx-scope-line b { color: var(--ink); }
-.cx-scope-line code { font-family: var(--mono); font-size: 11.5px;
-                      background: var(--raised); padding: 1px 4px;
-                      border-radius: 4px; }
-.cx-scope-line.warn { border-left: 2px solid var(--warn); padding-left: 10px; }
-
 .cx-provline { font-size: 12.5px; color: var(--muted); line-height: 1.6;
                max-width: 88ch; margin: 10px 0 6px; }
 .cx-provline b { color: var(--ink); }
@@ -127,10 +75,6 @@
 input.cx-url { flex: 1 1 320px; min-width: 200px; background: var(--raised);
                color: var(--ink); border: 1px solid var(--line);
                border-radius: 7px; padding: 6px 10px; font: inherit; }
-.cx-rates { color: var(--muted); font-size: 12.5px; line-height: 1.6;
-            max-width: 84ch; margin: 4px 0 8px; }
-.cx-rates b { color: var(--ink); }
-
 .cx-fail { border: 1px solid color-mix(in oklab, var(--warn) 32%, var(--line));
            background: color-mix(in oklab, var(--warn) 7%, var(--surface));
            border-radius: 8px; padding: 9px 12px; margin: 6px 0; }
@@ -196,10 +140,6 @@ a.cx-job-url:hover { color: var(--ink); text-decoration: underline; }
  * is free, and free things do not need to be shouted — it is a plain button
  * with the word "free" spelled out underneath, because the cost is the
  * decision and the cost belongs next to the control. */
-
-.cx-gate { color: var(--muted); font-size: 12.5px; line-height: 1.6;
-           max-width: 84ch; margin: 0 0 10px; }
-.cx-gate b { color: var(--ink); }
 
 .cx-job.parked { border-color: color-mix(in oklab, var(--s1) 42%, var(--line));
                  box-shadow: inset 2px 0 0 var(--s1); }
@@ -809,15 +749,6 @@ tr.cx-you td.cx-gutter { background: color-mix(in oklab, var(--accent) 10%, var(
     max-width: 190px; }
 }
 
-/* Below this the two terms cannot sit side by side, and a wrapped × strands
-   at the right of the first column reading exactly like a close button. The
-   expression stacks instead, with the operator on its own line between. */
-@media (max-width: 520px) {
-  .cx-identity { display: block; }
-  .cx-identity > .cx-eq-op { display: block; padding: 5px 0 3px 2px; }
-  .cx-eq-col + .cx-eq-col { margin-top: 2px; }
-}
-
 /* ---- skeleton loading (R3) ----------------------------------------------
    The panel build is measured at 2.5–4s; a shape that says "board loading"
    replaces the bare text line. Tokens only, both themes; motion respects
@@ -847,3 +778,170 @@ tr.cx-you td.cx-gutter { background: color-mix(in oklab, var(--accent) 10%, var(
 .cx-fresh.hot { color: var(--good); border-color:
                 color-mix(in oklab, var(--good) 45%, var(--line)); }
 .chip.cx-48:disabled { opacity: .55; cursor: default; }
+
+/* ============================================ the record and the sources */
+
+.cx-honest { font-size: 13.5px; line-height: 1.6; color: var(--muted);
+             margin: 4px 0 10px; max-width: 88ch; }
+.cx-honest b { color: var(--ink); font-weight: 650; }
+.cx-honest.warn { border-left: 2px solid var(--warn); padding-left: 10px; }
+
+.cx-sources { border-top: 1px solid var(--line); padding-top: 10px; }
+.cx-srcrow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+/* the segmented count: one button per measured state, a dot for the state */
+.cx-segbar { display: inline-flex; border: 1px solid var(--line);
+             border-radius: 8px; overflow: hidden; }
+.cx-segb { border: 0; border-radius: 0; padding: 5px 11px; font-size: 12px;
+           background: var(--surface); color: var(--muted);
+           display: inline-flex; gap: 6px; align-items: center; }
+.cx-segb + .cx-segb { border-left: 1px solid var(--line); }
+.cx-segb b { font-family: var(--mono); color: var(--ink);
+             font-variant-numeric: tabular-nums; }
+.cx-segb::before, .cx-statedot { content: ""; display: inline-block; width: 8px;
+  height: 8px; border-radius: 50%; background: var(--faint); flex: none; }
+.cx-segb.live::before, .cx-state.live .cx-statedot { background: var(--good); }
+.cx-segb.quiet::before, .cx-state.quiet .cx-statedot {
+  background: color-mix(in oklab, var(--good) 45%, var(--surface)); }
+.cx-segb.stale::before, .cx-segb.empty::before,
+.cx-state.stale .cx-statedot, .cx-state.empty .cx-statedot { background: var(--warn); }
+.cx-segb.failing::before, .cx-segb.blocked::before,
+.cx-state.failing .cx-statedot, .cx-state.blocked .cx-statedot { background: var(--bad); }
+.cx-segb.legacy::before, .cx-segb.disabled::before, .cx-segb.unprobed::before,
+.cx-state.legacy .cx-statedot, .cx-state.disabled .cx-statedot,
+.cx-state.unprobed .cx-statedot { background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--faint); }
+.cx-segb:hover { color: var(--ink); }
+.cx-segb.on { background: color-mix(in oklab, var(--s1) 14%, var(--surface));
+              color: var(--ink); }
+.cx-srcmeta { display: inline-flex; align-items: center; gap: 6px;
+              color: var(--faint); font-size: 11.5px; }
+.cx-srcacts { margin-left: auto; display: inline-flex; gap: 8px; align-items: center; }
+.cx-srclist, .cx-fetchall { font-size: 12px; padding: 5px 11px; }
+.cx-srclist.on { border-color: var(--s1); }
+.cx-seq { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+          margin-top: 8px; padding: 7px 10px; border-radius: 8px;
+          background: var(--raised); font-size: 12.5px; color: var(--muted); }
+.cx-seqbar { flex: 0 1 180px; height: 6px; border-radius: 3px; overflow: hidden;
+             background: var(--surface); border: 1px solid var(--line); }
+.cx-seqfill { display: block; height: 100%; background: var(--s1); }
+.cx-seqtext { color: var(--ink); }
+.cx-seq .cx-x { margin-left: 0; }
+.cx-srcwrap { margin-top: 8px; }
+table.cx-srctable { font-size: 12.5px; }
+table.cx-srctable td { vertical-align: middle; }
+.cx-tier-tag { margin-left: 6px; font-size: 9.5px; letter-spacing: .06em;
+               text-transform: uppercase; color: var(--faint);
+               border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+.cx-kind { color: var(--muted); }
+.cx-state { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+.cx-probe { color: var(--muted); white-space: nowrap; }
+.cx-srcact { white-space: nowrap; }
+.cx-srcact > * + * { margin-left: 8px; }
+.cx-fetch1 { font-size: 11.5px; padding: 3px 9px; }
+.cx-srcgot { color: var(--good); font-size: 12px; }
+.cx-srcbad { color: var(--bad); font-size: 12px; }
+tr.cx-srcline.legacy td, tr.cx-srcline.blocked td { color: var(--faint); }
+
+/* ================================================ the window, as a fact */
+
+.cx-factrow { justify-content: space-between; }
+.cx-fact { color: var(--muted); font-size: 12.5px; display: inline-flex;
+           flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.cx-fact b { color: var(--ink); font-size: 13.5px; }
+.cx-factwin { color: var(--faint); }
+.cx-factwin::before, .cx-fact .cx-asof::before { content: "·"; color: var(--faint);
+                                                  margin-right: 6px; }
+.cx-togs { display: inline-flex; gap: 8px; flex-wrap: wrap; }
+.cx-tog:disabled { opacity: .5; cursor: default; }
+
+/* ============================================== the report card, as a chip */
+
+.cx-rcrow { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.cx-rc { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px 3px 8px;
+         border-radius: 999px; border: 1px solid var(--line); background: var(--surface);
+         font: inherit; font-size: 11.5px; color: var(--muted); cursor: pointer; }
+.cx-rc:hover { border-color: var(--muted); color: var(--ink); }
+.cx-rc b { color: var(--ink); font-weight: 600; }
+.cx-rcdir { font-family: var(--mono); font-size: 10px; letter-spacing: .04em;
+            color: var(--faint); }
+.cx-rc .cx-rcstat { margin: 0; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.cx-rc.below .cx-rcstat { color: var(--bad); }
+.cx-rc.above .cx-rcstat { color: var(--good); }
+.cx-rc.legacy { border-style: dashed; }
+.cx-count.cue { background: repeating-linear-gradient(135deg, var(--raised) 0 3px,
+                                                      var(--surface) 3px 6px); }
+.cx-count.own { border-color: color-mix(in oklab, var(--accent) 55%, var(--line)); }
+
+/* ============================================================ report cards */
+
+.cx-rcgrid { display: grid; gap: 8px; margin-top: 10px;
+             grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
+.cx-rcard { display: block; text-align: left; background: var(--raised);
+            border: 1px solid var(--line); border-left: 3px solid var(--line);
+            border-radius: 9px; padding: 9px 11px; font: inherit; color: inherit;
+            cursor: pointer; min-width: 0; }
+.cx-rcard:hover { border-color: var(--muted); }
+.cx-rcard:focus-visible { outline: 2px solid var(--s1); outline-offset: 2px; }
+.cx-rcard.below { border-left-color: var(--bad); }
+.cx-rcard.above { border-left-color: var(--good); }
+.cx-rcard.flip { border-left-color: var(--muted); }
+.cx-rcard.legacy { border-style: dashed; border-left-style: solid; }
+.cx-rcname { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.cx-rcname b { color: var(--ink); font-size: 13px; }
+.cx-rccoin { margin-left: auto; font-size: 10px; letter-spacing: .06em;
+             text-transform: uppercase; color: var(--faint); white-space: nowrap; }
+.cx-rcard.below .cx-rccoin { color: var(--bad); }
+.cx-rcard.above .cx-rccoin { color: var(--good); }
+.cx-legacy { font-size: 9.5px; letter-spacing: .06em; text-transform: uppercase;
+             color: var(--warn); border-radius: 4px; padding: 0 5px;
+             border: 1px dashed color-mix(in oklab, var(--warn) 50%, var(--line)); }
+.cx-rcstat { margin-top: 5px; font-size: 12px; color: var(--muted);
+             font-variant-numeric: tabular-nums; }
+.cx-rcstat b { color: var(--ink); font-family: var(--mono); font-size: 15px; }
+/* the Wilson interval as a range on a 0-100 track; the tick is the coin flip */
+.cx-range { position: relative; height: 10px; margin-top: 8px; border-radius: 5px;
+            background: var(--surface); border: 1px solid var(--line); }
+.cx-range.big { height: 16px; margin: 10px 0 6px; }
+.cx-range-mid { position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px;
+                background: var(--muted); }
+.cx-range-band { position: absolute; top: 1px; bottom: 1px; border-radius: 4px;
+                 background: color-mix(in oklab, var(--muted) 45%, var(--surface)); }
+.cx-rcard.below .cx-range-band { background: color-mix(in oklab, var(--bad) 40%, var(--surface)); }
+.cx-rcard.above .cx-range-band { background: color-mix(in oklab, var(--good) 40%, var(--surface)); }
+.cx-range-pt { position: absolute; top: -2px; width: 3px; height: calc(100% + 4px);
+               margin-left: -1.5px; background: var(--ink); border-radius: 2px; }
+/* per-gameweek hit rate: small columns on a 22px track, dashed line at 50% */
+.cx-gwbars { display: flex; gap: 4px; align-items: flex-end; height: 34px;
+             margin-top: 8px; position: relative; }
+.cx-gwbars::before { content: ""; position: absolute; left: 0; right: 0; bottom: 23px;
+                     border-top: 1px dashed var(--line); }
+.cx-gwbar { display: flex; flex-direction: column; align-items: center;
+            justify-content: flex-end; width: 28px; height: 34px; }
+.cx-gwfill { display: block; width: 14px; background: var(--muted);
+             border-radius: 2px 2px 0 0; }
+.cx-gwbar.thin .cx-gwfill { opacity: .5; }
+.cx-gwlab { font-size: 9px; color: var(--faint); font-family: var(--mono);
+            line-height: 12px; }
+.cx-rcteam { margin-top: 7px; padding-top: 6px; border-top: 1px dashed var(--line);
+             font-size: 11.5px; color: var(--muted); line-height: 1.5; }
+.cx-rcchan { font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase;
+             color: var(--faint); margin-right: 6px; font-weight: 700; }
+.cx-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr);
+            gap: 3px 12px; margin: 8px 0; font-size: 12.5px; }
+.cx-facts dt { color: var(--faint); font-size: 10.5px; letter-spacing: .06em;
+               text-transform: uppercase; padding-top: 2px; }
+.cx-facts dd { margin: 0; color: var(--ink); }
+table.cx-byaction { font-size: 12px; margin-top: 4px; }
+table.cx-byaction tr.thin td { color: var(--faint); }
+.cx-teamrow { margin-top: 8px; border-left: 2px solid var(--line); padding-left: 10px; }
+.cx-teamhead { display: flex; gap: 8px; align-items: baseline; }
+.cx-gridhost { margin-top: 6px; }
+.cx-legend > span.cx-shape { flex-basis: auto; margin-left: auto; color: var(--faint);
+                             font-size: 11px; }
+.cx-maintakes .cx-subhead:first-of-type { margin-top: 8px; }
+
+@media (max-width: 760px) {
+  .cx-srcacts { margin-left: 0; flex-basis: 100%; }
+  .cx-legend > span.cx-shape { margin-left: 0; flex-basis: 100%; }
+}
+.cx-factwin.warn { color: var(--warn); }

@@ -31,6 +31,7 @@ operating map. **Bold** = scheduled today; *italics* = manual-only today.
 | **bootstrap + fixtures** | fantasy.premierleague.com API | nightly post_gw + DAG T-30h | dim_event/team/player, fact_player_state, fact_fixture |
 | **results settlement** | FPL live API | nightly post_gw (refuses un-finalised GWs) | fact_player_fixture |
 | my-team (public/private) | FPL API (+OAuth for private) | manual / on-demand | data/myteam/*.json (not warehouse) |
+| **fixture ratings refit** (Dixon-Coles club split) | local warehouse only | **daily 11:00 UTC** (`fixture_ratings_refit`, ~2.5s) | fixture_ratings.parquet, fixture_calibration.parquet. Was hand-run only and went 227h stale while the nightly job refreshed the deprecated blend |
 
 ### B · Odds (metered: 500 credits/month)
 | Pipeline | Schedule today | Freshness gate |
@@ -59,9 +60,11 @@ value-identical rows** — fplform is 60k rows over 13 pulls and it is the
 | Pipeline | Schedule today | Gate |
 |---|---|---|
 | **RSS/blog/YouTube-page ingest** (22 podcasts, 3 blogs, 14 channels) | nightly post_gw (backfill 3d) + DAG T-30h (2d) | GUID-keyed content-addressed item_id; description-only until transcribed |
-| *transcription* (MLX-Whisper ASR 11.5×; panel captions 286×) | **manual only** | queue skips done/skipped items; 80% coverage or nothing stored; audio cached on disk content-addressed, **never cleaned up** |
-| *analysis* (Opus reads stored text → claims/insights) | manual only | per-item, resumable |
+| **transcription** (MLX-Whisper ASR 11.5×; panel captions 286×) | **daily 12:00 UTC** (`content_transcribe`, 1h budget) | queue skips done/skipped items; 80% coverage or nothing stored; a failed run records `error`, never `ok` |
+| **analysis** (Opus reads stored text → claims/insights) | **daily 13:30 UTC** (`content_analyse`, last 21d, 30m budget) + **daily 01:30 UTC** (`content_analyse_backlog`, no window) | per-item, resumable across runs. Was manual-only until 2026-09-04: discovery ran every 4h while 651 items sat unanalysed |
 | paste-a-link | UI, preview-gated (park → accept/decline, 30-min TTL) | decline stores nothing |
+
+**Stale windows.** A task whose value does not decay within the day keeps a 23h window, so a tick that slept through the due instant runs late instead of skipping the day (the Mac lid was down through 2026-08-31 and 2026-09-06; both days' settlement and analysis were `skipped_stale`). Time-sensitive tasks (prices, odds, deadline-relative rungs) keep tight windows.
 
 ### E · Cohort crawls (elite field)
 **elite snowball** (budget 1100), **named elite** (identity-verified),

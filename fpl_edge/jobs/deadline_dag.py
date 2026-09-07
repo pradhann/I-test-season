@@ -50,6 +50,7 @@ import importlib.util
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import time
@@ -513,7 +514,17 @@ def run_step(name: str, argv: list[str], *, timeout: float = STEP_TIMEOUT_S) -> 
     t0 = time.monotonic()
     try:
         proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
-        tail = (proc.stdout + proc.stderr).strip().splitlines()[-3:]
+        lines = (proc.stdout + proc.stderr).strip().splitlines()
+        tail = lines[-3:]
+        # A Python traceback or a native crash ends in the least useful lines
+        # (the C stack bottom: "Py_RunMain | Py_BytesMain | start"). Keep the
+        # first line that names the error as well, so a failed step's 300
+        # characters say WHAT failed and not only where the interpreter died.
+        if proc.returncode != 0:
+            head = next((ln for ln in lines
+                         if re.search(r"Error|Exception|Traceback|usage:|Fatal", ln)), None)
+            if head and head not in tail:
+                tail = [head, "...", *tail[-2:]]
         return Step(
             name=name, ok=proc.returncode == 0, seconds=round(time.monotonic() - t0, 1),
             detail=" | ".join(tail)[-300:],

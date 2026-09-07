@@ -137,6 +137,19 @@ PANELS: tuple[Panel, ...] = (
     # number this app's fixtures page preaches against is worse than dead
     # weight -- it is a second, blended answer on offer beside the split one.
     Panel(
+        id="creator_report_card",
+        title="Creator report card",
+        script="creator_report_card",
+        default_params={},
+        layout="cards",
+        description=(
+            "Every tracked creator's measured record: binary claims scored "
+            "hit or flop with a Wilson interval and n, and their real FPL "
+            "team's points against a stated baseline. Two channels, never "
+            "one score; a weight is earned only past the floor."
+        ),
+    ),
+    Panel(
         id="creator_board",
         title="The deadline board",
         script="creator_board",
