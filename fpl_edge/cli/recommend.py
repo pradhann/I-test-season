@@ -57,6 +57,8 @@ def serialize_recommendation(
     rec,
     *,
     chips_allowed: bool = True,
+    max_hits: int = -1,
+    unconstrained=None,
     generated_at: dt.datetime,
     max_candidates: int,
     seconds: float,
@@ -97,6 +99,14 @@ def serialize_recommendation(
         "solve_seconds": float(rec.solve_seconds),
         # Whether the optimiser was allowed to spend a chip; a plan that plays one
         # is a different decision from a transfer plan and renders as such.
+        # The hit cap the headline honoured, and the optimiser's top move when
+        # that cap displaced it: visible beside the headline, never silently gone.
+        "max_hits": int(max_hits),
+        "unconstrained": (None if unconstrained is None else {
+            **_serialize_move(unconstrained),
+            "gain_over_roll": (float(unconstrained.objective - rec.roll.objective)
+                               if rec.roll is not None else None),
+        }),
         "chips_allowed": bool(chips_allowed),
         "bounds": (
             f"candidates capped at {int(max_candidates)}/position, "
@@ -127,6 +137,12 @@ def recommend_cmd(
              "owner's decision, not the objective's: with them allowed, the first "
              "GW4 run proposed a 10-change wildcard for +51 xPts. The dashboard "
              "runs --no-chips and shows chip plans separately.",
+    ),
+    max_hits: int = typer.Option(
+        -1, "--max-hits",
+        help="Most points-hits the HEADLINE move may take; -1 = unconstrained. "
+             "Hit-taking moves are still solved and kept as the unconstrained "
+             "best, so the trade is visible. The dashboard runs --max-hits 0.",
     ),
     commit: bool = typer.Option(
         True, "--commit/--no-commit",
@@ -230,9 +246,28 @@ def recommend_cmd(
     typer.echo(rec.render(index))
 
     if commit:
+        # The headline must respect the hit cap (the chat tool's rule since
+        # day one): the optimiser's top move stays on the table as the
+        # unconstrained best, never hidden, never the headline by default.
+        unconstrained = None
+        if max_hits >= 0 and rec.chosen.hits > max_hits:
+            import dataclasses
+            ranked = [rec.chosen, *rec.alternatives]
+            within = next((mv for mv in ranked if mv.hits <= max_hits), None)
+            if within is None and rec.roll is not None:
+                within = rec.roll
+            if within is not None:
+                unconstrained = rec.chosen
+                others = tuple(mv for mv in ranked if mv is not within)
+                rec = dataclasses.replace(rec, chosen=within, alternatives=others)
+                typer.echo(
+                    f"Headline held to max_hits={max_hits}: {within.describe(index)} "
+                    f"(the unconstrained best took {unconstrained.hits} hit(s))"
+                )
         payload = serialize_recommendation(
             rec, generated_at=now, max_candidates=int(max_candidates),
             seconds=float(seconds), chips_allowed=bool(chips),
+            max_hits=int(max_hits), unconstrained=unconstrained,
         )
         out = root / "data" / "warehouse" / TRANSFER_PLAN_NAME
         out.parent.mkdir(parents=True, exist_ok=True)

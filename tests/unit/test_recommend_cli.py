@@ -144,6 +144,7 @@ def test_the_transfers_mode_maps_to_fpl_recommend_in_the_runner():
     assert cmd.startswith("uv run fpl recommend --commit")
     assert "--no-chips" in cmd
     assert "--seconds 150" in cmd and "--max-candidates 20" in cmd
+    assert "--max-hits 0" in cmd
     assert "fpl solve" not in cmd
     assert solve_runner._default_command("points").startswith("uv run fpl solve")
 
@@ -160,3 +161,20 @@ def test_the_artefact_records_whether_chips_were_allowed():
     assert serialize_recommendation(rec, generated_at=now, max_candidates=20, seconds=150.0)["chips_allowed"] is True
     assert serialize_recommendation(rec, generated_at=now, max_candidates=20, seconds=150.0,
                                     chips_allowed=False)["chips_allowed"] is False
+
+
+def test_the_artefact_carries_the_hit_cap_and_the_displaced_unconstrained_best():
+    """The dashboard runs --max-hits 0: the headline stays inside the free
+    transfers and the optimiser's hit-taking top move rides beside it as
+    `unconstrained`, with its own gain, never hidden."""
+    import datetime as dt
+    from fpl_edge.cli.recommend import serialize_recommendation
+    rec = _rec()
+    now = dt.datetime(2026, 9, 7, tzinfo=dt.UTC)
+    base = serialize_recommendation(rec, generated_at=now, max_candidates=20, seconds=150.0)
+    assert base["max_hits"] == -1 and base["unconstrained"] is None
+    gated = serialize_recommendation(rec, generated_at=now, max_candidates=20, seconds=150.0,
+                                     max_hits=0, unconstrained=rec.chosen)
+    assert gated["max_hits"] == 0
+    assert gated["unconstrained"]["out"] == [int(c) for c in rec.chosen.out]
+    assert gated["unconstrained"]["gain_over_roll"] == base["gain_over_roll"]

@@ -155,7 +155,7 @@ def _default_command(mode: str) -> str:
         # them allowed it wildcarded for +51 on the first run). The forecast it
         # reads is refreshed daily by forecast_refresh, never here.
         return ("uv run fpl recommend --commit --seconds 150 "
-                "--max-candidates 20 --no-chips")
+                "--max-candidates 20 --no-chips --max-hits 0")
     return f"uv run fpl solve --mode {shlex.quote(mode)}"
 
 
