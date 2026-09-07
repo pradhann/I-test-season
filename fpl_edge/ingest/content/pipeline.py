@@ -25,6 +25,7 @@ backed by a count taken from the run that just happened.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as dt
 import json
 import sys
@@ -1339,6 +1340,10 @@ _INDEXED_TABLES: tuple[str, ...] = (
 )
 
 
+#: Keys the health probe round-trips per table, spread over primary-key order.
+INDEX_PROBE_KEYS = 48
+
+
 def _index_is_healthy(con, table: str) -> tuple[bool, str]:
     """Round-trip ONE existing row through the primary-key index, then undo it.
 
@@ -1364,16 +1369,36 @@ def _index_is_healthy(con, table: str) -> tuple[bool, str]:
     if not cols:
         return True, "no primary key"
     where = " AND ".join(f"{c} IS NOT DISTINCT FROM ?" for c in cols)
-    row = con.execute(
-        f"SELECT {', '.join(cols)} FROM {table} LIMIT 1").fetchone()
-    if row is None:
+    # ART corruption is KEY-PREFIX-LOCAL: on 2026-09-07 content_claim passed a
+    # one-key probe while every INSERT of FPL Family's claim ids died inside
+    # FixedSizeAllocator. One key answers for one leaf. So probe a spread:
+    # first, last, and every n/INDEX_PROBE_KEYS-th row in primary-key order,
+    # so a broken region of the tree is likely to be walked. Still not proof
+    # (an allocator fault on the insert path can evade any delete probe), and
+    # the message says so; --force exists for exactly that case.
+    key_list = ", ".join(cols)
+    rows = con.execute(
+        f"WITH k AS (SELECT {key_list}, row_number() OVER (ORDER BY {key_list}) AS rn, "
+        f"           count(*) OVER () AS n FROM {table}) "
+        f"SELECT {key_list} FROM k "
+        f"WHERE rn = 1 OR rn = n OR rn % GREATEST(1, n // {INDEX_PROBE_KEYS}) = 0 "
+        f"ORDER BY rn").fetchall()
+    if not rows:
         return True, "empty table"
+    total = con.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
     try:
         con.execute("BEGIN")
-        con.execute(f"DELETE FROM {table} WHERE {where}", list(row))
+        for row in rows:
+            con.execute(f"DELETE FROM {table} WHERE {where}", list(row))
         con.execute("ROLLBACK")
-        return True, f"index round-trip ok on {dict(zip(cols, row))}"
+        return True, (f"index round-trip ok on {len(rows)} of {total} keys spread "
+                      f"across the tree (a delete probe; insert-path faults can "
+                      f"still evade it, see --force)")
     except Exception as exc:  # noqa: BLE001 - the failure IS the answer
+        # A FATAL index error has already invalidated the connection; the
+        # rollback is best-effort and its own failure adds nothing.
+        with contextlib.suppress(Exception):
+            con.execute("ROLLBACK")
         return False, f"{type(exc).__name__}: {str(exc)[:200]}"
 
 
