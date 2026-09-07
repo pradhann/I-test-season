@@ -553,7 +553,8 @@ def auth(
     which is the everyday case. ``--paste-cookie`` is the one-time setup, and
     the recovery path if the refresh token is ever revoked.
     """
-    from fpl_edge.myteam.tokens import AuthNotConfiguredError, TokenManager
+    from fpl_edge.myteam import account
+    from fpl_edge.myteam.tokens import TokenManager
 
     manager = TokenManager()
     if paste_cookie or from_file is not None:
@@ -562,65 +563,68 @@ def auth(
         except _CookieInputError as exc:
             console.print(f"[red]{exc}[/red]")
             raise typer.Exit(1)
-        try:
-            status = manager.ingest_from_cookie(pasted)
-        except AuthNotConfiguredError as exc:
-            echo(str(exc))
+        # The same store-prove-read sequence the web UI runs (account.connect):
+        # the progress callback keeps the terminal's step-by-step narration.
+        def progress(msg: str) -> None:
+            if msg.startswith("Stored."):
+                console.print(f"[green]Stored.[/green]{msg[len('Stored.'):]}")
+            elif msg.startswith("Refresh grant verified."):
+                console.print("[green]Refresh grant verified.[/green] Renewal is automatic.")
+            else:
+                console.print(msg)
+
+        outcome = account.connect(
+            pasted, manager=manager, entry_id=_entry_id(entry), progress=progress,
+        )
+        if not outcome.ok:
+            if outcome.stage == "paste":
+                echo(outcome.message)
+            elif outcome.stage == "refresh":
+                console.print(
+                    f"[red]The refresh grant does not work:[/red] "
+                    f"{outcome.message.removeprefix('The refresh grant does not work: ')}\n"
+                    f"{outcome.remediation}"
+                )
+            else:
+                echo(outcome.message)
             raise typer.Exit(1)
-        console.print(f"[green]Stored.[/green] {status}")
-        # Prove the grant, do not assume it. See TokenManager.prove_refresh.
-        console.print("Proving the refresh grant (redeeming once)...")
-        try:
-            manager.prove_refresh()
-        except Exception as exc:  # noqa: BLE001 - report any refusal plainly
-            console.print(
-                f"[red]The refresh grant does not work:[/red] {exc}\n"
-                "The access token will still last ~8 hours, but renewal will "
-                "fail after that. Re-copy the cookie from a browser session you "
-                "have just used, and check nothing else is redeeming the same "
-                "token (`launchctl list | grep fpledge`)."
-            )
-            raise typer.Exit(1)
-        console.print("[green]Refresh grant verified.[/green] Renewal is automatic.")
-    else:
-        console.print(manager.status())
-        if not manager.configured:
-            console.print(
-                "Not configured. Run [bold]fpl myteam auth --paste-cookie[/bold] "
-                "once; see `fpl myteam whynot` for why this is a session and "
-                "never a password."
-            )
-            raise typer.Exit(1)
+        _print_session_ok(outcome)
+        return
+
+    console.print(manager.status())
+    if not manager.configured:
+        console.print(
+            "Not configured. Run [bold]fpl myteam auth --paste-cookie[/bold] "
+            "once; see `fpl myteam whynot` for why this is a session and "
+            "never a password."
+        )
+        raise typer.Exit(1)
 
     console.print("Verifying against the live account (refreshing if needed)...")
     cookie_probe(entry)
 
 
-@app.command("cookie")
-def cookie_probe(entry: int = EntryOpt) -> None:
-    """Test the FPL session cookie end to end, without printing it."""
-    from fpl_edge.myteam.private import (
-        NoSessionError,
-        PrivateTeamClient,
-        StaleSessionError,
-    )
-
-    entry_id = _entry_id(entry)
-    client = PrivateTeamClient()
-    try:
-        squad = client.fetch(entry_id)
-    except (NoSessionError, StaleSessionError) as exc:
-        echo(str(exc))
-        raise typer.Exit(1)
-    console.print(
-        f"[green]Session OK.[/green] Live squad read: 15 picks, "
-        f"bank {squad.bank}, value {squad.squad_value}, "
-        f"free transfers {squad.free_transfers}, "
-        f"chips: " + ", ".join(f"{k}={v}" for k, v in sorted(squad.chips.items()))
-    )
+def _print_session_ok(outcome) -> None:
+    """The one green line every successful verification ends with."""
+    console.print(f"[green]Session OK.[/green] {outcome.message.removeprefix('Session OK. ')}")
+    if outcome.entry_name:
+        console.print(f"Verified as {outcome.entry_name}"
+                      + (f" ({outcome.player_name})" if outcome.player_name else "") + ".")
     console.print(
         "The weekly report and `myteam show` now read this squad automatically."
     )
+
+
+@app.command("cookie")
+def cookie_probe(entry: int = EntryOpt) -> None:
+    """Test the FPL session cookie end to end, without printing it."""
+    from fpl_edge.myteam import account
+
+    outcome = account.verify(entry_id=_entry_id(entry))
+    if not outcome.ok:
+        echo(outcome.message)
+        raise typer.Exit(1)
+    _print_session_ok(outcome)
 
 
 if __name__ == "__main__":  # pragma: no cover
