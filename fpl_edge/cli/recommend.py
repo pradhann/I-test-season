@@ -189,11 +189,11 @@ def recommend_cmd(
             gw = int(state.gw)
         gws = list(range(gw, gw + horizon))
 
-        cfg_kwargs: dict[str, object] = dict(
-            mode=ObjectiveMode.EXPECTED_POINTS,
-            max_candidates_per_position=int(max_candidates),
-            solver=SolverConfig(time_limit_s=float(seconds), mip_gap_rel=5e-3),
-        )
+        cfg_kwargs: dict[str, object] = {
+            "mode": ObjectiveMode.EXPECTED_POINTS,
+            "max_candidates_per_position": int(max_candidates),
+            "solver": SolverConfig(time_limit_s=float(seconds), mip_gap_rel=5e-3),
+        }
         if not chips:
             cfg_kwargs["allowed_chips"] = frozenset()
         cfg = OptimizerConfig(**cfg_kwargs)
