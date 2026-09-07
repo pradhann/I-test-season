@@ -2048,6 +2048,18 @@ export default async function home(host) {
   }
   renderGaps();
   function renderGaps() {
+    // The squad gap's fix is one paste on the Account tab (the CLI equivalent
+    // stays for terminal people). FPL has no API login, so the browser cookie
+    // step is the one thing no tool removes; everything after it is one paste.
+    function connectFix(cmd) {
+      const wrap = el("span", "gap-cmd");
+      const link = el("a", "chip", "Connect your FPL account");
+      link.href = "#account";
+      link.title = "one paste of your fantasy.premierleague.com cookies; the panels read your live team on the next request";
+      wrap.appendChild(link);
+      if (cmd) wrap.appendChild(cmdFix(cmd));
+      return wrap;
+    }
     gapStrip.textContent = "";
     const rows = [];
     const gwNext = brief?.gw ?? null;
@@ -2060,7 +2072,7 @@ export default async function home(host) {
         + "made since are not in this 15; the XI, captain and moves below "
         + "are computed on it. squad_overview as of "
         + `${shortDate(squadSource.as_of) || "?"} ${clockText(squadSource.as_of)}.`,
-        squadSource.fix ? cmdFix(squadSource.fix) : null,
+        connectFix(squadSource.fix),
         squadSource.fix ? `run: ${squadSource.fix}` : null));
     } else if (sq && !squadSource && gwNext != null && sq.gw != null
                && sq.gw < gwNext) {

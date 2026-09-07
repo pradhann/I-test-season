@@ -1019,6 +1019,12 @@ def create_app(db: Path | str = DEFAULT_DB,
         media = "image/png" if ext == "png" else "image/svg+xml"
         return FileResponse(path, media_type=media)
 
+    # Connect-your-FPL-account routes. Included BEFORE the static mount: that
+    # Mount("/") is a catch-all matched in order, and a router added after it
+    # answers 404.
+    from fpl_edge.platform import routes_account
+    app.include_router(routes_account.router)
+
     if WEB_DIST.is_dir():
         # Zero-build UI: a redeploy is a file write, and the browser was serving
         # yesterday's module until a hard refresh because nothing said otherwise.
