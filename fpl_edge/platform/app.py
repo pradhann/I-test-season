@@ -53,6 +53,7 @@ an unauthenticated SQL endpoint on the local network.
 from __future__ import annotations
 
 import datetime as dt
+import re
 import threading
 from pathlib import Path
 from typing import Any
@@ -111,7 +112,13 @@ class TurnRequest(BaseModel):
 
 
 class SolveRequest(BaseModel):
+    """``mode`` picks the CLI; ``options`` are the Planner rail's settings for
+    mode ``transfers`` (horizon, max_hits, chips, must_keep, ban, seconds,
+    max_candidates; see ``solve_runner.normalise_options``). Any other mode
+    ignores them."""
+
     mode: str = "both"
+    options: dict[str, Any] | None = None
 
 
 class IngestLinkRequest(BaseModel):
@@ -343,7 +350,15 @@ def create_app(db: Path | str = DEFAULT_DB,
                 status_code=400,
                 detail=f"mode must be one of {list(solve_runner.MODES)}",
             )
-        return JSONResponse(solve_runner.start(mode))
+        options = body.options if body is not None else None
+        try:
+            # Validated here as well as in start(): a bad option is a 400 with
+            # the reason, and nothing is spawned for it.
+            if mode == "transfers":
+                solve_runner.normalise_options(options)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return JSONResponse(solve_runner.start(mode, options=options))
 
     @app.get("/api/solve/status")
     def get_solve_status() -> JSONResponse:
@@ -354,6 +369,12 @@ def create_app(db: Path | str = DEFAULT_DB,
     @app.get("/api/solve/plan")
     def get_solve_plan() -> JSONResponse:
         return JSONResponse(_solve_plan(db_path))
+
+    @app.get("/api/solve/transfer-plan")
+    def get_transfer_plan() -> JSONResponse:
+        """transfer_plan.json (the `fpl recommend` artefact) with names resolved
+        and its freshness judged against the deadline calendar."""
+        return JSONResponse(_transfer_plan(db_path))
 
     # ---- on-demand Understat profile fetch (CHAT_ARCHITECTURE §6) ----
     # The async-on-click half of the player profile: the panel only ever READS
@@ -1112,6 +1133,83 @@ def _monitor_definitions(db_path: Path) -> dict[str, Any]:
 _PLAN_PATH = Path(__file__).resolve().parents[2] / "data" / "warehouse" / "gw1_plan.json"
 
 
+_PLAYER_LOOKUP_SQL = """
+    SELECT p.code, p.web_name, p.position, p.team_code,
+           t.short_name AS team, s.price_tenths
+    FROM (
+        SELECT * EXCLUDE (rn) FROM (
+            SELECT *, row_number() OVER (PARTITION BY season, code
+                                         ORDER BY as_of DESC) rn
+            FROM dim_player WHERE season = ?
+        ) WHERE rn = 1
+    ) p
+    LEFT JOIN (
+        SELECT * EXCLUDE (rn) FROM (
+            SELECT *, row_number() OVER (PARTITION BY season, code
+                                         ORDER BY as_of DESC) rn
+            FROM fact_player_state WHERE season = ?
+        ) WHERE rn = 1
+    ) s USING (season, code)
+    LEFT JOIN (
+        SELECT * EXCLUDE (rn) FROM (
+            SELECT *, row_number() OVER (PARTITION BY season, team_code
+                                         ORDER BY as_of DESC) rn
+            FROM dim_team WHERE season = ?
+        ) WHERE rn = 1
+    ) t ON t.team_code = p.team_code
+"""
+_POS_NAME = {1: "GKP", 2: "DEF", 3: "MID", 4: "FWD"}
+
+
+def _player_lookup(wh, season: str | None, wanted: set[int]) -> dict[str, Any]:
+    """``{code: {name, pos, team, team_code, price}}`` for ``wanted`` (all
+    players when ``wanted`` is empty), from the latest warehouse rows."""
+    df = wh.sql(_PLAYER_LOOKUP_SQL, [season, season, season])
+    players: dict[str, Any] = {}
+    for row in df.to_dict(orient="records"):
+        code = int(row["code"])
+        if wanted and code not in wanted:
+            continue
+        price = row.get("price_tenths")
+        team_code = row.get("team_code")
+        players[str(code)] = {
+            "name": str(row.get("web_name") or code),
+            "pos": _POS_NAME.get(int(row["position"]) if row.get("position") is not None else 0, "?"),
+            "team": None if row.get("team") is None else str(row["team"]),
+            "team_code": None if team_code is None or team_code != team_code else int(team_code),
+            "price": None if price is None or price != price else round(float(price) / 10.0, 1),
+        }
+    return players
+
+
+def _deadline_calendar(wh, season: str | None, now: dt.datetime) -> dict[str, Any]:
+    """Next and last deadlines around ``now`` (one row per gw: dim_event keeps
+    an as_of history, so the latest deadline per gw is the one that counts)."""
+    df = wh.sql(
+        "SELECT gw, max(deadline_utc) AS deadline_utc FROM dim_event "
+        + ("WHERE season = ? " if season else "")
+        + "GROUP BY gw ORDER BY deadline_utc",
+        [season] if season else [],
+    )
+    out: dict[str, Any] = {"next_gw": None, "next_deadline_utc": None,
+                           "last_gw": None, "last_deadline_utc": None}
+    for row in df.to_dict(orient="records"):
+        d = row["deadline_utc"]
+        if d is None or d != d:
+            continue
+        d = d.to_pydatetime() if hasattr(d, "to_pydatetime") else d
+        if d.tzinfo is None:
+            d = d.replace(tzinfo=UTC)
+        if d > now:
+            if out["next_deadline_utc"] is None:
+                out["next_gw"] = int(row["gw"])
+                out["next_deadline_utc"] = d.isoformat()
+        else:
+            out["last_gw"] = int(row["gw"])
+            out["last_deadline_utc"] = d.isoformat()
+    return out
+
+
 def _solve_plan(db_path: Path) -> dict[str, Any]:
     """The persisted solve artefact, with enough context to render it honestly.
 
@@ -1143,54 +1241,9 @@ def _solve_plan(db_path: Path) -> dict[str, Any]:
         try:
             with read_copy(db_path) as wh:
                 season = plan.get("season")
-                df = wh.sql(
-                    """
-                    SELECT p.code, p.web_name, p.position, t.short_name AS team,
-                           s.price_tenths
-                    FROM (
-                        SELECT * EXCLUDE (rn) FROM (
-                            SELECT *, row_number() OVER (PARTITION BY season, code
-                                                         ORDER BY as_of DESC) rn
-                            FROM dim_player WHERE season = ?
-                        ) WHERE rn = 1
-                    ) p
-                    LEFT JOIN (
-                        SELECT * EXCLUDE (rn) FROM (
-                            SELECT *, row_number() OVER (PARTITION BY season, code
-                                                         ORDER BY as_of DESC) rn
-                            FROM fact_player_state WHERE season = ?
-                        ) WHERE rn = 1
-                    ) s USING (season, code)
-                    LEFT JOIN (
-                        SELECT * EXCLUDE (rn) FROM (
-                            SELECT *, row_number() OVER (PARTITION BY season, team_code
-                                                         ORDER BY as_of DESC) rn
-                            FROM dim_team WHERE season = ?
-                        ) WHERE rn = 1
-                    ) t ON t.team_code = p.team_code
-                    """,
-                    [season, season, season],
-                )
-                pos_name = {1: "GKP", 2: "DEF", 3: "MID", 4: "FWD"}
                 wanted = {int(c) for c in plan.get("gw1", {}).get("squad", [])}
-                for row in df.to_dict(orient="records"):
-                    code = int(row["code"])
-                    if wanted and code not in wanted:
-                        continue
-                    price = row.get("price_tenths")
-                    players[str(code)] = {
-                        "name": str(row.get("web_name") or code),
-                        "pos": pos_name.get(int(row["position"]) if row.get("position") is not None else 0, "?"),
-                        "team": None if row.get("team") is None else str(row["team"]),
-                        "price": None if price is None or price != price else round(float(price) / 10.0, 1),
-                    }
-                gw_row = wh.sql(
-                    "SELECT gw FROM dim_event WHERE deadline_utc > ? "
-                    "ORDER BY deadline_utc LIMIT 1",
-                    [dt.datetime.now(UTC)],
-                )
-                if not gw_row.empty:
-                    next_gw = int(gw_row.iloc[0]["gw"])
+                players = _player_lookup(wh, season, wanted)
+                next_gw = _deadline_calendar(wh, None, dt.datetime.now(UTC))["next_gw"]
         except Exception as exc:  # noqa: BLE001 - names are a nicety, the plan is the payload
             reason = f"could not resolve names: {type(exc).__name__}: {exc}"
     else:
@@ -1202,6 +1255,118 @@ def _solve_plan(db_path: Path) -> dict[str, Any]:
         "players": players,
         "next_gw": next_gw,
         "diff_lines": _solve_diff_lines(),
+        "reason": reason,
+    }
+
+
+#: `fpl recommend --commit` writes here; the Planner tab and the dashboard's
+#: solver card both read this one artefact. Module-level so a test can point
+#: it at a fixture.
+_TRANSFER_PLAN_PATH = (Path(__file__).resolve().parents[2] / "data" / "warehouse"
+                       / "transfer_plan.json")
+_GAP_NOTE = re.compile(r"(\d+(?:\.\d+)?)% optimality gap")
+
+
+def _plan_codes(plan: dict[str, Any]) -> set[int]:
+    codes: set[int] = set()
+    moves = [plan.get("chosen") or {}, plan.get("unconstrained") or {},
+             *(plan.get("alternatives") or [])]
+    for m in moves:
+        for key in ("out", "in", "starting_xi"):
+            codes |= {int(c) for c in (m.get(key) or [])}
+        for key in ("captain", "vice_captain"):
+            if m.get(key) is not None:
+                codes.add(int(m[key]))
+    codes |= {int(c) for c in ((plan.get("constraints") or {}).get("must_keep") or [])}
+    codes |= {int(c) for c in ((plan.get("constraints") or {}).get("ban") or [])}
+    return codes
+
+
+def _transfer_plan(db_path: Path) -> dict[str, Any]:
+    """transfer_plan.json, resolved and judged.
+
+    Names, positions, teams and prices for every code the plan mentions come
+    from the warehouse through a read copy. Freshness is judged the way the
+    dashboard brief judges it: a plan generated before the last deadline, or
+    solved for a gameweek that is not the next one, is STALE -- a record of a
+    past decision the client must show as a gap with Re-solve, never as
+    guidance. The optimality gap is parsed from the solver's own note so it
+    can be printed beside the gain.
+    """
+    import json
+
+    now = dt.datetime.now(UTC)
+    if not _TRANSFER_PLAN_PATH.exists():
+        return {"exists": False,
+                "reason": (f"no transfer plan artefact at {_TRANSFER_PLAN_PATH.name}; "
+                           f"solve to commit one (POST /api/solve mode=transfers).")}
+    try:
+        plan = json.loads(_TRANSFER_PLAN_PATH.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        return {"exists": False,
+                "reason": f"transfer plan unreadable: {type(exc).__name__}: {exc}"}
+
+    players: dict[str, Any] = {}
+    cal: dict[str, Any] = {"next_gw": None, "next_deadline_utc": None,
+                           "last_gw": None, "last_deadline_utc": None}
+    reason = None
+    if db_path.exists():
+        try:
+            with read_copy(db_path) as wh:
+                season = plan.get("season")
+                players = _player_lookup(wh, season, _plan_codes(plan))
+                cal = _deadline_calendar(wh, season, now)
+        except Exception as exc:  # noqa: BLE001 - names are a nicety, the plan is the payload
+            reason = f"could not resolve names: {type(exc).__name__}: {exc}"
+    else:
+        reason = f"no warehouse at {db_path}; codes shown unresolved."
+
+    gen = None
+    try:
+        gen = dt.datetime.fromisoformat(str(plan.get("generated_at")))
+        if gen.tzinfo is None:
+            gen = gen.replace(tzinfo=UTC)
+    except (TypeError, ValueError):
+        gen = None
+    age_hours = (round((now - gen).total_seconds() / 3600.0, 1) if gen else None)
+
+    stale_reason = None
+    plan_gw = plan.get("gw")
+    h = plan.get("horizon_gws") or []
+    span = f"GW{h[0]}-{h[-1]}" if h else "?"
+    last = cal.get("last_deadline_utc")
+    if gen is not None and last is not None and gen < dt.datetime.fromisoformat(last):
+        stale_reason = (
+            f"plan generated {gen.strftime('%Y-%m-%d %H:%MZ')} for {span}; the "
+            f"GW{cal.get('last_gw')} deadline has passed since, so its moves "
+            f"were priced against a squad and a market you no longer have."
+        )
+    elif plan_gw is not None and cal.get("next_gw") is not None and int(plan_gw) != int(cal["next_gw"]):
+        stale_reason = (
+            f"plan solved for GW{plan_gw} but the next open deadline is "
+            f"GW{cal['next_gw']}; it is a record of a past decision."
+        )
+    elif gen is None:
+        stale_reason = "plan carries no readable generated_at; its age is unknowable."
+
+    gap = None
+    for note in plan.get("notes") or []:
+        m = _GAP_NOTE.search(str(note))
+        if m:
+            gap = float(m.group(1))
+            break
+
+    return {
+        "exists": True,
+        "path": str(_TRANSFER_PLAN_PATH.relative_to(_TRANSFER_PLAN_PATH.parents[2])),
+        "plan": plan,
+        "players": players,
+        "as_of": plan.get("generated_at"),
+        "age_hours": age_hours,
+        "stale": stale_reason is not None,
+        "stale_reason": stale_reason,
+        "optimality_gap_pct": gap,
+        **cal,
         "reason": reason,
     }
 

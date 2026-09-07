@@ -30,6 +30,7 @@ import json
 import os
 import shlex
 import subprocess
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +41,111 @@ JOBS_DIR = REPO_ROOT / "data" / "warehouse" / "jobs"
 
 MODES = ("both", "rank", "points", "transfers")
 LOG_TAIL_LINES = 30
+
+#: The four chips, in the optimiser's own vocabulary (OptimizerConfig.allowed_chips).
+CHIPS = ("wildcard", "freehit", "bboost", "3xc")
+
+#: What the Planner's solve rail sends when the user touches nothing. These are
+#: the settings that solved the GW4-8 problem (2026-09-07): 60s per MILP found
+#: no incumbent; 150s x 20 candidates solved all nine moves in 219-238s. Chips
+#: off because a chip is the owner's decision, not the objective's (allowed,
+#: the first run wildcarded for +51). Hits capped at 0 for the headline; the
+#: optimiser's hit-taking best still rides along as `unconstrained`.
+TRANSFER_DEFAULTS: dict[str, Any] = {
+    "horizon": 5,
+    "max_hits": 0,
+    "chips": (),
+    "must_keep": (),
+    "ban": (),
+    "seconds": 150,
+    "max_candidates": 20,
+}
+_OPTION_BOUNDS = {
+    "horizon": (1, 8),
+    "max_hits": (-1, 8),
+    "seconds": (10, 900),
+    "max_candidates": (5, 80),
+}
+
+
+def _int_list(name: str, value: Any) -> tuple[int, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, (str, bytes)):
+        raise ValueError(f"{name} must be a list of player codes, not a string")
+    try:
+        codes = tuple(sorted({int(v) for v in value}))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be a list of integer player codes") from exc
+    if any(c <= 0 for c in codes):
+        raise ValueError(f"{name} carries a non-positive player code")
+    if len(codes) > 30:
+        raise ValueError(f"{name} lists more than 30 players")
+    return codes
+
+
+def normalise_options(options: Mapping[str, Any] | None) -> dict[str, Any]:
+    """The transfers-mode options, validated and filled with the defaults.
+
+    Raises ``ValueError`` with a message fit for a 400: the argv is built from
+    these, so nothing unvalidated may reach the shell, and a bad request must
+    be refused before a five-minute process is spawned for it.
+    """
+    opts = dict(TRANSFER_DEFAULTS)
+    if not options:
+        return opts
+    unknown = set(options) - set(TRANSFER_DEFAULTS)
+    if unknown:
+        raise ValueError(
+            f"unknown solve option(s) {sorted(unknown)}; "
+            f"known: {sorted(TRANSFER_DEFAULTS)}"
+        )
+    for key, (lo, hi) in _OPTION_BOUNDS.items():
+        if key in options and options[key] is not None:
+            try:
+                v = int(options[key])
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"{key} must be an integer") from exc
+            if not lo <= v <= hi:
+                raise ValueError(f"{key} must be between {lo} and {hi}, not {v}")
+            opts[key] = v
+    if options.get("chips") is not None:
+        chips = options["chips"]
+        if isinstance(chips, (str, bytes)):
+            raise ValueError("chips must be a list of chip names, not a string")
+        bad = [c for c in chips if c not in CHIPS]
+        if bad:
+            raise ValueError(f"unknown chip(s) {bad}; known: {list(CHIPS)}")
+        opts["chips"] = tuple(c for c in CHIPS if c in set(chips))
+    opts["must_keep"] = _int_list("must_keep", options.get("must_keep"))
+    opts["ban"] = _int_list("ban", options.get("ban"))
+    overlap = set(opts["must_keep"]) & set(opts["ban"])
+    if overlap:
+        raise ValueError(f"players both kept and banned: {sorted(overlap)}")
+    return opts
+
+
+def transfers_command(options: Mapping[str, Any] | None = None) -> str:
+    """The `fpl recommend` argv for a set of (normalised) rail options."""
+    o = normalise_options(options)
+    argv = [
+        "uv", "run", "fpl", "recommend", "--commit",
+        "--seconds", str(o["seconds"]),
+        "--max-candidates", str(o["max_candidates"]),
+        "--max-hits", str(o["max_hits"]),
+        "--horizon", str(o["horizon"]),
+    ]
+    if o["chips"]:
+        argv.append("--chips")
+        for c in o["chips"]:
+            argv += ["--chip", c]
+    else:
+        argv.append("--no-chips")
+    if o["must_keep"]:
+        argv += ["--must-keep", ",".join(str(c) for c in o["must_keep"])]
+    if o["ban"]:
+        argv += ["--ban", ",".join(str(c) for c in o["ban"])]
+    return shlex.join(argv)
 
 
 def _status_path(jobs_dir: Path) -> Path:
@@ -145,29 +251,32 @@ def status(*, jobs_dir: Path = JOBS_DIR) -> dict[str, Any]:
     return _reconcile(jobs_dir, stored)
 
 
-def _default_command(mode: str) -> str:
+def _default_command(mode: str,
+                     options: Mapping[str, Any] | None = None) -> str:
     # "transfers" is `fpl recommend`: the current-squad transfer plan, not the
     # from-scratch ideal-squad solve. Same runner, same single-flight rules.
+    # The Planner's rail options map onto the CLI's own flags; with none given
+    # the defaults above apply. The forecast it reads is refreshed daily by
+    # forecast_refresh, never here.
     if mode == "transfers":
-        # Squad-anchored solver. 60s per MILP found no incumbent on the GW4-8
-        # problem (2026-09-07); 150s x 20 candidates solved all nine in 238s.
-        # --no-chips: chips are the owner's decision, not the objective's (with
-        # them allowed it wildcarded for +51 on the first run). The forecast it
-        # reads is refreshed daily by forecast_refresh, never here.
-        return ("uv run fpl recommend --commit --seconds 150 "
-                "--max-candidates 20 --no-chips --max-hits 0")
+        return transfers_command(options)
     return f"uv run fpl solve --mode {shlex.quote(mode)}"
 
 
 def start(mode: str, *, jobs_dir: Path = JOBS_DIR,
-          command: str | None = None) -> dict[str, Any]:
+          command: str | None = None,
+          options: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """Start a solve, or return the running one. Exactly one at a time.
 
+    ``options`` are the Planner rail's transfers-mode settings (see
+    :func:`normalise_options`); they are validated before anything is spawned
+    and recorded in the status file so a poller can say what is being solved.
     ``command`` is injectable so tests can run a harmless sleep instead of a
-    five-minute MILP; production callers pass only ``mode``.
+    five-minute MILP; production callers pass only ``mode`` and ``options``.
     """
     if mode not in MODES:
         raise ValueError(f"mode must be one of {MODES}, not {mode!r}")
+    opts = normalise_options(options) if mode == "transfers" else None
 
     current = status(jobs_dir=jobs_dir)
     if current["state"] == "running":
@@ -179,7 +288,7 @@ def start(mode: str, *, jobs_dir: Path = JOBS_DIR,
     log_path = jobs_dir / f"solve_{ts}.log"
     exit_path = Path(str(log_path) + ".exit")
     pid_path = Path(str(log_path) + ".pid")
-    cmd = command if command is not None else _default_command(mode)
+    cmd = command if command is not None else _default_command(mode, opts)
 
     # A true double-fork detach, not just start_new_session: the wrapper shell
     # backgrounds the worker subshell (whose pid it records) and exits at
@@ -210,6 +319,9 @@ def start(mode: str, *, jobs_dir: Path = JOBS_DIR,
     fresh = {
         "state": "running",
         "mode": mode,
+        "options": None if opts is None else {
+            k: (list(v) if isinstance(v, tuple) else v) for k, v in opts.items()
+        },
         "started_utc": _now_iso(),
         "finished_utc": None,
         "pid": pid,

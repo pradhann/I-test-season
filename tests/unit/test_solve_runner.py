@@ -125,3 +125,44 @@ def test_bad_mode_is_rejected(jobs_dir: Path) -> None:
     with pytest.raises(ValueError):
         solve_runner.start("fastest", jobs_dir=jobs_dir, command="true")
     assert not (jobs_dir / "solve_status.json").exists()
+
+
+def test_rail_options_map_onto_recommend_flags() -> None:
+    """The Planner rail's options become `fpl recommend` flags, one to one;
+    the defaults reproduce the dashboard's proven command."""
+    cmd = solve_runner.transfers_command(None)
+    assert cmd.startswith("uv run fpl recommend --commit")
+    assert "--no-chips" in cmd and "--max-hits 0" in cmd and "--horizon 5" in cmd
+    cmd = solve_runner.transfers_command({
+        "horizon": 3, "max_hits": -1, "chips": ["3xc", "wildcard"],
+        "must_keep": [219168, 108416], "ban": [95658], "seconds": 60,
+        "max_candidates": 25,
+    })
+    assert "--horizon 3" in cmd and "--max-hits -1" in cmd
+    assert "--chips --chip wildcard --chip 3xc" in cmd and "--no-chips" not in cmd
+    assert "--must-keep 108416,219168" in cmd and "--ban 95658" in cmd
+    assert "--seconds 60" in cmd and "--max-candidates 25" in cmd
+
+
+@pytest.mark.parametrize("bad", [
+    {"horizon": 0}, {"horizon": 9}, {"max_hits": -2}, {"chips": ["bench"]},
+    {"chips": "wildcard"}, {"must_keep": "219168"}, {"must_keep": [1], "ban": [1]},
+    {"seconds": 5}, {"max_candidates": 1000}, {"nonsense": 1}, {"ban": [-4]},
+])
+def test_bad_rail_options_are_refused_before_anything_spawns(bad, jobs_dir: Path) -> None:
+    with pytest.raises(ValueError):
+        solve_runner.normalise_options(bad)
+    with pytest.raises(ValueError):
+        solve_runner.start("transfers", jobs_dir=jobs_dir, command="true", options=bad)
+    assert not (jobs_dir / "solve_status.json").exists()
+
+
+def test_options_are_recorded_in_the_status_file(jobs_dir: Path) -> None:
+    s = solve_runner.start("transfers", jobs_dir=jobs_dir, command="sleep 60",
+                           options={"horizon": 2, "ban": [7]})
+    assert s["options"]["horizon"] == 2 and s["options"]["ban"] == [7]
+    assert s["options"]["max_hits"] == 0, "defaults fill the unspecified fields"
+    on_disk = json.loads((jobs_dir / "solve_status.json").read_text())
+    assert on_disk["options"] == s["options"]
+    assert solve_runner.start("both", jobs_dir=jobs_dir, command="true")["options"] == s["options"], (
+        "a second start attaches to the running solve and reports ITS options")

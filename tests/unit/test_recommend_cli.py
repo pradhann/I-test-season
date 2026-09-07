@@ -178,3 +178,29 @@ def test_the_artefact_carries_the_hit_cap_and_the_displaced_unconstrained_best()
     assert gated["max_hits"] == 0
     assert gated["unconstrained"]["out"] == [int(c) for c in rec.chosen.out]
     assert gated["unconstrained"]["gain_over_roll"] == base["gain_over_roll"]
+
+
+def test_the_artefact_records_the_constraints_it_was_solved_under():
+    art = serialize_recommendation(
+        _rec(), generated_at=dt.datetime(2026, 9, 1, 12, tzinfo=UTC),
+        max_candidates=20, seconds=150.0, chips_allowed=False, max_hits=0,
+        constraints={"horizon": 5, "max_hits": 0, "chips": [],
+                     "must_keep": [219168], "ban": [95658], "seconds": 150.0,
+                     "max_candidates": 20, "candidates": 8},
+    )
+    assert art["constraints"]["must_keep"] == [219168]
+    assert art["constraints"]["ban"] == [95658]
+    json.dumps(art)
+    bare = serialize_recommendation(
+        _rec(), generated_at=dt.datetime(2026, 9, 1, 12, tzinfo=UTC),
+        max_candidates=20, seconds=150.0)
+    assert bare["constraints"] == {}, "absent constraints serialise as an empty block, never null"
+
+
+def test_parse_codes_takes_integers_only():
+    import typer
+    from fpl_edge.cli.recommend import parse_codes
+    assert parse_codes("219168, 108416,,", flag="--ban") == frozenset({219168, 108416})
+    assert parse_codes("", flag="--ban") == frozenset()
+    with pytest.raises(typer.BadParameter):
+        parse_codes("Salah", flag="--must-keep")

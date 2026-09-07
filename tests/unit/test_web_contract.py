@@ -240,11 +240,15 @@ def test_the_solver_objective_is_never_relabelled_as_xpts() -> None:
         "the raw objective value stays off the dashboard (gain_over_roll is "
         "the served delta); the Solver tab speaks in the solver's currency"
     )
-    solver_src = _strip_comments(VIEWS["solver"])
-    assert "objective_mode" in solver_src, (
-        "the Solver tab must print the objective in the payload's own unit"
+    # The solver lives in the Planner tab (one tab, fplreview's idiom); the
+    # from-scratch Solver view is gone and must not come back beside it.
+    assert "solver" not in VIEWS, "solver.js is folded into planner.js"
+    assert 'href="#solver"' not in HTML and 'register("solver"' not in HTML
+    planner_src = _strip_comments(VIEWS["planner"])
+    assert "objective_mode" in planner_src, (
+        "the Planner tab must print the objective in the payload's own unit"
     )
-    for name in ("home", "solver"):
+    for name in ("home", "planner"):
         for ln in _strip_comments(VIEWS[name]).splitlines():
             if "objective" in ln:
                 assert "xPts" not in ln, (
@@ -598,3 +602,33 @@ def test_no_em_dashes_in_dashboard_strings() -> None:
     bad = [m.group(0)[:60] for m in _JS_STRING.finditer(_strip_comments(src))
            if "—" in m.group(0)]
     assert not bad, f"em-dashes in dashboard strings: {bad}"
+
+
+def test_the_planner_tab_carries_the_solver_rail_and_fills_the_grid() -> None:
+    """One tab: the rail's options are the runner's TRANSFER_DEFAULTS keys,
+    Solve posts mode=transfers with them, the headline plan is drawn into the
+    grid by the planner's own move machinery, and a stale plan is a gap with
+    Re-solve rather than guidance."""
+    from fpl_edge.platform import solve_runner
+    src = _strip_comments(VIEWS["planner"])
+    assert 'runPanel("planner_grid"' in src
+    assert 'postJSON("/api/solve", { mode: "transfers", options: solveOptions() })' in src
+    for key in solve_runner.TRANSFER_DEFAULTS:
+        assert key in src, f"the rail must carry solve option {key}"
+    assert 'getJSON("/api/solve/transfer-plan")' in src
+    assert 'getJSON("/api/solve/status")' in src
+    # the plan reaches the grid only through applyMove -> moves -> sanitise
+    assert "function applyMove(" in src and "sanitise()" in src
+    assert "tplan.stale" in src and "Re-solve" in src
+    # the unconstrained best and chip plans are labelled, never mixed in
+    assert "plan.unconstrained" in src and "chip plan" in src
+    # no em-dash asides in authored strings (the owner's prose rule)
+    bad = [m.group(0)[:60] for m in _JS_STRING.finditer(src) if "\u2014" in m.group(0)]
+    assert not bad, f"em-dashes in planner strings: {bad}"
+
+
+def test_the_dashboard_names_the_unconstrained_best_beside_the_headline() -> None:
+    src = _strip_comments(VIEWS["home"])
+    assert "if hits were free" in src
+    assert 'href = "#planner"' in src and 'href="#solver"' not in src
+    assert "#solver" not in src, "no link may point at the removed Solver tab"

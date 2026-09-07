@@ -1514,13 +1514,38 @@ export default async function home(host) {
   let solveKicked = false;
   let solvePollTimer = null;
   let solveTickerEl = null;
+  let tplanPromise = null;   // /api/solve/transfer-plan, fetched once per view
   renderSolver();
   if (solveStatus && solveStatus.state === "running") startSolvePolling();
 
   function fullDetailLink() {
-    const a = el("a", "chip", "full detail → Solver tab");
-    a.href = "#solver";
+    const a = el("a", "chip", "full detail → Planner tab");
+    a.href = "#planner";
     return a;
+  }
+  /* The optimiser's top move when the hit cap displaced it, one line beside
+     the headline. Read from the artefact itself via /api/solve/transfer-plan
+     (the brief's plan block carries no field for it); fetched once, appended
+     only when the plan is standing and the move differs from the headline. */
+  function unconstrainedLine(target) {
+    tplanPromise = tplanPromise || getJSON("/api/solve/transfer-plan").catch(() => null);
+    tplanPromise.then(tp => {
+      if (!tp || !tp.exists || tp.stale || !target.isConnected) return;
+      const u = tp.plan.unconstrained, c = tp.plan.chosen || {};
+      if (!u) return;
+      const same = arr => [...(arr || [])].map(Number).sort((a, b) => a - b).join(",");
+      if (same(u.out) === same(c.out) && same(u.in) === same(c.in)) return;
+      const line = el("p", "sv-lines sv-uncon");
+      line.appendChild(document.createTextNode(
+        `if hits were free: ${u.n_transfers} changes, ${u.hits} hits, `
+        + `${fmtSigned(u.gain_over_roll, 1)} xPts vs rolling, solver forecast; `));
+      const a = el("a", null, "see Planner");
+      a.href = "#planner";
+      line.appendChild(a);
+      line.title = "the optimiser's top move when the headline was held to the "
+        + "hit cap; the Planner tab draws it into the grid with one click";
+      target.appendChild(line);
+    });
   }
   function lastLogLine() {
     const t = solveStatus?.log_tail || [];
@@ -1702,6 +1727,8 @@ export default async function home(host) {
           + "gap is how far from proven-best the solve stopped";
         solverCard.appendChild(line);
       }
+
+      if (!plan.is_roll) unconstrainedLine(solverCard);
 
       // hits, only when the plan actually spends points
       if ((plan.hits ?? 0) > 0) {

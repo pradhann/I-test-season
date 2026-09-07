@@ -390,3 +390,58 @@ def test_health_reports_the_warehouse_and_sha(client, db):
     assert body["ok"] is True
     assert body["warehouse"] == str(db) and body["warehouse_present"] is True
     assert body["repo_sha"]
+
+
+# -- POST /api/solve options and GET /api/solve/transfer-plan ----------------
+
+
+def test_bad_solve_options_are_a_400_and_spawn_nothing(client, monkeypatch):
+    from fpl_edge.platform import solve_runner
+    spawned = []
+    monkeypatch.setattr(solve_runner, "start", lambda *a, **k: spawned.append((a, k)) or {})
+    r = client.post("/api/solve", json={"mode": "transfers", "options": {"horizon": 12}})
+    assert r.status_code == 400 and "horizon" in r.json()["detail"]
+    r = client.post("/api/solve", json={"mode": "transfers", "options": {"chips": ["bench"]}})
+    assert r.status_code == 400 and "chip" in r.json()["detail"]
+    assert spawned == [], "a refused request must not reach the runner"
+    r = client.post("/api/solve", json={"mode": "transfers",
+                                        "options": {"horizon": 3, "ban": [7]}})
+    assert r.status_code == 200
+    assert spawned and spawned[0][1]["options"] == {"horizon": 3, "ban": [7]}
+
+
+def test_transfer_plan_route_resolves_names_and_judges_freshness(client, tmp_path, monkeypatch):
+    import json as _json
+    from fpl_edge.platform import app as app_mod
+    # the fixture db has no dim_player rows: names fall back to codes, never invented
+    plan_path = tmp_path / "transfer_plan.json"
+    monkeypatch.setattr(app_mod, "_TRANSFER_PLAN_PATH", plan_path)
+
+    r = client.get("/api/solve/transfer-plan")
+    assert r.status_code == 200 and r.json()["exists"] is False
+    assert "solve" in r.json()["reason"]
+
+    plan = {
+        "generated_at": "2026-09-07T19:47:05+00:00", "season": "2026-27", "gw": 1,
+        "horizon_gws": [1, 2, 3], "objective_mode": "expected_points",
+        "free_transfers": 2, "chosen": {"out": [11], "in": [22], "n_transfers": 1,
+                                        "hits": 0, "hit_points": 0, "objective": 10.0,
+                                        "chip": "", "captain": 22, "vice_captain": 11,
+                                        "starting_xi": [22]},
+        "roll": {"objective": 8.0}, "gain_over_roll": 2.0, "alternatives": [],
+        "unconstrained": None, "max_hits": 0, "chips_allowed": False,
+        "notes": ["Stopped at a 6.88% optimality gap (Time limit reached)"],
+    }
+    plan_path.write_text(_json.dumps(plan))
+    body = client.get("/api/solve/transfer-plan").json()
+    assert body["exists"] is True and body["plan"]["gw"] == 1
+    assert body["stale"] is False, "GW1 is the next open deadline in the fixture calendar"
+    assert body["next_gw"] == 1 and body["last_deadline_utc"] is None
+    assert body["optimality_gap_pct"] == 6.88
+    assert body["age_hours"] is not None
+    assert body["players"] == {}, "the fixture warehouse has no dim_player rows; no name is invented"
+
+    plan["gw"] = 0   # solved for a gameweek that is not the next one: stale
+    plan_path.write_text(_json.dumps(plan))
+    body = client.get("/api/solve/transfer-plan").json()
+    assert body["stale"] is True and "GW0" in body["stale_reason"]

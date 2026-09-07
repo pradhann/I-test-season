@@ -23,6 +23,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +34,27 @@ from fpl_edge.store.warehouse import DEFAULT_DB
 UTC = dt.UTC
 
 TRANSFER_PLAN_NAME = "transfer_plan.json"
+
+#: The chips in the optimiser's vocabulary (OptimizerConfig.allowed_chips).
+CHIPS = ("wildcard", "freehit", "bboost", "3xc")
+
+_BANNED_OUTSIDE_UNIVERSE = re.compile(r"banned player (\d+) is not in the universe")
+
+
+def parse_codes(raw: str, *, flag: str) -> frozenset[int]:
+    """``"123,456"`` -> ``{123, 456}``; anything else is a usage error."""
+    out: set[int] = set()
+    for piece in (raw or "").split(","):
+        piece = piece.strip()
+        if not piece:
+            continue
+        if not piece.isdigit():
+            raise typer.BadParameter(
+                f"{flag} takes comma-separated player codes; {piece!r} is not one",
+                param_hint=flag,
+            )
+        out.add(int(piece))
+    return frozenset(out)
 
 
 def register(app: typer.Typer) -> None:
@@ -62,6 +84,7 @@ def serialize_recommendation(
     generated_at: dt.datetime,
     max_candidates: int,
     seconds: float,
+    constraints: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The transfer_plan.json payload, pure and testable without a MILP.
 
@@ -108,6 +131,9 @@ def serialize_recommendation(
                                if rec.roll is not None else None),
         }),
         "chips_allowed": bool(chips_allowed),
+        # What the caller asked for, verbatim, so the Planner can say what a
+        # standing plan was solved under before offering it as guidance.
+        "constraints": dict(constraints or {}),
         "bounds": (
             f"candidates capped at {int(max_candidates)}/position, "
             f"{seconds:.0f}s per MILP; a capped solve is best-found, "
@@ -144,6 +170,25 @@ def recommend_cmd(
              "Hit-taking moves are still solved and kept as the unconstrained "
              "best, so the trade is visible. The dashboard runs --max-hits 0.",
     ),
+    chip: list[str] = typer.Option(
+        None, "--chip",
+        help="Allow only this chip (repeatable; one of wildcard, freehit, "
+             "bboost, 3xc). Implies --chips. Without --chip, --chips allows "
+             "all four.",
+    ),
+    must_keep: str = typer.Option(
+        "", "--must-keep",
+        help="Comma-separated player codes the squad must own in every "
+             "gameweek of the horizon (OptimizerConfig.locked).",
+    ),
+    ban: str = typer.Option(
+        "", "--ban",
+        help="Comma-separated player codes the squad may never own; a banned "
+             "player you hold is sold in the first gameweek "
+             "(OptimizerConfig.banned). A banned player outside the solver's "
+             "candidate universe could never have been bought, so he is "
+             "dropped from the ban with a note rather than failing the solve.",
+    ),
     commit: bool = typer.Option(
         True, "--commit/--no-commit",
         help="Persist data/warehouse/transfer_plan.json, the artefact the "
@@ -170,6 +215,19 @@ def recommend_cmd(
 
     now = dt.datetime.now(UTC)
     horizon = max(1, min(int(horizon), 8))
+    keep_codes = parse_codes(must_keep, flag="--must-keep")
+    ban_codes = set(parse_codes(ban, flag="--ban"))
+    overlap = keep_codes & ban_codes
+    if overlap:
+        typer.echo(f"players both kept and banned: {sorted(overlap)}")
+        raise typer.Exit(code=2)
+    chip_names = tuple(dict.fromkeys(c.strip().lower() for c in (chip or [])))
+    bad_chips = [c for c in chip_names if c not in CHIPS]
+    if bad_chips:
+        typer.echo(f"unknown chip(s) {bad_chips}; known: {list(CHIPS)}")
+        raise typer.Exit(code=2)
+    if chip_names:
+        chips = True
 
     root = Path(__file__).resolve().parents[2]
     fc_path = root / "data" / "warehouse" / "forecast.parquet"
@@ -209,27 +267,57 @@ def recommend_cmd(
             "mode": ObjectiveMode.EXPECTED_POINTS,
             "max_candidates_per_position": int(max_candidates),
             "solver": SolverConfig(time_limit_s=float(seconds), mip_gap_rel=5e-3),
+            "locked": frozenset(keep_codes),
         }
         if not chips:
             cfg_kwargs["allowed_chips"] = frozenset()
-        cfg = OptimizerConfig(**cfg_kwargs)
+        elif chip_names:
+            cfg_kwargs["allowed_chips"] = frozenset(chip_names)
+        held_now = {int(p.code) for p in (state.picks or ())}
+        extra_notes: list[str] = []
+        if keep_codes:
+            typer.echo(f"must keep: {sorted(keep_codes)}")
+        if ban_codes:
+            typer.echo(f"banned: {sorted(ban_codes)}"
+                       + (f" (held now: {sorted(ban_codes & held_now)}, sold in GW{gws[0]})"
+                          if ban_codes & held_now else ""))
         typer.echo(
             f"Solving GW{gws[0]}..{gws[-1]} — free optimum, roll, and "
             f"{int(candidates)} candidate moves (≤{seconds:.0f}s each)…"
         )
         try:
-            rec = recommend(
-                snapshot,
-                state,
-                season=season,
-                gws=gws,
-                points_forecast=points_forecast,
-                # The surrogate, stated in writing — the same configuration the
-                # weekly report uses until the rank simulator ships a provider.
-                mode=ObjectiveMode.EXPECTED_POINTS,
-                config=cfg,
-                candidates=int(candidates),
-            )
+            while True:
+                cfg = OptimizerConfig(**cfg_kwargs, banned=frozenset(ban_codes))
+                try:
+                    rec = recommend(
+                        snapshot,
+                        state,
+                        season=season,
+                        gws=gws,
+                        points_forecast=points_forecast,
+                        # The surrogate, stated in writing — the same
+                        # configuration the weekly report uses until the rank
+                        # simulator ships a provider.
+                        mode=ObjectiveMode.EXPECTED_POINTS,
+                        config=cfg,
+                        candidates=int(candidates),
+                    )
+                    break
+                except ValueError as exc:
+                    # A banned player the pruned universe never contained: the
+                    # ban is vacuous, not an error. Drop him, say so, go again
+                    # (the retry costs a problem build, no MILP has run yet).
+                    m = _BANNED_OUTSIDE_UNIVERSE.search(str(exc))
+                    if not m or int(m.group(1)) not in ban_codes:
+                        typer.echo(f"Could not solve: {exc}")
+                        raise typer.Exit(code=2) from exc
+                    gone = int(m.group(1))
+                    ban_codes.discard(gone)
+                    note = (f"ban on {gone} dropped: outside the top-"
+                            f"{int(max_candidates)}-per-position universe, so "
+                            f"the optimiser could never have bought him")
+                    extra_notes.append(note)
+                    typer.echo(note)
         except PointsForecastUnavailableError as exc:
             typer.echo(
                 "No transfer recommendation: no points forecast is configured.\n\n"
@@ -268,7 +356,19 @@ def recommend_cmd(
             rec, generated_at=now, max_candidates=int(max_candidates),
             seconds=float(seconds), chips_allowed=bool(chips),
             max_hits=int(max_hits), unconstrained=unconstrained,
+            constraints={
+                "horizon": int(horizon),
+                "max_hits": int(max_hits),
+                "chips": (list(chip_names) if chip_names
+                          else (list(CHIPS) if chips else [])),
+                "must_keep": sorted(keep_codes),
+                "ban": sorted(ban_codes),
+                "seconds": float(seconds),
+                "max_candidates": int(max_candidates),
+                "candidates": int(candidates),
+            },
         )
+        payload["notes"] = [*payload["notes"], *extra_notes]
         out = root / "data" / "warehouse" / TRANSFER_PLAN_NAME
         out.parent.mkdir(parents=True, exist_ok=True)
         tmp = out.with_suffix(".json.tmp")
