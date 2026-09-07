@@ -44,6 +44,9 @@ UTC = dt.UTC
 #: Where every run's captured output lands, named by the ledger's run_id so
 #: the two are joinable with no extra column.
 LOG_DIR = Path("data/warehouse/pipeline_logs")
+#: The shipped default, kept so an override (tests monkeypatch LOG_DIR) can be
+#: told apart from "nobody chose", which derives the dir from the database.
+_DEFAULT_LOG_DIR = LOG_DIR
 
 #: A log is tail-truncated to this many bytes, with a marker line at the top.
 LOG_CAP_BYTES = 200_000
@@ -79,8 +82,24 @@ class RunOutcome:
     log_path: Path
 
 
-def log_path_for(run_id: str, *, log_dir: Path | None = None) -> Path:
-    return (log_dir or LOG_DIR) / f"{run_id}.log"
+def log_path_for(run_id: str, *, log_dir: Path | None = None,
+                 db_path: Path | str | None = None) -> Path:
+    """Where this run's log lands: an explicit dir, else an overridden
+    LOG_DIR, else BESIDE THE DATABASE THE RUN USED.
+
+    The old default was a relative repo path, so a unit test running a task
+    against a tmp warehouse still wrote its log into the real
+    data/warehouse/pipeline_logs (694 of them by 2026-09-07). The pipelines
+    panel already reads ``source_dir(wh) / "pipeline_logs"`` first, so the
+    real deployment's path is unchanged and a tmp database gets tmp logs.
+    """
+    if log_dir is not None:
+        return log_dir / f"{run_id}.log"
+    if LOG_DIR != _DEFAULT_LOG_DIR:
+        return LOG_DIR / f"{run_id}.log"
+    if db_path is not None:
+        return Path(db_path).parent / "pipeline_logs" / f"{run_id}.log"
+    return LOG_DIR / f"{run_id}.log"
 
 
 def _write_log(path: Path, text: str) -> None:
@@ -156,7 +175,7 @@ def execute(
     if captured.strip():
         lines += ["--- captured output ---", captured]
     log_text = "\n".join(lines)
-    path = log_path_for(rec.run_id, log_dir=log_dir)
+    path = log_path_for(rec.run_id, log_dir=log_dir, db_path=ctx.db_path)
     try:
         _write_log(path, log_text)
     except OSError:

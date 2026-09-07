@@ -551,7 +551,11 @@ def run_fixture_ratings_refit(ctx: TaskContext) -> TaskResult:
     """
     step = run_step(
         "fixture_ratings_refit",
-        [ctx.python, "-m", "fpl_edge.platform.scripts.fixtures", "--build"],
+        # --db is not optional: without it the build writes beside DEFAULT_DB,
+        # and a unit test that ran this task rebuilt the REAL artefact from
+        # inside the suite (fitted_at 2026-09-07 08:35 UTC, a pytest run).
+        [ctx.python, "-m", "fpl_edge.platform.scripts.fixtures", "--build",
+         "--db", str(ctx.db_path)],
         timeout=300,
     )
     outcome = "quiet" if step.ok else "error"
