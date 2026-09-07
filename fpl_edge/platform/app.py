@@ -999,6 +999,20 @@ def create_app(db: Path | str = DEFAULT_DB,
         return FileResponse(path, media_type=media)
 
     if WEB_DIST.is_dir():
+        # Zero-build UI: a redeploy is a file write, and the browser was serving
+        # yesterday's module until a hard refresh because nothing said otherwise.
+        # no-cache means revalidate every time (ETag/Last-Modified still make the
+        # common case a 304), so an edit is live on the next plain reload.
+        @app.middleware("http")
+        async def _no_stale_static(request, call_next):
+            response = await call_next(request)
+            ct = response.headers.get("content-type", "")
+            if request.method == "GET" and (
+                ct.startswith(("text/html", "text/css", "application/javascript",
+                               "text/javascript"))):
+                response.headers.setdefault("Cache-Control", "no-cache")
+            return response
+
         app.mount("/", StaticFiles(directory=str(WEB_DIST), html=True), name="web")
     else:
         @app.get("/")
