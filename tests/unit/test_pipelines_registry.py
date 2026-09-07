@@ -103,7 +103,22 @@ def test_the_legacy_five_are_present_and_dag_scheduled():
 def test_the_folded_in_pipelines_are_registered():
     ids = {t.id for t in registry.TASKS}
     assert {"post_gw_settlement", "fpl_core_insights", "content_transcribe",
-            "content_fast_rss", "audio_retention"} <= ids
+            "content_fast_rss", "audio_retention", "panel_picks_crawl"} <= ids
+
+
+def test_the_panel_picks_crawl_runs_shortly_after_settlement():
+    """The panel crawl reads the roster settlement leaves behind and feeds the
+    Creators page, so it fires after the 10:30 settlement slot, and with the
+    23h window the lid-down tick can still run it the same day."""
+    settle = registry.by_id("post_gw_settlement")
+    panel = registry.by_id("panel_picks_crawl")
+    assert panel is not None and settle is not None
+    assert isinstance(panel.due, registry.Calendar)
+    assert (panel.due.hour_utc, panel.due.minute) > (settle.due.hour_utc,
+                                                     settle.due.minute)
+    assert panel.stale_window == dt.timedelta(hours=23)
+    assert panel.family == "settlement"
+    assert panel.enabled
 
 
 # -- due arithmetic and the deadline-relative parity -------------------------
@@ -297,6 +312,7 @@ def _ctx(tmp_path, now=None):
     registry.run_transcribe_nightly,
     registry.run_fpl_core_insights,
     registry.run_fast_rss,
+    registry.run_panel_picks_crawl,
 ])
 def test_fetching_tasks_honour_the_network_kill_switch(fn, tmp_path, monkeypatch):
     monkeypatch.setenv("FPL_EDGE_DISABLE_NETWORK_INGEST", "1")
@@ -319,6 +335,9 @@ def test_post_gw_cli_and_registry_run_the_same_step_list(tmp_path, monkeypatch):
     assert names[0] == "ingest_live"
     assert names.index("settle_results") < names.index("score_projections")
     assert names.index("settle_results") < names.index("crawl_elite")
+    # The panel crawl is a settlement step too, after the cohort crawls
+    # whose coincidental coverage it exists to replace.
+    assert names.index("crawl_elite_named") < names.index("crawl_panel")
     assert names[-3:] == ["intel", "retro_report", "weekly_idea_report"]
 
     monkeypatch.setenv("FPL_EDGE_DISABLE_NETWORK_INGEST", "0")
@@ -641,6 +660,7 @@ def test_pipeline_status_shape_is_the_declared_contract(db):
     assert row["next_due"] is not None
     assert by_id["audio_retention"]["schedule"] == "weekly"
     assert by_id["post_gw_settlement"]["schedule"] == "daily 10:30 UTC"
+    assert by_id["panel_picks_crawl"]["schedule"] == "daily 11:15 UTC"
     assert by_id["price_radar"]["schedule"] == "daily 02:00 Europe/London"
     assert "ladder" in by_id["odds_refresh"]["schedule"]
     assert by_id["odds_refresh"]["metered"]["confirm_required"] is True

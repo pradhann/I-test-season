@@ -278,6 +278,14 @@ def settlement_steps(py: str) -> list[tuple[str, list[str]]]:
         # re-run after a crash costs almost nothing.
         ("crawl_elite_named",
          [py, "-m", "fpl_edge.ingest.rivals.elite", "--budget", "200"]),
+        # The creator panel's own teams: every panel_person with a verified,
+        # active entry id, through the same ingest path. The cohort crawls
+        # above select by league and rank and never read panel_person, which
+        # is why eight of fifteen verified creators had no squad on the
+        # Creators page until 2026-09-07. Also a standalone registry task
+        # (panel_picks_crawl, 11:15 UTC); the second run replays from cache.
+        ("crawl_panel",
+         [py, "-m", "fpl_edge.ingest.rivals.panel_picks", "--budget", "700"]),
         # Deepen the top-of-overall sample by 300 entries a night toward the
         # full top-10k. Resumable by construction: finished-gameweek picks
         # are cached forever, so only the new tail costs requests, and the

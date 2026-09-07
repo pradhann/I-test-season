@@ -572,6 +572,39 @@ def run_fpl_core_insights(ctx: TaskContext) -> TaskResult:
     return TaskResult(outcome=outcome, detail=step.detail[-300:], steps=[step])
 
 
+def run_panel_picks_crawl(ctx: TaskContext) -> TaskResult:
+    """The creator panel's own teams, from ``panel_person``.
+
+    Every active person with a verified entry id gets picks, transfers,
+    chips and gameweek history through the rivals ingest path
+    (:mod:`fpl_edge.ingest.rivals.panel_picks`). This exists because the
+    cohort crawls select by league and rank and never read the panel, so
+    the Creators page could show squads only for the panel members who
+    happened to be in a crawled cohort -- 7 of 15 on 2026-09-07.
+
+    Runs at 11:15 UTC, after the settlement slot, AND as a step inside the
+    settlement chain (``post_gw.settlement_steps``): on a settlement day the
+    standalone firing replays from cache for almost nothing. The budget is
+    the module's own default (700), sized for a cold full-season crawl; a
+    steady-state run is ~2 requests per person.
+
+    A person the API refuses, a name that no longer matches the verified
+    roster, or a write that did not commit exits the module non-zero, so
+    the outcome here is ``error`` -- never a fake ``quiet`` for a crawl that
+    covered fourteen of fifteen.
+    """
+    if _network_disabled():
+        return _GATED
+    step = run_step(
+        "panel_picks_crawl",
+        [ctx.python, "-m", "fpl_edge.ingest.rivals.panel_picks",
+         "--db", str(ctx.db_path)],
+        timeout=1200.0,
+    )
+    outcome = "quiet" if step.ok else "error"
+    return TaskResult(outcome=outcome, detail=step.detail[-300:], steps=[step])
+
+
 def run_fast_rss(ctx: TaskContext) -> TaskResult:
     """4-hourly ingest of the fast tier only: the panel creators' feeds.
 
@@ -745,6 +778,17 @@ TASKS: tuple[Task, ...] = (
         stale_window=dt.timedelta(hours=12),
         run=run_fpl_core_insights,
         family="results",
+    ),
+    Task(
+        id="panel_picks_crawl",
+        description="Daily picks/transfers/chips/history for every verified, "
+                    "active panel_person, after the settlement slot",
+        due=Calendar(hour_utc=11, minute=15),
+        # 23h, not 12h: the tick sleeps with the lid (see the comment above
+        # TASKS), and yesterday's squads are still yesterday's squads.
+        stale_window=dt.timedelta(hours=23),
+        run=run_panel_picks_crawl,
+        family="settlement",
     ),
     Task(
         id="content_transcribe",
