@@ -863,7 +863,7 @@ TASKS: tuple[Task, ...] = (
         description="Model-authored salience pass over the panels; artefact "
                     "clearly labelled, never merged into dashboard_brief.",
         due=Calendar(hour_local=7, minute=40, tz="Europe/London"),
-        stale_window=dt.timedelta(hours=12),
+        stale_window=dt.timedelta(hours=23),
         run=run_briefing_intel,
         family="core",
     ),
