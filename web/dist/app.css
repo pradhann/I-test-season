@@ -326,3 +326,14 @@ select, input[type="text"], input[type="number"] {
 @media (prefers-reduced-motion: no-preference) {
   .card { transition: border-color .15s; }
 }
+
+/* xPoints: consensus weighting toggle, weights table, provider accuracy strip */
+.wbox { margin: 4px 0 10px; }
+.wbox h3 { font-size: 11px; font-weight: 600; letter-spacing: .06em;
+           text-transform: uppercase; color: var(--muted); margin: 8px 0 4px; }
+.wnote { color: var(--muted); font-size: 12px; }
+table.acc { font-size: 12px; }
+table.acc td.underfloor { color: var(--faint); font-style: italic; }
+.accd { font-size: 10px; font-weight: 700; font-family: var(--mono); margin-left: 5px; }
+.accd.good { color: var(--good); }
+.accd.bad  { color: var(--bad); }

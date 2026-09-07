@@ -137,6 +137,65 @@ CREATE OR REPLACE MACRO sem_projection_weights(p_as_of) AS TABLE (
 );
 
 -- ---------------------------------------------------------------------------
+-- sem_projection_consensus_weighted(p_as_of): the EARNED-WEIGHT blend, one
+-- row per (season, gw, code). This is the "new macro" the consensus comment
+-- above promised: sem_projection_consensus stays the equal-weight mean and is
+-- never changed; this one reads the latest fit at p_as_of from
+-- sem_projection_weights and blends with it.
+--
+-- Arithmetic, per (season, gw, code), over the providers PRESENT for that
+-- player-gameweek (a provider that did not publish a number for the player is
+-- not in the sum at all, so weights renormalise over who showed up):
+--
+--     xpts_mean = SUM(xpts * weight) / SUM(weight)       over weight > 0
+--
+-- A provider with weight 0, or with no row in the fit (a feed newer than the
+-- last fit), contributes nothing to xpts_mean but STILL counts in n_sources,
+-- min, max, spread and sd -- disagreement is measured over everyone, the
+-- blend only over the earned. n_weighted_sources says how many carried
+-- weight; when it is 0 (no earned provider covers the player, or no fit
+-- exists yet) xpts_mean is NULL rather than a quietly equal-weight number.
+-- weights_as_of / weights_fit_id name the fit used, so a consumer can print
+-- "weighted with the fit of <instant>" beside every number. xmins_mean stays
+-- the plain mean: the fit scores xPts, not minutes.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE MACRO sem_projection_consensus_weighted(p_as_of) AS TABLE (
+    WITH w AS (
+        SELECT provider, weight, fitted_at, fit_id
+        FROM sem_projection_weights(p_as_of)
+    ), fit AS (
+        SELECT any_value(fitted_at) AS weights_as_of,
+               any_value(fit_id)    AS weights_fit_id
+        FROM w
+    ), pr AS (
+        SELECT p.*, COALESCE(w.weight, 0) AS weight
+        FROM sem_projections(p_as_of) p
+        LEFT JOIN w ON w.provider = p.source
+        WHERE p.xpts IS NOT NULL
+    )
+    SELECT pr.season, pr.gw, pr.code, any_value(pr.web_name) AS web_name,
+           any_value(pr.position) AS position, any_value(pr.team) AS team,
+           any_value(pr.price) AS price,
+           COUNT(DISTINCT pr.source)            AS n_sources,
+           CASE WHEN SUM(pr.weight) > 0
+                THEN SUM(pr.xpts * pr.weight) / SUM(pr.weight)
+                ELSE NULL END                   AS xpts_mean,
+           MIN(pr.xpts)                         AS xpts_min,
+           MAX(pr.xpts)                         AS xpts_max,
+           MAX(pr.xpts) - MIN(pr.xpts)          AS xpts_spread,
+           stddev_samp(pr.xpts)                 AS xpts_sd,
+           AVG(pr.xmins)                        AS xmins_mean,
+           COUNT(pr.xmins)                      AS n_sources_xmins,
+           any_value(fit.weights_as_of)         AS weights_as_of,
+           any_value(fit.weights_fit_id)        AS weights_fit_id,
+           COUNT(DISTINCT CASE WHEN pr.weight > 0 THEN pr.source END)
+                                                AS n_weighted_sources
+    FROM pr
+    CROSS JOIN fit
+    GROUP BY pr.season, pr.gw, pr.code
+);
+
+-- ---------------------------------------------------------------------------
 -- sem_player_form(p_as_of): realised per-gameweek returns INCLUDING official
 -- xG/xA/xGC, one row per (season, gw, code, fixture). as_of on these rows is
 -- the points-finalisation instant, so at a deadline you see only completed,

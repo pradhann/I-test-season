@@ -17,12 +17,14 @@ export default async function xpoints(host) {
     "refresh T-30h before each deadline and nightly; a newly ingested " +
     "provider appears below automatically."));
   const srcRow = el("div", "toolbar");
+  const wRow = el("div", "toolbar");       // consensus weighting toggle
+  const wBox = el("div", "wbox");          // weights table + accuracy strip
   const gwRow = el("div", "toolbar");
   const filterRow = el("div", "toolbar");
   const body = el("div");
   const foot = el("div");
   const dh = attachPlayerDrawer("xpoints");
-  card.append(srcRow, gwRow, filterRow, body, foot);
+  card.append(srcRow, wRow, wBox, gwRow, filterRow, body, foot);
   host.appendChild(card);
 
   // ---- state ----
@@ -30,6 +32,10 @@ export default async function xpoints(host) {
   let gwSel = new Set();           // chosen gameweeks; filled after first load
   let pos = "", team = "", search = "", maxPrice = "", minPapp = "";
   let squadOnly = false, showAccuracy = false, accScope = "own_gt5";
+  // "equal" is the default on purpose: three settled gameweeks is a thin
+  // track record. The panel names which blend drove every block; the UI
+  // repeats that name rather than assuming the request was honoured.
+  let weighting = "equal";         // "equal" | "earned"
   let sortBy = { kind: "sum" };    // {kind:"gw",gw} | {kind:"col",key} | {kind:"sum"}
   let sortDir = -1;                // -1 desc
   let res = null, squadCodes = new Set();
@@ -48,7 +54,7 @@ export default async function xpoints(host) {
     const gws = [...gwSel].sort((a, b) => a - b);
     const anchor = gws.length ? gws[0] : "next";
     const span = gws.length ? Math.min(8, gws[gws.length - 1] - gws[0] + 1) : 8;
-    const params = { gw: anchor, span, limit: 200 };
+    const params = { gw: anchor, span, limit: 200, weighting };
     if (picked.size) params.sources = [...picked];
     if (pos) params.position = { GKP: 1, DEF: 2, MID: 3, FWD: 4 }[pos];
     if (team) params.team = team;
@@ -60,12 +66,12 @@ export default async function xpoints(host) {
       foot.textContent = "";
       foot.appendChild(provenance(prov));
       if (res.empty) {
-        renderSources(); body.textContent = "";
+        renderSources(); renderWeighting(); body.textContent = "";
         body.appendChild(emptyBox(res.reason)); return;
       }
       if (!gwSel.size)
         gwSel = new Set((res.gws || []).slice(0, 5));
-      renderSources(); renderGws(); renderFilters(); renderBody();
+      renderSources(); renderWeighting(); renderGws(); renderFilters(); renderBody();
     } catch (e) { body.textContent = ""; body.appendChild(errBox(e)); }
   }
 
@@ -128,6 +134,194 @@ export default async function xpoints(host) {
       acc.onclick = () => { showAccuracy = !showAccuracy; renderBody(); };
       srcRow.appendChild(acc);
     }
+  }
+
+  // ---- row 1b: consensus weighting (labelled toggle, default equal) ----
+  const shortName = s => String(s).replace(/^gh_/, "");
+  const fitStamp = iso => String(iso || "").replace("T", " ").slice(0, 16);
+  const deltaChip = (v, base) => {
+    // negative delta = provider's MAE below the consensus baseline = better
+    if (v == null || base == null) return null;
+    const d = v - base;
+    const c = el("span", "accd " + (d <= 0 ? "good" : "bad"),
+                 (d > 0 ? "+" : "") + fmt2(d));
+    c.title = `${fmt2(v)} vs the equal-weight consensus ${fmt2(base)} ` +
+              `on the same players`;
+    return c;
+  };
+
+  function renderWeighting() {
+    wRow.textContent = ""; wBox.textContent = "";
+    const lbl = el("span", "tlabel", "Consensus");
+    lbl.id = "xp-weighting-label";
+    wRow.appendChild(lbl);
+    const seg = el("span", "seg wseg");
+    seg.setAttribute("role", "group");
+    seg.setAttribute("aria-labelledby", "xp-weighting-label");
+    for (const [k, label, tip] of [
+      ["equal", "equal weights",
+       "every provider counts the same (sem_projection_consensus)"],
+      ["earned", "earned weights",
+       "inverse-MSE weights fitted on settled gameweeks " +
+       "(sem_projection_consensus_weighted); a provider that trails the " +
+       "consensus earns less than an equal share"],
+    ]) {
+      const b = el("button", k === weighting ? "on" : "", label);
+      b.title = tip;
+      b.setAttribute("aria-pressed", String(k === weighting));
+      b.onclick = () => { if (weighting !== k) { weighting = k; fetchPanel(); } };
+      seg.appendChild(b);
+    }
+    wRow.appendChild(seg);
+
+    if (!res) return;
+    const applied = res.weighting;                 // what the panel says it did
+    const w = res.weights;
+    let note;
+    if (res.empty) note = "";
+    else if (applied === "single_source")
+      note = `${shortName(res.source)}: raw numbers, nothing blended, ` +
+             `so weighting does not apply`;
+    else if (applied === "earned")
+      note = `rows, matrix and totals use earned weights` +
+             (w ? `, fit of ${fitStamp(w.as_of)} UTC` : "");
+    else note = "rows, matrix and totals use equal weights";
+    if (note) wRow.appendChild(el("span", "wnote", note));
+
+    if (weighting === "earned" && applied !== "single_source") {
+      if (w) renderWeightsTable(w);
+      else wBox.appendChild(el("p", "sub",
+        "no fit yet: the calibration loop has not scored a settled gameweek, " +
+        "so there are no earned weights to apply"));
+    }
+    renderAccuracyStrip(res.provider_accuracy);
+    for (const n of res.notes || []) wBox.appendChild(el("p", "sub", n));
+  }
+
+  // why each provider carries the weight it does: the fit beside its evidence
+  function renderWeightsTable(w) {
+    const box = el("div");
+    box.appendChild(el("h3", null, "Why these weights"));
+    // the equal share is 1/n over the providers that actually publish xPts
+    // (n_obs > 0); a p(appear)-only feed is in the fit table but never in
+    // the equal-weight mean, so it must not dilute the comparison
+    const n = w.rows.filter(r => r.n_obs > 0).length || w.rows.length;
+    const share = 1 / Math.max(1, n);
+    box.appendChild(el("p", "sub",
+      `weight = 1 / pooled squared error, normalised to sum 1, fitted on ` +
+      `${w.scored_gws.length} scored gameweek${w.scored_gws.length === 1 ? "" : "s"}` +
+      (w.scored_gws.length ? ` (GW${w.scored_gws.join(", GW")})` : "") +
+      `. An equal share across the ${n} measured providers is ${fmt2(share)}; ` +
+      `"vs equal" is each weight minus that. A provider whose MAE sits above ` +
+      `the equal-weight consensus earns less than an equal share; one under ` +
+      `the ${w.n_floor}-observation floor is unmeasured and carries no weight.`));
+    const wrap = el("div", "scroll-x");
+    const t = el("table", "data acc");
+    const hr = el("tr");
+    for (const [l, num] of [["provider", 0], ["weight", 1], ["vs equal", 1],
+                            ["MAE", 1], ["vs consensus", 1],
+                            ["player-GWs", 1], ["", 0]])
+      hr.appendChild(el("th", num ? "num" : "", l));
+    const th_ = el("thead"); th_.appendChild(hr); t.appendChild(th_);
+    const tb = el("tbody");
+    for (const r of w.rows) {
+      const tr = el("tr");
+      tr.appendChild(el("td", null, shortName(r.provider)));
+      const wt = el("td", "num", fmt2(r.weight));
+      if (r.weight > 0) wt.style.fontWeight = "700";
+      tr.appendChild(wt);
+      const dEq = r.weight - share;
+      const eq = el("td", "num", (dEq >= 0 ? "+" : "") + fmt2(dEq));
+      eq.title = `${fmt2(r.weight)} against an equal share of ${fmt2(share)}`;
+      eq.style.color = dEq >= 0 ? "var(--good)" : "var(--bad)";
+      tr.appendChild(eq);
+      tr.appendChild(el("td", "num", r.mae == null ? "–" : fmt2(r.mae)));
+      const vs = el("td", "num");
+      const chip = deltaChip(r.mae, r.baseline_mae);
+      vs.textContent = chip ? "" : "–";
+      if (chip) vs.appendChild(chip);
+      tr.appendChild(vs);
+      const nobs = el("td", "num" + (r.n_obs < w.n_floor ? " underfloor" : ""),
+                      r.n_obs.toLocaleString());
+      if (r.n_obs < w.n_floor)
+        nobs.title = `under the ${w.n_floor} floor: shown, never ranked`;
+      tr.appendChild(nobs);
+      const st = el("td");
+      st.appendChild(el("span", r.earned ? "chip good" : "chip",
+                        r.earned ? "earned" : "unmeasured"));
+      if (!r.earned && r.holdout) st.title = r.holdout;
+      tr.appendChild(st);
+      tb.appendChild(tr);
+    }
+    t.appendChild(tb); wrap.appendChild(t); box.append(wrap);
+    wBox.appendChild(box);
+  }
+
+  // the compact strip: MAE per provider per scored gameweek, always shown
+  function renderAccuracyStrip(acc) {
+    const box = el("div");
+    box.appendChild(el("h3", null, "Provider accuracy"));
+    const gws = acc?.scored_gws || [];
+    if (!gws.length || !(acc?.rows || []).length) {
+      box.appendChild(el("p", "sub",
+        "no gameweek scored yet: providers are scored against settled " +
+        "actuals by the nightly post-gameweek job"));
+      wBox.appendChild(box); return;
+    }
+    const byProv = new Map();
+    for (const r of acc.rows) {
+      if (!byProv.has(r.provider)) byProv.set(r.provider, new Map());
+      byProv.get(r.provider).set(r.gw, r);
+    }
+    // alphabetical on purpose: a table sorted by MAE is a ranking, and a
+    // cell under the n floor must never take part in one
+    const provs = [...byProv.keys()].sort();
+    const wrap = el("div", "scroll-x");
+    const t = el("table", "data acc");
+    const hr = el("tr");
+    hr.appendChild(el("th", null, "provider"));
+    for (const g of gws) hr.appendChild(el("th", "num", `GW${g}`));
+    hr.appendChild(el("th", "num", "mean"));
+    const th_ = el("thead"); th_.appendChild(hr); t.appendChild(th_);
+    const tb = el("tbody");
+    for (const p of provs) {
+      const tr = el("tr");
+      tr.appendChild(el("td", null, shortName(p)));
+      const cells = byProv.get(p);
+      let sum = 0, bsum = 0, k = 0;
+      for (const g of gws) {
+        const c = cells.get(g);
+        const td = el("td", "num");
+        if (!c) { td.textContent = "–"; tr.appendChild(td); continue; }
+        td.appendChild(document.createTextNode(fmt2(c.mae)));
+        const chip = deltaChip(c.mae, c.baseline_mae);
+        if (chip) td.appendChild(chip);
+        if (!c.meets_floor) {
+          td.classList.add("underfloor");
+          td.title = `${c.n_obs} player-GWs, under the ${acc.n_floor} floor: ` +
+                     `shown, never ranked`;
+        } else td.title = `${c.n_obs.toLocaleString()} player-GWs`;
+        tr.appendChild(td);
+        if (c.baseline_mae != null) { sum += c.mae; bsum += c.baseline_mae; k++; }
+      }
+      const mean = el("td", "num");
+      if (k) {
+        mean.appendChild(document.createTextNode(fmt2(sum / k)));
+        const chip = deltaChip(sum / k, bsum / k);
+        if (chip) mean.appendChild(chip);
+      } else mean.textContent = "–";
+      tr.appendChild(mean);
+      tb.appendChild(tr);
+    }
+    t.appendChild(tb); wrap.appendChild(t); box.appendChild(wrap);
+    box.appendChild(el("p", "sub",
+      `${gws.length} gameweek${gws.length === 1 ? "" : "s"} scored ` +
+      `(GW${gws.join(", GW")}) · MAE = average points missed per player, ` +
+      `all players · the small number is the gap to the equal-weight ` +
+      `consensus on the same players: green beats it, red trails it · ` +
+      `italic cells sit under the ${acc.n_floor} player-GW floor and are ` +
+      `shown, never ranked`));
+    wBox.appendChild(box);
   }
 
   // ---- row 2: gameweek chips (toggle any subset) ----
@@ -392,8 +586,12 @@ export default async function xpoints(host) {
       ? `prices as of ${Math.round((Date.now() -
           new Date(res.prices_as_of.replace(" ", "T"))) / 3.6e6)}h ago`
       : "price age unknown";
+    const blend = res.weighting === "single_source"
+      ? `${shortName(res.source)} raw, no blend`
+      : `consensus: ${res.weighting} weights`;
     body.appendChild(el("p", "sub",
       `${rows.length} players · showing ${Math.min(100, rows.length)} · ` +
+      `${blend} · ` +
       `ring on a photo = in your squad · click any header to sort · ` +
       `tint = xPts magnitude · ✓ columns are settled: bold actual, ` +
       `green over / red under projection · ` +

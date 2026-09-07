@@ -13,6 +13,15 @@ Two data regimes live behind one registered name:
   specific ``source`` gives that vendor's raw numbers. ``detail_code`` adds a
   per-source breakdown for one player over the chosen GW and the next four.
 
+``weighting`` picks which consensus the gameweek mode serves: ``"equal"``
+(the default; ``sem_projection_consensus``) or ``"earned"`` (the inverse-MSE
+weights the calibration loop fitted, through
+``sem_projection_consensus_weighted``). The two are never blended: the payload
+names which one drove every row-bearing block, and the earned view travels
+with the weights table (weight, n_obs, MAE, baseline MAE, fitted-at) so the
+reader can see WHY a provider is down-weighted. The default stays equal on
+purpose -- three settled gameweeks is a thin track record.
+
 ``p_appear`` is deliberately a separate column from ``xpts`` and is never
 multiplied in: "3.1 xPts" and "82% to appear" are different claims about
 different random variables, and the rank layer needs them separate
@@ -24,6 +33,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any
 
+from fpl_edge.eval.projection_scoring import N_OBS_FLOOR
 from fpl_edge.platform.registry import register_script
 from fpl_edge.platform.scripts.common import (
     POSITION_NAME,
@@ -108,6 +118,16 @@ PARAMS: dict[str, Any] = {
             "description": "How many gameweeks the matrix covers from the "
                            "anchor gw.",
         },
+        "weighting": {
+            "type": "string",
+            "enum": ["equal", "earned"],
+            "default": "equal",
+            "description": "Consensus blend for gameweek mode. 'equal' = the "
+                           "unweighted mean (sem_projection_consensus). "
+                           "'earned' = the calibration loop's inverse-MSE "
+                           "weights (sem_projection_consensus_weighted). "
+                           "Never blended; the result names which applied.",
+        },
     },
 }
 
@@ -169,6 +189,11 @@ _GW_ROW: dict[str, Any] = {
                    "description": "xpts_max - xpts_min across sources"},
         "sd": {"type": ["number", "null"]},
         "n_sources": {"type": "integer"},
+        "n_weighted_sources": {
+            "type": ["integer", "null"],
+            "description": "earned weighting only: how many of n_sources "
+                           "carried weight > 0 in the blend; null under "
+                           "equal weighting or a single source"},
         "xmins": {"type": ["number", "null"]},
         "p_appear": {"type": ["number", "null"],
                      "description": "separate from xpts by design; never "
@@ -258,6 +283,114 @@ _GW_RESULT: dict[str, Any] = {
                     "weight": {"type": "number"},
                     "earned": {"type": "boolean"},
                     "track_record_gws": {"type": ["integer", "null"]},
+                },
+            },
+        },
+        "weighting": {
+            "enum": ["equal", "earned", "single_source"],
+            "description": "which blend actually drove rows, matrix and the "
+                           "team/position aggregates. 'single_source' when "
+                           "one vendor's raw numbers are shown (no blend)."},
+        "weighting_requested": {"enum": ["equal", "earned"]},
+        "blocks_weighting": {
+            "type": "object",
+            "description": "the same answer per row-bearing block, so no "
+                           "consumer has to assume: rows, matrix, by_team, "
+                           "by_position, detail (detail is always 'raw' -- "
+                           "per-source numbers, nothing blended)",
+            "additionalProperties": False,
+            "required": ["rows", "matrix", "by_team", "by_position", "detail"],
+            "properties": {
+                "rows": {"enum": ["equal", "earned", "single_source"]},
+                "matrix": {"enum": ["equal", "earned", "single_source"]},
+                "by_team": {"enum": ["equal", "earned", "single_source"]},
+                "by_position": {"enum": ["equal", "earned", "single_source"]},
+                "detail": {"const": "raw"},
+            },
+        },
+        "weights": {
+            "type": ["object", "null"],
+            "description": "the earned weights WITH their evidence -- the "
+                           "latest fit at query time, whatever `weighting` "
+                           "was asked for, so the equal view can still show "
+                           "what earned weighting would use. null when no "
+                           "fit exists yet.",
+            "additionalProperties": False,
+            "required": ["as_of", "fit_id", "scored_gws", "n_floor", "rows"],
+            "properties": {
+                "as_of": {"type": "string",
+                          "description": "when the fit was written"},
+                "fit_id": {"type": "string"},
+                "scored_gws": {"type": "array", "items": {"type": "integer"},
+                               "description": "the settled gameweeks the fit "
+                                              "pooled"},
+                "n_floor": {"type": "integer",
+                            "description": "player-GW observations a provider "
+                                           "needs before its weight is earned"},
+                "rows": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["provider", "weight", "n_obs", "mae",
+                                     "baseline_mae", "earned"],
+                        "properties": {
+                            "provider": {"type": "string"},
+                            "weight": {"type": "number"},
+                            "n_obs": {"type": "integer"},
+                            "mae": {"type": ["number", "null"],
+                                    "description": "mean of the provider's "
+                                                   "per-GW overall MAE"},
+                            "baseline_mae": {"type": ["number", "null"],
+                                             "description": "same, for the "
+                                                            "equal-weight "
+                                                            "consensus"},
+                            "loss": {"type": ["number", "null"],
+                                     "description": "pooled MSE the weight "
+                                                    "was inverted from"},
+                            "baseline_loss": {"type": ["number", "null"]},
+                            "earned": {"type": "boolean"},
+                            "holdout": {"type": ["string", "null"]},
+                        },
+                    },
+                },
+            },
+        },
+        "provider_accuracy": {
+            "type": "object",
+            "description": "the accuracy strip: each provider's overall MAE "
+                           "against the equal-weight consensus baseline, PER "
+                           "settled gameweek (fact_projection_score, latest "
+                           "scoring per cell). Empty rows until a gameweek "
+                           "settles.",
+            "additionalProperties": False,
+            "required": ["scope", "scored_gws", "n_floor", "rows"],
+            "properties": {
+                "scope": {"const": "overall"},
+                "scored_gws": {"type": "array", "items": {"type": "integer"}},
+                "n_floor": {"type": "integer"},
+                "rows": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["provider", "gw", "mae", "baseline_mae",
+                                     "n_obs", "meets_floor"],
+                        "properties": {
+                            "provider": {"type": "string"},
+                            "gw": {"type": "integer"},
+                            "mae": {"type": "number"},
+                            "baseline_mae": {"type": ["number", "null"]},
+                            "rmse": {"type": ["number", "null"]},
+                            "baseline_rmse": {"type": ["number", "null"]},
+                            "n_obs": {"type": "integer"},
+                            "meets_floor": {
+                                "type": "boolean",
+                                "description": "n_obs >= n_floor; a cell "
+                                               "below the floor is shown, "
+                                               "never ranked"},
+                        },
+                    },
                 },
             },
         },
@@ -389,6 +522,7 @@ def projection_table(
     detail_code: int | None = None,
     span: int = 5,
     sources: list[str] | None = None,
+    weighting: str = "equal",
 ) -> dict[str, Any]:
     """Projected points per player: solved artefact by default, or per-gameweek
     provider consensus (with the cross-source spread as the uncertainty column)
@@ -405,7 +539,7 @@ def projection_table(
             wh, season=season, position=position, sort=sort, limit=limit,
             max_price=max_price, gw=gw, source=source, team=team,
             min_p_appear=min_p_appear, detail_code=detail_code, span=span,
-            subset=sources,
+            subset=sources, weighting=weighting,
         )
     return _artefact_mode(
         wh, season=season, position=position, sort=sort, limit=limit,
@@ -572,9 +706,13 @@ def _gw_mode(
     detail_code: int | None,
     span: int = 5,
     subset: list[str] | None = None,
+    weighting: str = "equal",
 ) -> dict[str, Any]:
     now = dt.datetime.now(UTC)
     notes: list[str] = []
+    if weighting not in ("equal", "earned"):
+        raise ValueError(f"weighting must be 'equal' or 'earned', got {weighting!r}")
+    earned = weighting == "earned"
     # A one-name subset is just `source`; 2+ names is a subset consensus.
     if subset:
         subset = [str(x) for x in subset]
@@ -661,7 +799,46 @@ def _gw_mode(
             )
         notes.append(f"Consensus restricted to: {', '.join(sorted(subset))}.")
 
-    if consensus and subset:
+    if consensus and subset and earned:
+        # The subset blend with earned weights: the SAME arithmetic as
+        # sem_projection_consensus_weighted (SUM(x*w)/SUM(w) over w > 0,
+        # renormalised over the providers present), restricted to the subset.
+        ph = ", ".join("?" for _ in subset)
+        frame = q(
+            wh,
+            f"""
+            WITH w AS (
+                SELECT provider, weight FROM sem_projection_weights(?)
+            ), pr AS (
+                SELECT p.*, COALESCE(w.weight, 0) AS weight
+                FROM sem_projections(?) p
+                LEFT JOIN w ON w.provider = p.source
+                WHERE p.season = ? AND p.gw = ? AND p.xpts IS NOT NULL
+                  AND p.source IN ({ph})
+            ), c AS (
+                SELECT code, any_value(web_name) web_name,
+                       any_value(position) "position",
+                       any_value(team) team, any_value(price) price,
+                       COUNT(DISTINCT source) n_sources,
+                       CASE WHEN SUM(weight) > 0
+                            THEN SUM(xpts * weight) / SUM(weight) END xpts,
+                       MIN(xpts) xpts_min, MAX(xpts) xpts_max,
+                       MAX(xpts) - MIN(xpts) spread, stddev_samp(xpts) sd,
+                       AVG(xmins) xmins, AVG(p_appear) p_appear,
+                       AVG(xp_if_appears) xp_if_appears,
+                       COUNT(DISTINCT CASE WHEN weight > 0 THEN source END)
+                           n_weighted_sources
+                FROM pr GROUP BY code
+            ), pl AS (
+                SELECT code, selected_by_pct, status, team_code
+                FROM sem_players(?) WHERE season = ?
+            )
+            SELECT c.*, pl.selected_by_pct AS own_pct, pl.status, pl.team_code
+            FROM c LEFT JOIN pl USING (code)
+            """,
+            (now, now, season, gw, *subset, now, season),
+        )
+    elif consensus and subset:
         ph = ", ".join("?" for _ in subset)
         frame = q(
             wh,
@@ -688,6 +865,35 @@ def _gw_mode(
             FROM c LEFT JOIN pl USING (code)
             """,
             (now, season, gw, *subset, now, season),
+        )
+    elif consensus and earned:
+        frame = q(
+            wh,
+            """
+            WITH c AS (
+                SELECT * FROM sem_projection_consensus_weighted(?)
+                WHERE season = ? AND gw = ?
+            ), ap AS (
+                SELECT code, AVG(p_appear) AS p_appear,
+                       AVG(xp_if_appears) AS xp_if_appears
+                FROM sem_projections(?)
+                WHERE season = ? AND gw = ? AND xpts IS NOT NULL
+                GROUP BY code
+            ), pl AS (
+                SELECT code, selected_by_pct, status, team_code
+                FROM sem_players(?) WHERE season = ?
+            )
+            SELECT c.code, c.web_name, c.position, c.team, c.price,
+                   pl.selected_by_pct AS own_pct, pl.status, pl.team_code,
+                   c.n_sources, c.xpts_mean AS xpts, c.xpts_min, c.xpts_max,
+                   c.xpts_spread AS spread, c.xpts_sd AS sd,
+                   c.xmins_mean AS xmins, ap.p_appear, ap.xp_if_appears,
+                   c.n_weighted_sources
+            FROM c
+            LEFT JOIN ap USING (code)
+            LEFT JOIN pl USING (code)
+            """,
+            (now, season, gw, now, season, gw, now, season),
         )
     elif consensus:
         frame = q(
@@ -743,6 +949,24 @@ def _gw_mode(
             f"No projection rows survived the join at GW{gw}. Gameweeks with "
             f"data: {coverage_text()}."
         )
+    if consensus and earned:
+        # A player no earned provider covers has NO weighted number. Saying so
+        # beats quietly serving the equal-weight mean under an "earned" label.
+        unweighted = frame["xpts"].isna()
+        if unweighted.any():
+            notes.append(
+                f"{int(unweighted.sum())} player(s) at GW{gw} have no provider "
+                f"with an earned weight and are omitted from the earned-weight "
+                f"view (they are in the equal-weight view)."
+            )
+            frame = frame[~unweighted]
+        if frame.empty:
+            return empty(
+                f"No provider with an earned weight covers GW{gw}; switch to "
+                f"equal weights or wait for the calibration loop to fit."
+            )
+    if "n_weighted_sources" not in frame.columns:
+        frame["n_weighted_sources"] = None
 
     frame["value"] = frame["xpts"] / frame["price"].clip(lower=0.1)
 
@@ -820,6 +1044,10 @@ def _gw_mode(
             "spread": _rnd(r["spread"]),
             "sd": _rnd(r["sd"]),
             "n_sources": int(r["n_sources"]),
+            "n_weighted_sources": (
+                None if r.get("n_weighted_sources") is None
+                or r["n_weighted_sources"] != r["n_weighted_sources"]
+                else int(r["n_weighted_sources"])),
             "xmins": _rnd(r["xmins"], 1),
             "p_appear": _rnd(r["p_appear"]),
             "xp_if_appears": _rnd(r["xp_if_appears"]),
@@ -866,7 +1094,28 @@ def _gw_mode(
     gws = [g for g in range(int(gw), int(gw) + int(span)) if g in covered]
     matrix: dict[str, dict[str, float]] = {}
     if gws:
-        if consensus and subset:
+        if consensus and subset and earned:
+            ph = ", ".join("?" for _ in subset)
+            mrows = q(
+                wh,
+                f"""
+                WITH w AS (
+                    SELECT provider, weight FROM sem_projection_weights(?)
+                ), pr AS (
+                    SELECT p.code, p.gw, p.xpts, COALESCE(w.weight, 0) AS weight
+                    FROM sem_projections(?) p
+                    LEFT JOIN w ON w.provider = p.source
+                    WHERE p.season = ? AND p.gw >= ? AND p.gw <= ?
+                      AND p.xpts IS NOT NULL AND p.source IN ({ph})
+                )
+                SELECT code, gw,
+                       CASE WHEN SUM(weight) > 0
+                            THEN SUM(xpts * weight) / SUM(weight) END AS v
+                FROM pr GROUP BY code, gw
+                """,
+                (now, now, season, gws[0], gws[-1], *subset),
+            )
+        elif consensus and subset:
             ph = ", ".join("?" for _ in subset)
             mrows = q(
                 wh,
@@ -874,6 +1123,14 @@ def _gw_mode(
                 f"WHERE season = ? AND gw >= ? AND gw <= ? "
                 f"AND xpts IS NOT NULL AND source IN ({ph}) GROUP BY code, gw",
                 (now, season, gws[0], gws[-1], *subset),
+            )
+        elif consensus and earned:
+            mrows = q(
+                wh,
+                "SELECT code, gw, xpts_mean AS v "
+                "FROM sem_projection_consensus_weighted(?) "
+                "WHERE season = ? AND gw >= ? AND gw <= ?",
+                (now, season, gws[0], gws[-1]),
             )
         elif consensus:
             mrows = q(
@@ -974,11 +1231,30 @@ def _gw_mode(
     except Exception:  # noqa: BLE001 - no scores yet is a normal state
         pass
 
+    applied = ("single_source" if not consensus
+               else ("earned" if earned else "equal"))
+    if not consensus and earned:
+        notes.append(
+            f"weighting='earned' does not apply to a single source: these are "
+            f"{source}'s raw numbers, unblended."
+        )
+    weights_block = _weights_block(wh, now, season)
+    provider_accuracy = _provider_accuracy_block(wh, season)
+
     return {
         "mode": "consensus" if consensus else "source",
         "season": season,
         "gw": gw,
         "source": None if consensus else source,
+        "weighting": applied,
+        "weighting_requested": weighting,
+        "blocks_weighting": {
+            "rows": applied, "matrix": applied,
+            "by_team": applied, "by_position": applied,
+            "detail": "raw",
+        },
+        "weights": weights_block,
+        "provider_accuracy": provider_accuracy,
         "active_sources": (sorted(subset) if subset
                            else ([source] if not consensus else sources)),
         "sort": sort,
@@ -999,6 +1275,122 @@ def _gw_mode(
         "matrix": matrix,
         "notes": notes,
     }
+
+
+def _latest_scores_sql(scope: str = "overall") -> str:
+    """fact_projection_score, latest scoring per (provider, gw, metric).
+
+    ``as_of`` is the scoring instant and a re-score appends rather than
+    overwrites, so a cell can have two rows; the newest is the one to read."""
+    return f"""
+        SELECT * EXCLUDE (rn) FROM (
+            SELECT *, row_number() OVER (
+                PARTITION BY provider, season, gw, scope, metric
+                ORDER BY as_of DESC) rn
+            FROM fact_projection_score
+            WHERE season = ? AND scope = '{scope}'
+        ) WHERE rn = 1
+    """
+
+
+def _weights_block(wh, now: dt.datetime, season: str) -> dict[str, Any] | None:
+    """The latest fit's weights beside the evidence that earned them: n_obs,
+    the provider's mean per-GW MAE and the equal-weight consensus's MAE on
+    the same players. None when no fit exists -- an absent table, not an
+    invented one."""
+    try:
+        df = q(
+            wh,
+            f"""
+            WITH w AS (
+                SELECT * FROM sem_projection_weights(?)
+            ), m AS (
+                SELECT provider,
+                       AVG(CASE WHEN metric = 'mae' THEN value END) mae,
+                       AVG(CASE WHEN metric = 'mae' THEN baseline END) baseline_mae
+                FROM ({_latest_scores_sql("overall")}) GROUP BY provider
+            )
+            SELECT w.provider, w.weight, w.n_obs, w.loss, w.baseline_loss,
+                   w.earned, w.holdout, w.fit_id, w.fitted_at,
+                   m.mae, m.baseline_mae
+            FROM w LEFT JOIN m USING (provider)
+            ORDER BY w.weight DESC, w.provider
+            """,
+            (now, season),
+        )
+        gws_df = q(
+            wh,
+            f"SELECT DISTINCT gw FROM ({_latest_scores_sql('overall')}) ORDER BY gw",
+            (season,),
+        )
+    except Exception:  # noqa: BLE001 - tables absent = no fit yet
+        return None
+    if df.empty:
+        return None
+    first = df.iloc[0]
+    return {
+        "as_of": str(first["fitted_at"]),
+        "fit_id": str(first["fit_id"]),
+        "scored_gws": [int(g) for g in gws_df["gw"]],
+        "n_floor": int(N_OBS_FLOOR),
+        "rows": [{
+            "provider": str(r["provider"]),
+            "weight": round(float(r["weight"]), 3),
+            "n_obs": int(r["n_obs"] or 0),
+            "mae": _rnd(r["mae"]),
+            "baseline_mae": _rnd(r["baseline_mae"]),
+            "loss": _rnd(r["loss"]),
+            "baseline_loss": _rnd(r["baseline_loss"]),
+            "earned": bool(r["earned"]),
+            "holdout": None if r["holdout"] is None or r["holdout"] != r["holdout"]
+                       else str(r["holdout"]),
+        } for _, r in df.iterrows()],
+    }
+
+
+def _provider_accuracy_block(wh, season: str) -> dict[str, Any]:
+    """Per provider per settled GW: overall MAE vs the equal-weight baseline.
+    ``meets_floor`` travels with every cell so the UI ranks nothing that sits
+    under the house n_obs floor."""
+    rows: list[dict[str, Any]] = []
+    gws: list[int] = []
+    try:
+        df = q(
+            wh,
+            f"""
+            SELECT provider, gw,
+                   MAX(CASE WHEN metric = 'mae' THEN value END) mae,
+                   MAX(CASE WHEN metric = 'mae' THEN baseline END) baseline_mae,
+                   MAX(CASE WHEN metric = 'rmse' THEN value END) rmse,
+                   MAX(CASE WHEN metric = 'rmse' THEN baseline END) baseline_rmse,
+                   MAX(n_obs) n_obs
+            FROM ({_latest_scores_sql("overall")})
+            GROUP BY provider, gw ORDER BY gw, provider
+            """,
+            (season,),
+        )
+    except Exception:  # noqa: BLE001 - no scores yet is a normal state
+        df = None
+    if df is not None:
+        for _, r in df.iterrows():
+            if r["mae"] is None or r["mae"] != r["mae"]:
+                continue
+            g = int(r["gw"])
+            if g not in gws:
+                gws.append(g)
+            n = int(r["n_obs"] or 0)
+            rows.append({
+                "provider": str(r["provider"]),
+                "gw": g,
+                "mae": round(float(r["mae"]), 3),
+                "baseline_mae": _rnd(r["baseline_mae"]),
+                "rmse": _rnd(r["rmse"]),
+                "baseline_rmse": _rnd(r["baseline_rmse"]),
+                "n_obs": n,
+                "meets_floor": n >= N_OBS_FLOOR,
+            })
+    return {"scope": "overall", "scored_gws": sorted(gws),
+            "n_floor": int(N_OBS_FLOOR), "rows": rows}
 
 
 def _player_detail(
