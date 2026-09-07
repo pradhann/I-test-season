@@ -2182,6 +2182,10 @@ export default async function creators(host) {
    * card. Click opens the full card. A legacy pseudo-source says so.
    */
   function rcChip(name, dir) {
+    // "user-shared" is links pasted by hand, not a person; the owner asked
+    // for it removed, not labelled. A comment node appends anywhere and
+    // renders nothing, so no caller needs a null check.
+    if (LEGACY.has(name)) return document.createComment("legacy pseudo-source omitted");
     const card = rcByCreator.get(name);
     const cl = card && card.claims;
     const legacy = LEGACY.has(name);
@@ -2429,8 +2433,11 @@ export default async function creators(host) {
   }
 
   function reportCard(c) {
+    // Not a creator, not a card: the owner asked for the pseudo-source
+    // removed, not labelled. The honesty line already excludes it.
+    if (LEGACY.has(c.creator)) return document.createComment("legacy pseudo-source omitted");
     const cl = c.claims, tm = c.team;
-    const legacy = LEGACY.has(c.creator);
+    const legacy = false;
     const card = el("button", "cx-rcard " + coin(cl.vs_coin_flip).cls + (legacy ? " legacy" : ""));
     const nm = el("div", "cx-rcname");
     nm.appendChild(el("b", null, c.creator));
