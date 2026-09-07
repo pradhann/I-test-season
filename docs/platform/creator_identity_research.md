@@ -362,3 +362,277 @@ person-stamped.
    in a handful of requests. Start from any confirmed host and walk their
    invitational leagues.
 4. Never reuse the Fantasy Football Pundit creators table.
+
+---
+
+# 2026-09-07 — the shows whose hosts were not on the roster
+
+Second pass, same method, same bar. The corpus tracks ~24 shows whose people
+had no row. Every id below was read back from `/api/entry/{id}/` on
+2026-09-07 between 07:30 and 08:10 UTC (`User-Agent: fpl-edge/0.1`, ≥1.3 s
+between calls); `entry_api_name` is what the API returned, verbatim.
+
+## Result
+
+**38 rows appended: 28 with an id (19 conclusive, 9 high → 28
+`entry_verified: true`), 10 deliberately null.** Two of the nulls are brands/
+anonymous operators, not failed searches. File totals: 54 rows, 29 conclusive,
+14 high, 11 null.
+
+| Show | Person | Entry | Conf. | API name | What it rests on |
+|---|---|---:|---|---|---|
+| FPL General / The 59th Minute / The Athletic FPL | Mark McGettigan | 176749 | conclusive | Mark McGettigan | admins 38523 "Beat the @FPLGeneral"; team "@FPLGeneral"; Pro Pundits |
+| FPL Tom | Tom L | 5406 | conclusive | Tom L | team "FPL TOM"; admins 58929 "FPL Tom Super League"; Pro Pundits |
+| FPL Focal | Oscar | 298 | conclusive | Oscar - | admins 3876 "YouTube.com/FPLFocal" + Discord/Members/Experts leagues |
+| Gianni Buttice | Gianni Buttice | 2375 | conclusive | Gianni Buttice | admins 42307 "GIANNI BUTTICÈ YOUTUBE"; Mods & Cons; Sky guests |
+| Planet FPL | James Linden | 1194 | conclusive | James Linden | admins 122414 "Planet #FPL Podcast" + 122418 Correspondents |
+| Planet FPL | Sujan Shah (Suj) | 84298 | high | Sujan Shah | team "Suj - Planet FPL"; in both Planet leagues (admin = James) |
+| Who Got The Assist? | Tom C | 454 | conclusive | Tom C (WGTA) | admins 6791 "Who Got The Assist? Minileague", 6829 "WGTA Fight Club"; Hub Contributors |
+| Who Got The Assist? | Sam Price | 125 | conclusive | Sam Price | admins 26990 "www.youtube.com/@fplpricey"; in WGTA Minileague |
+| Always Cheating | Josh Landon | 88520 | high | Joshua Landon | Hub Contributors; AC Community Team League (admin = show account 5120019) |
+| Always Cheating | Brandon Kelley | 279 | high | Brandon Kelley | AC Community Team League + AC Underdogs; admins a league Josh is in |
+| FPL Family | Lee Bonfield | 2913 | conclusive | Lee Bonfield | admins 6229 "FPL Family", 6223 "FPL Family Patreon"; Pro Pundits; Sky guests |
+| FPL Family / FPL Pod / Scout | Sam Bonfield | 2977 | conclusive | Sam Bonfield | admins 8507 "FPL Extended Family", 8449 "FFScout Mods & Cons"; in 1359 "FPL Pod", 53993 Coreteam |
+| FPL BlackBox | Luke Williams | 71 | high | Luke Williams | BlackBox Contributors (6 entries) + Patreon + youtube leagues; feed "Luke (@fpl_dis)" |
+| FPL BlackBox / Scout | Andy North | 2325 | high | Andy North | BlackBox Contributors + Patreon; Pro Pundits; feed "Az is joined by Andy North" |
+| FPL Mate | Dan | 120 | conclusive | Dan FPL Mate | admins 37471 "youtube.com/FPLMate", 37485, 2139579; team "FPL Mate on YouTube" |
+| FPL JUiCE | Nick Turner | 2472 | conclusive | Nick Turner -FPL JUiCE- | admins 544/566/579 JUiCE leagues; name carries the brand |
+| FPL JUiCE | Ash | null | — | — | not found; one LOW name-resemblance (24846) rejected |
+| Above Average FPL | Adam Currier | 157 | conclusive | Adam Currier | admins 2543 "Above Average FPL", 72643 "AAFPL Invitational" |
+| Above Average FPL | Martin Baker | 4470 | high | Martin Baker | only Baker in AAFPL Invitational; 6 further leagues shared with Adam |
+| Sky Sports FPL | Mark Briggs | 27539 | conclusive | Mark Briggs | admins 5790/5800/5814 Sky Sports News leagues |
+| Sky Sports FPL | James Savundra | 2992401 | high | James Savundra | Sky Sports News Internal + guests (admin = Briggs) |
+| Fantasy Football Hub | Rich Clarke | 209763 | conclusive | Richard Clarke | admins 772236 "Hub Ultras"; 4-entry "Green Arrow Hosts"; Hub Team |
+| Fantasy Football Hub | Fergi | 2057 | conclusive | Andrew Ferguson | admins 32922 "The Green Arrow FPL Podcast", 32932 "Green Arrow Hosts"; feed email andrew.ferguson@ |
+| Fantasy Football Hub | Jack (@Redditor) | 6801 | high | Jack Ukiah | team "Redditor's Predators"; Hub Team + Hub Contributors |
+| FPL Fran | Francisco MW | 21 | conclusive | Francisco MW | admins 18475 "YouTube.com/@FPLFran"; team "FPL Fran"; best 437 = Hub's "437 in 2023/24" |
+| Fantasy Football Scout | Neale Rigg | 6225 | conclusive | Neale Rigg | admins 1774 "Fantasy Football Scout Members"; Coreteam; Scout Editor |
+| Fantasy Football Scout | FPL Chai (stand-in) | 2157 | conclusive | Chai - | admins 150425/203542/672640 "FPL CHAI 26/27"; Pro Pundits |
+| Fantasy Football Scout | Joe Lepper | null | — | — | identified, no entry found in any Scout league |
+| FML FPL | Alon Shapiro | 28410 | conclusive | Alon Shapiro | admins 5550 "FML FPL Public League", 83218 "FML FPL Prize Mug League", 1917942 |
+| FML FPL | Alex Walsh | 220415 | high | Alex Walsh | sole Walsh in Alon's 39-entry league; shares private "AZ vs. LDN" with Alon |
+| FPL Pod | Kelly Somers | null | — | — | broadcaster; no id; PL's old show-note ids are strangers |
+| FPL Pod | Julien Laurens | null | — | — | PL feed's /entry/2496505/ now Ebbe Gärdelid — rejected |
+| All In Football FPL | Barry Stokes | null | — | — | no link anywhere; not in any creator league |
+| All In Football FPL | Alex Rex | null | — | — | same |
+| AllAboutFPL | Srinivasan S | null | — | — | blog; only an auto-join code (2xywgk) published |
+| AllAboutFPL | Surya | null | — | — | first name only |
+| FPL Review | (anonymous operator) | null | — | — | brand row; anonymous by design |
+| Ignore the Template | (anonymous host) | null | — | — | no name anywhere in feed or page |
+
+## Two more sources that resolved to strangers
+
+Add these to the Fantasy Football Pundit table in the "do not reuse" list.
+
+**Old show-notes entry links, even from the game operator.** The Premier
+League's own FPL Pod RSS (`audioboom.com/channels/5001585.rss`) carries
+episode notes reading "Sam Bonfield takes the top spot … Her team:
+`fantasy.premierleague.com/entry/32044/history`" and "Julien Laurens extends
+his lead … `entry/2496505`". Read back today: **32044 = Tomas Naulickas,
+"BeoPower", Lithuania; 2496505 = Ebbe Gärdelid, "Change Name", Sweden.**
+Likewise the Fantasy Football Scout feed's "Follow Gianni here:
+`entry/24862/history`" is now **George Mayhew, "Jacquet Potato"**. These were
+presumably guest teams created for a past season's segment and since
+re-registered, or simply wrong when written — it does not matter which. Sam
+Bonfield's real account (2977) administers four Scout/Family leagues and was
+found through the league graph, not through the notes.
+
+**League ids recycle.** The FPL Pod's "Official FPL Podcast (Guests)" league
+730132 is today a 4-entry "League of Ordinary Gentlemen"; FML FPL's
+`fmlfpl.com/ourteams` links league 146684, today "Balon D Best 3" (31 Nigerian
+entries). A league id from any page older than this season is not evidence.
+
+Neither of these is new information about *entry* stability — 53517 still
+carries 19 seasons — but they are the first concrete cases in this repo of a
+publisher's own link pointing at a stranger, and they justify the rule that
+nothing goes in the file without a live read-back.
+
+## Per person — the ones worth reading
+
+### FPL General → 176749 (three shows)
+Search identified FPL General as **Mark McGettigan** (Scout "Meet the Manager
+#10", Hub "Veterans Series"). Found as `176749 Mark McGettigan, team
+"@FPLGeneral"` in the invite-only **FFScout Pro Pundits** league 1426424
+(admin 16 = Scout's Tom Johnson). Admins 38523 "Beat the @FPLGeneral", 38555
+"#Elite64 Qualifier", 38563 "The McGettigans", 1200595 "Discorders". Region
+Scotland; Finn Harps league membership fits the Donegal connection. History:
+18 seasons, 3 top-10k, best 102 — his "3 × top 500" billing.
+He is the **solo host of The 59th Minute** (feed title "hosted by Mark
+McGettigan, known as FPL General") and of **The Athletic FPL Podcast** (acast
+description: "The Athletic's Fantasy Premier League expert Mark McGettigan —
+aka FPL General"). Three registered shows collapse onto one person, which is
+exactly the situation `panel_person_show` exists for. He is also a Scoutcast
+regular; that show link was left off the row because Scout's roster is many
+people and the item-level attribution will need titles anyway.
+
+### FFScout Pro Pundits 1426424 — the richest discovery league
+24 entries, admin 16 ("Tom Johnson", Scout's deputy GM, who also admins 53993
+"FFScout Coreteam" and 53998 "Fantasy Football Scout"). Members include Harry
+Daniels (3054), Az Phillips (246), Mark McGettigan, Lee and Sam Bonfield,
+"Tom L / FPL TOM" (5406), "Oscar - / Focal Point" (298), Andy North (2325),
+"Chai -" (2157), Tom Freeman (22728), Neale Rigg via Coreteam. Six of this
+pass's rows came from this one standings call. Note the league also contains
+people with *no* show in the registry (Tom Hadley, Callum Dummelow, Josh
+Cuthbert, Grey Head, Simon March, Obay Eid, Mohamed "FPL Mo", Yelena
+Cekerevac, Joshua Scott, Ben Brown, Stephen Gallagher, Sean Jackson, Charlie
+Noakes) — a ready-made shortlist if the registry grows.
+
+### FPL Focal → 298, FPL Tom → 5406, FPL Mate → 120
+All three self-identify through league names: 298 admins **"YouTube.com/
+FPLFocal"** plus Discord/Members/Experts leagues (Holly Shand, Tom Johnson,
+Josh Scott and Francisco MW sit in "FPL Focal Experts"); 5406 admins **"FPL
+Tom Super League"** with team **"FPL TOM"**; 120 admins **"youtube.com/FPLMate"**
+with account name **"Dan FPL Mate"** and team **"FPL Mate on YouTube"**. FPL
+Mate was found as the *admin* of a league in FPL Tom's list — the graph walk
+again. None of the three publishes a surname; the rows carry the API names
+as returned ("Oscar -", "Tom L", "Dan FPL Mate"). Entry 298 has a rank-0
+season (2022/23) in `past[]`; stats exclude it.
+
+### Planet FPL — James Linden 1194 (conclusive), Sujan Shah 84298 (high)
+Mark Sutherns' list contained 122418 "Planet #FPL Correspondents" (admin
+1194). 1194 = **James Linden**, admin of 122414 "Planet #FPL Podcast" and the
+Correspondents league; team "Ledley's Kings" (Spurs, as billed). The
+Correspondents standings list **84298 "Sujan Shah", team "Suj - Planet FPL"**;
+he is in both show leagues and in FPL Harry's league, but admins only "Shah
+Boyz", so high. The Correspondents league (40 entries) is Planet FPL's
+Patreon-tier roster, not a hosts list — two joke accounts "Suj and James" /
+"James And Suj" (4103882, 4104550) sit in it and must not be mistaken for the
+hosts.
+
+### Who Got The Assist? — Tom 454 (conclusive), Sam Price 125 (conclusive)
+Hub Contributors carried **454 "Tom C (WGTA)"**, who admins 6791 "Who Got The
+Assist? Minileague" and 6829 "WGTA Fight Club". Sam was found by scanning
+6791's standings page by page for the handle @FPLPricey's surname: page 3,
+**125 "Sam Price"**, who admins 26990 **"www.youtube.com/@fplpricey"**. Both
+self-identifying. Neither Tom's surname nor an @FPLPricey ↔ "Price" record
+beyond his own league name exists publicly; the league names are the
+evidence.
+
+### FPL Family → Lee 2913 and Sam 2977 (both conclusive)
+Both in Pro Pundits and in Sky's 7-entry "Sky Sports News guests". Lee admins
+**"FPL Family"** 6229 and **"FPL Family Patreon"** 6223. Sam admins **"FPL
+Extended Family"** 8507 and — because she is Scout's General Manager —
+**"FFScout Mods & Cons"** 8449, "FFScout Family" and "Inner Circle"; she is in
+the Premier League's "FPL Pod" league 1359 (admin 6212 = "Christian
+Harrall-Baker", who admins "@OfficialFPL on X", "@OfficialFPL on Facebook" and
+"FPL on WhatsApp" — the PL's social account, not a host). Sam's row therefore
+links three shows: FPL Family, FPL Pod, Fantasy Football Scout.
+
+### FPL BlackBox — Luke Williams 71 and Andy North 2325 (both high)
+The feed's `itunes:author` is **"Az, Andy, and Luke"**; description: "Az
+(@fplblackbox_az), Andy (@FPLMode) and Luke (@fpl_dis)". Episode notes say
+"Az is joined by Andy North"; a BlackBox video is titled "Meet Luke" and
+search returns "Luke Williams, also known as d1sable" as a BlackBox
+recruit. Both are in the 6-entry **BlackBox Contributors** and the Patreon
+league. Neither admins a show-named league (Luke: "CID"; Andy: six family/
+work leagues), so high. Luke's record is real — 3 top-10k, best 580. Andy has
+none in 20 seasons. The remaining Contributors (Zoe Clarke 7909621, Natalie
+Chowdhury 4643619) are contributors, not hosts, and got no rows.
+
+### Always Cheating — Josh Landon 88520, Brandon Kelley 279 (both high)
+Hub Contributors carried **88520 "Joshua Landon"** (USA). His list included
+1099942 "AC Community Team League", whose admin **5120019 is "Always Cheating
+Community", team "AlwaysCommunity"** — the show's own account (a brand
+account, one league, no row). Its standings include **279 "Brandon Kelley",
+"Inter Butternuts"**, Canada, who also admins 679217 "Elks Lodge Classic" with
+Josh in it. Exact name matches to the two billed hosts plus membership of the
+show's own league; no show-named admin league on either side, so high.
+
+### Above Average FPL — Adam Currier 157 (conclusive), Martin Baker 4470 (high)
+Luke Williams' list had 2543 "Above Average FPL" (admin 157). **157 = Adam
+Currier**, admin of 2543 and 72643 "AAFPL Invitational"; the co-host is
+billed only as "Baker" (@BakerFPL343). Page 2 of the Invitational has **4470
+"Martin Baker"**, the only Baker across six pages; he shares six more leagues
+with Adam (7421, 58598, 109318, 110140, 311542 "Thought Dump", 1032855) and
+sits in both FML FPL leagues. That is a strong co-membership pattern, but
+"Baker" could in principle be a superfan's surname; high, with that caveat
+written in the row.
+
+### Sky Sports FPL — Mark Briggs 27539 (conclusive), James Savundra 2992401 (high)
+The captivate feed bills every episode "James Savundra and Mark Briggs". Lee
+Bonfield's list had 5814 "Sky Sports News guests" (admin 27539). **27539 =
+Mark Briggs, "Ballabriggs"**, admin of 5790 "Sky Sports News Official FPL",
+5800 "Sky Sports News Internal" and 5814. The guests league (7 entries: the
+Bonfields, Gianni, Josh Cuthbert, Holly Shand, Briggs) also holds **2992401
+"James Savundra", "BazBall 2.0"**, who is in the staff league 5800 too. High.
+
+### Fantasy Football Hub — Rich Clarke 209763, Fergi 2057 (conclusive), Jack Ukiah 6801 (high)
+The Hub feed: "The Green Arrow FPL Podcast with Rich Clarke and Fergi … audio
+versions of our YouTube content hosted by Jack (@Redditor)". Hub Contributors
+carried **2057 "Andrew Ferguson", "Fergi Time"**, admin of 32922 **"The Green
+Arrow FPL Podcast"** and the 4-entry 32932 **"Green Arrow Hosts"**; the feed's
+`itunes:email` is andrew.ferguson@fantasyfootballhub.co.uk. Green Arrow Hosts
+= Ferguson, **209763 "Richard Clarke"** (admin of 772236 "Hub Ultras", 9
+top-10k finishes, best 263), Adam Hopcroft 9804 and Scott Harris 3966 (not
+billed anywhere; no rows). **6801 "Jack Ukiah", "Redditor's Predators"**,
+Mauritius, is in Hub Team and Hub Contributors. Hub Team (37 entries, admin
+6774 "Will Thomas", who admins every Hub league) also holds two brand
+accounts "Fantasy Football Hub / AI Team" (2245143, 2246265) — not people.
+
+### FPL Fran → 21 (conclusive)
+The Hub team-reveal page is paywalled and gives nothing. Found on page 1 of
+the AAFPL Invitational: **21 "Francisco MW", team "FPL Fran"**, Spain. Admins
+18475 **"YouTube.com/@FPLFran"** and 18497 "FPL Fran Members' League"; member
+of 32123 "Youtube.com/@Fplscript" (his FPL Script podcast with JD), Bakar's
+"Kings League" and Sertalp's "Analytics League". **Record match: Hub bills
+"rank 437 in 2023/24"; `history` best_ever_rank = 437.**
+
+### Fantasy Football Scout — a roster, not a host
+Scout's podcast is presented by a rotating cast: the feed names "FPL Harry,
+Joe, Neale, Sam, FPL General", Andy North (22 mentions), "FPL Chai standing
+in", and a "Ryan (@Ryan_ms28)" segment. Rows written: **Neale Rigg 6225**
+(Editor; admins 1774 "Fantasy Football Scout Members"; Coreteam), **FPL Chai
+2157** (admins three "FPL CHAI 26/27" leagues; Pro Pundits — billed "former
+world no. 2", which is an in-season peak, since his best *final* rank is
+1839), Sam Bonfield and Andy North via their rows. **Joe = Joe Lepper**
+(meet-the-team: contributor, 6-8 top-10k) — not found in Coreteam, Mods &
+Cons, Pro Pundits, Hub Contributors, or three pages of the public Scout
+league; null row. Two Joes to NOT confuse him with: 283492 "Joe Collett"
+(Mods & Cons) and 1735 "Joshua Scott" (marketing, FPL Graduates). Ryan got no
+row: a segment host with only a handle. Harry and General already have rows;
+their `shows` lists were left as written.
+
+### FML FPL — Alon Shapiro 28410 (conclusive), Alex Walsh 220415 (high)
+Billed only as "Alon and Walsh". Martin Baker's list had 5550 "FML FPL Public
+League" and 83218 "FML FPL Prize Mug League" (admin 28410). **28410 = Alon
+Shapiro, team "alon"**, USA, admin of both plus 1917942 "livestream merchants
+fml fpl" (39 entries). That league's sole Walsh is **220415 "Alex Walsh"**,
+USA, who is in all three FML leagues, shares the private 1679400 "AZ vs. LDN"
+with Alon, and sits in the AAFPL Invitational. High. (100018 "Guest Jason",
+region "Western Sahara", who admins two leagues Alon is in, is a joke account
+and was not taken as Walsh.)
+
+### Nulls, and why
+- **Ash (FPL JUiCE)**: only "Ash"/"Ashley" in the feed; not in Nick's 10-entry
+  Social Club; nothing JUiCE-branded administered by any Ash in four pages of
+  the two public leagues.
+- **Kelly Somers, Julien Laurens (FPL Pod)**: broadcasters; the PL's own
+  show-note ids resolve to strangers (above); not on page 1 of the 1359 "FPL
+  Pod" league.
+- **Barry Stokes, Alex Rex (All In Football)**: acast feed has 166 / 76 name
+  mentions and no links at all; not in any league walked; web search returns
+  an NFL player.
+- **AllAboutFPL (Srinivasan S, Surya)**: a bylined blog; only an auto-join code
+  (2xywgk), which does not resolve without a session.
+- **FPL Review**: "developed and run independently by myself"; handle
+  formdork@; anonymous by design. Brand row like Solio.
+- **Ignore the Template**: feed and Buzzsprout page carry no name; "Link to
+  the mini league: Link" with the href stripped.
+
+## Dead ends this pass (so nobody re-walks them)
+- `fantasyfootballhub.co.uk/fpl-fran-team-reveal`: paywalled, header only.
+- `fmlfpl.com/pod`, `/ourteams`: nav only, plus the recycled league 146684.
+- `ignorethetemplate.buzzsprout.com`: no name.
+- Show-note `entry/` links in the FPL Pod and Scout feeds (above).
+- `leagues-classic/{id}/standings/` for 1359 "FPL Pod" (page 1 of 50+), 544
+  "FPL JUiCE League" p1-4, 579 p1-4, 2543 p1-6, 72643 p1-6, 6791 p1-3, 53998
+  p1-3: the only hits were the ones written.
+- macOS ships bash 3: `declare -A` does not exist, and zsh does not
+  word-split `$f` in `for … set -- $f`. Use Python for feed fetching.
+
+## Re-verification addendum
+The checklist above still holds. Two additions: (5) treat any `entry/` or
+`leagues/` link in a podcast feed as a *candidate*, never as evidence — three
+of three sampled this pass were strangers; (6) the cheapest re-derivation for
+this pass's rows is the FFScout Pro Pundits league 1426424 plus the admin_entry
+of each show-named league listed in the rows.

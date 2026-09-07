@@ -485,3 +485,992 @@
   top10k_finishes: 1
   best_ever_rank: 1607
   seasons_played: 7
+
+# ===========================================================================
+# 2026-09-07 -- hosts of the ~20 corpus shows whose people were not on the
+# roster. Method: the leagues.classic[] graph again (walk from a known-good
+# entry into invite-only creator leagues: FFScout Pro Pundits 1426424, FFScout
+# Mods & Cons 8449, Planet #FPL Correspondents 122418, Hub Team 357994, Green
+# Arrow Hosts 32932, Sky Sports News guests 5814, AC Community Team 1099942,
+# livestream merchants fml fpl 1917942), then read every candidate back from
+# /api/entry/{id}/ and look for admin_entry of a league named after their own
+# channel. Full audit trail, including dead ends, in
+# docs/platform/creator_identity_research.md (section dated 2026-09-07).
+#
+# TWO MORE SOURCES THAT RESOLVED TO STRANGERS, recorded so nobody re-walks them:
+#   * The Premier League's own FPL Pod RSS published "Sam Bonfield ... Her team:
+#     /entry/32044/" and "Julien Laurens ... /entry/2496505/". Today 32044 is
+#     Tomas Naulickas (Lithuania) and 2496505 is Ebbe Gaerdelid (Sweden). The
+#     Fantasy Football Scout feed's "Follow Gianni here: /entry/24862/" is now
+#     George Mayhew. Old show-notes ids, even from the game operator, are not
+#     evidence; only a live read-back is.
+#   * League ids DO recycle across seasons (the FPL Pod's "Official FPL Podcast
+#     (Guests)" 730132 is now a 4-man "League of Ordinary Gentlemen"; FML FPL's
+#     146684 is now "Balon D Best 3"). Never cite a league id from an old page.
+# ===========================================================================
+
+- person_key: fpl_general
+  display_name: FPL General
+  legal_name: Mark McGettigan
+  aliases: ["FPL General", "General", "McGettigan"]
+  handles:
+    x: "@FPLGeneral"
+    youtube: "@FPLGeneral"
+    site: null
+  shows: ["FPL General", "The 59th Minute", "The Athletic FPL"]
+  own_channel: "https://www.youtube.com/@FPLGeneral"
+  entry_id: 176749
+  entry_verified: true
+  entry_confidence: conclusive
+  entry_source_url: "https://fantasy.premierleague.com/api/entry/176749/"
+  entry_api_name: "Mark McGettigan"
+  entry_team_name: "@FPLGeneral"
+  entry_checked_utc: "2026-09-07T08:10:00Z"
+  entry_reason: null
+  entry_evidence: >-
+    Entry 176749 is `admin_entry` of league 38523 "Beat the @FPLGeneral" and
+    38555 "#Elite64 Qualifier"; team name is literally "@FPLGeneral"; member of
+    invite-only 1426424 "FFScout Pro Pundits". Real name Mark McGettigan is
+    published by Fantasy Football Scout ("Meet the Manager #10") and by The
+    Athletic. Hosts The 59th Minute (solo) and The Athletic FPL Podcast (solo,
+    per the acast feed description); also a regular Scoutcast guest.
+  edge_note: "Three top-500 finishes; solo-host of two podcasts plus his own channel."
+  top10k_finishes: 3
+  best_ever_rank: 102
+  seasons_played: 18
+
+- person_key: fpl_tom
+  display_name: FPL Tom
+  aliases: ["FPL Tom"]
+  handles:
+    youtube: "@FPLTom"
+    site: null
+  shows: ["FPL Tom"]
+  own_channel: "https://www.youtube.com/@FPLTom"
+  entry_id: 5406
+  entry_verified: true
+  entry_confidence: conclusive
+  entry_source_url: "https://fantasy.premierleague.com/api/entry/5406/"
+  entry_api_name: "Tom L"
+  entry_team_name: "FPL TOM"
+  entry_checked_utc: "2026-09-07T08:10:00Z"
+  entry_reason: null
+  entry_evidence: >-
+    Team name "FPL TOM"; entry 5406 is `admin_entry` of league 58929 "FPL Tom
+    Super League" and 603023 "FPL CART MINI LEAGUE"; member of invite-only
+    1426424 "FFScout Pro Pundits" and of 37471 "youtube.com/FPLMate" (admin
+    120 = FPL Mate). Account name is abbreviated ("Tom L"), so no legal-name
+    cross-check exists; the self-branded league estate carries the verdict.
+  edge_note: "Solo YouTube; one top-10k finish."
+  top10k_finishes: 1
+  best_ever_rank: 8283
+  seasons_played: 8
+
+- person_key: fpl_focal_oscar
+  display_name: Oscar (FPL Focal)
+  aliases: ["FPL Focal", "Oscar"]
+  handles:
+    youtube: "@FPLFocal"
+    site: null
+  shows: ["FPL Focal"]
+  own_channel: "https://www.youtube.com/@FPLFocal"
+  entry_id: 298
+  entry_verified: true
+  entry_confidence: conclusive
+  entry_source_url: "https://fantasy.premierleague.com/api/entry/298/"
+  entry_api_name: "Oscar -"
+  entry_team_name: "Focal Point"
+  entry_checked_utc: "2026-09-07T08:10:00Z"
+  entry_reason: null
+  entry_evidence: >-
+    Entry 298 is `admin_entry` of league 3876 "YouTube.com/FPLFocal", 3889
+    "FPL Focal Discord", 3896 "FPL Focal Members" and 3901 "FPL Focal Experts";
+    team "Focal Point". Member of invite-only 1426424 "FFScout Pro Pundits" and
+    311543 "The FPL Wire". Surname not public (account shows "Oscar -").
+    history has one season (2022/23) with rank 0; stats below exclude it.
+  edge_note: "Solo YouTube + podcast; 15 seasons."
+  top10k_finishes: 1
+  best_ever_rank: 3405
+  seasons_played: 15
+
+- person_key: gianni_buttice
+  display_name: Gianni Buttice
+  aliases: ["Gianni Buttice", "Gianni"]
+  handles:
+    x: "@GianniButtice"
+    site: null
+  shows: ["Gianni Buttice"]
+  own_channel: null
+  entry_id: 2375
+  entry_verified: true
+  entry_confidence: conclusive
+  entry_source_url: "https://fantasy.premierleague.com/api/entry/2375/"
+  entry_api_name: "Gianni Buttice"
+  entry_team_name: "Gianni's Team"
+  entry_checked_utc: "2026-09-07T08:10:00Z"
+  entry_reason: null
+  entry_evidence: >-
+    Entry 2375 is `admin_entry` of league 42307 "GIANNI BUTTICÈ YOUTUBE" and
+    42341 "Gianni's ULTRA'S"; member of invite-only 8449 "FFScout Mods & Cons"
+    and 5814 "Sky Sports News guests" (7 entries, admin = Sky's Mark Briggs).
+    NOT entry 24862, which an old Scout show-note linked as "Gianni" and which
+    now resolves to George Mayhew.
+  edge_note: "Personality-led podcast; no top-10k finish in 17 seasons."
+  top10k_finishes: 0
+  best_ever_rank: 15283
+  seasons_played: 17
+
+- person_key: james_linden
+  display_name: James (Planet FPL)
+  legal_name: James Linden
+  aliases: ["James Linden", "James"]
+  handles:
+    x: "@PlanetFPLPod"
+    site: "https://www.patreon.com/planetfpl"
+  shows: ["Planet FPL"]
+  own_channel: null
+  entry_id: 1194
+  entry_verified: true
+  entry_confidence: conclusive
+  entry_source_url: "https://fantasy.premierleague.com/api/entry/1194/"
+  entry_api_name: "James Linden"
+  entry_team_name: "Ledley's Kings"
+  entry_checked_utc: "2026-09-07T08:10:00Z"
+  entry_reason: null
+  entry_evidence: >-
+    Entry 1194 is `admin_entry` of league 122414 "Planet #FPL Podcast" and
+    122418 "Planet #FPL Correspondents" -- he runs the show's league estate.
+    Team "Ledley's Kings" fits the published "Spurs season-ticket holder".
+    Found by resolving the admin of 122418, which sat in Mark Sutherns' list.
+  edge_note: "Planet FPL co-host; entertainment-led, no elite record."
+  top10k_finishes: 0
+  best_ever_rank: 21479
+  seasons_played: 12
+
+- person_key: sujan_shah
+  display_name: Suj (Planet FPL)
+  legal_name: Sujan Shah
+  aliases: ["Sujan Shah", "Suj"]
+  handles:
+    site: "https://www.patreon.com/planetfpl"
+  shows: ["Planet FPL"]
+  own_channel: null
+  entry_id: 84298
+  entry_verified: true
+  entry_confidence: high
+  entry_source_url: "https://fantasy.premierleague.com/api/entry/84298/"
+  entry_api_name: "Sujan Shah"
+  entry_team_name: "Suj - Planet FPL"
+  entry_checked_utc: "2026-09-07T08:10:00Z"
+  entry_reason: null
+  entry_evidence: >-
+    Team name "Suj - Planet FPL" (set by the account holder); member of both
+    show leagues 122414 and 122418 (admin 1194 = co-host James Linden) and of
+    7735 "www.youtube.com/@FPLHarry". Administers only a personal league
+    ("Shah Boyz"), so high rather than conclusive. Team "The Boleyn Boys Club"
+    membership fits the published "West Ham season-ticket holder".
+  edge_note: "Planet FPL co-host."
+  top10k_finishes: 0
+  best_ever_rank: 101280
+  seasons_played: 14
+
+- person_key: wgta_tom
+  display_name: Tom (Who Got The Assist?)
+  aliases: ["WGTA Tom", "Tom C"]
+  handles:
+    x: "@WGTA_FPL"
+    youtube: "@whogottheassist"
+    site: null
+  shows: ["Who Got The Assist?"]
+  own_channel: "https://www.youtube.com/whogottheassist"
+  entry_id: 454
+  entry_verified: true
+  entry_confidence: conclusive
+  entry_source_url: "https://fantasy.premierleague.com/api/entry/454/"
+  entry_api_name: "Tom C (WGTA)"
+  entry_team_name: "Dalot's Humour"
+  entry_checked_utc: "2026-09-07T08:10:00Z"
+  entry_reason: null
+  entry_evidence: >-
+    Entry 454 is `admin_entry` of league 6791 "Who Got The Assist? Minileague"
+    and 6829 "WGTA Fight Club"; account name carries the show tag "(WGTA)";
+    member of invite-only 357990 "Hub Contributors". Surname not public.
+  edge_note: "WGTA co-host since 2017; one top-10k finish."
+  top10k_finishes: 1
+  best_ever_rank: 2353
+  seasons_played: 17
+
+- person_key: sam_price
+  display_name: Sam Price (FPL Pricey)
+  aliases: ["Sam Price", "Pricey", "FPL Pricey"]
+  handles:
+    x: "@FPLPricey"
+    youtube: "@fplpricey"
+    site: null
+  shows: ["Who Got The Assist?"]
+  own_channel: "https://www.youtube.com/@fplpricey"
+  entry_id: 125
+  entry_verified: true
+  entry_confidence: conclusive
+  entry_source_url: "https://fantasy.premierleague.com/api/entry/125/"
+  entry_api_name: "Sam Price"
+  entry_team_name: "Insert Football Pun"
+  entry_checked_utc: "2026-09-07T08:10:00Z"
+  entry_reason: null
+  entry_evidence: >-
+    Entry 125 is `admin_entry` of league 26990 "www.youtube.com/@fplpricey";
+    member of co-host Tom's 6791 "Who Got The Assist? Minileague" and of
+    311543 "The FPL Wire" (invite-only). Found by scanning 6791 for the
+    published handle's surname.
+  edge_note: "WGTA co-host; own channel FPL Pricey."
+  top10k_finishes: 0
+  best_ever_rank: 21799
+  seasons_played: 14
+
+- person_key: josh_landon
+  display_name: Josh Landon
+  aliases: ["Josh Landon", "Joshua Landon", "Josh"]
+  handles:
+    site: "https://www.bluewirepods.com/podcast/always-cheating-a-fantasy-premier-league-podcast-fpl"
+  shows: ["Always Cheating"]
+  own_channel: null
+  entry_id: 88520
+  entry_verified: true
+  entry_confidence: high
+  entry_source_url: "https://fantasy.premierleague.com/api/entry/88520/"
+  entry_api_name: "Joshua Landon"
+  entry_team_name: "Joshua's Team"
+  entry_checked_utc: "2026-09-07T08:10:00Z"
+  entry_reason: null
+  entry_evidence: >-
+    Member of invite-only 357990 "Hub Contributors" and of 1099942 "AC
+    Community Team League", whose admin 5120019 is the show's own account
+    ("Always Cheating Community"). Region USA; the show bills "two native New
+    Yorkers". Administers no show-named league, so high not conclusive.
+  edge_note: "Always Cheating co-host; five top-10k finishes."
+  top10k_finishes: 5
+  best_ever_rank: 1224
+  seasons_played: 15
+
+- person_key: brandon_kelley
+  display_name: Brandon Kelley
+  aliases: ["Brandon Kelley", "Brandon"]
+  handles: {}
+  shows: ["Always Cheating"]
+  own_channel: null
+  entry_id: 279
+  entry_verified: true
+  entry_confidence: high
+  entry_source_url: "https://fantasy.premierleague.com/api/entry/279/"
+  entry_api_name: "Brandon Kelley"
+  entry_team_name: "Inter Butternuts"
+  entry_checked_utc: "2026-09-07T08:10:00Z"
+  entry_reason: null
+  entry_evidence: >-
+    Exact name match to the published co-host; member of 1099942 "AC Community
+    Team League" (admin = the show's own account 5120019) and 638414 "AC
+    Underdogs 26/27"; admins 679217 "Elks Lodge Classic", of which co-host Josh
+    Landon (88520) is a member. Found by scanning the AC league for "Kelley".
+  edge_note: "Always Cheating co-host."
+  top10k_finishes: 0
+  best_ever_rank: 10643
+  seasons_played: 15
+
+- person_key: lee_bonfield
+  display_name: Lee (FPL Family)
+  legal_name: Lee Bonfield
+  aliases: ["Lee Bonfield", "Lee"]
+  handles:
+    x: "@FPLFamily"
+    site: "https://www.patreon.com/fplfamily"
+  shows: ["FPL Family"]
+  own_channel: "https://www.youtube.com/@FPLFamily"
+  entry_id: 2913
+  entry_verified: true
+  entry_confidence: conclusive
+  entry_source_url: "https://fantasy.premierleague.com/api/entry/2913/"
+  entry_api_name: "Lee Bonfield"
+  entry_team_name: "Little Beauties"
+  entry_checked_utc: "2026-09-07T08:10:00Z"
+  entry_reason: null
+  entry_evidence: >-
+    Entry 2913 is `admin_entry` of league 6229 "FPL Family" and 6223 "FPL
+    Family Patreon"; member of invite-only 1426424 "FFScout Pro Pundits" and
+    5814 "Sky Sports News guests" (the show is a Sky Sports News regular).
+  edge_note: "FPL Family co-host (with wife Sam); four top-10k finishes."
+  top10k_finishes: 4
+  best_ever_rank: 1732
+  seasons_played: 19
+
+- person_key: sam_bonfield
+  display_name: Sam Bonfield
+  aliases: ["Sam Bonfield", "Sam"]
+  handles:
+    x: "@FPLFamily"
+    site: "https://www.fantasyfootballscout.co.uk/meet-the-team"
+  shows: ["FPL Family", "FPL Pod", "Fantasy Football Scout"]
+  own_channel: null
+  entry_id: 2977
+  entry_verified: true
+  entry_confidence: conclusive
+  entry_source_url: "https://fantasy.premierleague.com/api/entry/2977/"
+  entry_api_name: "Sam Bonfield"
+  entry_team_name: "Best in Alderweireld"
+  entry_checked_utc: "2026-09-07T08:10:00Z"
+  entry_reason: null
+  entry_evidence: >-
+    Entry 2977 is `admin_entry` of 8507 "FPL Extended Family", 8449 "FFScout
+    Mods & Cons", 8457 "FFScout Family" and 8474 "Inner Circle"; member of
+    6229 "FPL Family" (admin = husband Lee), 1359 "FPL Pod" (admin 6212, the
+    Premier League's own social account) and 53993 "FFScout Coreteam". Scout's
+    meet-the-team page lists her as General Manager; the PL bills her as an
+    FPL Pod host. NOT 32044, which the FPL Pod's own RSS once linked as "her
+    team" and which now resolves to Tomas Naulickas.
+  edge_note: "FPL Family co-host, official FPL Pod host, FFScout GM."
+  top10k_finishes: 1
+  best_ever_rank: 3499
+  seasons_played: 15
+
+- person_key: luke_williams
+  display_name: Luke (FPL BlackBox)
+  legal_name: Luke Williams
+  aliases: ["Luke Williams", "Luke"]
+  handles:
+    x: "@fpl_dis"
+    site: null
+  shows: ["FPL BlackBox"]
+  own_channel: null
+  entry_id: 71
+  entry_verified: true
+  entry_confidence: high
+  entry_source_url: "https://fantasy.premierleague.com/api/entry/71/"
+  entry_api_name: "Luke Williams"
+  entry_team_name: "Super Puzzle Fighter"
+  entry_checked_utc: "2026-09-07T08:10:00Z"
+  entry_reason: null
+  entry_evidence: >-
+    The BlackBox feed's itunes:author is "Az, Andy, and Luke" and its
+    description names "Luke (@fpl_dis)"; a BlackBox video bills "Luke
+    Williams, also known as d1sable". Entry 71 is a member of the 6-entry
+    invite-only 14891 "FPL BlackBox Contributors", 15389 "FPL BlackBox Patreon
+    2627" and 14884 "youtube.com/FPLBlackBox" (all admin 246 = Az). Admins
+    only a personal league ("CID"), so high.
+  edge_note: "BlackBox third host; three top-10k finishes, best 580."
+  top10k_finishes: 3
+  best_ever_rank: 580
+  seasons_played: 16
+
+- person_key: andy_north
+  display_name: Andy North
+  aliases: ["Andy North", "FPLMode"]
+  handles:
+    x: "@FplMode"
+    site: null
+  shows: ["FPL BlackBox", "Fantasy Football Scout"]
+  own_channel: null
+  entry_id: 2325
+  entry_verified: true
+  entry_confidence: high
+  entry_source_url: "https://fantasy.premierleague.com/api/entry/2325/"
+  entry_api_name: "Andy North"
+  entry_team_name: "Nordi By Nature"
+  entry_checked_utc: "2026-09-07T08:10:00Z"
+  entry_reason: null
+  entry_evidence: >-
+    BlackBox episode notes say "Az is joined by Andy North"; the feed names
+    "Andy (@FPLMode)" and a Scout video bills "Andy North (@FplMode)". Entry
+    2325 is in invite-only 14891 "FPL BlackBox Contributors", 15389 "FPL
+    BlackBox Patreon 2627", 1426424 "FFScout Pro Pundits" and 8449 "FFScout
+    Mods & Cons". Admins six personal leagues, none show-named, so high.
+    Named 22 times in the Scout feed as a Scoutcast presenter.
+  edge_note: "BlackBox host and Scoutcast presenter; 20 seasons, no top-10k."
+  top10k_finishes: 0
+  best_ever_rank: 15028
+  seasons_played: 20
+
+- person_key: fpl_mate
+  display_name: FPL Mate (Dan)
+  aliases: ["FPL Mate", "Mate"]
+  handles:
+    x: "@FPLMate"
+    youtube: "@FPLMate"
+    instagram: "@fplmate"
+    site: null
+  shows: ["FPL Mate"]
+  own_channel: "https://www.youtube.com/@FPLMate"
+  entry_id: 120
+  entry_verified: true
+  entry_confidence: conclusive
+  entry_source_url: "https://fantasy.premierleague.com/api/entry/120/"
+  entry_api_name: "Dan FPL Mate"
+  entry_team_name: "FPL Mate on YouTube"
+  entry_checked_utc: "2026-09-07T08:10:00Z"
+  entry_reason: null
+  entry_evidence: >-
+    Entry 120 is `admin_entry` of league 37471 "youtube.com/FPLMate", 37485
+    "FPL Mate 100 Experts League" and 2139579 "FPL Mate Members League";
+    account name "Dan FPL Mate", team "FPL Mate on YouTube". Found by resolving
+    the admin of 37471, which sat in FPL Tom's league list. Surname not public.
+  edge_note: "Large casual YouTube audience; one top-10k (best 243)."
+  top10k_finishes: 1
+  best_ever_rank: 243
+  seasons_played: 13
+
+- person_key: nick_turner
+  display_name: Nick (FPL JUiCE)
+  legal_name: Nick Turner
+  aliases: ["Nick Turner", "Nick"]
+  handles: {}
+  shows: ["FPL JUiCE"]
+  own_channel: null
+  entry_id: 2472
+  entry_verified: true
+  entry_confidence: conclusive
+  entry_source_url: "https://fantasy.premierleague.com/api/entry/2472/"
+  entry_api_name: "Nick Turner -FPL JUiCE-"
+  entry_team_name: "Fiorentina Turner"
+  entry_checked_utc: "2026-09-07T08:10:00Z"
+  entry_reason: null
+  entry_evidence: >-
+    Entry 2472 is `admin_entry` of 544 "FPL JUiCE League", 566 "FPL JUiCE
+    Social Club" and 579 "FPL JUiCE Legends Prize League"; the account name
+    itself carries "-FPL JUiCE-". Found by resolving the admin of 544, which
+    sat in James Linden's league list.
+  edge_note: "JUiCE co-host; entertainment-led, no elite record."
+  top10k_finishes: 0
+  best_ever_rank: 37331
+  seasons_played: 17
+
+- person_key: juice_ash
+  display_name: Ash (FPL JUiCE)
+  aliases: ["Ash"]
+  handles: {}
+  shows: ["FPL JUiCE"]
+  own_channel: null
+  entry_id: null
+  entry_verified: false
+  entry_confidence: null
+  entry_source_url: null
+  entry_api_name: null
+  entry_team_name: null
+  entry_checked_utc: "2026-09-07T08:10:00Z"
+  entry_reason: >-
+    Not found to the bar. The feed gives only "Ash"; he is not in the 10-entry
+    "FPL JUiCE Social Club" and no Ash/Ashley in pages 1-4 of the two public
+    JUiCE leagues administers anything JUiCE-branded. The one candidate,
+    24846 "Ashley Davies" (in the public JUiCE League; admins three unrelated
+    personal leagues), is a name-resemblance only: LOW, not written.
+  edge_note: "JUiCE co-host."
+  top10k_finishes: null
+
+- person_key: adam_currier
+  display_name: Adam (Above Average FPL)
+  legal_name: Adam Currier
+  aliases: ["Adam Currier", "Adam"]
+  handles:
+    x: "@aboveaveragefpl"
+    site: "https://www.patreon.com/aboveaveragefpl"
+  shows: ["Above Average FPL"]
+  own_channel: null
+  entry_id: 157
+  entry_verified: true
+  entry_confidence: conclusive
+  entry_source_url: "https://fantasy.premierleague.com/api/entry/157/"
+  entry_api_name: "Adam Currier"
+  entry_team_name: "Sensible Calm Robust"
+  entry_checked_utc: "2026-09-07T08:10:00Z"
+  entry_reason: null
+  entry_evidence: >-
+    Entry 157 is `admin_entry` of league 2543 "Above Average FPL" and 72643
+    "AAFPL Invitational"; member of invite-only 311542 "Thought Dump" (admin
+    6816 = Lateriser). Region is set to "Holy See", a joke, not a signal.
+    Found by resolving the admin of 2543, which sat in Luke Williams' list.
+  edge_note: "Above Average co-host; Spurs fan; no top-10k."
+  top10k_finishes: 0
+  best_ever_rank: 11476
+  seasons_played: 15
+
+- person_key: martin_baker
+  display_name: Baker (Above Average FPL)
+  legal_name: Martin Baker
+  aliases: ["Martin Baker", "Baker"]
+  handles:
+    x: "@BakerFPL343"
+  shows: ["Above Average FPL"]
+  own_channel: null
+  entry_id: 4470
+  entry_verified: true
+  entry_confidence: high
+  entry_source_url: "https://fantasy.premierleague.com/api/entry/4470/"
+  entry_api_name: "Martin Baker"
+  entry_team_name: "Baker’s Beauties"
+  entry_checked_utc: "2026-09-07T08:10:00Z"
+  entry_reason: null
+  entry_evidence: >-
+    The co-host is billed only as "Baker" (@BakerFPL343). Entry 4470 "Martin
+    Baker" is the only Baker in 72643 "AAFPL Invitational" (pages 1-6) and
+    shares SIX further leagues with co-host Adam Currier (2543, 7421, 58598,
+    109318, 110140, 311542 "Thought Dump", 1032855), plus sits in both FML
+    FPL leagues (the sister US pod). Admins nothing show-named, so high; the
+    residual risk is that "Baker" is a surname shared with a keen listener.
+  edge_note: "Above Average co-host; 19 seasons, no top-10k."
+  top10k_finishes: 0
+  best_ever_rank: 22638
+  seasons_played: 19
+
+- person_key: mark_briggs
+  display_name: Mark Briggs
+  aliases: ["Mark Briggs", "Briggs"]
+  handles: {}
+  shows: ["Sky Sports FPL"]
+  own_channel: null
+  entry_id: 27539
+  entry_verified: true
+  entry_confidence: conclusive
+  entry_source_url: "https://fantasy.premierleague.com/api/entry/27539/"
+  entry_api_name: "Mark Briggs"
+  entry_team_name: "Ballabriggs"
+  entry_checked_utc: "2026-09-07T08:10:00Z"
+  entry_reason: null
+  entry_evidence: >-
+    The Sky feed says every episode is "James Savundra and Mark Briggs". Entry
+    27539 is `admin_entry` of 5790 "Sky Sports News Official FPL", 5800 "Sky
+    Sports News Internal" and 5814 "Sky Sports News guests" -- he runs Sky
+    Sports News' league estate. Found by resolving the admin of 5814, which sat
+    in Lee Bonfield's list.
+  edge_note: "Sky Sports News presenter; mainstream audience."
+  top10k_finishes: 0
+  best_ever_rank: 22836
+  seasons_played: 11
+
+- person_key: james_savundra
+  display_name: James Savundra
+  aliases: ["James Savundra", "Savundra"]
+  handles: {}
+  shows: ["Sky Sports FPL"]
+  own_channel: null
+  entry_id: 2992401
+  entry_verified: true
+  entry_confidence: high
+  entry_source_url: "https://fantasy.premierleague.com/api/entry/2992401/"
+  entry_api_name: "James Savundra"
+  entry_team_name: "BazBall 2.0"
+  entry_checked_utc: "2026-09-07T08:10:00Z"
+  entry_reason: null
+  entry_evidence: >-
+    Exact name match; member of 5800 "Sky Sports News Internal" (staff
+    league), 5814 "Sky Sports News guests" (7 entries) and 5790, all admin
+    27539 = co-host Mark Briggs; also 1201436 "J Savundra FPL Expert League".
+    Admins nothing himself, so high.
+  edge_note: "Sky Sports FPL co-host."
+  top10k_finishes: 0
+  best_ever_rank: 16451
+  seasons_played: 10
+
+- person_key: rich_clarke
+  display_name: Rich Clarke
+  legal_name: Richard Clarke
+  aliases: ["Rich Clarke", "Richard Clarke"]
+  handles: {}
+  shows: ["Fantasy Football Hub"]
+  own_channel: null
+  entry_id: 209763
+  entry_verified: true
+  entry_confidence: conclusive
+  entry_source_url: "https://fantasy.premierleague.com/api/entry/209763/"
+  entry_api_name: "Richard Clarke"
+  entry_team_name: "Corsano United"
+  entry_checked_utc: "2026-09-07T08:10:00Z"
+  entry_reason: null
+  entry_evidence: >-
+    The Hub feed: "The Green Arrow FPL Podcast with Rich Clarke and Fergi".
+    Entry 209763 is `admin_entry` of 772236 "Hub Ultras" and a member of the
+    4-entry 32932 "Green Arrow Hosts" (admin 2057 = Fergi), 32922 "The Green
+    Arrow FPL Podcast", 357994 "Hub Team" and 357990 "Hub Contributors".
+    Nine top-10k finishes, best 263.
+  edge_note: "Green Arrow co-host; strong record (9 top-10k)."
+  top10k_finishes: 9
+  best_ever_rank: 263
+  seasons_played: 20
+
+- person_key: fergi
+  display_name: Fergi
+  legal_name: Andrew Ferguson
+  aliases: ["Fergi", "Andrew Ferguson"]
+  handles: {}
+  shows: ["Fantasy Football Hub"]
+  own_channel: null
+  entry_id: 2057
+  entry_verified: true
+  entry_confidence: conclusive
+  entry_source_url: "https://fantasy.premierleague.com/api/entry/2057/"
+  entry_api_name: "Andrew Ferguson"
+  entry_team_name: "Fergi Time"
+  entry_checked_utc: "2026-09-07T08:10:00Z"
+  entry_reason: null
+  entry_evidence: >-
+    Entry 2057 is `admin_entry` of 32922 "The Green Arrow FPL Podcast" and
+    32932 "Green Arrow Hosts"; team "Fergi Time"; member of Hub Team and Hub
+    Contributors. The Hub feed's itunes:email is
+    andrew.ferguson@fantasyfootballhub.co.uk, tying the handle to the name.
+  edge_note: "Green Arrow co-host; Hub staff; Wales."
+  top10k_finishes: 1
+  best_ever_rank: 715
+  seasons_played: 13
+
+- person_key: jack_ukiah
+  display_name: Jack (Redditor)
+  legal_name: Jack Ukiah
+  aliases: ["Redditor", "Jack Ukiah"]
+  handles:
+    x: "@Redditor"
+  shows: ["Fantasy Football Hub"]
+  own_channel: null
+  entry_id: 6801
+  entry_verified: true
+  entry_confidence: high
+  entry_source_url: "https://fantasy.premierleague.com/api/entry/6801/"
+  entry_api_name: "Jack Ukiah"
+  entry_team_name: "Redditor's Predators"
+  entry_checked_utc: "2026-09-07T08:10:00Z"
+  entry_reason: null
+  entry_evidence: >-
+    The Hub feed: YouTube content "hosted by Jack (@Redditor)". Entry 6801 is
+    "Jack Ukiah", team "Redditor's Predators", member of invite-only 357994
+    "Hub Team" and 357990 "Hub Contributors" (both admin 6774 = Hub's Will
+    Thomas). Admins four personal leagues, none Hub-named, so high.
+  edge_note: "Hub YouTube host; two top-10k finishes."
+  top10k_finishes: 2
+  best_ever_rank: 1290
+  seasons_played: 13
+
+- person_key: fpl_fran
+  display_name: FPL Fran
+  aliases: ["FPL Fran", "Fran"]
+  handles:
+    x: "@FPL__Fran"
+    youtube: "@FPLFran"
+    instagram: "@fplfran"
+    site: "https://www.patreon.com/FPLFran"
+  shows: ["FPL Fran"]
+  own_channel: "https://www.youtube.com/@FPLFran"
+  entry_id: 21
+  entry_verified: true
+  entry_confidence: conclusive
+  entry_source_url: "https://fantasy.premierleague.com/api/entry/21/"
+  entry_api_name: "Francisco MW"
+  entry_team_name: "FPL Fran"
+  entry_checked_utc: "2026-09-07T08:10:00Z"
+  entry_reason: null
+  entry_evidence: >-
+    Entry 21 is `admin_entry` of 18475 "YouTube.com/@FPLFran" and 18497 "FPL
+    Fran Members' League"; team name "FPL Fran"; member of 32123
+    "Youtube.com/@Fplscript" (his FPL Script podcast with JD), 72643 "AAFPL
+    Invitational", 614192 "Kings League" (admin 5133 = BigMan Bakar) and
+    696621 "Analytics League" (admin 3333334 = Sertalp Cay). RECORD MATCH:
+    Hub bills "rank 437 in 2023/24"; history best_ever_rank = 437.
+  edge_note: "Analytical YouTube; three top-10k in four seasons."
+  top10k_finishes: 3
+  best_ever_rank: 437
+  seasons_played: 8
+
+- person_key: neale_rigg
+  display_name: Neale Rigg
+  aliases: ["Neale Rigg", "Neale"]
+  handles:
+    site: "https://www.fantasyfootballscout.co.uk/meet-the-team"
+  shows: ["Fantasy Football Scout"]
+  own_channel: null
+  entry_id: 6225
+  entry_verified: true
+  entry_confidence: conclusive
+  entry_source_url: "https://fantasy.premierleague.com/api/entry/6225/"
+  entry_api_name: "Neale Rigg"
+  entry_team_name: "Skonto Rigga"
+  entry_checked_utc: "2026-09-07T08:10:00Z"
+  entry_reason: null
+  entry_evidence: >-
+    Scout's Editor per meet-the-team; named 49 times in the Scout feed and
+    listed as a Scoutcast host ("FPL Harry, Joe, Neale, Sam, FPL General").
+    Entry 6225 is `admin_entry` of 1774 "Fantasy Football Scout Members" and
+    a member of the 13-entry 53993 "FFScout Coreteam" (admin 16 = Scout's
+    Tom Johnson) and 8449 "FFScout Mods & Cons".
+  edge_note: "Scout editor and Scoutcast host; three top-10k."
+  top10k_finishes: 3
+  best_ever_rank: 2016
+  seasons_played: 20
+
+- person_key: fpl_chai
+  display_name: FPL Chai
+  aliases: ["FPL Chai", "Chai"]
+  handles: {}
+  shows: ["Fantasy Football Scout"]
+  own_channel: null
+  entry_id: 2157
+  entry_verified: true
+  entry_confidence: conclusive
+  entry_source_url: "https://fantasy.premierleague.com/api/entry/2157/"
+  entry_api_name: "Chai -"
+  entry_team_name: "Chai's Team"
+  entry_checked_utc: "2026-09-07T08:10:00Z"
+  entry_reason: null
+  entry_evidence: >-
+    Stand-in Scoutcast host (the Scout feed: "Andy was away ... FPL Chai
+    standing in"; named 605 times). Entry 2157 is `admin_entry` of 150425 "FPL
+    CHAI 26/27", 203542 "FPL CHAI MEMBERS 26/27" and 672640 "FPL Chai 26/27";
+    member of invite-only 1426424 "FFScout Pro Pundits". Surname not public.
+    Billed as "former world no. 2"; that is an in-season peak, not a finish --
+    history best FINAL rank is 1839.
+  edge_note: "Scoutcast stand-in host; Ireland."
+  top10k_finishes: 2
+  best_ever_rank: 1839
+  seasons_played: 9
+
+- person_key: joe_lepper
+  display_name: Joe Lepper
+  aliases: ["Joe Lepper"]
+  handles:
+    site: "https://www.fantasyfootballscout.co.uk/meet-the-team"
+  shows: ["Fantasy Football Scout"]
+  own_channel: null
+  entry_id: null
+  entry_verified: false
+  entry_confidence: null
+  entry_source_url: null
+  entry_api_name: null
+  entry_team_name: null
+  entry_checked_utc: "2026-09-07T08:10:00Z"
+  entry_reason: >-
+    Identified (Scoutcast "Joe" = Joe Lepper, Scout contributor since 2011,
+    billed 6-8 top-10k finishes) but no entry found: not in FFScout Coreteam
+    (53993), Mods & Cons (8449), Pro Pundits (1426424), Hub Contributors, or
+    pages 1-3 of the public "Fantasy Football Scout" league 53998. Do not
+    confuse with 283492 "Joe Collett" (Mods & Cons; a different Joe) or 1735
+    "Joshua Scott" (Scout marketing, FPL Graduates).
+  edge_note: "Scoutcast host; strong billed record."
+  top10k_finishes: null
+
+- person_key: alon_shapiro
+  display_name: Alon (FML FPL)
+  legal_name: Alon Shapiro
+  aliases: ["Alon Shapiro", "Alon"]
+  handles:
+    x: "@FMLFPL"
+    site: "https://fmlfpl.com/"
+  shows: ["FML FPL"]
+  own_channel: null
+  entry_id: 28410
+  entry_verified: true
+  entry_confidence: conclusive
+  entry_source_url: "https://fantasy.premierleague.com/api/entry/28410/"
+  entry_api_name: "Alon Shapiro"
+  entry_team_name: "alon"
+  entry_checked_utc: "2026-09-07T08:10:00Z"
+  entry_reason: null
+  entry_evidence: >-
+    Entry 28410 is `admin_entry` of 5550 "FML FPL Public League", 83218 "FML
+    FPL Prize Mug League" and 1917942 "livestream merchants fml fpl"; member of
+    invite-only 311542 "Thought Dump". Found by resolving the admin of the FML
+    leagues that appeared in Martin Baker's list. The fmlfpl.com "our teams"
+    page links league 146684, which now belongs to an unrelated Nigerian league
+    ("Balon D Best 3") -- league ids recycle.
+  edge_note: "FML FPL co-host; USA; no top-10k in 14 seasons."
+  top10k_finishes: 0
+  best_ever_rank: 19490
+  seasons_played: 14
+
+- person_key: alex_walsh
+  display_name: Walsh (FML FPL)
+  legal_name: Alex Walsh
+  aliases: ["Alex Walsh", "Walsh"]
+  handles: {}
+  shows: ["FML FPL"]
+  own_channel: null
+  entry_id: 220415
+  entry_verified: true
+  entry_confidence: high
+  entry_source_url: "https://fantasy.premierleague.com/api/entry/220415/"
+  entry_api_name: "Alex Walsh"
+  entry_team_name: "Bobb’s Tete Ba"
+  entry_checked_utc: "2026-09-07T08:10:00Z"
+  entry_reason: null
+  entry_evidence: >-
+    The co-host is billed only as "Walsh". Entry 220415 is the sole Walsh in
+    Alon's 39-entry 1917942 "livestream merchants fml fpl", is in both other
+    FML leagues, shares the private 1679400 "AZ vs. LDN" with Alon, and sits
+    in 72643 "AAFPL Invitational" (the sister pod's invite list; Above
+    Average's Baker is in the FML leagues in return). Region USA, matching
+    Alon. Admins only two personal leagues, so high.
+  edge_note: "FML FPL co-host."
+  top10k_finishes: 0
+  best_ever_rank: 102479
+  seasons_played: 11
+
+- person_key: kelly_somers
+  display_name: Kelly Somers
+  aliases: ["Kelly Somers"]
+  handles: {}
+  shows: ["FPL Pod"]
+  own_channel: null
+  entry_id: null
+  entry_verified: false
+  entry_confidence: null
+  entry_source_url: null
+  entry_api_name: null
+  entry_team_name: null
+  entry_checked_utc: "2026-09-07T08:10:00Z"
+  entry_reason: >-
+    Official FPL Pod host (with Julien Laurens and Sam Bonfield), a broadcaster
+    rather than an FPL creator. Not on page 1 of the 50+ entry public "FPL
+    Pod" league 1359; the PL's own guests league from old show notes (730132)
+    has been recycled to strangers. No self-published id. Not found.
+  edge_note: "Official FPL Pod presenter."
+  top10k_finishes: null
+
+- person_key: julien_laurens
+  display_name: Julien Laurens
+  aliases: ["Julien Laurens", "Laurens"]
+  handles: {}
+  shows: ["FPL Pod"]
+  own_channel: null
+  entry_id: null
+  entry_verified: false
+  entry_confidence: null
+  entry_source_url: null
+  entry_api_name: null
+  entry_team_name: null
+  entry_checked_utc: "2026-09-07T08:10:00Z"
+  entry_reason: >-
+    Official FPL Pod host. The Premier League's own RSS once published "The
+    team: /entry/2496505/" for him; that id now resolves to Ebbe Gärdelid
+    (Sweden) and is REJECTED. No current id found.
+  edge_note: "Official FPL Pod presenter; journalist."
+  top10k_finishes: null
+
+- person_key: barry_stokes
+  display_name: Barry Stokes
+  aliases: ["Barry Stokes", "Stokes"]
+  handles: {}
+  shows: ["All In Football FPL"]
+  own_channel: null
+  entry_id: null
+  entry_verified: false
+  entry_confidence: null
+  entry_source_url: null
+  entry_api_name: null
+  entry_team_name: null
+  entry_checked_utc: "2026-09-07T08:10:00Z"
+  entry_reason: >-
+    Host identified (acast feed names Barry Stokes 166 times, with Alex Rex and
+    regular Scott Williams) but the feed carries no team or league link, the
+    hosts appear in none of the creator leagues walked, and web search returns
+    only an American footballer of the same name. Not found.
+  edge_note: "All In Football co-host ('Differential King')."
+  top10k_finishes: null
+
+- person_key: alex_rex
+  display_name: Alex Rex (The FPL Guru)
+  aliases: ["Alex Rex", "FPL Guru"]
+  handles: {}
+  shows: ["All In Football FPL"]
+  own_channel: null
+  entry_id: null
+  entry_verified: false
+  entry_confidence: null
+  entry_source_url: null
+  entry_api_name: null
+  entry_team_name: null
+  entry_checked_utc: "2026-09-07T08:10:00Z"
+  entry_reason: >-
+    Host identified from the acast feed; no team link, league link or creator
+    league membership found. Not found.
+  edge_note: "All In Football co-host."
+  top10k_finishes: null
+
+- person_key: allaboutfpl_srinivasan
+  display_name: Srinivasan S (AllAboutFPL)
+  aliases: ["Srinivasan"]
+  handles:
+    x: "@allaboutfpl"
+    site: "https://allaboutfpl.com/all-about-fpl-about-us/"
+  shows: ["AllAboutFPL"]
+  own_channel: "https://allaboutfpl.com/"
+  entry_id: null
+  entry_verified: false
+  entry_confidence: null
+  entry_source_url: null
+  entry_api_name: null
+  entry_team_name: null
+  entry_checked_utc: "2026-09-07T08:10:00Z"
+  entry_reason: >-
+    AllAboutFPL is a multi-author blog founded by university friends Srinivasan
+    S and Surya (2019), with Anirudh KK on differentials. The site publishes
+    only a mini-league AUTO-JOIN CODE (2xywgk), which does not resolve to a
+    league id without an authenticated session, and no author publishes a team
+    id. Articles are bylined, so attribution needs the byline, not an entry.
+  edge_note: "AllAboutFPL co-founder; blog, not a podcast."
+  top10k_finishes: null
+
+- person_key: allaboutfpl_surya
+  display_name: Surya (AllAboutFPL)
+  aliases: ["Surya"]
+  handles:
+    site: "https://allaboutfpl.com/all-about-fpl-about-us/"
+  shows: ["AllAboutFPL"]
+  own_channel: null
+  entry_id: null
+  entry_verified: false
+  entry_confidence: null
+  entry_source_url: null
+  entry_api_name: null
+  entry_team_name: null
+  entry_checked_utc: "2026-09-07T08:10:00Z"
+  entry_reason: "Co-founder named only as 'Surya'; no surname, team id or league published. Not found."
+  edge_note: "AllAboutFPL co-founder."
+  top10k_finishes: null
+
+- person_key: fpl_review_operator
+  display_name: FPL Review (anonymous operator)
+  is_brand: true
+  aliases: ["FPL Review"]
+  handles:
+    x: "@fplreview"
+    bluesky: "@fplreview.com"
+    site: "https://fplreview.com/"
+  shows: ["FPL Review"]
+  own_channel: "https://fplreview.com/"
+  entry_id: null
+  entry_verified: false
+  entry_confidence: null
+  entry_source_url: null
+  entry_api_name: null
+  entry_team_name: null
+  entry_checked_utc: "2026-09-07T08:10:00Z"
+  entry_reason: >-
+    FPL Review is a projections product "developed and run independently by
+    myself since day one" (docs.fplreview.com); the operator publishes only
+    the handle formdork@fplreview.com and no name or team. Anonymous by
+    design -- there is no person to resolve. Like Solio, a brand row.
+  edge_note: "Projections/planner product; blog feed."
+  top10k_finishes: null
+
+- person_key: ignore_the_template_host
+  display_name: Ignore the Template (anonymous host)
+  aliases: ["Ignore the Template"]
+  handles:
+    site: "https://ignorethetemplate.buzzsprout.com/"
+  shows: ["Ignore the Template"]
+  own_channel: null
+  entry_id: null
+  entry_verified: false
+  entry_confidence: null
+  entry_source_url: null
+  entry_api_name: null
+  entry_team_name: null
+  entry_checked_utc: "2026-09-07T08:10:00Z"
+  entry_reason: >-
+    Solo statistics podcast (143 episodes, 2024-26) whose feed and Buzzsprout
+    page give no host name; episode notes say "Link to the mini league: Link"
+    with the href stripped. Anonymous; not found.
+  edge_note: "Solo stats podcast."
+  top10k_finishes: null
