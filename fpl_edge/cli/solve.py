@@ -28,6 +28,33 @@ import typer
 from fpl_edge.store.warehouse import DEFAULT_DB
 
 
+def _commit_forecast(problem, root) -> None:
+    """Persist the forecast the plan is (or would be) solved against.
+
+    Straight from the problem's own arrays, zero extra simulation. The
+    squad-anchored solver (``fpl recommend``) and the weekly report read this,
+    so the plan and the transfer advice share ONE source of truth. Committed
+    BEFORE the MILP: on 2026-09-07 a 30s solve found no incumbent and the
+    fitted forecast was thrown away with the plan.
+    """
+    import pandas as pd
+
+    frames = []
+    for k, g in enumerate(problem.gws):
+        frames.append(pd.DataFrame({
+            "code": [int(pl.code) for pl in problem.players],
+            "gw": int(g),
+            "xpts": problem.xpts[:, k],
+            "p_play": problem.p_play[:, k],
+        }))
+    fc = pd.concat(frames, ignore_index=True)
+    fc_path = root / "data" / "warehouse" / "forecast.parquet"
+    fc_path.parent.mkdir(parents=True, exist_ok=True)
+    fc.to_parquet(fc_path, index=False)
+    typer.echo(f"forecast committed: {fc_path} "
+               f"({len(fc)} rows, GW{int(problem.gws[0])}-{int(problem.gws[-1])})")
+
+
 def register(app: typer.Typer) -> None:
     app.command("solve")(solve)
 
@@ -51,6 +78,12 @@ def solve(
         help="Points behind the top-10k pace. Omitted: 0 pre-season (an "
              "identity), else you are asserting you are level with the pace "
              "and the artefact records that as an assumption.",
+    ),
+    forecast_only: bool = typer.Option(
+        False, "--forecast-only",
+        help="Fit the models and commit forecast.parquet, then stop: no MILP. "
+             "The forecast is the fit, not the plan; the daily refresh uses this "
+             "so a solver that finds no incumbent can never lose the forecast.",
     ),
     commit: bool = typer.Option(
         True, "--commit/--no-commit",
@@ -90,11 +123,11 @@ def solve(
     from fpl_edge.types import GwId
 
     with Warehouse.read_copy(db) as wh:
-        now = dt.datetime.now(dt.timezone.utc)
+        now = dt.datetime.now(dt.UTC)
         snap_now = wh.snapshot_at(now)
         target = int(gw) if gw is not None else int(snap_now.next_gw(season))
         deadline = snap_now.deadline(season, target)
-        snap = wh.snapshot_at(deadline if deadline > now else now)
+        snap = wh.snapshot_at(max(now, deadline))
         gws = [GwId(g) for g in range(target, target + int(horizon))]
         typer.echo(f"Solving GW{target}..{gws[-1]} for {season} "
              f"(deadline {deadline:%Y-%m-%d %H:%M}Z).")
@@ -115,6 +148,11 @@ def solve(
             points_forecast=SampledPointsForecast(model, n_sims=n_sims, seed=20260821),
             state=None,
         )
+
+        if forecast_only:
+            _commit_forecast(problem, Path(__file__).resolve().parents[2])
+            typer.echo("forecast-only: models fitted and forecast committed; no plan solved.")
+            return
 
         plans: dict[str, object] = {}
         configs: dict[str, OptimizerConfig] = {}
@@ -208,7 +246,7 @@ def solve(
             d0 = plan.decisions[0]
             artefact = {
                 "generated_at": now.isoformat(),
-                "snapshot_as_of": (deadline if deadline > now else now).isoformat(),
+                "snapshot_as_of": (max(now, deadline)).isoformat(),
                 "season": season,
                 "horizon_gws": [int(g) for g in gws],
                 "objective_mode": label,
@@ -238,18 +276,4 @@ def solve(
             # transfer advice share ONE source of truth -- they used to read
             # different ones, which is how the report could show a full squad
             # while claiming no forecast was configured.
-            import pandas as pd
-
-            frames = []
-            for k, g in enumerate(problem.gws):
-                frames.append(pd.DataFrame({
-                    "code": [int(pl.code) for pl in problem.players],
-                    "gw": int(g),
-                    "xpts": problem.xpts[:, k],
-                    "p_play": problem.p_play[:, k],
-                }))
-            fc = pd.concat(frames, ignore_index=True)
-            fc_path = root / "data" / "warehouse" / "forecast.parquet"
-            fc.to_parquet(fc_path, index=False)
-            typer.echo(f"forecast committed: {fc_path} "
-                       f"({len(fc)} rows, GW{int(problem.gws[0])}-{int(problem.gws[-1])})")
+            _commit_forecast(problem, root)

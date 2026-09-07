@@ -548,14 +548,13 @@ def run_forecast_refresh(ctx: TaskContext) -> TaskResult:
     that, so on 2026-09-07 the forecast still covered GW3-7 while the solve
     wanted GW4-8 and refused to score 32 unprojected players as zero. The
     same never-scheduled-artefact failure as claim extraction and the
-    ratings refit. Points objective with a 30s MILP cap: the forecast is the
-    model fit, not the MILP, and the from-scratch plan this also writes is
-    read by nothing on the dashboard. Local warehouse only; no network gate.
+    ratings refit. --forecast-only: the forecast is the model fit, not the MILP, so
+    no plan is solved and a solver with no incumbent can never lose it. Local warehouse only; no network gate.
     """
     step = run_step(
         "forecast_refresh",
         [ctx.python, "-m", "fpl_edge.cli.main", "solve", "--db", str(ctx.db_path),
-         "--mode", "points", "--seconds", "30", "--horizon", "5"],
+         "--forecast-only", "--horizon", "5"],
         timeout=1800,
     )
     outcome = "quiet" if step.ok else "error"
