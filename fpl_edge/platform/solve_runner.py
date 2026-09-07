@@ -33,7 +33,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 JOBS_DIR = REPO_ROOT / "data" / "warehouse" / "jobs"

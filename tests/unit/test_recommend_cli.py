@@ -136,14 +136,16 @@ def test_bounds_names_the_caps_and_the_best_found_caveat():
 
 
 def test_the_transfers_mode_maps_to_fpl_recommend_in_the_runner():
+    """The dashboard's Re-run is the squad-anchored solver, never the
+    from-scratch ideal-squad solve, holding chips (the owner's decision) at
+    the cap that actually solves the GW4-8 problem."""
     from fpl_edge.platform import solve_runner
-
-    assert "transfers" in solve_runner.MODES
-    assert solve_runner._default_command("transfers") == \
-        "uv run fpl recommend --commit"
-    # the existing modes still route to fpl solve, untouched
-    assert solve_runner._default_command("both") == "uv run fpl solve --mode both"
-
+    cmd = solve_runner._default_command("transfers")
+    assert cmd.startswith("uv run fpl recommend --commit")
+    assert "--no-chips" in cmd
+    assert "--seconds 150" in cmd and "--max-candidates 20" in cmd
+    assert "fpl solve" not in cmd
+    assert solve_runner._default_command("points").startswith("uv run fpl solve")
 
 def test_the_artefact_records_whether_chips_were_allowed():
     """The dashboard runs --no-chips (chips are the owner's decision); a plan

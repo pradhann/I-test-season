@@ -30,7 +30,7 @@ import typer
 
 from fpl_edge.store.warehouse import DEFAULT_DB
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 TRANSFER_PLAN_NAME = "transfer_plan.json"
 
@@ -174,7 +174,7 @@ def recommend_cmd(
         typer.echo("Reconstructing squad…")
         try:
             state = current_state(wh, season, now)
-        except Exception as exc:  # noqa: BLE001 - a dead endpoint must not raise
+        except Exception as exc:
             typer.echo(
                 "Could not reconstruct your squad from the FPL endpoints: "
                 f"{type(exc).__name__}: {exc}\nNo recommendation is offered — "
