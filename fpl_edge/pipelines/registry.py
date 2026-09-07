@@ -44,9 +44,9 @@ from __future__ import annotations
 
 import datetime as dt
 import os
-from pathlib import Path
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from fpl_edge.jobs import deadline_dag as dag

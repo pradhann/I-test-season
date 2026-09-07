@@ -17,9 +17,9 @@ Break-watch-restored during the build for each pinned behaviour:
 from __future__ import annotations
 
 import datetime as dt
+from types import SimpleNamespace
 
 import pytest
-from types import SimpleNamespace
 
 from fpl_edge.jobs import deadline_dag as dag
 from fpl_edge.jobs import post_gw
