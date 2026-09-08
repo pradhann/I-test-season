@@ -104,3 +104,48 @@
 .pl-grid td.clickable:focus-visible { outline: 2px solid var(--s1); outline-offset: -2px; }
 .pitch-select .pcard.selectable:focus-visible { outline: 2px solid var(--s1); outline-offset: 2px; }
 .pl-notice { min-height: 1.2em; }
+
+/* ---- the FPL transfers-page idiom: click a player, get a small menu ---- */
+.pl-gridhint { margin: 8px 0 6px; padding: 7px 10px; font-size: 12.5px; color: var(--ink);
+               background: var(--raised); border-left: 3px solid var(--s1);
+               border-radius: 0 7px 7px 0; }
+.pl-grid td.pl-playerbtn { cursor: pointer; }
+.pl-grid td.pl-playerbtn:hover { color: var(--accent-ink); }
+.pl-grid td.pl-playerbtn:focus-visible { outline: 2px solid var(--s1); outline-offset: -2px; }
+.pl-grid td.clickable { cursor: pointer; }
+
+.pl-menu { position: fixed; z-index: 60; min-width: 240px; max-width: 320px;
+           background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+           box-shadow: 0 8px 24px rgb(0 0 0 / .28), var(--shadow); padding: 6px; }
+.pl-menuhead { display: flex; align-items: center; gap: 8px; padding: 6px 8px 8px;
+               border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+.pl-menuhead .avatar { margin: 0; width: 30px; height: 30px; }
+.pl-menutext { min-width: 0; }
+.pl-menunm { font-weight: 650; font-size: 13px; white-space: nowrap; overflow: hidden;
+             text-overflow: ellipsis; }
+.pl-menuhead .pl-hint { margin: 1px 0 0; }
+.pl-menuitem { display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
+               width: 100%; text-align: left; padding: 7px 8px; border: 0; border-radius: 7px;
+               background: transparent; color: var(--ink); cursor: pointer; font: inherit; }
+.pl-menuitem:hover, .pl-menuitem:focus-visible { background: var(--raised); outline: none; }
+.pl-menuitem:focus-visible { box-shadow: inset 0 0 0 2px var(--s1); }
+.pl-menuitem .pl-menulbl { font-weight: 600; font-size: 13px; }
+.pl-menuitem.bad .pl-menulbl { color: var(--bad); }
+.pl-menuitem .pl-hint { margin: 0; }
+
+/* the removed player's slot stays open until a replacement is picked */
+.pl-grid tr.pl-pickrow td { color: var(--muted); }
+.pl-grid tr.pl-pickrow td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
+.pl-placeholder { font-style: italic; color: var(--muted); }
+.pl-undo { font-size: 11px; cursor: pointer; }
+.pl-pickchip { cursor: pointer; }
+.pitch-select .pcard.pl-empty { display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 2px; min-height: 104px; cursor: pointer;
+  background: var(--raised); border: 1px dashed var(--faint); box-shadow: none;
+  color: var(--muted); }
+.pitch-select .pcard.pl-empty .pl-emptypos { font: 700 15px/1 var(--mono); color: var(--warn); }
+.pitch-select .pcard.pl-empty .nm { white-space: normal; font-size: 10.5px; }
+.pitch-select .pcard.pl-empty .sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 78px; }
+.pitch-select .pcard.pl-empty .pl-undo { margin-top: 3px; }
+.pitch-select .pcard.pl-empty:focus-visible { outline: 2px solid var(--s1); outline-offset: 2px; }

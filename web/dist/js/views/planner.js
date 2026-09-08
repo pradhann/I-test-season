@@ -263,7 +263,9 @@ export default async function planner(host) {
   const poolBox = el("div");
   const noteLine = el("p", "sub pl-notice");
   noteLine.setAttribute("role", "status");
-  plannerCard.append(toolbar, summaryBox, pitchBox, pickerBox, gridBox, poolBox, noteLine);
+  const gridHint = el("p", "pl-gridhint",
+    "Click a player to remove, keep or ban. Click Solve to let the optimiser fill the plan.");
+  plannerCard.append(toolbar, summaryBox, gridHint, pitchBox, pickerBox, gridBox, poolBox, noteLine);
   plannerCard.appendChild(provenance(prov));
 
   function describePayload() {
@@ -271,7 +273,7 @@ export default async function planner(host) {
       `Consensus xPts per GW from the planner_grid panel` +
       (prov?.generated_at ? ` (as of ${shortTs(prov.generated_at)})` : "") +
       `; cell tint = magnitude, hover for the cross-source spread. ` +
-      `Click a cell to transfer that player out from that GW. Grid captain is ` +
+      `Click a player, or a cell, to remove, keep or ban him. Grid captain is ` +
       `auto-assigned to the XI's top xPts. ` + (res.notes || []).join(" ");
   }
   describePayload();
@@ -1050,8 +1052,7 @@ export default async function planner(host) {
       chip.onclick = () => { pitchGw = g; picking = null; adding = null; render(); };
       tabs.appendChild(chip);
     }
-    tabs.appendChild(el("span", "sub",
-      "  click a player to transfer out; click an IN card to undo"));
+    tabs.appendChild(el("span", "sub", "  the squad entering this gameweek"));
     box.appendChild(tabs);
 
     const codes = squadAt(pitchGw);
@@ -1067,6 +1068,11 @@ export default async function planner(host) {
     for (const posRow of ["GKP", "DEF", "MID", "FWD"]) {
       const row = el("div", "row");
       for (const pl of byPos[posRow]) {
+        if (picking && picking.out === pl.code) {
+          // FPL's empty shirt: the slot stays open until a replacement is picked
+          row.appendChild(placeholderCard(pl));
+          continue;
+        }
         const inMove = outThisGw.get(pl.code);      // this player IS an incoming
         const cardEl = playerCard(pl, {
           mark: pl.is_captain ? "C" : null,
@@ -1075,19 +1081,14 @@ export default async function planner(host) {
         cardEl.classList.add("selectable");
         cardEl.tabIndex = 0;
         cardEl.setAttribute("role", "button");
+        cardEl.setAttribute("aria-haspopup", "menu");
         if (inMove) {
           cardEl.classList.add("incoming");
-          cardEl.title = `in for ${byCode.get(inMove.out)?.name ?? inMove.out}; click to undo`;
-          cardEl.onclick = () => removeMoveByRef(inMove);
+          cardEl.title = `${pl.name}: in for ${byCode.get(inMove.out)?.name ?? inMove.out}; click for undo, keep or ban`;
         } else {
-          cardEl.title = `transfer ${pl.name} out from GW${pitchGw}`;
-          cardEl.onclick = () => {
-            picking = { gw: pitchGw, out: pl.code };
-            poolPos = pl.pos;             // the pool follows, FPL-site style
-            render();
-            pickerBox.scrollIntoView({ behavior: "smooth", block: "start" });
-          };
+          cardEl.title = `${pl.name}: remove, keep or ban (GW${pitchGw})`;
         }
+        cardEl.onclick = () => openMenu(cardEl, pl.code, pitchGw);
         cardEl.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); cardEl.click(); } };
         row.appendChild(cardEl);
       }
@@ -1098,6 +1099,145 @@ export default async function planner(host) {
   }
 
   let removeMoveByRef = () => {};       // bound inside renderGrid (shares cascade)
+
+  /* The empty slot a removed player leaves on the pitch (FPL's blank shirt),
+     with undo; clicking it scrolls to the replacement picker. */
+  function placeholderCard(pl) {
+    const d = el("div", "pcard pl-empty");
+    d.tabIndex = 0;
+    d.setAttribute("role", "button");
+    d.title = `${pl.pos} slot open: pick a replacement for ${pl.name}`;
+    d.appendChild(el("div", "pl-emptypos", pl.pos));
+    d.appendChild(el("div", "nm", "pick a replacement"));
+    d.appendChild(el("div", "sub", `for ${pl.name}`));
+    const undo = el("button", "chip pl-undo", "undo");
+    undo.type = "button";
+    undo.setAttribute("aria-label", `undo removing ${pl.name}`);
+    undo.onclick = e => { e.stopPropagation(); picking = null; notice = `${pl.name} stays.`; render(); };
+    d.appendChild(undo);
+    d.onclick = () => pickerBox.scrollIntoView({ behavior: "smooth", block: "start" });
+    d.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); d.click(); } };
+    return d;
+  }
+
+  // ---- player action menu: the FPL transfers-page idiom ----
+  // One small menu anchored to the clicked player: Remove (transfer out from
+  // that GW, then the same-position picker), Keep and Ban (the rail's solver
+  // constraints, reflected there at once), or undo of a planned move.
+  let menu = null;                    // {box, anchor, off} while open
+  function closeMenu(refocus) {
+    if (!menu) return;
+    const { box, anchor, off } = menu;
+    menu = null; off();
+    box.remove();
+    if (anchor?.isConnected) {
+      anchor.setAttribute("aria-expanded", "false");
+      if (refocus) anchor.focus();
+    }
+  }
+  function openMenu(anchor, code, gw) {
+    if (menu && menu.anchor === anchor) { closeMenu(true); return; }
+    closeMenu(false);
+    const p = byCode.get(code);
+    if (!p) return;
+    const box = el("div", "pl-menu");
+    box.setAttribute("role", "menu");
+    const headId = `pl-menuhead-${code}`;
+    box.setAttribute("aria-labelledby", headId);
+    const head = el("div", "pl-menuhead"); head.id = headId;
+    head.appendChild(faceImg(code, "avatar"));
+    const txt = el("div", "pl-menutext");
+    txt.appendChild(el("div", "pl-menunm", p.name));
+    const v = xp(code, gw);
+    txt.appendChild(el("div", "pl-hint",
+      [p.pos, p.team ?? "?", fmtPrice(p.price), `GW${gw}: ${v == null ? "?" : fmt1(v)} xPts`].join(" · ")));
+    head.appendChild(txt);
+    box.appendChild(head);
+
+    const items = [];
+    const item = (label, hint, cls, act) => {
+      const b = el("button", "pl-menuitem" + (cls ? " " + cls : ""));
+      b.type = "button"; b.setAttribute("role", "menuitem");
+      b.appendChild(el("span", "pl-menulbl", label));
+      if (hint) b.appendChild(el("span", "pl-hint", hint));
+      b.onclick = () => { closeMenu(false); act(); };
+      box.appendChild(b); items.push(b);
+    };
+    const inMove = moves.find(m => m.in === code);
+    const outMove = moves.find(m => m.out === code);
+    const inSquad = res.squad.some(s => s.code === code);
+    if (!outMove && squadAt(gw).has(code)) {
+      item("Remove", `transfer out from GW${gw}, then pick a ${p.pos}`, "bad", () => {
+        picking = { gw, out: code };
+        poolPos = p.pos;                // the pool follows, FPL-site style
+        notice = `${p.name} removed from GW${gw}: pick a replacement ${p.pos}, or undo.`;
+        render();
+        pickerBox.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    }
+    if (outMove)
+      item("Undo transfer out", `out in GW${outMove.gw} for ${byCode.get(outMove.in)?.name ?? outMove.in}`, "",
+           () => removeMoveByRef(outMove));
+    if (inMove)
+      item("Undo transfer in", `in for ${byCode.get(inMove.out)?.name ?? inMove.out} in GW${inMove.gw}`, "",
+           () => removeMoveByRef(inMove));
+    if (inSquad) {
+      const kept = rail.must_keep.includes(code);
+      item(kept ? "Release keep" : "Keep",
+           kept ? "the solver may sell him again" : "the solver locks him in every GW of the horizon", "", () => {
+        rail.must_keep = kept ? rail.must_keep.filter(c => c !== code) : [...rail.must_keep, code];
+        if (!kept) rail.ban = (rail.ban || []).filter(c => c !== code);
+        persist(); renderRail();
+        notice = kept ? `${p.name} released: the solver may sell him.`
+                      : `${p.name} kept: the solver locks him in every GW (see the rail).`;
+        noteLine.textContent = notice;
+      });
+    }
+    const banned = (rail.ban || []).includes(code);
+    item(banned ? "Unban" : "Ban",
+         banned ? "the solver may own him again" : "never owned by the solver; sold in the first GW if held", "", () => {
+      rail.ban = banned ? rail.ban.filter(c => c !== code) : [...(rail.ban || []), code];
+      if (!banned) rail.must_keep = rail.must_keep.filter(c => c !== code);
+      persist(); renderRail();
+      notice = banned ? `${p.name} unbanned.` : `${p.name} banned: the solver never owns him (see the rail).`;
+      noteLine.textContent = notice;
+    });
+
+    box.onkeydown = e => {
+      const i = items.indexOf(document.activeElement);
+      const n = items.length;
+      if (e.key === "Escape" || e.key === "Tab") { e.preventDefault(); closeMenu(true); }
+      else if (e.key === "ArrowDown") { e.preventDefault(); items[(i + 1) % n].focus(); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); items[(i - 1 + n) % n].focus(); }
+      else if (e.key === "Home") { e.preventDefault(); items[0].focus(); }
+      else if (e.key === "End") { e.preventDefault(); items[n - 1].focus(); }
+    };
+    const onDown = e => { if (!box.contains(e.target) && !anchor.contains(e.target)) closeMenu(false); };
+    const onKey = e => { if (e.key === "Escape" && !box.contains(e.target)) closeMenu(true); };
+    const onMove = () => closeMenu(false);
+    document.addEventListener("pointerdown", onDown, true);
+    document.addEventListener("keydown", onKey, true);
+    window.addEventListener("scroll", onMove, { capture: true, passive: true });
+    window.addEventListener("resize", onMove);
+    const off = () => {
+      document.removeEventListener("pointerdown", onDown, true);
+      document.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("scroll", onMove, { capture: true });
+      window.removeEventListener("resize", onMove);
+    };
+    menu = { box, anchor, off };
+    anchor.setAttribute("aria-expanded", "true");
+    host.appendChild(box);
+    // fixed to the viewport, beside the anchor, flipped up or left when short of room
+    const r = anchor.getBoundingClientRect();
+    const w = box.offsetWidth, h = box.offsetHeight;
+    let left = r.left, top = r.bottom + 4;
+    if (left + w > window.innerWidth - 8) left = Math.max(8, window.innerWidth - 8 - w);
+    if (top + h > window.innerHeight - 8) top = Math.max(8, r.top - h - 4);
+    box.style.left = `${Math.round(left)}px`;
+    box.style.top = `${Math.round(top)}px`;
+    items[0]?.focus();
+  }
 
   // ---- candidate picker ----
   function renderPicker() {
@@ -1110,14 +1250,14 @@ export default async function planner(host) {
     const funds = bankBefore(picking.gw) + (out ? tenths(out) : 0);
     box.appendChild(el("p", "sub",
       `Funds: ${fmtPrice(funds / 10)} (bank after earlier moves + sale at current price). ` +
-      `Same position only.`));
+      `Same position only, sorted by consensus xPts over the rest of the horizon.`));
 
     const search = el("input");
     search.type = "text"; search.placeholder = "search player / team"; search.size = 20;
     search.setAttribute("aria-label", "search a replacement");
     box.appendChild(el("div", "filters")).append(search,
-      (() => { const b = el("button", null, "Cancel");
-               b.onclick = () => { picking = null; render(); }; return b; })());
+      (() => { const b = el("button", null, "Undo remove");
+               b.onclick = () => { picking = null; notice = `${out?.name ?? "the player"} stays.`; render(); }; return b; })());
 
     const listBox = el("div", "scroll-x");
     box.appendChild(listBox);
@@ -1231,12 +1371,32 @@ export default async function planner(host) {
     const playerRow = (p, joinedGw) => {
       const tr = el("tr");
       const outMove = outAt.get(p.code);
+      const picked = !!picking && picking.out === p.code;   // removed, slot open
       if (outMove) tr.classList.add("pl-outrow");
       if (joinedGw != null) tr.classList.add("pl-inrow");
+      if (picked) tr.classList.add("pl-pickrow");
       const nameTd = el("td");
-      nameTd.appendChild(faceImg(p.code, "avatar"));
-      const nm = el("span", outMove ? "pl-struck" : "", p.name + (p.is_captain ? " (C)" : ""));
-      nameTd.appendChild(nm);
+      if (picked) {
+        nameTd.appendChild(el("span", "pl-placeholder", `${p.pos}: pick a replacement`));
+        nameTd.appendChild(document.createTextNode(" "));
+        const undo = el("button", "chip pl-undo", "undo");
+        undo.type = "button";
+        undo.setAttribute("aria-label", `undo removing ${p.name}`);
+        undo.onclick = () => { picking = null; notice = `${p.name} stays.`; render(); };
+        nameTd.appendChild(undo);
+        nameTd.title = `${p.name} removed from GW${picking.gw}; pick a replacement above or undo`;
+      } else {
+        nameTd.appendChild(faceImg(p.code, "avatar"));
+        const nm = el("span", outMove ? "pl-struck" : "", p.name + (p.is_captain ? " (C)" : ""));
+        nameTd.appendChild(nm);
+        nameTd.classList.add("pl-playerbtn");
+        nameTd.tabIndex = 0;
+        nameTd.setAttribute("role", "button");
+        nameTd.setAttribute("aria-haspopup", "menu");
+        nameTd.title = `${p.name}: remove, keep or ban (GW${pitchGw})`;
+        nameTd.onclick = () => openMenu(nameTd, p.code, pitchGw);
+        nameTd.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); nameTd.click(); } };
+      }
       if (joinedGw != null) {
         nameTd.appendChild(document.createTextNode(" "));
         nameTd.appendChild(el("span", "chip good", `IN GW${joinedGw}`));
@@ -1253,6 +1413,15 @@ export default async function planner(host) {
         const td = el("td", "num");
         const joined = joinedGw == null || g >= joinedGw;
         if (!joined) { td.textContent = "·"; td.style.color = "var(--faint)"; }
+        else if (picked && g > picking.gw) { td.textContent = "·"; td.style.color = "var(--faint)"; }
+        else if (picked && g === picking.gw) {
+          const chip = el("button", "chip warn pl-pickchip", "pick a replacement");
+          chip.type = "button";
+          chip.title = "the slot is open until a replacement is chosen";
+          chip.onclick = () => pickerBox.scrollIntoView({ behavior: "smooth", block: "start" });
+          td.appendChild(chip);
+        }
+        else if (picked) { xpCell(td, p.code, g); }
         else if (outMove && g > outMove.gw) { td.textContent = "·"; td.style.color = "var(--faint)"; }
         else if (outMove && g === outMove.gw) {
           const inn = byCode.get(outMove.in);
@@ -1265,8 +1434,9 @@ export default async function planner(host) {
           xpCell(td, p.code, g);
           td.classList.add("clickable");
           td.tabIndex = 0;
-          td.title = (td.title ? td.title + " · " : "") + `click to transfer out in GW${g}`;
-          td.onclick = () => { picking = { gw: g, out: p.code }; render(); };
+          td.setAttribute("aria-haspopup", "menu");
+          td.title = (td.title ? td.title + " · " : "") + `click to remove, keep or ban (GW${g})`;
+          td.onclick = () => openMenu(td, p.code, g);
           td.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); td.click(); } };
         }
         tr.appendChild(td);
@@ -1444,6 +1614,7 @@ export default async function planner(host) {
   }
 
   function render() {
+    closeMenu(false);
     renderSolverCards();
     renderToolbar();
     renderSummary();
