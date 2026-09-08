@@ -542,7 +542,7 @@ export default async function home(host) {
         }
         if (n.gain_over_roll != null)
           numBits.push(`${fmtSigned(n.gain_over_roll, 1)} xPts vs rolling`
-            + `, ${fcName(plan)}`);
+            + `, ${fcName(brief?.solve?.plan)}`);
         if (n.optimality_gap_pct != null)
           numBits.push(`${fmt1(n.optimality_gap_pct)}% gap`);
         if (n.age_hours != null) numBits.push(`${fmtSpan(n.age_hours)} old`);
@@ -615,7 +615,7 @@ export default async function home(host) {
         if (ln.rule === "solver_plan_captain" && n.pick_solver_xpts != null)
           numBits.push(`${fmt1(n.pick_solver_xpts)} xPts`
             + `${n.solver_gw != null ? ` GW${n.solver_gw}` : ""}`
-            + `, ${fcName(plan)}`);
+            + `, ${fcName(brief?.solve?.plan)}`);
         if (n.pick_xpts != null)
           numBits.push(`consensus ${fmt1(n.pick_xpts)} xPts`);
         if (n.pick_p_haul != null && haulFresh)
