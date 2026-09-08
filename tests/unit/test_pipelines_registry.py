@@ -698,3 +698,23 @@ def test_audio_retention_sweeps_the_cache_beside_the_runs_database(tmp_path, mon
     runner.run_task("audio_retention", db_path=db, trigger="cli")
     assert seen["cache_dir"] == tmp_path / "raw" / "content" / "asr_audio"
     assert not str(seen["cache_dir"]).startswith("data/")
+
+
+def test_forecast_refresh_commits_the_consensus_currency(tmp_path, monkeypatch):
+    """The daily forecast is denominated in the provider consensus -- the
+    number every other dashboard surface shows -- with equal weights: three
+    scored gameweeks are too thin a track record to default to earned ones."""
+    monkeypatch.setenv("FPL_EDGE_DISABLE_NETWORK_INGEST", "0")
+    seen: list[list[str]] = []
+
+    def capture(name, argv, *, timeout=None):
+        seen.append(argv)
+        return dag.Step(name=name, ok=True, seconds=1.0, detail="done")
+
+    monkeypatch.setattr(registry, "run_step", capture)
+    result = registry.run_forecast_refresh(_ctx(tmp_path))
+    assert result.outcome == "quiet"
+    (argv,) = seen
+    assert "solve" in argv and "--forecast-only" in argv
+    assert argv[argv.index("--forecast-source") + 1] == "consensus"
+    assert argv[argv.index("--horizon") + 1] == "5"

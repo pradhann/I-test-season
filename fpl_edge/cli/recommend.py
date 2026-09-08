@@ -61,6 +61,35 @@ def register(app: typer.Typer) -> None:
     app.command("recommend")(recommend_cmd)
 
 
+def forecast_provenance(frame, gws=None) -> dict[str, Any]:
+    """What currency the committed forecast is in, read off its own rows.
+
+    ``fpl solve --forecast-source`` stamps every row with ``forecast_source``
+    (the mode) and ``source`` (``engine`` | ``consensus`` | ``engine_fill``).
+    A parquet written before those columns existed was written by the engine
+    model -- the only writer there ever was -- so it reads as ``engine`` with
+    an unmeasured fill share (None, never 0.0). Restricted to the horizon
+    gameweeks when given, so the share describes the rows the solve used.
+    """
+    sub = frame
+    if gws is not None and "gw" in frame.columns:
+        want = {int(g) for g in gws}
+        sub = frame[frame["gw"].astype(int).isin(want)]
+    if "forecast_source" not in sub.columns or "source" not in sub.columns:
+        return {"forecast_source": "engine", "engine_fill_share": None,
+                "rows_by_source": None}
+    modes = sub["forecast_source"].dropna().unique().tolist()
+    mode = modes[0] if len(modes) == 1 else "mixed"
+    counts = {str(k): int(v) for k, v in sub["source"].value_counts().items()}
+    n = int(sum(counts.values()))
+    fill = counts.get("engine_fill", 0)
+    return {
+        "forecast_source": str(mode),
+        "engine_fill_share": (fill / n) if n else None,
+        "rows_by_source": counts,
+    }
+
+
 def _serialize_move(move) -> dict[str, Any]:
     """One solved move, in the artefact's vocabulary. Money as .tenths."""
     return {
@@ -85,14 +114,20 @@ def serialize_recommendation(
     max_candidates: int,
     seconds: float,
     constraints: dict[str, Any] | None = None,
+    forecast: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The transfer_plan.json payload, pure and testable without a MILP.
 
     ``chosen`` carries the first-gameweek decision (captain, vice, XI) straight
     from the plan's own :class:`~fpl_edge.opt.plan.GwDecision` -- the read side
     never re-derives a lineup. Money serialises as tenths; the objective stays
-    in the mode's own currency, named by ``objective_mode``.
+    in the mode's own currency, named by ``objective_mode``; the forecast that
+    currency was computed from is named by ``forecast_source`` (``engine`` |
+    ``consensus`` | ``consensus_weighted``) with ``forecast_engine_fill_share``
+    saying how much of it the engine model filled in -- so a gain reads
+    "vs rolling, consensus forecast", not just "vs rolling".
     """
+    fc = dict(forecast or {})
     d0 = rec.chosen.plan.decisions[0]
     chosen = _serialize_move(rec.chosen)
     chosen.update({
@@ -131,6 +166,15 @@ def serialize_recommendation(
                                if rec.roll is not None else None),
         }),
         "chips_allowed": bool(chips_allowed),
+        # The currency's provenance: which forecast the objective summed.
+        "forecast_source": (str(fc["forecast_source"])
+                            if fc.get("forecast_source") is not None else None),
+        "forecast_engine_fill_share": (
+            float(fc["engine_fill_share"])
+            if fc.get("engine_fill_share") is not None else None),
+        "forecast_rows_by_source": (
+            {str(k): int(v) for k, v in fc["rows_by_source"].items()}
+            if fc.get("rows_by_source") else None),
         # What the caller asked for, verbatim, so the Planner can say what a
         # standing plan was solved under before offering it as guidance.
         "constraints": dict(constraints or {}),
@@ -240,8 +284,9 @@ def recommend_cmd(
             "report's Transfers section reads."
         )
         raise typer.Exit(code=2)
+    fc_frame = pd.read_parquet(fc_path)
     points_forecast = TablePointsForecast(
-        frame=pd.read_parquet(fc_path), name="table:forecast.parquet"
+        frame=fc_frame, name="table:forecast.parquet"
     )
 
     with Warehouse.read_copy(db) as wh:
@@ -262,6 +307,12 @@ def recommend_cmd(
         except Exception:  # noqa: BLE001 - no calendar; use the state's own gw
             gw = int(state.gw)
         gws = list(range(gw, gw + horizon))
+        provenance = forecast_provenance(fc_frame, gws)
+        share = provenance.get("engine_fill_share")
+        typer.echo(
+            f"forecast source: {provenance['forecast_source']}"
+            + ("" if share is None else f" (engine_fill {share:.1%} of horizon rows)")
+        )
 
         cfg_kwargs: dict[str, object] = {
             "mode": ObjectiveMode.EXPECTED_POINTS,
@@ -356,6 +407,7 @@ def recommend_cmd(
             rec, generated_at=now, max_candidates=int(max_candidates),
             seconds=float(seconds), chips_allowed=bool(chips),
             max_hits=int(max_hits), unconstrained=unconstrained,
+            forecast=provenance,
             constraints={
                 "horizon": int(horizon),
                 "max_hits": int(max_hits),
@@ -368,7 +420,10 @@ def recommend_cmd(
                 "candidates": int(candidates),
             },
         )
-        payload["notes"] = [*payload["notes"], *extra_notes]
+        fc_note = f"forecast source: {provenance['forecast_source']}"
+        if share is not None:
+            fc_note += f"; engine_fill {share:.1%} of horizon rows"
+        payload["notes"] = [*payload["notes"], *extra_notes, fc_note]
         out = root / "data" / "warehouse" / TRANSFER_PLAN_NAME
         out.parent.mkdir(parents=True, exist_ok=True)
         tmp = out.with_suffix(".json.tmp")

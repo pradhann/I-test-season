@@ -22,21 +22,44 @@ from __future__ import annotations
 import datetime as dt
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import typer
 
 from fpl_edge.store.warehouse import DEFAULT_DB
 
+if TYPE_CHECKING:
+    import pandas as pd
 
-def _commit_forecast(problem, root) -> None:
-    """Persist the forecast the plan is (or would be) solved against.
 
-    Straight from the problem's own arrays, zero extra simulation. The
-    squad-anchored solver (``fpl recommend``) and the weekly report read this,
-    so the plan and the transfer advice share ONE source of truth. Committed
-    BEFORE the MILP: on 2026-09-07 a 30s solve found no incumbent and the
-    fitted forecast was thrown away with the plan.
-    """
+#: The currencies ``forecast.parquet`` may be denominated in.
+#:
+#: ``engine``             the engine's own points model (Dixon-Coles goals x GBM
+#:                        minutes x rates, sampled) -- the historical default.
+#: ``consensus``          the equal-weight provider mean, ``sem_projection_consensus``,
+#:                        the number every other dashboard surface shows.
+#: ``consensus_weighted`` the earned-weight blend, ``sem_projection_consensus_weighted``.
+#:
+#: On 2026-09-07 the engine model ran ~40% hot against the provider consensus in
+#: every position (GW4 means: GK 1.42 vs 0.97, DEF 2.00 vs 1.46, MID 1.97 vs
+#: 1.44, FWD 2.28 vs 1.33) and rated a GK away at Chelsea 29.2 xPts over GW4-8
+#: against a four-provider 12.1. The squad-anchored solver was optimising a
+#: currency the owner never saw. A consensus-denominated forecast lets the
+#: solver and the dashboard argue in the same units.
+FORECAST_SOURCES = ("engine", "consensus", "consensus_weighted")
+
+#: Sidecar written beside forecast.parquet: the mode, the row split, the
+#: coverage per gameweek. The parquet carries the same facts per row.
+FORECAST_META_NAME = "forecast.meta.json"
+
+_CONSENSUS_VIEW = {
+    "consensus": "sem_projection_consensus",
+    "consensus_weighted": "sem_projection_consensus_weighted",
+}
+
+
+def engine_forecast_frame(problem) -> pd.DataFrame:
+    """The problem's own arrays as a long (code, gw) table. Zero simulation."""
     import pandas as pd
 
     frames = []
@@ -47,12 +70,184 @@ def _commit_forecast(problem, root) -> None:
             "xpts": problem.xpts[:, k],
             "p_play": problem.p_play[:, k],
         }))
-    fc = pd.concat(frames, ignore_index=True)
+    return pd.concat(frames, ignore_index=True)
+
+
+def consensus_forecast_frame(wh, *, season: str, as_of, gws, source: str) -> pd.DataFrame:
+    """Provider consensus for the horizon, one row per (code, gw) the providers cover.
+
+    ``xpts`` is the view's ``xpts_mean`` verbatim. ``p_appear`` is the mean of
+    the providers' own P(any minutes) where at least one serves it, else null
+    -- the caller decides what fills a null, this function never does. Rows
+    whose ``xpts_mean`` is null (the weighted view with no earned provider on
+    the player) are dropped: not covered is not covered.
+    """
+    view = _CONSENSUS_VIEW[source]
+    extra = (", c.n_weighted_sources, c.weights_fit_id"
+             if source == "consensus_weighted" else "")
+    lo, hi = int(min(gws)), int(max(gws))
+    frame = wh.sql(
+        f"""
+        WITH c AS (
+            SELECT gw, code, xpts_mean, n_sources{extra.replace('c.', '')}
+            FROM {view}(?::TIMESTAMPTZ)
+            WHERE season = ? AND gw BETWEEN ? AND ? AND xpts_mean IS NOT NULL
+        ), pa AS (
+            SELECT gw, code, AVG(p_appear) AS p_appear
+            FROM sem_projections(?::TIMESTAMPTZ)
+            WHERE season = ? AND gw BETWEEN ? AND ? AND p_appear IS NOT NULL
+            GROUP BY gw, code
+        )
+        SELECT c.gw, c.code, c.xpts_mean AS xpts, pa.p_appear, c.n_sources{extra}
+        FROM c LEFT JOIN pa ON pa.gw = c.gw AND pa.code = c.code
+        """,
+        [as_of, season, lo, hi, as_of, season, lo, hi],
+    )
+    want = {int(g) for g in gws}
+    frame = frame[frame["gw"].astype(int).isin(want)].copy()
+    frame["code"] = frame["code"].astype(int)
+    frame["gw"] = frame["gw"].astype(int)
+    if "p_appear" in frame.columns:
+        frame["p_appear"] = frame["p_appear"].astype(float).clip(lower=0.0, upper=1.0)
+    return frame.reset_index(drop=True)
+
+
+def build_forecast(problem, *, source: str = "engine", wh=None, season: str | None = None,
+                   as_of=None) -> tuple[pd.DataFrame, dict]:
+    """The forecast table for ``forecast.parquet`` plus its provenance record.
+
+    Every row is denominated in exactly ONE source and says which:
+
+    * ``engine``: every row from the problem's arrays, ``source = "engine"``.
+    * ``consensus*``: a (code, gw) the providers cover takes the view's
+      ``xpts_mean`` (``source = "consensus"``); one they do not is FILLED
+      from the engine arrays (``source = "engine_fill"``). ``p_play`` on a
+      consensus row is the providers' mean ``p_appear`` when any serves it,
+      else the engine minutes model -- ``p_play_source`` records which.
+
+    Never a scale, never a blend: a row's xpts is one source's number, and
+    the ``forecast_source`` column names the mode the whole table was built
+    under so a reader can tell "engine" from "engine_fill inside a consensus
+    forecast" at a glance.
+    """
+    import numpy as np
+    import pandas as pd
+
+    if source not in FORECAST_SOURCES:
+        raise ValueError(f"forecast source must be one of {FORECAST_SOURCES}, not {source!r}")
+    eng = engine_forecast_frame(problem)
+    eng["code"] = eng["code"].astype(int)
+    eng["gw"] = eng["gw"].astype(int)
+    gws = [int(g) for g in problem.gws]
+
+    if source == "engine":
+        out = eng.assign(source="engine", forecast_source="engine",
+                         p_play_source="engine", n_sources=0)
+        meta = _forecast_meta(out, source=source, gws=gws)
+        return out[_FORECAST_COLUMNS], meta
+
+    if wh is None or season is None or as_of is None:
+        raise ValueError("a consensus forecast needs the warehouse, season and as_of")
+    cons = consensus_forecast_frame(wh, season=season, as_of=as_of, gws=gws, source=source)
+    cons = cons[cons["code"].isin(set(eng["code"]))]
+    merged = eng.merge(
+        cons.rename(columns={"xpts": "xpts_cons"}), on=["code", "gw"], how="left",
+    )
+    covered = merged["xpts_cons"].notna().to_numpy()
+    p_served = covered & merged["p_appear"].notna().to_numpy()
+    out = pd.DataFrame({
+        "code": merged["code"].astype(int),
+        "gw": merged["gw"].astype(int),
+        "xpts": np.where(covered, merged["xpts_cons"].to_numpy(dtype=float),
+                         merged["xpts"].to_numpy(dtype=float)),
+        "p_play": np.where(p_served, merged["p_appear"].to_numpy(dtype=float),
+                           merged["p_play"].to_numpy(dtype=float)),
+        "source": np.where(covered, "consensus", "engine_fill"),
+        "forecast_source": source,
+        "p_play_source": np.where(p_served, "consensus", "engine"),
+        "n_sources": merged["n_sources"].fillna(0).astype(int),
+    })
+    meta = _forecast_meta(out, source=source, gws=gws)
+    if source == "consensus_weighted" and "weights_fit_id" in merged.columns:
+        fits = merged["weights_fit_id"].dropna().unique().tolist()
+        meta["weights_fit_id"] = fits[0] if len(fits) == 1 else fits
+    return out[_FORECAST_COLUMNS], meta
+
+
+_FORECAST_COLUMNS = ["code", "gw", "xpts", "p_play", "source", "forecast_source",
+                     "p_play_source", "n_sources"]
+
+
+def _forecast_meta(frame, *, source: str, gws: list[int]) -> dict:
+    by_source = frame["source"].value_counts().to_dict()
+    n = len(frame)
+    fill = int(by_source.get("engine_fill", 0))
+    per_gw = {}
+    for g, grp in frame.groupby("gw"):
+        counts = grp["source"].value_counts().to_dict()
+        per_gw[str(int(g))] = {k: int(v) for k, v in counts.items()}
+    return {
+        "forecast_source": source,
+        "generated_at": dt.datetime.now(dt.UTC).isoformat(),
+        "gws": gws,
+        "rows": n,
+        "rows_by_source": {k: int(v) for k, v in by_source.items()},
+        "engine_fill_share": (fill / n) if n else None,
+        "p_play_from_consensus_rows": int((frame["p_play_source"] == "consensus").sum()),
+        "coverage_by_gw": per_gw,
+    }
+
+
+def describe_forecast(meta: dict) -> str:
+    """One line a human can read: the mode and how much of it is the fill."""
+    rows = meta["rows_by_source"]
+    parts = [f"{k}={v}" for k, v in sorted(rows.items())]
+    share = meta.get("engine_fill_share")
+    fill = ("" if share is None or share == 0
+            else f"; engine_fill {share:.1%} of rows")
+    gws_fill = [g for g, c in meta.get("coverage_by_gw", {}).items()
+                if c.get("engine_fill") and not c.get("consensus")]
+    tail = f"; GW{','.join(gws_fill)} entirely engine_fill" if gws_fill else ""
+    return f"forecast source {meta['forecast_source']}: {', '.join(parts)}{fill}{tail}"
+
+
+def _commit_forecast(problem, root, *, source: str = "engine", wh=None,
+                     season: str | None = None, as_of=None) -> pd.DataFrame:
+    """Persist the forecast the plan is (or would be) solved against.
+
+    The squad-anchored solver (``fpl recommend``) and the weekly report read
+    this, so the plan and the transfer advice share ONE source of truth.
+    Committed BEFORE the MILP: on 2026-09-07 a 30s solve found no incumbent
+    and the fitted forecast was thrown away with the plan. The sidecar
+    ``forecast.meta.json`` carries the provenance the CLI prints.
+    """
+    fc, meta = build_forecast(problem, source=source, wh=wh, season=season, as_of=as_of)
     fc_path = root / "data" / "warehouse" / "forecast.parquet"
     fc_path.parent.mkdir(parents=True, exist_ok=True)
     fc.to_parquet(fc_path, index=False)
+    (fc_path.parent / FORECAST_META_NAME).write_text(json.dumps(meta, indent=2))
     typer.echo(f"forecast committed: {fc_path} "
                f"({len(fc)} rows, GW{int(problem.gws[0])}-{int(problem.gws[-1])})")
+    typer.echo(describe_forecast(meta))
+    return fc
+
+
+def _problem_with_forecast(problem, frame):
+    """The same problem, its xpts/p_play read back from a committed table.
+
+    Used when the solve runs in a consensus currency: the MILP must optimise
+    the numbers the artefact says it optimised, never the engine's while the
+    parquet says consensus.
+    """
+    import dataclasses
+
+    from fpl_edge.opt.problem import _pivot
+
+    return dataclasses.replace(
+        problem,
+        xpts=_pivot(frame, problem.players, problem.gws, "xpts", float),
+        p_play=_pivot(frame, problem.players, problem.gws, "p_play", float),
+    )
 
 
 def register(app: typer.Typer) -> None:
@@ -79,6 +274,16 @@ def solve(
              "identity), else you are asserting you are level with the pace "
              "and the artefact records that as an assumption.",
     ),
+    forecast_source: str = typer.Option(
+        "engine", "--forecast-source",
+        help="engine | consensus | consensus_weighted. The currency the committed "
+             "forecast (and any plan solved here) is denominated in. 'engine' is "
+             "the engine's own points model; 'consensus' the equal-weight provider "
+             "mean every dashboard surface shows; 'consensus_weighted' the "
+             "earned-weight blend. Consensus modes FILL uncovered (player, gw) "
+             "rows from the engine model and label them engine_fill; nothing is "
+             "scaled or blended within a row.",
+    ),
     forecast_only: bool = typer.Option(
         False, "--forecast-only",
         help="Fit the models and commit forecast.parquet, then stop: no MILP. "
@@ -97,6 +302,10 @@ def solve(
     """
     if mode not in ("both", "rank", "points"):
         raise typer.BadParameter("mode must be both, rank or points")
+    if forecast_source not in FORECAST_SOURCES:
+        raise typer.BadParameter(
+            f"forecast-source must be one of {', '.join(FORECAST_SOURCES)}"
+        )
 
     # Heavy imports live here so `fpl --help` stays fast.
     from fpl_edge.models.minutes import GBMMinutesModel, TrainingSetBuilder
@@ -149,10 +358,22 @@ def solve(
             state=None,
         )
 
+        fc_kwargs = {"source": forecast_source, "wh": wh, "season": season,
+                     "as_of": snap.as_of}
+        root = Path(__file__).resolve().parents[2]
         if forecast_only:
-            _commit_forecast(problem, Path(__file__).resolve().parents[2])
+            _commit_forecast(problem, root, **fc_kwargs)
             typer.echo("forecast-only: models fitted and forecast committed; no plan solved.")
             return
+
+        # Commit first (a solve with no incumbent must not lose the fit), and
+        # in a consensus currency re-read the arrays so the MILP optimises
+        # exactly what the parquet says it did.
+        committed = _commit_forecast(problem, root, **fc_kwargs) if commit else None
+        if forecast_source != "engine":
+            if committed is None:
+                committed, _ = build_forecast(problem, **fc_kwargs)
+            problem = _problem_with_forecast(problem, committed)
 
         plans: dict[str, object] = {}
         configs: dict[str, OptimizerConfig] = {}
@@ -252,6 +473,7 @@ def solve(
                 "objective_mode": label,
                 "objective": float(plan.objective),
                 "n_sims": int(n_sims),
+                "forecast_source": forecast_source,
                 "solver": f"status={plan.status} gap={plan.mip_gap}",
                 "notes": notes,
                 "gw1": {
@@ -264,16 +486,7 @@ def solve(
                     "bank_after": int(d0.bank_after.tenths),
                 },
             }
-            root = Path(__file__).resolve().parents[2]
             out = root / "data" / "warehouse" / "gw1_plan.json"
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(json.dumps(artefact, indent=2))
             typer.echo(f"\nplan committed: {out} (mode {label})")
-
-            # Persist the forecast the plan was solved against, straight from
-            # the problem's own arrays (zero extra simulation). The weekly
-            # report's transfer section reads this, so the plan and the
-            # transfer advice share ONE source of truth -- they used to read
-            # different ones, which is how the report could show a full squad
-            # while claiming no forecast was configured.
-            _commit_forecast(problem, root)

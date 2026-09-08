@@ -204,3 +204,51 @@ def test_parse_codes_takes_integers_only():
     assert parse_codes("", flag="--ban") == frozenset()
     with pytest.raises(typer.BadParameter):
         parse_codes("Salah", flag="--must-keep")
+
+
+def test_the_artefact_names_the_forecast_currency_and_its_fill_share():
+    """The gain reads 'vs rolling, consensus forecast', not just 'vs rolling'."""
+    art = serialize_recommendation(
+        _rec(), generated_at=dt.datetime(2026, 9, 1, 12, 0, tzinfo=UTC),
+        max_candidates=25, seconds=60.0,
+        forecast={"forecast_source": "consensus", "engine_fill_share": 0.0125,
+                  "rows_by_source": {"consensus": 2459, "engine_fill": 31}},
+    )
+    assert art["forecast_source"] == "consensus"
+    assert art["forecast_engine_fill_share"] == pytest.approx(0.0125)
+    assert art["forecast_rows_by_source"] == {"consensus": 2459, "engine_fill": 31}
+    json.dumps(art)
+
+
+def test_without_provenance_the_forecast_fields_are_null_not_guessed():
+    art = _serialize(_rec())
+    assert art["forecast_source"] is None
+    assert art["forecast_engine_fill_share"] is None
+    assert art["forecast_rows_by_source"] is None
+
+
+def test_forecast_provenance_is_read_off_the_parquets_own_rows():
+    import pandas as pd
+
+    from fpl_edge.cli.recommend import forecast_provenance
+
+    frame = pd.DataFrame({
+        "code": [1, 1, 2, 2, 3, 3],
+        "gw": [4, 5, 4, 5, 4, 5],
+        "xpts": [1.0] * 6, "p_play": [0.9] * 6,
+        "source": ["consensus", "consensus", "consensus", "engine_fill",
+                   "engine_fill", "engine_fill"],
+        "forecast_source": ["consensus"] * 6,
+    })
+    prov = forecast_provenance(frame, gws=[4, 5])
+    assert prov["forecast_source"] == "consensus"
+    assert prov["engine_fill_share"] == pytest.approx(0.5)
+    assert prov["rows_by_source"] == {"consensus": 3, "engine_fill": 3}
+    # restricted to the horizon actually solved
+    prov4 = forecast_provenance(frame, gws=[4])
+    assert prov4["engine_fill_share"] == pytest.approx(1 / 3)
+    # a legacy parquet (no provenance columns) was written by the engine
+    legacy = frame[["code", "gw", "xpts", "p_play"]]
+    prov_l = forecast_provenance(legacy, gws=[4, 5])
+    assert prov_l["forecast_source"] == "engine"
+    assert prov_l["engine_fill_share"] is None, "unmeasured is null, never 0.0"

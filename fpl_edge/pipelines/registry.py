@@ -550,11 +550,19 @@ def run_forecast_refresh(ctx: TaskContext) -> TaskResult:
     same never-scheduled-artefact failure as claim extraction and the
     ratings refit. --forecast-only: the forecast is the model fit, not the MILP, so
     no plan is solved and a solver with no incumbent can never lose it. Local warehouse only; no network gate.
+
+    ``--forecast-source consensus``: the equal-weight provider mean, the number
+    every other dashboard surface shows. The engine's own model ran ~40% hot
+    against it in every position on 2026-09-07 and sold a GK for one it rated
+    29.2 over five gameweeks against the providers' 12.1; the solver was
+    optimising a currency the owner never saw. Equal weights, not earned:
+    three gameweeks of scoring is too thin a track record to default to.
+    Uncovered (player, gw) rows are filled from the engine model and labelled.
     """
     step = run_step(
         "forecast_refresh",
         [ctx.python, "-m", "fpl_edge.cli.main", "solve", "--db", str(ctx.db_path),
-         "--forecast-only", "--horizon", "5"],
+         "--forecast-only", "--forecast-source", "consensus", "--horizon", "5"],
         timeout=1800,
     )
     outcome = "quiet" if step.ok else "error"
