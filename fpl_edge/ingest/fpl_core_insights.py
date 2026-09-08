@@ -315,15 +315,23 @@ def ingest(season: str = "2026-27", *, db: str | None = None,
                 pms, players, season=season, gw=gw,
                 as_of=got.fetched_at, valid_codes=valid_codes,
             )
-            n = warehouse.append("fact_player_match_stats", rows)
+            # change_dedup: a settled gameweek's rows never change again, but
+            # the fetch stamps a new as_of every night, so a plain append wrote
+            # the same 400 GW1 rows on each of seven consecutive nights --
+            # 3,113 stored rows for 400 facts, and seven identical PIT
+            # snapshots for any reader to pick between. Write-on-change keeps
+            # the first observation and counts the rest as unchanged.
+            n, unchanged = warehouse.append_measured(
+                "fact_player_match_stats", rows, change_dedup=True)
             total += n
             note = ""
             if not unresolved.empty:
                 note = (f", {len(unresolved)} unresolved: "
                         f"{unresolved.head(5).to_dict('records')}")
             print(f"  GW{gw}: {len(pms)} parsed, {n} appended, "
+                  f"{unchanged} unchanged, "
                   f"{rows['match_id'].nunique()} matches, "
-                  f"{int(rows['xg'].notna().sum())} with xg{note}")
+                  f"{int(rows['xg'].notna().sum())} with a shot{note}")
     print(f"{SOURCE}: {total} rows appended")
     return total
 

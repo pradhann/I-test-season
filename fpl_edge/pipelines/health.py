@@ -12,6 +12,9 @@ The states, in precedence order (first match wins):
 * ``never_ran``  -- no fetch_run row exists for the pipeline.
 * ``failing``    -- the most recent finished run has status ``error``;
   ``consecutive_failures`` counts the unbroken error streak.
+* ``refused``    -- the most recent run finished without an error and
+  without fetching: ``no_source`` or ``refused``. Not a failure and not a
+  success, so it is neither red nor green; the reason says which and why.
 * ``stale``      -- the last successful run is older than the task's own
   cadence times a grace factor. The cadence comes from the task's due rule:
   an :class:`~fpl_edge.pipelines.registry.Interval` task is stale past
@@ -30,6 +33,7 @@ panel script can be built against it without reading this module.
 from __future__ import annotations
 
 import datetime as dt
+import re
 from typing import Any
 
 import pandas as pd
@@ -55,6 +59,88 @@ CALENDAR_STALE_H = 30.0
 
 #: How many recent OK runs feed the duration average.
 AVG_OVER_RUNS = 20
+
+#: The line the runner writes above the log tail it appends to a non-ok
+#: ledger note (runner.NOTE_TAIL_LINES). A reason reads the detail above it;
+#: the tail belongs to the drawer, which serves the whole file.
+NOTE_TAIL_MARKER = "--- log tail ---"
+
+#: How many characters of a summarised note a reason carries.
+REASON_NOTE_CHARS = 160
+
+#: Ledger statuses that mean the run did its work.
+SUCCESS_STATUSES = ("ok", "skipped_fresh")
+
+#: Ledger statuses for a run that neither failed nor fetched.
+REFUSAL_STATUSES = ("no_source", "refused")
+
+#: Ledger status -> the words a reason uses for it. The enum itself never
+#: reaches a reader.
+STATUS_PHRASE: dict[str, str] = {
+    "ok": "last run succeeded inside its cadence",
+    "skipped_fresh": "last run skipped the fetch, the data was already fresh",
+    "no_source": "last run fetched nothing, no source was available",
+    "refused": "last run was refused before it fetched",
+}
+
+#: Outcome tokens the runner prefixes to a ledger note, stripped before the
+#: note is read back out.
+_OUTCOME_PREFIXES = ("ok", "error", "quiet", "delivered", "no_source",
+                     "refused", "skipped_fresh")
+
+
+def span_words(hours: float) -> str:
+    """A span in the vocabulary the rest of the app reads (app.js fmtSpan):
+    minutes under the hour, "3h 20m" under two days, "4d 16h" beyond, whole
+    days past a fortnight. "43.2h" is arithmetic, not a reading."""
+    h = max(0.0, float(hours))
+    if h < 1:
+        return f"{max(1, round(h * 60))}m"
+    if h < 48:
+        whole = int(h)
+        mins = round((h - whole) * 60)
+        if mins == 60:
+            whole, mins = whole + 1, 0
+        return f"{whole}h {mins}m"
+    if h < 14 * 24:
+        days = int(h // 24)
+        rest = round(h - days * 24)
+        if rest == 24:
+            days, rest = days + 1, 0
+        return f"{days}d {rest}h" if rest else f"{days}d"
+    return f"{round(h / 24)} days"
+
+
+def summarise_note(note: Any, *, limit: int = REASON_NOTE_CHARS) -> str:
+    """One readable line out of a ledger note.
+
+    The runner writes ``"{outcome}: {detail}"`` and, on a non-ok run, appends
+    the last log lines under :data:`NOTE_TAIL_MARKER`. A fixed slice of that
+    note therefore lands inside the tail or mid-traceback, which is how a
+    caret ruler and a half path reached the panel. This takes the detail
+    above the marker and reduces it to the line that says what happened: the
+    last line of a traceback, which is the exception and its message,
+    otherwise the first line. The outcome prefix goes, because the state is
+    already said in words beside it.
+    """
+    detail = str(note or "").split(NOTE_TAIL_MARKER)[0].strip()
+    head, sep, rest = detail.partition(": ")
+    if sep and head in _OUTCOME_PREFIXES:
+        detail = rest.strip()
+    lines = [ln.strip() for ln in detail.splitlines() if ln.strip()]
+    lines = [ln for ln in lines if set(ln) != {"^"}]
+    if not lines:
+        return ""
+    traceback_like = any(ln.startswith(('File "', "Traceback"))
+                         for ln in lines)
+    line = lines[-1] if traceback_like else lines[0]
+    cls, sep, msg = line.partition(": ")
+    if traceback_like and sep and re.fullmatch(r"[A-Za-z_][\w.]*", cls):
+        # "pkg.mod.BriefingIntelError: ..." reads as "BriefingIntelError: ..."
+        line = f"{cls.rsplit('.', 1)[-1]}: {msg}".strip()
+    if len(line) <= limit:
+        return line
+    return line[:limit].rstrip() + "..."
 
 
 # --------------------------------------------------------------------------
@@ -260,11 +346,14 @@ def task_health(wh, task: Task, *, now: dt.datetime | None = None) -> dict[str, 
         return {"state": "never_ran", "reason": "no ledger row yet",
                 "consecutive_failures": 0}
 
+    last = runs.iloc[0]
+    last_status = str(last.get("status") or "")
     streak = consecutive_failures(wh, task.id)
     if streak > 0:
-        note = str(runs.iloc[0].get("note") or "")[:120]
+        said = f"last run errored ({streak} consecutive)"
+        detail = summarise_note(last.get("note"))
         return {"state": "failing",
-                "reason": f"last run errored ({streak} consecutive): {note}",
+                "reason": f"{said}: {detail}" if detail else said,
                 "consecutive_failures": streak}
 
     cadence = cadence_hours(task.due)
@@ -284,11 +373,23 @@ def task_health(wh, task: Task, *, now: dt.datetime | None = None) -> dict[str, 
         age_h = (now - last_ok).total_seconds() / 3600.0
         if age_h > budget_h:
             return {"state": "stale",
-                    "reason": (f"last success {age_h:.1f}h ago against a "
-                               f"{budget_h:g}h budget ({describe_due(task.due)})"),
+                    "reason": (f"last success {span_words(age_h)} ago against "
+                               f"a {budget_h:g}h budget "
+                               f"({describe_due(task.due)})"),
                     "consecutive_failures": streak}
 
-    return {"state": "ok", "reason": "last run succeeded inside its cadence",
+    # A run that refused for lack of a source did not succeed, so it is not
+    # green and it does not claim it succeeded. The cadence rules above still
+    # run first: data older than its budget is stale whatever the last run did.
+    if last_status in REFUSAL_STATUSES:
+        said = STATUS_PHRASE[last_status]
+        detail = summarise_note(last.get("note"))
+        return {"state": "refused",
+                "reason": f"{said}: {detail}" if detail else said,
+                "consecutive_failures": 0}
+
+    return {"state": "ok",
+            "reason": STATUS_PHRASE.get(last_status, STATUS_PHRASE["ok"]),
             "consecutive_failures": 0}
 
 

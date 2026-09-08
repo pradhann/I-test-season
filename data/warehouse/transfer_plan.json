@@ -1,5 +1,23 @@
 {
-  "generated_at": "2026-09-08T00:29:12.365183+00:00",
+  "squad_before": [
+    95658,
+    141746,
+    177815,
+    184029,
+    219168,
+    226597,
+    244850,
+    424876,
+    455084,
+    466052,
+    466075,
+    475168,
+    485055,
+    487838,
+    489639
+  ],
+  "squad_source": "PRIVATE_API",
+  "generated_at": "2026-09-08T05:38:23.060876+00:00",
   "season": "2026-27",
   "gw": 4,
   "horizon_gws": [
@@ -14,41 +32,57 @@
   "unlimited_transfers": false,
   "chosen": {
     "out": [
-      95658,
-      184029
+      184029,
+      466052
     ],
     "in": [
-      17761,
-      201658
+      201658,
+      243298
     ],
     "n_transfers": 2,
     "hits": 0,
     "hit_points": 0,
-    "objective": 274.1559214859356,
+    "objective": 271.54669140517353,
     "chip": "",
     "label": "",
-    "bank_after_tenths": 0,
+    "bank_after_tenths": 12,
     "captain": 141746,
     "vice_captain": 475168,
     "starting_xi": [
-      17761,
       141746,
       201658,
       219168,
       226597,
+      243298,
+      244850,
       424876,
-      440993,
-      466052,
       466075,
       475168,
+      487838,
       489639
     ]
   },
   "roll": {
-    "objective": 255.87186512731924
+    "objective": 252.5330904273337
   },
-  "gain_over_roll": 18.28405635861637,
+  "gain_over_roll": 19.013600977839843,
   "alternatives": [
+    {
+      "out": [
+        184029,
+        466052
+      ],
+      "in": [
+        201658,
+        446008
+      ],
+      "n_transfers": 2,
+      "hits": 0,
+      "hit_points": 0,
+      "objective": 263.10040719920147,
+      "chip": "",
+      "label": ""
+    },
     {
       "out": [
         466052
@@ -59,7 +93,7 @@
       "n_transfers": 1,
       "hits": 0,
       "hit_points": 0,
-      "objective": 261.22117073695676,
+      "objective": 257.9557650880556,
       "chip": "",
       "label": ""
     },
@@ -73,7 +107,21 @@
       "n_transfers": 1,
       "hits": 0,
       "hit_points": 0,
-      "objective": 260.6481207353178,
+      "objective": 257.7337184535267,
+      "chip": "",
+      "label": ""
+    },
+    {
+      "out": [
+        244850
+      ],
+      "in": [
+        201658
+      ],
+      "n_transfers": 1,
+      "hits": 0,
+      "hit_points": 0,
+      "objective": 257.15762903340976,
       "chip": "",
       "label": ""
     },
@@ -87,35 +135,7 @@
       "n_transfers": 1,
       "hits": 0,
       "hit_points": 0,
-      "objective": 260.1989354975909,
-      "chip": "",
-      "label": ""
-    },
-    {
-      "out": [
-        466052
-      ],
-      "in": [
-        201658
-      ],
-      "n_transfers": 1,
-      "hits": 0,
-      "hit_points": 0,
-      "objective": 259.8508717238997,
-      "chip": "",
-      "label": ""
-    },
-    {
-      "out": [
-        466075
-      ],
-      "in": [
-        17761
-      ],
-      "n_transfers": 1,
-      "hits": 0,
-      "hit_points": 0,
-      "objective": 259.8301125054969,
+      "objective": 256.94274090774854,
       "chip": "",
       "label": ""
     }
@@ -124,12 +144,12 @@
   "notes": [
     "EXPECTED_POINTS is a surrogate. It ignores ownership, variance and covariance, so it cannot see that a differential is worth more than its mean when you are chasing a rank. Not the objective this engine is for.",
     "points forecast: table:forecast.parquet",
-    "Stopped at a 5.37% optimality gap (Time limit reached); this plan is the best found, not a proven optimum. Raise time_limit_s, prune the universe with max_candidates_per_position, or fix the chip schedule to close it.",
+    "Stopped at a 5.56% optimality gap (Time limit reached); this plan is the best found, not a proven optimum. Raise time_limit_s, prune the universe with max_candidates_per_position, or fix the chip schedule to close it.",
     "forecast source: consensus; engine_fill 0.0% of horizon rows"
   ],
   "n_candidates_screened": 9,
-  "n_candidates_solved": 8,
-  "solve_seconds": 155.24879137496464,
+  "n_candidates_solved": 9,
+  "solve_seconds": 153.27665975003038,
   "max_hits": 0,
   "unconstrained": null,
   "chips_allowed": false,

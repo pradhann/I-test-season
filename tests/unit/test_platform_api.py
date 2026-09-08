@@ -445,3 +445,50 @@ def test_transfer_plan_route_resolves_names_and_judges_freshness(client, tmp_pat
     plan_path.write_text(_json.dumps(plan))
     body = client.get("/api/solve/transfer-plan").json()
     assert body["stale"] is True and "GW0" in body["stale_reason"]
+
+
+def test_the_plan_route_refuses_a_plan_solved_against_another_squad(
+        client, tmp_path, monkeypatch):
+    """The Planner and the Dashboard must reach the same verdict about one
+    artefact. The Dashboard already refused a plan whose `squad_before` no
+    longer matched the held fifteen; without the same check here the Planner
+    rendered that plan in full, three inches from the tab that called it
+    superseded.
+    """
+    import json as _json
+
+    from fpl_edge.platform import app as app_mod
+
+    plan_path = tmp_path / "transfer_plan.json"
+    monkeypatch.setattr(app_mod, "_TRANSFER_PLAN_PATH", plan_path)
+    base = {
+        "generated_at": "2026-09-07T19:47:05+00:00", "season": "2026-27",
+        "gw": 1, "horizon_gws": [1, 2, 3], "objective_mode": "expected_points",
+        "free_transfers": 2,
+        "chosen": {"out": [11], "in": [22], "n_transfers": 1, "hits": 0,
+                   "hit_points": 0, "objective": 10.0, "chip": "",
+                   "captain": 22, "vice_captain": 11, "starting_xi": [22]},
+        "roll": {"objective": 8.0}, "gain_over_roll": 2.0, "alternatives": [],
+        "unconstrained": None, "max_hits": 0, "chips_allowed": False,
+        "notes": [],
+    }
+
+    # No squad in the fixture warehouse: unverifiable, so not refused.
+    plan_path.write_text(_json.dumps({**base, "squad_before": [11, 33]}))
+    body = client.get("/api/solve/transfer-plan").json()
+    assert body["superseded"] is False
+    assert body["state"] in ("fresh", "aging")
+
+    # With a squad that disagrees, the route refuses in the same words.
+    monkeypatch.setattr(app_mod, "_held_squad", lambda wh, season: [11, 44])
+    plan_path.write_text(_json.dumps({**base, "squad_before": [11, 33]}))
+    body = client.get("/api/solve/transfer-plan").json()
+    assert body["superseded"] is True
+    assert body["state"] == "superseded"
+    assert "different squad" in body["superseded_reason"]
+
+    # And leaves a matching plan alone.
+    plan_path.write_text(_json.dumps({**base, "squad_before": [11, 44]}))
+    body = client.get("/api/solve/transfer-plan").json()
+    assert body["superseded"] is False
+    assert body["state"] in ("fresh", "aging")

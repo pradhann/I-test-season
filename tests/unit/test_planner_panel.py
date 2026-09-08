@@ -222,3 +222,91 @@ def test_the_payload_is_strict_json_never_nan(seeded_db, monkeypatch):
     _fake_state(monkeypatch, bank=15, ft=2)
     result = run_script("planner_grid", {"horizon": 5}, db=seeded_db).result
     json.dumps(result, allow_nan=False)   # raises ValueError on any NaN/inf
+
+
+# ------------------------------------------------ where xG actually comes from
+# The panel used to read xG and xA from the third party's per-match feed. That
+# feed writes a row per player-match and leaves an event column NULL when the
+# count is zero, so xG was NULL for 252 of the 400 GW1 rows: everyone who took
+# no shot. Reading those NULLs as unknown blanked the column for 410 of 654
+# players while the OFFICIAL number, complete in every settled gameweek, sat
+# one table away. NULL-means-zero is not an assumption either: summed that way
+# the publisher's goals reconcile with the official settled goals for 400 of
+# 400 GW1 players, exactly.
+
+
+def _seed_returns(db, *, official, third_party):
+    with Warehouse(db) as wh:
+        wh.append("fact_player_fixture", pd.DataFrame([
+            {"season": SEASON, "code": c, "fixture_id": 1, "gw": 1,
+             "minutes": 90, "goals_scored": 0, "assists": 0, "clean_sheets": 0,
+             "goals_conceded": 0, "own_goals": 0, "penalties_saved": 0,
+             "penalties_missed": 0, "yellow_cards": 0, "red_cards": 0,
+             "saves": 0, "bonus": 0, "bps": 0, "starts": 1, "tackles": 0,
+             "clearances_blocks_interceptions": 0, "recoveries": 0,
+             "defensive_contribution": 0, "expected_goals": xg,
+             "expected_assists": xa, "expected_goals_conceded": 0.0,
+             "total_points": 2, "was_home": True, "as_of": STAMP}
+            for c, xg, xa in official
+        ]))
+        wh.append("fact_player_match_stats", pd.DataFrame([
+            {"source": "fpl_core_insights", "season": SEASON, "code": c,
+             "match_id": "m1", "tournament": "Premier League", "gw": 1,
+             "minutes_played": 90.0, "start_min": 0.0, "finish_min": 90.0,
+             "goals": None, "assists": None, "penalties_scored": None,
+             "penalties_missed": None, "total_shots": shots,
+             "shots_on_target": None, "xg": None, "xa": None, "xgot": None,
+             "chances_created": None, "touches_opposition_box": None,
+             "tackles": None, "tackles_won": None, "interceptions": None,
+             "recoveries": None, "blocks": None, "clearances": None,
+             "defensive_contributions": None, "saves": None,
+             "goals_conceded": None, "xgot_faced": None,
+             "goals_prevented": None, "as_of": STAMP}
+            for c, shots in third_party
+        ]))
+
+
+def test_xg_comes_from_the_official_feed_and_is_never_blank_for_a_settled_gw(
+        seeded_db, monkeypatch):
+    _fake_state(monkeypatch)
+    a, b = SQUAD_CODES[0], SQUAD_CODES[1]
+    _seed_returns(
+        seeded_db,
+        # b took no shot, so the official xG for b is a real 0.0
+        official=[(a, 0.31, 0.12), (b, 0.0, 0.04)],
+        # the third party records a shot count only for a
+        third_party=[(a, 3.0), (b, None)],
+    )
+    m = run_script("planner_grid", {}, db=seeded_db).result["metrics"]
+    assert m[str(a)]["xg"] == 0.31 and m[str(a)]["xa"] == 0.12
+    assert m[str(b)]["xg"] == 0.0, (
+        "a settled player with no shot has xG 0, not unknown"
+    )
+    assert m[str(b)]["xa"] == 0.04
+
+
+def test_a_missing_shot_count_is_zero_for_a_player_the_feed_covers(
+        seeded_db, monkeypatch):
+    """The publisher omits the column rather than writing 0, so a player it
+    has a row for took no shot. A player it has no row for is unknown."""
+    _fake_state(monkeypatch)
+    a, b, c = SQUAD_CODES[0], SQUAD_CODES[1], SQUAD_CODES[2]
+    _seed_returns(seeded_db,
+                  official=[(a, 0.3, 0.1), (b, 0.0, 0.0), (c, 0.0, 0.0)],
+                  third_party=[(a, 2.0), (b, None)])
+    m = run_script("planner_grid", {}, db=seeded_db).result["metrics"]
+    assert m[str(a)]["shots"] == 2.0
+    assert m[str(b)]["shots"] == 0.0, "covered by the feed, took no shot"
+    assert m[str(c)]["shots"] is None, (
+        "settled officially but absent from the shot feed: unknown, not zero"
+    )
+
+
+def test_the_metrics_note_names_the_source_of_each_column(seeded_db,
+                                                          monkeypatch):
+    _fake_state(monkeypatch)
+    _seed_returns(seeded_db, official=[(SQUAD_CODES[0], 0.3, 0.1)],
+                  third_party=[(SQUAD_CODES[0], 1.0)])
+    note = run_script("planner_grid", {}, db=seeded_db).result["metrics_note"]
+    assert "official settled returns" in note
+    assert "shots" in note and "FPL-Core-Insights" in note

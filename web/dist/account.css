@@ -15,6 +15,13 @@
 .acct-dot.off { background: var(--bad); }
 .acct-line { color: var(--muted); font-size: 12.5px; line-height: 1.5;
              font-variant-numeric: tabular-nums; }
+/* A broken connection has to look different from the six muted lines around
+   it: the old card said "last attempt failed" in the same grey as everything
+   else, so the only failure signal on the page read as a footnote. */
+.acct-broken { color: var(--bad); }
+.acct-err { color: var(--bad); }
+.acct-status:has(.acct-err) { border-color: color-mix(in oklab, var(--bad) 35%, var(--line));
+                              background: color-mix(in oklab, var(--bad) 8%, var(--surface)); }
 .acct-source { margin-top: 4px; color: var(--ink); }
 .acct-source .acct-k { color: var(--faint); }
 
@@ -22,7 +29,9 @@
             color: var(--ink); font-size: 13px; line-height: 1.45;
             background: color-mix(in oklab, var(--accent) 8%, var(--surface)); }
 
-.acct-steps { margin: 0 0 12px; padding-left: 22px; font-size: 13px;
+.acct-stepfold { margin: 0 0 12px; }
+.acct-stepfold > summary { cursor: pointer; color: var(--muted); font-size: 12.5px; }
+.acct-steps { margin: 8px 0 0; padding-left: 22px; font-size: 13px;
               line-height: 1.55; color: var(--ink); }
 .acct-steps li { margin-bottom: 3px; }
 
@@ -49,9 +58,12 @@
                    border: 1px solid color-mix(in oklab, var(--bad) 35%, var(--line));
                    color: var(--ink); }
 .acct-result.bad b { color: var(--bad); }
-.acct-msg { margin: 0; white-space: pre-wrap; word-break: break-word;
-            font: 12px/1.5 var(--mono); color: var(--ink); }
+/* Prose, so it is set as prose. The mono block made every sentence here read
+   like a stack trace. */
+.acct-msg { margin: 0; word-break: break-word; font-size: 13px;
+            line-height: 1.5; color: var(--ink); }
 .acct-fix { margin-top: 8px; color: var(--ink); }
+.acct-status .acct-fix { font-size: 12.5px; line-height: 1.5; }
 
 .acct-cli { margin-top: 12px; color: var(--faint); font-size: 12px; }
 .acct-cli code { font-family: var(--mono); color: var(--ink);

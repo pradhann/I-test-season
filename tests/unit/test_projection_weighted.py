@@ -50,8 +50,26 @@ SCORES = [
     ("src_c", 1, 1.60, 1.30, 40),
 ]
 
+#: The ragged seed adds two feeds the plain one has no room for, because the
+#: fitted weight and the applied weight only differ when coverage is ragged:
+#:   src_d  fitted weight 0.5, publishes GW2 and stops. At GW2 the blend
+#:          renormalises over a+b+c+d = 1.5, so src_a's applied weight is
+#:          0.4, not its fitted 0.6. At GW3 src_d is gone and src_a is 0.6.
+#:   src_p  a p(appear)-only feed: rows with no xp at all, so it is in the
+#:          fit table with nothing to score and is not a projection provider.
+STALE_PROVIDER = "src_d"
+STALE_WEIGHT = 0.5
+STALE_GW2_XP = {100: 4.0, 300: 6.0, 400: 7.0}
+PAPP_PROVIDER = "src_p"
 
-def _seed(path, *, with_fit: bool = True, with_scores: bool = True) -> None:
+
+def _seed(
+    path,
+    *,
+    with_fit: bool = True,
+    with_scores: bool = True,
+    ragged: bool = False,
+) -> None:
     wh = Warehouse(path)
     wh.append("dim_team", pd.DataFrame([
         {"season": SEASON, "team_code": 1, "team_id": 1, "name": "Arsenal",
@@ -95,6 +113,19 @@ def _seed(path, *, with_fit: bool = True, with_scores: bool = True) -> None:
                     "code": code, "xp": xp + 1.0, "xp_if_appears": None,
                     "p_appear": None, "xmins": None, "as_of": T0,
                 })
+    if ragged:
+        for code, xp in STALE_GW2_XP.items():
+            rows.append({
+                "provider": STALE_PROVIDER, "season": SEASON, "gw": 2,
+                "code": code, "xp": xp, "xp_if_appears": None,
+                "p_appear": None, "xmins": None, "as_of": T0,
+            })
+        for code in STALE_GW2_XP:
+            rows.append({
+                "provider": PAPP_PROVIDER, "season": SEASON, "gw": 2,
+                "code": code, "xp": None, "xp_if_appears": None,
+                "p_appear": 0.9, "xmins": None, "as_of": T0,
+            })
     frame = pd.DataFrame(rows)
     for col in ("xp", "xp_if_appears", "p_appear", "xmins"):
         frame[col] = pd.to_numeric(frame[col], errors="coerce").astype("float64")
@@ -112,13 +143,20 @@ def _seed(path, *, with_fit: bool = True, with_scores: bool = True) -> None:
                 })
         store.append("fact_projection_score", pd.DataFrame(score_rows))
     if with_fit:
+        fitted = dict(WEIGHTS)
+        obs = {p: next(n for pr, _, _, _, n in SCORES if pr == p) for p in WEIGHTS}
+        if ragged:
+            fitted[STALE_PROVIDER] = STALE_WEIGHT
+            fitted[PAPP_PROVIDER] = 0.0
+            obs[STALE_PROVIDER] = 600
+            obs[PAPP_PROVIDER] = 0
         store.record_weights("test:invmse:thru-gw1", pd.DataFrame([
             {"provider": p, "weight": w,
              "loss": None if w == 0 else 1.0 / w, "loss_metric": "mse",
              "baseline_loss": 2.0,
-             "n_obs": next(n for pr, _, _, _, n in SCORES if pr == p),
+             "n_obs": obs[p],
              "earned": w > 0, "holdout": "test holdout", "as_of": FIT_AT}
-            for p, w in WEIGHTS.items()
+            for p, w in fitted.items()
         ]))
     wh.close()
 
@@ -127,6 +165,13 @@ def _seed(path, *, with_fit: bool = True, with_scores: bool = True) -> None:
 def db(tmp_path):
     path = tmp_path / "fpl.duckdb"
     _seed(path)
+    return path
+
+
+@pytest.fixture()
+def db_ragged(tmp_path):
+    path = tmp_path / "ragged.duckdb"
+    _seed(path, ragged=True)
     return path
 
 
@@ -294,9 +339,76 @@ def test_the_weights_block_carries_the_evidence(db):
     assert by["src_a"] == {
         "provider": "src_a", "weight": 0.6, "n_obs": 600, "mae": 1.2,
         "baseline_mae": 1.3, "loss": pytest.approx(1.667, abs=1e-3),
-        "baseline_loss": 2.0, "earned": True, "holdout": "test holdout"}
+        "baseline_loss": 2.0, "earned": True, "holdout": "test holdout",
+        "applied_weight": 0.6, "covers_anchor": True, "publishes_xpts": True}
     assert by["src_c"]["weight"] == 0.0 and by["src_c"]["earned"] is False
     assert by["src_c"]["mae"] == 1.6 and by["src_c"]["baseline_mae"] == 1.3
+
+
+# -- applied weights: what the visible columns actually blend with -----------
+
+def test_the_applied_weight_renormalises_over_the_gameweeks_providers(db_ragged):
+    w = _panel(db_ragged)["weights"]
+    assert w["anchor_gw"] == 2
+    by = {r["provider"]: r for r in w["rows"]}
+    # the fit is untouched; the applied weight divides by the fitted weights
+    # of the four providers with xPts at GW2 (0.6 + 0.4 + 0.0 + 0.5)
+    assert by["src_a"]["weight"] == 0.6
+    assert by["src_a"]["applied_weight"] == pytest.approx(0.6 / 1.5, abs=1e-3)
+    assert by[STALE_PROVIDER]["applied_weight"] == pytest.approx(
+        0.5 / 1.5, abs=1e-3)
+    assert by["src_c"]["applied_weight"] == 0.0, (
+        "a fitted weight of 0 stays 0 however the rest renormalise"
+    )
+    assert sum(w["applied_by_gw"]["2"].values()) == pytest.approx(1.0, abs=1e-3)
+
+
+def test_a_provider_absent_from_a_gameweek_lifts_the_rest_there(db_ragged):
+    w = _panel(db_ragged)["weights"]
+    # src_d and src_c publish GW2 only, so GW3 renormalises over src_a+src_b
+    assert set(w["applied_by_gw"]["2"]) == {"src_a", "src_b", STALE_PROVIDER}
+    assert w["applied_by_gw"]["3"] == {
+        "src_a": pytest.approx(0.6, abs=1e-3),
+        "src_b": pytest.approx(0.4, abs=1e-3)}
+    assert (w["applied_by_gw"]["3"]["src_a"]
+            > w["applied_by_gw"]["2"]["src_a"]), (
+        "one static weight cannot describe columns built from two mixes"
+    )
+
+
+def test_a_provider_that_misses_the_anchor_carries_none_of_that_column(db_ragged):
+    w = run_script(
+        "projection_table", {"gw": 3}, db=db_ragged).result["weights"]
+    assert w["anchor_gw"] == 3
+    by = {r["provider"]: r for r in w["rows"]}
+    assert by[STALE_PROVIDER]["weight"] == STALE_WEIGHT
+    assert by[STALE_PROVIDER]["applied_weight"] == 0.0
+    assert by[STALE_PROVIDER]["covers_anchor"] is False
+    assert by["src_a"]["applied_weight"] == pytest.approx(0.6, abs=1e-3)
+    assert by["src_a"]["covers_anchor"] is True
+
+
+def test_a_subset_renormalises_the_applied_weight_over_the_subset(db_ragged):
+    w = _panel(db_ragged, sources=["src_a", STALE_PROVIDER])["weights"]
+    by = {r["provider"]: r for r in w["rows"]}
+    assert by["src_a"]["applied_weight"] == pytest.approx(0.6 / 1.1, abs=1e-3)
+    assert by[STALE_PROVIDER]["applied_weight"] == pytest.approx(
+        0.5 / 1.1, abs=1e-3)
+    assert by["src_b"]["applied_weight"] == 0.0
+    assert by["src_b"]["covers_anchor"] is False
+
+
+def test_a_feed_with_no_xpts_is_flagged_as_no_projection_provider(db_ragged):
+    res = _panel(db_ragged)
+    by = {r["provider"]: r for r in res["weights"]["rows"]}
+    assert by[PAPP_PROVIDER]["publishes_xpts"] is False
+    assert by[PAPP_PROVIDER]["n_obs"] == 0
+    assert all(by[p]["publishes_xpts"]
+               for p in ("src_a", "src_b", "src_c", STALE_PROVIDER))
+    assert not any(m["source"] == PAPP_PROVIDER for m in res["source_meta"]), (
+        "source_meta lists feeds with xPts, so the flag agrees with it"
+    )
+    assert PAPP_PROVIDER not in res["weights"]["applied_by_gw"]["2"]
 
 
 def test_the_accuracy_block_is_per_provider_per_scored_gw_with_the_floor(db):

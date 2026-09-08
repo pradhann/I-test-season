@@ -39,6 +39,10 @@
              background: var(--surface); color: var(--muted); }
 .pl-toggle[aria-pressed="true"] { background: var(--accent); border-color: var(--accent);
                                    color: #fff; }
+/* Nothing locked: the whole block dims, so fifteen unpressed names cannot
+   read as fifteen locks when the only difference is a background. */
+.pl-toggles.pl-none .pl-toggle { opacity: .5; }
+.pl-toggles.pl-none:hover .pl-toggle, .pl-toggles.pl-none:focus-within .pl-toggle { opacity: 1; }
 .pl-banhits { display: flex; flex-direction: column; gap: 2px; margin: 4px 0; }
 .pl-banhit { text-align: left; font-size: 11.5px; padding: 3px 8px; }
 .pl-banchip { font-size: 11.5px; }
@@ -49,6 +53,12 @@
 .pl-solve:disabled { opacity: .6; cursor: progress; }
 .pl-status { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
 .pl-statusline { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* The run on screen is not always the run behind the plan card; when it is
+   not, the line saying so is the one thing in the rail that must not read as
+   another grey footnote. */
+.pl-runsplit { color: var(--ink); border-left: 3px solid var(--warn);
+               padding: 4px 8px; margin-top: 6px; background: var(--raised);
+               border-radius: 0 6px 6px 0; }
 .pl-logfold { margin-top: 6px; }
 .pl-logfold > summary { cursor: pointer; color: var(--muted); font-size: 11.5px; }
 .pl-log { max-height: 220px; overflow: auto; background: var(--raised);
@@ -77,8 +87,12 @@
 .pl-arrow { text-align: center; color: var(--faint); }
 .pl-roll { color: var(--good); font-weight: 600; margin: 4px 0; }
 .pl-gain { margin: 4px 0 8px; font-size: 13px; }
-.pl-gain b { font: 600 16px/1.2 var(--mono); color: var(--good); }
+/* --s1, never --good: a model quantity on the model's own scale, not a
+   verdict. dashboard.css colours the same number the same way. */
+.pl-gain b { font: 600 16px/1.2 var(--mono); color: var(--s1); }
 .pl-gap { color: var(--muted); font: 600 11.5px var(--mono); }
+/* the size of the search, beside the number it produced */
+.pl-screened { color: var(--muted); font-size: 12px; }
 .pl-actions { margin: 6px 0 10px; }
 .pl-apply { display: inline-flex; align-items: center; gap: 6px; }
 .pl-xi { margin: 10px 0; }
@@ -149,3 +163,12 @@
   max-width: 78px; }
 .pitch-select .pcard.pl-empty .pl-undo { margin-top: 3px; }
 .pitch-select .pcard.pl-empty:focus-visible { outline: 2px solid var(--s1); outline-offset: 2px; }
+
+/* The locked FPL armband, distinct from the grid's own doubled player. */
+.pl-armband { font: 650 9.5px var(--mono); font-style: normal; margin-left: 5px;
+              padding: 1px 4px; border-radius: 4px; color: var(--surface);
+              background: var(--muted); vertical-align: 1px; }
+.pl-capname { font-size: 11px; color: var(--muted); }
+
+/* Why the grid total and the solver objective differ. */
+.pl-reconcile { margin-top: 8px; max-width: 68ch; }

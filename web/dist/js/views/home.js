@@ -81,6 +81,13 @@ function localClock(iso) {
   if (!d) return "?";
   return d.toTimeString().slice(0, 5);
 }
+/** An FPL rank with thousands separators. Ranks are large and read wrong
+ *  without them: 769533 and 76953 are one glance apart. */
+function fmtRank(v) {
+  if (v == null || !Number.isFinite(Number(v))) return "?";
+  return Number(v).toLocaleString("en-GB");
+}
+
 function fmtSigned(v, digits = 0) {
   if (v == null) return "–";
   const s = Math.abs(v).toLocaleString(undefined,
@@ -186,6 +193,7 @@ export default async function home(host) {
   const chipLedger = el("div", "db-chipledger");
   const provBanner = el("div", "db-prov");
   const gapStrip = el("section", "card db-gaps");
+  const standingStrip = el("section", "card db-standing");
   const verdictCard = card(null, null);
   verdictCard.classList.add("db-verdict");
   const intelCard = card(null, null);
@@ -209,7 +217,8 @@ export default async function home(host) {
   const watchBody = el("div");
   watchCard.appendChild(watchBody);
   const foot = el("div", "db-foot");
-  host.append(statsRow, chipLedger, provBanner, gapStrip, verdictCard, intelCard,
+  host.append(statsRow, chipLedger, provBanner, gapStrip, standingStrip,
+              verdictCard, intelCard,
               pitchCard, watchStrip, movesCard, solverCard, tilesCard,
               watchCard, foot);
 
@@ -387,10 +396,15 @@ export default async function home(host) {
       // Σ marks the SUM (the median tile beside it is per starter — 11× the
       // unit); xPts is the provider consensus, the Projections tab's own numbers
       const gen = shortDate(brief?.xpts_as_of);
+      // "captain not doubled" in the label, not only in the title: the
+      // Planner grid's own GW4 figure applies the armband and lands about 8
+      // points higher, and neither page said which was which.
       const xi = stat(fmt1(sq.projected_xi_xpts),
-                      "Σ XI xPts" + (gen ? ` · consensus ${gen}` : ""));
-      xi.title = brief?.xpts_source
-        || "sum of the XI's per-player consensus xPts";
+                      "Σ XI xPts, captain not doubled"
+                      + (gen ? ` · consensus ${gen}` : ""));
+      xi.title = (brief?.xpts_source
+        || "sum of the XI's per-player consensus xPts")
+        + ". The captain is counted once. The Planner grid doubles it.";
       statsRow.appendChild(xi);
     }
     if (median != null) {
@@ -547,6 +561,21 @@ export default async function home(host) {
           numBits.push(`${fmt1(n.optimality_gap_pct)}% gap`);
         if (n.age_hours != null) numBits.push(`${fmtSpan(n.age_hours)} old`);
         if (n.hits) numBits.push(`${n.hits} hit(s)`);
+        // The balance the plan leaves. A negative one cannot be executed, and
+        // the page used to print each price change without the net or the
+        // result, so the rejection happened at the FPL site instead of here.
+        if (n.bank_after_tenths != null) {
+          const bank = n.bank_after_tenths / 10;
+          if (bank < 0) {
+            const bad = el("b", "vd-unaffordable",
+              `not affordable: bank would be ${fmtPrice(bank)}`);
+            bad.title = "the plan spends more than you hold; FPL will reject "
+              + "these transfers";
+            main.appendChild(bad);
+          } else {
+            numBits.push(`${fmtPrice(bank)} left in the bank`);
+          }
+        }
         break;
       }
       case "solver_roll":
@@ -612,15 +641,41 @@ export default async function home(host) {
         // A solver pick is quoted in the solver's OWN currency first; the
         // consensus figure rides beside it, labelled — two sources, never
         // one number wearing the other's name.
-        if (ln.rule === "solver_plan_captain" && n.pick_solver_xpts != null)
-          numBits.push(`${fmt1(n.pick_solver_xpts)} xPts`
-            + `${n.solver_gw != null ? ` GW${n.solver_gw}` : ""}`
-            + `, ${fcName(brief?.solve?.plan)}`);
-        if (n.pick_xpts != null)
-          numBits.push(`consensus ${fmt1(n.pick_xpts)} xPts`);
+        // Two sources are named separately only when they disagree. When the
+        // solver and the consensus land on the same figure, printing it twice
+        // reads as two independent confirmations of one number.
+        {
+          const solverX = (ln.rule === "solver_plan_captain")
+            ? n.pick_solver_xpts : null;
+          const same = solverX != null && n.pick_xpts != null
+            && Math.abs(solverX - n.pick_xpts) < 0.05;
+          if (same) {
+            numBits.push(`${fmt1(n.pick_xpts)} xPts`
+              + `${n.solver_gw != null ? ` GW${n.solver_gw}` : ""}`
+              + `, solver and consensus agree`);
+          } else {
+            if (solverX != null)
+              numBits.push(`${fmt1(solverX)} xPts`
+                + `${n.solver_gw != null ? ` GW${n.solver_gw}` : ""}`
+                + `, ${fcName(brief?.solve?.plan)}`);
+            if (n.pick_xpts != null)
+              numBits.push(`consensus ${fmt1(n.pick_xpts)} xPts`);
+          }
+        }
         if (n.pick_p_haul != null && haulFresh)
           numBits.push(`${Math.round(n.pick_p_haul * 100)}% haul odds`
             + haulSimTag());
+        // What the armband change is actually worth. The number was computed
+        // and served and never printed, so the one free action on the page,
+        // no transfer and no hit, had to be worked out by hand across three
+        // sections. The brief puts it on this line's own numbers, and serves
+        // it only when the pick differs from the locked armband.
+        if (n.captain_delta_xpts != null) {
+          const mine = n.your_captain_code != null
+            ? (playerIndex.get(n.your_captain_code)?.name ?? null) : null;
+          numBits.push(`${fmtSigned(n.captain_delta_xpts, 1)} xPts against `
+            + `your armband${mine ? ` (${mine})` : ""}`);
+        }
         numBits.push(ln.rule === "solver_plan_captain"
           ? "solver plan" : "consensus pick, no solver plan");
         break;
@@ -699,7 +754,19 @@ export default async function home(host) {
         && ln.state !== "fresh") {
       const st = el("span",
         "chip " + (ln.state === "aging" ? "warn" : "bad"), ln.state);
-      st.title = "the solve state this pick was read under";
+      // The state word means nothing on its own. Define it where it is read.
+      st.title = {
+        aging: "aging: the plan still describes your squad and this "
+          + "gameweek, but it was solved more than 4 hours before the "
+          + "deadline window, so prices and news have moved since",
+        stale: "stale: a deadline has passed since this plan was solved, so "
+          + "its moves were priced against a squad and a market you no "
+          + "longer have. Re-solve on the Planner tab",
+        superseded: "superseded: the plan was solved against a different "
+          + "fifteen from the one you hold, so its moves do not apply. "
+          + "Re-solve on the Planner tab",
+        missing: "missing: no solver plan is stored for this season",
+      }[ln.state] || "the solve state this pick was read under";
       side.appendChild(st);
     }
     // one omission chip per line: the haul_odds dissent chip carries it
@@ -961,11 +1028,19 @@ export default async function home(host) {
         intelItem(it, dupes.byItem.get((intel.items || []).indexOf(it))));
     if (intel.rejected_n > 0) {
       // A count says something was dropped; the reasons say what to fix.
+      // Both belong on the page, neither belongs in front of the reader: this
+      // is the validator talking to whoever maintains the prompt, and it was
+      // the only visible content of the card whenever the briefing itself was
+      // folded as history.
       const why = (intel.rejected_reasons || []).join(" · ");
-      intelCard.appendChild(el("p", "sub",
-        `${intel.rejected_n} candidate item(s) rejected by the citation and `
-        + `house-prose rules, dropped loudly, never silently.`
-        + (why ? ` Reasons: ${why}.` : "")));
+      const det = el("details", "ib-rejects");
+      det.appendChild(el("summary", null,
+        `${intel.rejected_n} candidate item${intel.rejected_n > 1 ? "s" : ""} `
+        + "rejected by the citation and prose rules"));
+      det.appendChild(el("p", "db-quiet", why
+        ? `Reasons: ${why}.`
+        : "No reason recorded, which is itself a gap in the validator."));
+      intelCard.appendChild(det);
     }
   }
 
@@ -985,11 +1060,22 @@ export default async function home(host) {
         add(`${P(0).name} is flagged `, co(String(a.status || "?")));
         if (a.news) add(`; FPL says: `, el("q", null, a.news));
         break;
-      case "own_price_fall":
+      case "own_price_fall": {
         add(`${P(0).name} `, co(fmtSigned(n.net_per_hour) + "/hr"),
             ` in the ${fmt2(n.window_h)}h window (net `,
             co(fmtSigned(n.net)), `); price watch, observed flow.`);
+        // A short window read long ago is a closed observation, not a live
+        // rate. Saying so stops a 34-minute snapshot from yesterday being
+        // read as what transfers are doing now.
+        const snapH = a.source_as_of
+          ? (Date.now() - (parseTs(a.source_as_of)?.getTime() ?? Date.now()))
+            / 3.6e6
+          : null;
+        if (snapH != null && n.window_h != null && snapH > n.window_h)
+          add(` The window closed ${fmtSpan(snapH)} ago; this is not the `
+              + `current rate.`);
         break;
+      }
       case "solve_stale":
         add("solver: plan predates the deadline. ", a.reason || "");
         break;
@@ -1421,6 +1507,12 @@ export default async function home(host) {
           ? ` · opponent chip colour = fixture ease (fixtures tab's ramp)` : "")
       + (sq.as_of ? ` · as of ${clockText(sq.as_of)}` : "");
     pitchBody.appendChild(footLine);
+    // Card badges, named. The down arrow in particular reads as "demote" in
+    // an FPL context, and it sat unexplained on the recommended captain.
+    pitchBody.appendChild(el("p", "sub db-legendnote",
+      "Badges: C captain, V vice, \u2193 price-fall risk from observed "
+      + "transfer flow, ! an FPL availability flag. Hover any badge for its "
+      + "numbers."));
     pitchBody.appendChild(el("p", "sub db-legendnote",
       "GK and budget defenders sit below the median by construction; the "
       + "tier says who is cheap to upgrade, not who is failing."));
@@ -2068,6 +2160,75 @@ export default async function home(host) {
     wrap.appendChild(el("span", "db-quiet", "then reload"));
     return wrap;
   }
+  /* ------------------------------------------------ where the season is */
+  renderStanding();
+  function renderStanding() {
+    // The objective is P(top-1k) and the dashboard could not say where the
+    // season stood: GW3 scored 23 against a field average of 51 and the rank
+    // fell from 141,593 to 769,533 with nothing on the page reporting it.
+    // Every number here is the manager's own crawled gameweek against FPL's
+    // published average for that gameweek. Nothing is modelled.
+    standingStrip.textContent = "";
+    const st = brief?.standing || null;
+    if (!st) { standingStrip.hidden = true; return; }
+    standingStrip.hidden = false;
+    const rows = (st.gws || []).filter(g => g.points != null);
+    if (!rows.length) {
+      standingStrip.appendChild(namedGap("Season standing unknown.",
+        st.reason || "no crawled gameweek for this entry yet."));
+      return;
+    }
+    const head = el("div", "db-sthead");
+    head.appendChild(el("h2", null, "Where the season stands"));
+    if (st.overall_rank != null) {
+      const r = el("div", "db-strank");
+      r.appendChild(el("b", null, fmtRank(st.overall_rank)));
+      let moveTxt = "overall rank";
+      if (st.rank_move != null && st.rank_move !== 0) {
+        // FPL ranks count upward from the top, so a positive move is a fall.
+        const fell = st.rank_move > 0;
+        moveTxt = `overall rank, ${fell ? "down" : "up"} `
+          + `${fmtRank(Math.abs(st.rank_move))} places on the gameweek`;
+      }
+      r.appendChild(el("span", "sub", moveTxt));
+      head.appendChild(r);
+    }
+    standingStrip.appendChild(head);
+
+    const grid = el("div", "db-stgws");
+    for (const g of rows) {
+      const cell = el("div", "db-stgw");
+      cell.appendChild(el("i", "db-stlab", `GW${g.gw}`));
+      cell.appendChild(el("b", null, String(g.points)));
+      if (g.delta != null) {
+        const d = el("span",
+          "db-stdelta " + (g.delta >= 0 ? "up" : "down"),
+          `${fmtSigned(g.delta, 0)} vs field`);
+        d.title = `the field averaged ${g.field} in GW${g.gw}`;
+        cell.appendChild(d);
+      } else {
+        cell.appendChild(el("span", "db-stdelta flat", "field average not "
+          + "published yet"));
+      }
+      const bits = [];
+      if (g.bench_points) bits.push(`${g.bench_points} left on the bench`);
+      if (g.hit_cost) bits.push(`${g.hit_cost} spent on hits`);
+      if (bits.length) cell.appendChild(el("span", "db-stsub", bits.join(", ")));
+      grid.appendChild(cell);
+    }
+    standingStrip.appendChild(grid);
+
+    const foot = [];
+    if (st.total_points != null)
+      foot.push(`${st.total_points} points over ${rows.length} gameweek`
+        + `${rows.length > 1 ? "s" : ""}`);
+    if (st.vs_field_total != null)
+      foot.push(`${fmtSigned(st.vs_field_total, 0)} against the field in total`);
+    if (foot.length)
+      standingStrip.appendChild(el("p", "db-stfoot", foot.join(", ") + "."));
+    standingStrip.appendChild(citeChip("dashboard_brief", brief?.as_of));
+  }
+
   renderGaps();
   function renderGaps() {
     // The squad gap's fix is one paste on the Account tab (the CLI equivalent

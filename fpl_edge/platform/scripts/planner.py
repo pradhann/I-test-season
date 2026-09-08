@@ -323,10 +323,24 @@ def planner_grid(
         else str(deadline.iloc[0]["deadline_utc"]).replace(" ", "T")
     )
 
-    # Season-to-date metrics. Two honest sources, clearly separated in origin:
-    # the OFFICIAL settled return (sem_player_form -- minutes, goals, assists)
-    # and a third party's per-match read (sem_player_match_stats -- xG, xA,
-    # shots), which the official feed does not publish per player pre-GW-settle.
+    # Season-to-date metrics. Two sources, separated by what each one knows.
+    #
+    # The OFFICIAL settled return (sem_player_form) carries minutes, goals,
+    # assists AND expected_goals/expected_assists, for every player, in every
+    # settled gameweek: 610/610 rows in GW1, 626/626 in GW2, 654/654 in GW3.
+    # It is the xG source here.
+    #
+    # The third party (sem_player_match_stats) is read ONLY for shots, which
+    # the official feed does not publish per player. That feed writes a row per
+    # player-match and leaves an event column NULL when the count is zero, so
+    # xG was NULL for 252 of the 400 GW1 rows -- everyone who took no shot.
+    # Reading those NULLs as unknown blanked the xG column for most of the
+    # squad while the complete official number sat one table away.
+    #
+    # NULL-means-zero is not an assumption: summed under that reading the
+    # publisher's goals reconcile with the official settled goals for 400 of
+    # 400 GW1 players, exactly. Shots are therefore summed with COALESCE, and a
+    # player with no row at all still gets NULL rather than a fabricated zero.
     metrics: dict[str, dict[str, Any]] = {}
 
     def nn(v, default=0.0):
@@ -337,41 +351,58 @@ def planner_grid(
             return default
         return default if f != f else f
 
+    def r2(v):
+        """Round a summed metric, or None when the source has no row at all."""
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return None
+        return None if f != f else round(f, 2)
+
     form = q(
         wh,
         "SELECT code, COUNT(*) gp, SUM(minutes) mins, SUM(goals_scored) goals, "
-        "SUM(assists) assists FROM sem_player_form(?) WHERE season = ? GROUP BY 1",
+        "SUM(assists) assists, SUM(expected_goals) xg, SUM(expected_assists) xa "
+        "FROM sem_player_form(?) WHERE season = ? GROUP BY 1",
         (now, season),
     )
     for _, r in form.iterrows():
         metrics[str(int(r["code"]))] = {
             "gp": int(r["gp"]), "mins": nn(r["mins"]),
             "goals": nn(r["goals"]), "assists": nn(r["assists"]),
-            "xg": None, "xa": None, "shots": None,
+            "xg": r2(r["xg"]), "xa": r2(r["xa"]), "shots": None,
         }
     third = q(
         wh,
         "SELECT code, COUNT(*) gp, SUM(minutes_played) mins, SUM(goals) goals, "
-        "SUM(assists) assists, SUM(xg) xg, SUM(xa) xa, SUM(total_shots) shots "
+        "SUM(assists) assists, SUM(xg) xg, SUM(xa) xa, "
+        "SUM(COALESCE(total_shots, 0)) shots "
         "FROM sem_player_match_stats(?) WHERE season = ? GROUP BY 1",
         (now, season),
     )
     for _, r in third.iterrows():
         key = str(int(r["code"]))
-        m = metrics.setdefault(key, {
-            "gp": int(r["gp"]), "mins": nn(r["mins"]),
-            "goals": nn(r["goals"]), "assists": nn(r["assists"]),
-            "xg": None, "xa": None, "shots": None,
-        })
-        for col in ("xg", "xa", "shots"):
-            v = r[col]
-            m[col] = round(float(v), 2) if v == v and v is not None else None
+        m = metrics.get(key)
+        if m is None:
+            # Not settled officially yet: the publisher is all we have, and its
+            # NULL xG genuinely means the player took no shot.
+            metrics[key] = {
+                "gp": int(r["gp"]), "mins": nn(r["mins"]),
+                "goals": nn(r["goals"]), "assists": nn(r["assists"]),
+                "xg": r2(r["xg"]) or 0.0, "xa": r2(r["xa"]) or 0.0,
+                "shots": r2(r["shots"]),
+            }
+            continue
+        m["shots"] = r2(r["shots"])
     settled = not form.empty
     metrics_note = (
-        f"Season-to-date over {season}. Minutes/goals/assists from the "
-        + ("official settled returns" if settled
-           else "publisher's per-match feed (official returns not settled yet)")
-        + "; xG/xA/shots from FPL-Core-Insights."
+        f"Season-to-date over {season}. Minutes, goals, assists, xG and xA "
+        + ("from the official settled returns"
+           if settled else
+           "from the publisher's per-match feed, official returns not settled "
+           "yet")
+        + "; shots from FPL-Core-Insights, which the official feed does not "
+          "publish."
     )
 
     ft = int(getattr(state, "free_transfers", None) or free_per_gw)

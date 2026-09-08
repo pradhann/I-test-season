@@ -100,8 +100,13 @@ button, .btn {
 button:hover, .btn:hover { border-color: var(--muted); }
 button.primary { background: var(--accent); border-color: var(--accent);
                  color: #fff; }
+/* textarea and [tabindex] belong here too: without them every author who
+   made a div focusable had to remember its own ring, and three files did it
+   by hand while the Pipelines rows went without one. */
 button:focus-visible, a:focus-visible, select:focus-visible,
-input:focus-visible { outline: 2px solid var(--s1); outline-offset: 1px; }
+input:focus-visible, textarea:focus-visible,
+[tabindex]:not([tabindex="-1"]):focus-visible {
+  outline: 2px solid var(--s1); outline-offset: 1px; }
 
 /* ---- cards & panels ---- */
 .card { background: var(--surface); border: 1px solid var(--line);

@@ -1270,7 +1270,24 @@ def _solve_plan(db_path: Path) -> dict[str, Any]:
 #: it at a fixture.
 _TRANSFER_PLAN_PATH = (Path(__file__).resolve().parents[2] / "data" / "warehouse"
                        / "transfer_plan.json")
+def _brief_thresholds() -> dict:
+    """The dashboard brief's thresholds, or an empty dict if it cannot
+    be imported. The API must serve a plan even when a panel module is
+    broken, so a failed import degrades to the literal default."""
+    try:
+        from fpl_edge.platform.scripts.brief import THRESHOLDS
+    except Exception:  # noqa: BLE001 - a panel import must not break the API
+        return {}
+    return dict(THRESHOLDS)
+
+
 _GAP_NOTE = re.compile(r"(\d+(?:\.\d+)?)% optimality gap")
+
+#: Imported from the brief's own THRESHOLDS so one number governs both
+#: surfaces. A plan younger than this is "fresh"; older than this and still
+#: pre-deadline it is "aging".
+_SOLVE_FRESH_WINDOW_H = float(
+    _brief_thresholds().get("solve_fresh_window_h", 12))
 
 
 def _plan_codes(plan: dict[str, Any]) -> set[int]:
@@ -1315,6 +1332,7 @@ def _transfer_plan(db_path: Path) -> dict[str, Any]:
     players: dict[str, Any] = {}
     cal: dict[str, Any] = {"next_gw": None, "next_deadline_utc": None,
                            "last_gw": None, "last_deadline_utc": None}
+    held_now: list[int] = []
     reason = None
     if db_path.exists():
         try:
@@ -1322,6 +1340,7 @@ def _transfer_plan(db_path: Path) -> dict[str, Any]:
                 season = plan.get("season")
                 players = _player_lookup(wh, season, _plan_codes(plan))
                 cal = _deadline_calendar(wh, season, now)
+                held_now = _held_squad(wh, season)
         except Exception as exc:  # noqa: BLE001 - names are a nicety, the plan is the payload
             reason = f"could not resolve names: {type(exc).__name__}: {exc}"
     else:
@@ -1362,19 +1381,72 @@ def _transfer_plan(db_path: Path) -> dict[str, Any]:
             gap = float(m.group(1))
             break
 
+    # One freshness verdict, computed once, so the Planner and the Dashboard
+    # cannot colour the same artefact differently. They used to: the Planner
+    # called anything under 24h "standing" and green while the brief called the
+    # same 5-hour-old plan "aging" and amber.
+    # A plan's moves are diffed against the fifteen held when it was solved.
+    # The dashboard refuses one whose squad has changed since; without the same
+    # check here the Planner would render, in full, the plan the Dashboard
+    # calls superseded. Two surfaces, one verdict.
+    solved_against = [int(c) for c in (plan.get("squad_before") or [])]
+    superseded = bool(solved_against and held_now
+                      and set(solved_against) != set(held_now))
+    superseded_reason = None
+    if superseded:
+        gone = sorted(set(solved_against) - set(held_now))
+        got = sorted(set(held_now) - set(solved_against))
+        superseded_reason = (
+            f"the plan was solved against a different squad: {len(gone)} "
+            f"player(s) it assumed you held are not in your fifteen, and "
+            f"{len(got)} you hold were not in it. Re-solve."
+        )
+
+    state = "fresh"
+    if stale_reason is not None:
+        state = "stale"
+    elif superseded:
+        state = "superseded"
+    elif age_hours is None:
+        state = "aging"
+    else:
+        state = "fresh" if age_hours <= _SOLVE_FRESH_WINDOW_H else "aging"
+
     return {
         "exists": True,
+        "superseded": superseded,
+        "superseded_reason": superseded_reason,
         "path": str(_TRANSFER_PLAN_PATH.relative_to(_TRANSFER_PLAN_PATH.parents[2])),
         "plan": plan,
         "players": players,
         "as_of": plan.get("generated_at"),
         "age_hours": age_hours,
+        "state": state,
         "stale": stale_reason is not None,
         "stale_reason": stale_reason,
         "optimality_gap_pct": gap,
         **cal,
         "reason": reason,
     }
+
+
+def _held_squad(wh, season: str | None) -> list[int]:
+    """The codes the manager holds right now, through the squad panel.
+
+    The panel is the sanctioned read for this, so the plan check and the
+    squad card can never disagree about what "your fifteen" means.
+    """
+    try:
+        from fpl_edge.platform.scripts.squad import squad_overview
+
+        sq = squad_overview(wh, season=season or SEASON_DEFAULT)
+    except Exception:  # noqa: BLE001 - an unreadable squad is not a plan error
+        return []
+    if not isinstance(sq, dict) or sq.get("empty"):
+        return []
+    return [int(p["code"])
+            for p in [*(sq.get("starters") or []), *(sq.get("bench") or [])]
+            if p.get("code") is not None]
 
 
 def _solve_diff_lines() -> list[str]:

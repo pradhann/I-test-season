@@ -211,17 +211,37 @@ _CODE_KEY = re.compile(r"^(code|codes|.*_codes)$")
 _NUM_CAND = re.compile(r"\d[\d,]*(?:\.\d+)?")
 _ORDINAL = ("st", "nd", "rd", "th")
 
+#: Calendar and season labels, blanked before the numeric scan. A date is not
+#: a quantity any panel serves, so reading one as a quantity rejects a true
+#: item for a number it never claimed: "2026-27" and "5 Sept 2026" both
+#: yielded the token 2026, which no panel serves, and the item was dropped
+#: with the reason "prose number 2026.0 appears in no cited panel".
+_MONTH = (r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)"
+          r"[a-z]*\.?")
+_DATEISH = re.compile(
+    r"\b\d{4}-\d{2}(?:-\d{2})?\b"                 # 2026-27, 2026-09-08
+    rf"|\b\d{{1,2}}\s+{_MONTH}(?:\s+\d{{4}})?\b"   # 5 Sept, 5 Sept 2026
+    rf"|\b{_MONTH}\s+\d{{1,2}}(?:,\s*\d{{4}})?\b"  # Sept 5, Sept 5, 2026
+    rf"|\b{_MONTH}\s+\d{{4}}\b",                    # Sept 2026
+    re.IGNORECASE,
+)
+
 
 def prose_numbers(text: str) -> list[tuple[float, int]]:
     """Every numeric token in prose, with its printed decimal precision.
 
     Tolerant of formatting: thousands commas, percent signs, signs, ordinal
     suffixes ("33rd" is the quantity 33). Digits glued to letters (GW3,
-    top10k, p90, 36h) are labels/units, not quantities this validator can
-    adjudicate against payload values — skipped, deliberately.
+    top10k, p90, 36h) are labels or units, not quantities this validator can
+    adjudicate against payload values, so they are skipped deliberately.
+    Dates and season labels are skipped for the same reason: no panel serves
+    the year 2026 as a value, so reading "2026-27" as a quantity rejected
+    true items for a number they never claimed.
     """
     vals: list[tuple[float, int]] = []
-    text = text or ""
+    # Blank the calendar first, keeping the string length so the neighbour
+    # tests below still see the right characters around every survivor.
+    text = _DATEISH.sub(lambda m: " " * len(m.group(0)), text or "")
     for m in _NUM_CAND.finditer(text):
         s, e = m.span()
         if s and (text[s - 1].isalnum() or text[s - 1] in "._"):

@@ -1,4 +1,4 @@
-"""projection_table — the player board, joined to live price and ownership.
+"""projection_table: the player board, joined to live price and ownership.
 
 Two data regimes live behind one registered name:
 
@@ -8,8 +8,8 @@ Two data regimes live behind one registered name:
 * **Gameweek mode** (``gw`` or any gw-only param present): the third-party
   provider projections in ``projection_normalized``, read through the semantic
   layer (``sem_projections`` / ``sem_projection_consensus``). ``source="all"``
-  (or omitted) gives the consensus per player with the min–max SPREAD as a
-  first-class column — source disagreement IS the uncertainty estimate. A
+  (or omitted) gives the consensus per player with the min-max SPREAD as a
+  first-class column: source disagreement is the uncertainty estimate. A
   specific ``source`` gives that vendor's raw numbers. ``detail_code`` adds a
   per-source breakdown for one player over the chosen GW and the next four.
 
@@ -20,7 +20,7 @@ weights the calibration loop fitted, through
 names which one drove every row-bearing block, and the earned view travels
 with the weights table (weight, n_obs, MAE, baseline MAE, fitted-at) so the
 reader can see WHY a provider is down-weighted. The default stays equal on
-purpose -- three settled gameweeks is a thin track record.
+purpose: three settled gameweeks is a thin track record.
 
 ``p_appear`` is deliberately a separate column from ``xpts`` and is never
 multiplied in: "3.1 xPts" and "82% to appear" are different claims about
@@ -296,8 +296,9 @@ _GW_RESULT: dict[str, Any] = {
             "type": "object",
             "description": "the same answer per row-bearing block, so no "
                            "consumer has to assume: rows, matrix, by_team, "
-                           "by_position, detail (detail is always 'raw' -- "
-                           "per-source numbers, nothing blended)",
+                           "by_position, detail. detail is always 'raw', "
+                           "which means per-source numbers with nothing "
+                           "blended.",
             "additionalProperties": False,
             "required": ["rows", "matrix", "by_team", "by_position", "detail"],
             "properties": {
@@ -310,17 +311,35 @@ _GW_RESULT: dict[str, Any] = {
         },
         "weights": {
             "type": ["object", "null"],
-            "description": "the earned weights WITH their evidence -- the "
-                           "latest fit at query time, whatever `weighting` "
-                           "was asked for, so the equal view can still show "
-                           "what earned weighting would use. null when no "
-                           "fit exists yet.",
+            "description": "the earned weights with the evidence that "
+                           "earned them: the latest fit at query time, "
+                           "whatever `weighting` was asked for, so the equal "
+                           "view can still show what earned weighting would "
+                           "use. null when no fit exists yet.",
             "additionalProperties": False,
             "required": ["as_of", "fit_id", "scored_gws", "n_floor", "rows"],
             "properties": {
                 "as_of": {"type": "string",
                           "description": "when the fit was written"},
                 "fit_id": {"type": "string"},
+                "anchor_gw": {
+                    "type": "integer",
+                    "description": "the gameweek `applied_weight` is "
+                                   "renormalised for"},
+                "applied_by_gw": {
+                    "type": "object",
+                    "description": "{gw(str) -> {provider -> weight}}: the "
+                                   "weight each provider actually carries in "
+                                   "that gameweek's blend. The blend "
+                                   "renormalises over the providers present, "
+                                   "so a provider that stops projecting drops "
+                                   "out and the rest rise. Providers with no "
+                                   "weight are absent from the inner map.",
+                    "additionalProperties": {
+                        "type": "object",
+                        "additionalProperties": {"type": "number"},
+                    },
+                },
                 "scored_gws": {"type": "array", "items": {"type": "integer"},
                                "description": "the settled gameweeks the fit "
                                               "pooled"},
@@ -336,7 +355,28 @@ _GW_RESULT: dict[str, Any] = {
                                      "baseline_mae", "earned"],
                         "properties": {
                             "provider": {"type": "string"},
-                            "weight": {"type": "number"},
+                            "weight": {"type": "number",
+                                       "description": "the fitted weight, "
+                                                      "before renormalisation"},
+                            "applied_weight": {
+                                "type": ["number", "null"],
+                                "description": "the weight this provider "
+                                               "actually carries at "
+                                               "anchor_gw, renormalised over "
+                                               "the providers present there; "
+                                               "0 when it does not cover that "
+                                               "gameweek"},
+                            "covers_anchor": {
+                                "type": "boolean",
+                                "description": "the provider has xPts at "
+                                               "anchor_gw"},
+                            "publishes_xpts": {
+                                "type": "boolean",
+                                "description": "false for a feed that carries "
+                                               "no xPts at all (an injury "
+                                               "feed, say): it is in the fit "
+                                               "table but is not a projection "
+                                               "provider"},
                             "n_obs": {"type": "integer"},
                             "mae": {"type": ["number", "null"],
                                     "description": "mean of the provider's "
@@ -397,7 +437,7 @@ _GW_RESULT: dict[str, Any] = {
         "actuals": {
             "type": "object",
             "description": "{code -> {gw -> official points}} for SETTLED "
-                           "gameweeks inside the window -- so the matrix can "
+                           "gameweeks inside the window, so the matrix can "
                            "show projection vs what actually happened",
             "additionalProperties": {
                 "type": "object",
@@ -548,7 +588,7 @@ def projection_table(
 
 
 # ---------------------------------------------------------------------------
-# artefact mode — the original behaviour, unchanged (the dashboard's contract)
+# artefact mode: the original behaviour, unchanged (the dashboard's contract)
 # ---------------------------------------------------------------------------
 
 def _artefact_mode(
@@ -625,7 +665,7 @@ def _artefact_mode(
         if merged.empty:
             return empty(
                 f"The projection artefact and the {season} warehouse rows share no "
-                f"player codes -- the artefact is probably from another season."
+                f"player codes. The artefact is probably from another season."
             )
 
     if position is not None:
@@ -688,7 +728,7 @@ def _artefact_mode(
 
 
 # ---------------------------------------------------------------------------
-# gameweek mode — provider projections through the semantic layer
+# gameweek mode: provider projections through the semantic layer
 # ---------------------------------------------------------------------------
 
 def _gw_mode(
@@ -731,7 +771,7 @@ def _gw_mode(
             "GROUP BY gw ORDER BY gw",
             (now, season),
         )
-    except Exception as e:  # noqa: BLE001 -- narrow re-raise below
+    except Exception as e:  # noqa: BLE001 - narrow re-raise below
         if "projection_normalized" in str(e) or "fact_projection" in str(e):
             return empty(
                 "The projection tables do not exist in this warehouse yet. "
@@ -1070,7 +1110,7 @@ def _gw_mode(
 
     # Per-source freshness: what each feed covers and when it last fetched.
     # Data-driven so a newly registered provider (a paid FPL Review feed, say)
-    # appears here -- and therefore in the UI -- with no further change.
+    # appears here, and therefore in the UI, with no further change.
     meta = q(
         wh,
         "SELECT source, MIN(gw) gw_min, MAX(gw) gw_max, "
@@ -1179,7 +1219,7 @@ def _gw_mode(
                     else str(prices_df.iloc[0]["a"]))
 
     # Measured accuracy: the calibration loop's earned weights beside the MAE
-    # they were earned from. Empty until a gameweek settles -- never invented.
+    # they were earned from. Empty until a gameweek settles; never invented.
     accuracy: list[dict[str, Any]] = []
     try:
         acc = q(
@@ -1239,6 +1279,12 @@ def _gw_mode(
             f"{source}'s raw numbers, unblended."
         )
     weights_block = _weights_block(wh, now, season)
+    _annotate_applied_weights(
+        wh, now, season, weights_block,
+        gws=gws, anchor_gw=gw, source_meta=source_meta,
+        selection=(set(subset) if subset
+                   else (None if consensus else {str(source)})),
+    )
     provider_accuracy = _provider_accuracy_block(wh, season)
 
     return {
@@ -1296,7 +1342,7 @@ def _latest_scores_sql(scope: str = "overall") -> str:
 def _weights_block(wh, now: dt.datetime, season: str) -> dict[str, Any] | None:
     """The latest fit's weights beside the evidence that earned them: n_obs,
     the provider's mean per-GW MAE and the equal-weight consensus's MAE on
-    the same players. None when no fit exists -- an absent table, not an
+    the same players. None when no fit exists: an absent table, not an
     invented one."""
     try:
         df = q(
@@ -1346,6 +1392,72 @@ def _weights_block(wh, now: dt.datetime, season: str) -> dict[str, Any] | None:
                        else str(r["holdout"]),
         } for _, r in df.iterrows()],
     }
+
+
+def _annotate_applied_weights(
+    wh,
+    now: dt.datetime,
+    season: str,
+    weights_block: dict[str, Any] | None,
+    *,
+    gws: list[int],
+    anchor_gw: int,
+    selection: set[str] | None,
+    source_meta: list[dict[str, Any]],
+) -> None:
+    """Write the weights the visible columns actually use into the block.
+
+    The blend is SUM(x*w)/SUM(w) over the providers present in each gameweek,
+    so a fitted weight is not the applied one. A provider whose coverage stops
+    at GW4 drops out of GW5 and every other provider's share rises. This fills
+    ``applied_by_gw`` for the matrix window and ``applied_weight`` on each row
+    for the anchor gameweek, so a reader is never shown a fitted number as if
+    it were the one in the column.
+
+    ``selection`` is the provider subset the caller asked for, or None for
+    every provider.
+    """
+    if weights_block is None:
+        return
+    fitted = {r["provider"]: float(r["weight"]) for r in weights_block["rows"]}
+    publishes = {m["source"] for m in source_meta}
+    present: dict[int, set[str]] = {}
+    if gws:
+        try:
+            df = q(
+                wh,
+                "SELECT gw, source FROM sem_projections(?) "
+                "WHERE season = ? AND gw >= ? AND gw <= ? AND xpts IS NOT NULL "
+                "GROUP BY gw, source",
+                (now, season, gws[0], gws[-1]),
+            )
+        except Exception:  # noqa: BLE001 - no projection rows is a normal state
+            df = None
+        if df is not None:
+            for _, r in df.iterrows():
+                present.setdefault(int(r["gw"]), set()).add(str(r["source"]))
+
+    def applied_at(g: int) -> dict[str, float]:
+        here = present.get(g, set())
+        if selection is not None:
+            here = here & selection
+        total = sum(fitted.get(s, 0.0) for s in here)
+        if total <= 0:
+            return {}
+        return {s: round(fitted.get(s, 0.0) / total, 4)
+                for s in sorted(here) if fitted.get(s, 0.0) > 0}
+
+    anchor = applied_at(int(anchor_gw))
+    anchor_present = present.get(int(anchor_gw), set())
+    if selection is not None:
+        anchor_present = anchor_present & selection
+    weights_block["anchor_gw"] = int(anchor_gw)
+    weights_block["applied_by_gw"] = {str(g): applied_at(g) for g in gws}
+    for r in weights_block["rows"]:
+        provider = r["provider"]
+        r["applied_weight"] = anchor.get(provider, 0.0)
+        r["covers_anchor"] = provider in anchor_present
+        r["publishes_xpts"] = provider in publishes
 
 
 def _provider_accuracy_block(wh, season: str) -> dict[str, Any]:

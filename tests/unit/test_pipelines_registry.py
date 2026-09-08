@@ -614,6 +614,86 @@ def test_health_states_follow_the_rules(tmp_path, monkeypatch):
         wh.close()
 
 
+def test_a_refusal_is_neither_a_failure_nor_a_success(tmp_path):
+    """no_source and refused are runs that finished without fetching. They
+    were counted as neither, so the row read "ok / last run succeeded inside
+    its cadence" over a run that did not succeed."""
+    run, _ = quiet_run()
+    task = stub_task(run, task_id="rf", due=registry.Interval(hours=4),
+                     window=dt.timedelta(hours=3))
+    wh = Warehouse(tmp_path / "r.duckdb")
+    try:
+        _ledger_row(wh, "rf", status="ok", age_h=1.0)
+        assert health.task_health(wh, task)["state"] == "ok"
+
+        _ledger_row(wh, "rf", status="no_source", age_h=0.4)
+        got = health.task_health(wh, task)
+        assert got["state"] == "refused"
+        assert got["consecutive_failures"] == 0
+        assert "succeeded" not in got["reason"]
+
+        _ledger_row(wh, "rf", status="refused", age_h=0.3)
+        assert health.task_health(wh, task)["state"] == "refused"
+
+        # a skip that verified freshness IS a success, and says so plainly
+        _ledger_row(wh, "rf", status="skipped_fresh", age_h=0.2)
+        got = health.task_health(wh, task)
+        assert got["state"] == "ok"
+        assert "already fresh" in got["reason"]
+
+        # data older than the budget is stale whatever the last run did
+        wh.sql("DELETE FROM fetch_run WHERE pipeline = 'rf'")
+        _ledger_row(wh, "rf", status="ok", age_h=20.0)
+        _ledger_row(wh, "rf", status="no_source", age_h=0.1)
+        assert health.task_health(wh, task)["state"] == "stale"
+    finally:
+        wh.close()
+
+
+def test_a_health_reason_carries_the_sentence_not_the_traceback(tmp_path):
+    """The runner appends a log tail to the note and a traceback's first line
+    is a caret ruler, so a fixed slice of the note put `^^^^^ File "/Users/...`
+    on the panel. The reason takes the line that says what happened; the tail
+    stays in the drawer, which serves the whole file."""
+    note = (
+        "error: ^^^^^^^^^^^^^^^^\n"
+        '  File "/Users/x/fpl_edge/platform/briefing_intel.py", line 748, '
+        "in generate\n"
+        "    text = _run_model(prompt)\n"
+        "fpl_edge.platform.briefing_intel.BriefingIntelError: "
+        "model call failed\n"
+        "\n--- log tail ---\n"
+        "# task=briefing_intel trigger=scheduler"
+    )
+    assert health.summarise_note(note) == (
+        "BriefingIntelError: model call failed"
+    )
+    # a plain detail is served as it stands, without its outcome prefix
+    assert health.summarise_note(
+        "error: 15/17 steps ok; failed: ingest_odds_fixtures\n"
+        "--- log tail ---\nstep ingest_odds_fixtures: FAILED"
+    ) == "15/17 steps ok; failed: ingest_odds_fixtures"
+    assert health.summarise_note(None) == ""
+    long = "error: " + "a" * 400
+    assert len(health.summarise_note(long)) <= health.REASON_NOTE_CHARS + 3
+
+    run, _ = quiet_run()
+    task = stub_task(run, task_id="tb", due=registry.Interval(hours=4),
+                     window=dt.timedelta(hours=3))
+    wh = Warehouse(tmp_path / "t.duckdb")
+    try:
+        rec = fetch_ledger.RunRecord("tb")
+        rec.started = dt.datetime.now(UTC) - dt.timedelta(minutes=5)
+        rec.finished = dt.datetime.now(UTC)
+        fetch_ledger.record_finished(wh, rec, status="error", note=note)
+        reason = health.task_health(wh, task)["reason"]
+        assert reason == ("last run errored (1 consecutive): "
+                          "BriefingIntelError: model call failed")
+        assert "^^^" not in reason and "--- log tail ---" not in reason
+    finally:
+        wh.close()
+
+
 def test_deadline_relative_tasks_are_never_cadence_stale(tmp_path):
     run, _ = quiet_run()
     task = stub_task(run, task_id="dr",

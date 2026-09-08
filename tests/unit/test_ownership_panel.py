@@ -656,6 +656,103 @@ def test_every_cohort_derived_measure_carries_its_n(segmented_db):
     assert "n" not in row["fields"]["global"]
 
 
+def test_the_triple_captain_term_is_split_out_of_eo(segmented_db):
+    """The blocker this split exists to stop.
+
+    On the live warehouse Haaland read 238.2 EO against 98.1 owned and 98.1
+    captained, and the page's one sentence explaining the minus sign quoted
+    the two head counts against a number they could not produce: 257 owners
+    plus 257 captains over 262 managers is 196.2, not 238.2. The missing 42.0
+    was 110 triple captains. EO keeps them, because the identity subtracts the
+    multipliers the field actually played, but the chip part is now measured
+    separately so a sentence can name it and a baseline can drop it.
+
+    Element 20 here is the same shape in miniature: two managers own him, one
+    at 1x and one on a triple captain, so EO is 200.0 and 50.0 of that is the
+    third unit the chip bought.
+    """
+    res = run(segmented_db, segments=["mini_league", "snowball"])
+    assert res["selection"]["n"] == 2
+    m = next(r for r in res["rows"] if r["code"] == 200)["fields"]["selected"]
+
+    assert m["eo"] == 200.0
+    assert m["eo_tc_pp"] == 50.0
+    assert m["eo_ex_tc"] == 150.0
+    assert m["tripled_by"] == 1
+    # THE reconciliation the sentence on the page makes: one multiplier unit
+    # per starter, one more per captain, one more per triple captain.
+    units = m["started_by"] + m["captained_by"] + m["tripled_by"]
+    assert units == 4
+    assert m["eo"] == pytest.approx(100.0 * units / m["n"], abs=0.05)
+    # and without the chip, EO is own + cap again
+    assert m["eo_ex_tc"] == pytest.approx(m["own"] + m["cap"], abs=0.05)
+
+    d = next(r for r in res["diff"] if r["code"] == 200)
+    assert (d["field_eo_pct"], d["field_eo_tc_pp"], d["field_eo_ex_tc_pct"],
+            d["field_tripled_by"]) == (200.0, 50.0, 150.0, 1)
+    w = next(p for p in res["whatif"]["players"] if p["code"] == 200)
+    assert (w["field_eo_pct"], w["field_eo_tc_pp"],
+            w["field_eo_ex_tc_pct"], w["field_tripled_by"]) == (200.0, 50.0,
+                                                                150.0, 1)
+
+
+def test_a_chip_free_week_reports_a_zero_chip_term_not_a_null(segmented_db):
+    """0.0 is a measurement here: the squads were read and nobody played the
+    chip. A null would mean the split could not be made, which is what an
+    external EO feed serves, and the UI keys its wording off the difference."""
+    res = run(segmented_db)
+    m = next(r for r in res["rows"] if r["code"] == 100)["fields"]["selected"]
+    assert m["eo_tc_pp"] == 0.0
+    assert m["tripled_by"] == 0
+    assert m["eo_ex_tc"] == m["eo"]
+    # the cohort field comes from sem_elite_ownership and cannot split it
+    assert "eo_tc_pp" not in next(
+        r for r in res["rows"] if r["code"] == 100)["fields"]["cohort:elite"]
+
+
+def test_the_diff_flag_names_the_list_it_points_at(segmented_db):
+    """It was `in_template`, and it did not mean the template.
+
+    The flag is membership of this payload's own `rows`, which is the top
+    `limit` by an EXTERNAL effective-ownership metric. It never described the
+    page's Template XV, which is the crawled field's most-started shape, so
+    on the live warehouse it marked four players the XV does not contain and
+    missed four it does. The name now says what it is and the payload names
+    the ranking, so a reader can check every flag against `rows`.
+    """
+    res = run(segmented_db)
+    row_codes = {r["code"] for r in res["rows"]}
+    assert row_codes, "no rows to check the flag against"
+    for d in res["diff"]:
+        assert "in_template" not in d
+        assert d["in_panel_rows"] is (d["code"] in row_codes)
+    assert res["rows_ranked_by"]
+    assert "own_pct" in res["rows_ranked_by"] or "eo_pred" in res["rows_ranked_by"]
+
+
+def _payload_strings(obj, path="", out=None):
+    if out is None:
+        out = []
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            _payload_strings(v, f"{path}.{k}", out)
+    elif isinstance(obj, list):
+        for i, v in enumerate(obj):
+            _payload_strings(v, f"{path}[{i}]", out)
+    elif isinstance(obj, str):
+        out.append((path, obj))
+    return out
+
+
+def test_no_string_this_panel_serves_carries_an_em_dash(segmented_db):
+    """House rule, enforced where the prose is written rather than where it is
+    rendered: every one of these strings is printed verbatim on the EliteFPL
+    tab, so a dash added here reaches the page."""
+    bad = [(p, s) for p, s in _payload_strings(run(segmented_db))
+           if "—" in s or " -- " in s]
+    assert bad == []
+
+
 def test_the_two_fields_are_told_apart_explicitly(segmented_db):
     """R2 #5: the measured cohort (charts, elite_* columns) and the segment
     selection (WHO IS IN IT, diff, whatif) are different populations under
@@ -766,12 +863,32 @@ def test_the_panels_segment_union_equals_the_semantic_layer_macro(segmented_db):
 def test_the_whole_pool_selected_equals_the_elite_cohort(segmented_db):
     """The segment vocabulary and the cohort vocabulary must describe the same
     managers. With no top1k crawl seeded, every tagged entry is 'elite', so
-    selecting every segment must reproduce `cohort:elite` exactly."""
+    selecting every segment must reproduce `cohort:elite` on every measure the
+    two share.
+
+    They do not publish the same KEYS. `selected` is computed in this script
+    from the stored picks, so it can split the triple-captain term out of EO
+    (`eo_tc_pp` / `eo_ex_tc` / `tripled_by`); `cohort:elite` comes from
+    sem_elite_ownership, which publishes EO with the chip already folded in.
+    The extra keys are asserted to be present on one side and absent from the
+    other, so this test still fails if the two ever drift on a shared measure.
+    """
+    chip_only = {"eo_tc_pp", "eo_ex_tc", "tripled_by"}
     every = [s["key"] for s in run(segmented_db)["segments"]]
     res = run(segmented_db, segments=every)
     assert res["selection"]["n"] == res["cohort_n"] == 5
     for row in res["rows"]:
-        assert row["fields"].get("selected") == row["fields"].get("cohort:elite")
+        sel = row["fields"].get("selected")
+        coh = row["fields"].get("cohort:elite")
+        if sel is None or coh is None:
+            assert sel == coh
+            continue
+        assert chip_only <= set(sel)
+        assert not chip_only & set(coh)
+        assert {k: v for k, v in sel.items() if k not in chip_only} == coh
+        # eo splits exactly into the chip part and the rest, on every row.
+        assert sel["eo"] == pytest.approx(sel["eo_ex_tc"] + sel["eo_tc_pp"],
+                                          abs=0.05)
 
 
 # ---------------------------------------------------------------------------

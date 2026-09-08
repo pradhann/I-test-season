@@ -22,7 +22,7 @@
    registry; this file never hardcodes a game rule. */
 
 import { runPanel, getJSON, postJSON, el, emptyBox, errBox, provenance, faceImg,
-         stat, playerCard, fmtPrice, fmt1, fmt2 } from "/js/app.js";
+         stat, playerCard, fmtPrice, fmt1, fmt2, fmtAge } from "/js/app.js";
 
 const PLANS_KEY = "itest-planner-plans-v1";
 const RAIL_KEY = "itest-planner-rail-v1";
@@ -65,12 +65,9 @@ function shortTs(iso) {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? String(iso) : d.toISOString().slice(0, 16).replace("T", " ") + "Z";
 }
-function ageText(iso) {
-  const ms = Date.now() - new Date(iso).getTime();
-  if (Number.isNaN(ms)) return "";
-  const h = ms / 3.6e6;
-  return h < 1 ? `${Math.max(1, Math.round(h * 60))} min ago` : `${h.toFixed(1)}h ago`;
-}
+/* No local age helper: app.js's fmtAge/fmtSpan is the one age vocabulary
+   every view speaks. The version that lived here printed "112.2h ago", the
+   arithmetic the owner asked to be removed. */
 const sortedInts = xs => [...(xs || [])].map(Number).sort((a, b) => a - b);
 function sameSets(a, b) {
   const x = sortedInts(a), y = sortedInts(b);
@@ -78,6 +75,19 @@ function sameSets(a, b) {
 }
 function sameMove(m1, m2) {
   return !!m1 && !!m2 && sameSets(m1.out, m2.out) && sameSets(m1.in, m2.in);
+}
+/* Is `part` a strict subset of `whole` on both sides? The artefact ranks
+   every candidate it solved, so the one-transfer half of a two-transfer plan
+   comes back in the same list and was printed under "alternative it beat":
+   "Odegaard to Tavernier" is not an alternative to a plan that makes it. */
+export function subsetMove(part, whole) {
+  if (!part || !whole || sameMove(part, whole)) return false;
+  const has = (xs, ys) => {
+    const set = new Set(sortedInts(xs));
+    return sortedInts(ys).every(v => set.has(v));
+  };
+  const size = (part.out || []).length + (part.in || []).length;
+  return size > 0 && has(whole.out, part.out) && has(whole.in, part.in);
 }
 
 function card(title, cls) {
@@ -196,7 +206,7 @@ export default async function planner(host) {
     }
     for (const k in by) by[k].sort((a, b) => b - a);
     const gk = by.GKP[0] ?? 0;
-    let best = null;
+    let best = null, bestCap = null;
     for (let d = 3; d <= Math.min(5, by.DEF.length); d++)
       for (let m = 2; m <= Math.min(5, by.MID.length); m++) {
         const f = 10 - d - m;
@@ -205,12 +215,27 @@ export default async function planner(host) {
                           ...by.FWD.slice(0, f)];
         const sum = gk + outfield.reduce((a, x) => a + x, 0);
         const cap = Math.max(gk, ...outfield);
-        if (best === null || sum + cap > best) best = sum + cap;
+        if (best === null || sum + cap > best) { best = sum + cap; bestCap = cap; }
       }
-    if (best !== null) return best;
+    if (best !== null) return { total: best, capXpts: bestCap };
     // Degenerate squad (should not happen with same-position swaps): top 11.
     const all = Object.values(by).flat().sort((a, b) => b - a).slice(0, 11);
-    return all.reduce((a, x) => a + x, 0) + (all[0] ?? 0);
+    return { total: all.reduce((a, x) => a + x, 0) + (all[0] ?? 0),
+             capXpts: all[0] ?? 0 };
+  }
+
+  /* Who the grid doubled. The table badged `(C)` from the LOCKED FPL armband
+     while xiTotal auto-captains the XI's top xPts, so the "XI xPts" row could
+     double a different player from the one wearing the badge, eight points
+     apart, with nothing on the page reconciling them. */
+  function capName(codes, gw, capXpts) {
+    if (capXpts == null) return null;
+    let hit = null;
+    for (const c of codes) {
+      const v = xp(c, gw);
+      if (v != null && Math.abs(v - capXpts) < 1e-9) { hit = byCode.get(c); break; }
+    }
+    return hit ? hit.name : null;
   }
 
   /* One pass over the horizon: transfers, FTs used/banked, hits, bank, XI. */
@@ -228,8 +253,9 @@ export default async function planner(host) {
       const ftUsed = Math.min(mv.length, ft);
       const hits = mv.length - ftUsed;
       const x = xiTotal(codes, g);
-      perGw.push({ gw: g, transfers: mv.length, ftAvail: ft, ftUsed, hits, bank, xi: x });
-      totalX += x; totalHits += hits;
+      perGw.push({ gw: g, transfers: mv.length, ftAvail: ft, ftUsed, hits, bank,
+                   xi: x.total, capName: capName(codes, g, x.capXpts) });
+      totalX += x.total; totalHits += hits;
       ft = Math.min(R.max_banked, ft - ftUsed + R.free_per_gw);
     }
     return { perGw, totalX, totalHits,
@@ -464,12 +490,28 @@ export default async function planner(host) {
         rail.must_keep = now ? rail.must_keep.filter(c => c !== p.code) : [...rail.must_keep, p.code];
         rail.ban = (rail.ban || []).filter(c => c !== p.code);
         b.setAttribute("aria-pressed", now ? "false" : "true");
-        persist(); renderBans();
+        persist(); renderBans(); keepHint();
       };
       keepBox.appendChild(b);
     }
-    railBody.appendChild(field("must keep", keepBox,
-      "locked in every gameweek of the horizon (OptimizerConfig.locked)"));
+    /* Fifteen names under "locked in every gameweek" read as fifteen locks,
+       because a pressed toggle differs from an unpressed one only by its
+       background. The count is stated, and the whole block is dimmed while
+       nothing is selected. */
+    const keepNote = el("div", "pl-hint");
+    const keepHint = () => {
+      const n = rail.must_keep.length;
+      keepBox.classList.toggle("pl-none", n === 0);
+      keepNote.textContent = n === 0
+        ? `None selected: the solver may sell any of the ${squadSorted.length}. `
+          + "Press a name to lock him in every gameweek of the horizon."
+        : `${n} of ${squadSorted.length} locked in every gameweek of the horizon `
+          + "(OptimizerConfig.locked); the rest can be sold.";
+    };
+    const keepField = field("must keep", keepBox);
+    keepField.appendChild(keepNote);
+    keepHint();
+    railBody.appendChild(keepField);
 
     // ban: a typeahead over the universe, bans as removable chips
     const banWrap = el("div");
@@ -576,6 +618,28 @@ export default async function planner(host) {
     }
   }
 
+  /* Did THIS run produce the plan the cards show?
+
+     The rail printed one run's mode, times, exit code and settings directly
+     above a plan card built from a different run, so "keep 1, ban 1" sat
+     three inches from "solved with: keep none, ban none" and the log fold
+     recommended four transfers and an 8-point hit that appeared nowhere on
+     the page.
+
+     The test is containment, not equality: the artefact stamps
+     `generated_at` when the run reconstructs the squad, about a second after
+     the process starts, not when it commits. So the run owns the plan when
+     the plan's stamp falls inside [started, finished]. A running solve owns
+     nothing yet; the plan on screen is still the previous one. */
+  function runOwnsPlan(s) {
+    const gen = tplan?.plan?.generated_at;
+    if (!s || !gen || s.state === "running") return false;
+    const g = Date.parse(gen), a = Date.parse(s.started_utc || "");
+    const b = Date.parse(s.finished_utc || "");
+    if (!Number.isFinite(g) || !Number.isFinite(a)) return false;
+    const end = Number.isFinite(b) ? b : a;
+    return g >= a - 2000 && g <= end + 2000;
+  }
   function statusChip(state) {
     const cls = state === "running" ? "chip warn" : state === "done" ? "chip good"
       : state === "failed" ? "chip bad" : "chip";
@@ -589,6 +653,9 @@ export default async function planner(host) {
       solveBtnRef.disabled = running;
       solveBtnRef.textContent = running ? "Solving…" : "Solve";
     }
+    const owns = runOwnsPlan(s);
+    const planStamp = tplan?.exists && tplan.plan ? tplan.plan.generated_at : null;
+    const ranAtAll = !!(s.started_utc || s.finished_utc);
     const line = el("div", "pl-statusline");
     line.appendChild(statusChip(s.state));
     const bits = [];
@@ -599,13 +666,22 @@ export default async function planner(host) {
     if (s.reason) bits.push(s.reason);
     line.appendChild(el("span", "pl-hint", bits.join(" · ")));
     statusBox.appendChild(line);
+    if (ranAtAll && !running && planStamp) {
+      statusBox.appendChild(el("div", owns ? "pl-hint" : "pl-hint pl-runsplit",
+        owns
+          ? "This run produced the plan card."
+          : "Last run, not the run behind the plan card, which was generated "
+            + `${shortTs(planStamp)}. The settings and log below describe this `
+            + "run, not that plan."));
+    }
     if (s.options && s.mode === "transfers") {
       const o = s.options;
       statusBox.appendChild(el("div", "pl-hint",
-        `settings: horizon ${o.horizon}, hits ${o.max_hits < 0 ? "unconstrained" : "≤" + o.max_hits}, ` +
+        `${owns ? "settings" : "this run's settings"}: horizon ${o.horizon}, ` +
+        `hits ${o.max_hits < 0 ? "unconstrained" : "≤" + o.max_hits}, ` +
         `chips ${o.chips?.length ? o.chips.map(c => CHIP_NAME[c] || c).join("/") : "off"}, ` +
         `keep ${o.must_keep?.length || 0}, ban ${o.ban?.length || 0}, ` +
-        `${o.seconds}s x ${o.max_candidates}/position`));
+        `${o.seconds}s per solve, ${o.max_candidates} candidates per position`));
     }
     // A failed run is an error only when it is newer than the plan that
     // stands; an older failure beside a standing plan is a footnote.
@@ -624,7 +700,10 @@ export default async function planner(host) {
     if (s.log_tail && s.log_tail.length) {
       const det = el("details", "pl-logfold");
       det.open = running;
-      det.appendChild(el("summary", null, "solver log (tail)"));
+      det.appendChild(el("summary", null,
+        owns || running || !planStamp
+          ? "solver log (tail)"
+          : "solver log (tail), from this run, not the plan card"));
       const pre = el("pre", "pl-log", s.log_tail.join("\n"));
       det.appendChild(pre);
       statusBox.appendChild(det);
@@ -707,6 +786,14 @@ export default async function planner(host) {
     line.appendChild(el("b", null, `${fmtSigned(gain)} ${plan.objective_mode || "?"}`));
     line.appendChild(document.createTextNode(
       ` over GW${h[0]}-${h.at(-1)} vs rolling, solver forecast`));
+    /* How big the search actually was, beside the number it produced. It sat
+       in the provenance footer while "20/position" sat in the rail, which
+       read as eighty players considered rather than nine moves tried. */
+    if (plan.n_candidates_screened != null) {
+      const solved = plan.n_candidates_solved ?? 0;
+      line.appendChild(el("span", "pl-screened",
+        ` · ${solved} of ${plan.n_candidates_screened} candidate moves solved in full`));
+    }
     if (opts.gap !== undefined) {
       line.appendChild(el("span", "pl-gap", " · " + (opts.gap != null
         ? `${fmt1(opts.gap)}% optimality gap (best found, not proven)` : "gap closed within tolerance")));
@@ -726,17 +813,23 @@ export default async function planner(host) {
       `chips ${chips.length ? chips.map(k => CHIP_NAME[k] || k).join("/") : "off"}`,
       `keep ${(c.must_keep || []).length ? c.must_keep.map(x => who(x).name).join(", ") : "none"}`,
       `ban ${(c.ban || []).length ? c.ban.map(x => who(x).name).join(", ") : "none"}`,
-      c.seconds != null ? `${Math.round(c.seconds)}s x ${c.max_candidates}/position` : null,
+      // "150s x 20/position" is a universe cap, not the number of moves the
+      // solver tried, and beside a nine-move search it read as eighty
+      // players considered. The cap stays in the bounds note; the headline
+      // settings line keeps only the time limit.
+      c.seconds != null ? `${Math.round(c.seconds)}s per solve` : null,
     ].filter(Boolean);
     return el("p", "pl-hint pl-settings", "solved with: " + bits.join(" · "));
   }
   function sourceLine(plan) {
     const bits = [
       `source ${tplan.path || "transfer_plan.json"}`,
-      `generated ${shortTs(plan.generated_at)} (${ageText(plan.generated_at)})`,
+      `generated ${shortTs(plan.generated_at)}`
+        + (fmtAge(plan.generated_at) ? ` (${fmtAge(plan.generated_at)} ago)` : ""),
       `objective ${plan.objective_mode} (surrogate; see notes)`,
       plan.solve_seconds != null ? `solved in ${Math.round(plan.solve_seconds)}s` : null,
-      plan.n_candidates_solved != null ? `${plan.n_candidates_solved}/${plan.n_candidates_screened} candidates solved` : null,
+      // the screened/solved counts moved up beside the gain, where the size
+      // of the search is read
     ].filter(Boolean);
     return el("p", "provenance", bits.join(" · "));
   }
@@ -814,8 +907,26 @@ export default async function planner(host) {
       return;
     }
     const plan = tplan.plan;
-    const st = el("span", "chip " + (tplan.stale ? "bad" : (tplan.age_hours ?? 0) > 24 ? "warn" : "good"),
-      (tplan.stale ? "stale" : "standing") + (tplan.age_hours != null ? ` · ${fmt1(tplan.age_hours)}h old` : ""));
+    // The server decides freshness, not this file. Both tabs read the same
+    // verdict, so a five-hour-old plan can no longer read green here and amber
+    // on the Dashboard.
+    const state = tplan.state || (tplan.stale ? "stale" : "aging");
+    const stateClass = { fresh: "good", aging: "warn" }[state] || "bad";
+    // Same refusal the Dashboard makes: a plan whose moves were priced
+    // against a different fifteen is a record, not guidance.
+    if (state === "superseded") {
+      const gap = el("div", "err");
+      gap.appendChild(el("b", null, "This plan does not fit your squad. "));
+      gap.appendChild(document.createTextNode(
+        tplan.superseded_reason
+        || "it was solved against a different fifteen."));
+      solverCard.head.appendChild(st);
+      solverCard.body.appendChild(gap);
+      altCard.hidden = true;
+      return;
+    }
+    const st = el("span", "chip " + stateClass,
+      state + (tplan.age_hours != null ? ` · ${fmt1(tplan.age_hours)}h old` : ""));
     st.title = `generated ${plan.generated_at}`;
     solverCard.head.appendChild(st);
 
@@ -904,7 +1015,7 @@ export default async function planner(host) {
     if (alts.length) {
       const tbl = el("table", "data pl-alttable");
       const thead = el("thead"); const hr = el("tr");
-      for (const [lbl, num] of [["alternative it beat", 0], ["hits", 1], [`vs rolling (${plan.objective_mode})`, 1], ["", 0]])
+      for (const [lbl, num] of [["move it beat", 0], ["hits", 1], [`vs rolling (${plan.objective_mode})`, 1], ["", 0]])
         hr.appendChild(el("th", num ? "num" : "", lbl));
       thead.appendChild(hr); tbl.appendChild(thead);
       const tbody = el("tbody");
@@ -914,6 +1025,11 @@ export default async function planner(host) {
         const nameTd = el("td");
         if (a.chip) nameTd.appendChild(el("span", "chip s1", `chip plan: ${CHIP_NAME[a.chip] || a.chip}`));
         nameTd.appendChild(document.createTextNode((a.chip ? " " : "") + moveSummary(a)));
+        // Not a road not taken: this row is part of the plan above it.
+        if (subsetMove(a, chosen))
+          nameTd.appendChild(el("div", "pl-hint",
+            `part of the headline plan: ${a.n_transfers ?? (a.out || []).length} of its `
+            + `${chosen.n_transfers ?? (chosen.out || []).length} transfers, scored on its own`));
         tr.appendChild(nameTd);
         tr.appendChild(el("td", "num", String(a.hits ?? 0)));
         tr.appendChild(el("td", "num", roll != null && a.objective != null ? fmtSigned(a.objective - roll) : "?"));
@@ -1009,7 +1125,18 @@ export default async function planner(host) {
       for (const p of c.perGw) { const td = el("td", "num"); cell(td, p); tr.appendChild(td); }
       tbody.appendChild(tr);
     };
-    row("XI xPts (C×2)", (td, p) => td.textContent = fmt1(p.xi));
+    row("XI xPts, captain doubled", (td, p) => {
+      td.textContent = fmt1(p.xi);
+      td.title = p.capName
+        ? `doubling ${p.capName}, the XI's top xPts this gameweek`
+        : "captain doubled";
+    });
+    // Named, not implied: the row above doubles this player, and it is not
+    // necessarily the one badged with your locked armband.
+    row("doubled", (td, p) => {
+      td.textContent = p.capName || "–";
+      td.classList.add("pl-capname");
+    });
     row("transfers", (td, p) => td.textContent = String(p.transfers));
     row("FTs used / available", (td, p) => td.textContent = `${p.ftUsed}/${p.ftAvail}`);
     row("hit pts", (td, p) => {
@@ -1032,6 +1159,23 @@ export default async function planner(host) {
                       c.perGw.some(p => p.bank < 0) ? "bad" : ""));
     strip.append(stat(String(moves.length), "moves planned"));
     summaryBox.appendChild(strip);
+    // The grid and the solver count different things, and the page used to
+    // print both totals with nothing saying so: the reader was left to
+    // reconcile a 15-point gap by themselves. The grid sums the eleven with
+    // the top xPts doubled. The solver's objective adds the bench at fixed
+    // autosub weights and picks its own lineup in every gameweek, so it is
+    // structurally the larger number.
+    if (tplan?.plan?.chosen?.objective != null) {
+      const solverX = Number(tplan.plan.chosen.objective);
+      const line = el("p", "sub pl-reconcile");
+      line.append(
+        `The solver scores this plan at ${fmt1(solverX)} over the same `
+        + `gameweeks, ${fmt1(solverX - c.totalX)} above the grid. The grid `
+        + `sums the eleven with the top xPts doubled; the solver adds the `
+        + `bench at fixed autosub weights and chooses its own XI each `
+        + `gameweek. Two objectives, not two answers to one question.`);
+      summaryBox.appendChild(line);
+    }
     if (c.perGw.some(p => p.bank < 0))
       summaryBox.appendChild(el("p", "sub")).appendChild(
         el("span", "chip bad", "bank goes negative: plan is not affordable"));
@@ -1387,7 +1531,14 @@ export default async function planner(host) {
         nameTd.title = `${p.name} removed from GW${picking.gw}; pick a replacement above or undo`;
       } else {
         nameTd.appendChild(faceImg(p.code, "avatar"));
-        const nm = el("span", outMove ? "pl-struck" : "", p.name + (p.is_captain ? " (C)" : ""));
+        const nm = el("span", outMove ? "pl-struck" : "", p.name);
+        if (p.is_captain) {
+          const armband = el("i", "pl-armband", "C");
+          armband.title = "your locked FPL armband. The grid's own total "
+            + "doubles the XI's top xPts each gameweek, named in the "
+            + "'doubled' row, which is not always this player.";
+          nm.appendChild(armband);
+        }
         nameTd.appendChild(nm);
         nameTd.classList.add("pl-playerbtn");
         nameTd.tabIndex = 0;
@@ -1459,7 +1610,16 @@ export default async function planner(host) {
   function renderPool() {
     poolBox.textContent = "";
     const box = el("div", "card");
-    box.appendChild(el("h2", null, `Player pool: all ${res.candidates.length} players`));
+    /* The heading counted the whole universe while the footer counted the
+       rows, so "all 639 players" stood over "showing 40 of 637": the two
+       players the plan buys are in the squad by the time the list is built
+       and were subtracted from one number but not the other. Both now count
+       the same set. */
+    const poolGwNow = poolGw ?? res.gws[0];
+    const heldNow = squadAt(poolGwNow);
+    const addable = res.candidates.filter(c => !heldNow.has(c.code)).length;
+    box.appendChild(el("h2", null,
+      `Player pool: ${addable} players you do not hold in GW${poolGwNow}`));
     box.appendChild(el("p", "sub",
       `Browse anyone, add from the list. ${res.metrics_note || ""}`));
 
@@ -1521,9 +1681,9 @@ export default async function planner(host) {
     box.appendChild(cols);
 
     // -- rows --
-    const gw = poolGw ?? res.gws[0];
+    const gw = poolGwNow;
     const remaining = res.gws.filter(g => g >= gw);
-    const inSquadNow = squadAt(gw);
+    const inSquadNow = heldNow;
     const term = poolSearch.trim().toLowerCase();
     let rows = res.candidates
       .filter(c => !inSquadNow.has(c.code))
@@ -1609,7 +1769,7 @@ export default async function planner(host) {
     box.appendChild(wrap);
     if (total > rows.length)
       box.appendChild(el("p", "sub",
-        `showing 40 of ${total}; search or filter to narrow`));
+        `showing ${rows.length} of ${total} after filters; search or filter to narrow`));
     poolBox.appendChild(box);
   }
 

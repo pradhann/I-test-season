@@ -420,6 +420,11 @@ class Warehouse:
         silently missing it.
         """
         additions = {
+            "dim_event": [
+                ("avg_entry_score", "INTEGER"),
+                ("highest_score", "INTEGER"),
+                ("ranked_count", "BIGINT"),
+            ],
             "fact_player_state": [
                 ("can_select", "BOOLEAN"),
                 ("can_transact", "BOOLEAN"),

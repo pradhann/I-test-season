@@ -25,6 +25,7 @@ import json
 import os
 import re
 from pathlib import Path
+from collections.abc import Sequence
 from typing import Any
 
 import typer
@@ -115,6 +116,8 @@ def serialize_recommendation(
     seconds: float,
     constraints: dict[str, Any] | None = None,
     forecast: dict[str, Any] | None = None,
+    squad_before: Sequence[int] | None = None,
+    squad_source: str | None = None,
 ) -> dict[str, Any]:
     """The transfer_plan.json payload, pure and testable without a MILP.
 
@@ -136,7 +139,27 @@ def serialize_recommendation(
         "vice_captain": int(d0.vice_captain),
         "starting_xi": [int(c) for c in d0.starting_xi],
     })
+    before = sorted(int(c) for c in (squad_before or ()))
+    # A plan is a statement about ONE squad. `out` and `in` are diffed against
+    # the squad held when the solve ran, so a reader who applies them to a
+    # different fifteen gets a squad the optimiser never scored. On 2026-09-08
+    # this surfaced as a starting XI naming a player the dashboard's own squad
+    # card did not list: the plan was solved before the account was connected
+    # and the two surfaces disagreed in silence. Recording the squad here lets
+    # every reader check rather than assume; brief.py refuses a plan whose
+    # squad_before no longer matches what the manager holds.
+    if before:
+        after = sorted((set(before) - set(chosen["out"])) | set(chosen["in"]))
+        stray = sorted(set(chosen["starting_xi"]) - set(after))
+        if stray:
+            raise ValueError(
+                f"plan is self-inconsistent: starting XI names {stray}, which "
+                f"the post-transfer squad does not contain. Writing it would "
+                f"publish a lineup the optimiser never scored."
+            )
     return {
+        "squad_before": before,
+        "squad_source": (str(squad_source) if squad_source else None),
         "generated_at": generated_at.astimezone(UTC).isoformat(),
         "season": str(rec.season),
         "gw": int(rec.gw),
@@ -408,6 +431,8 @@ def recommend_cmd(
             seconds=float(seconds), chips_allowed=bool(chips),
             max_hits=int(max_hits), unconstrained=unconstrained,
             forecast=provenance,
+            squad_before=sorted(held_now),
+            squad_source=getattr(state.provenance, "name", None),
             constraints={
                 "horizon": int(horizon),
                 "max_hits": int(max_hits),

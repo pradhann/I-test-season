@@ -25,6 +25,18 @@ CREATE TABLE IF NOT EXISTS dim_event (
     deadline_utc TIMESTAMPTZ NOT NULL,
     is_finished  BOOLEAN,
     as_of        TIMESTAMPTZ NOT NULL,
+    -- The field's own result for the gameweek, straight from bootstrap-static.
+    -- NULL until the gameweek finishes: FPL reports 0 for an unplayed event,
+    -- and storing that zero would hand every baseline a fake field average.
+    --
+    -- Declared AFTER as_of on purpose. ALTER TABLE ADD COLUMN appends, so a
+    -- warehouse that gained these by migration has them last; declaring them
+    -- earlier here would give a fresh warehouse a different column order from
+    -- a migrated one, and any positional INSERT would then mean two different
+    -- things depending on which machine ran it.
+    avg_entry_score INTEGER,
+    highest_score   INTEGER,
+    ranked_count    BIGINT,
     PRIMARY KEY (season, gw, as_of)
 );
 

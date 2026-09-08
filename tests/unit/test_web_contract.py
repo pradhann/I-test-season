@@ -399,12 +399,27 @@ def test_the_fixtures_caption_flips_on_data_not_prose() -> None:
 
 
 def test_sorting_rebuilds_the_tbody_not_the_panel() -> None:
-    """host.innerHTML="" on a header click deleted the provenance footer."""
+    """host.innerHTML="" on a header click deleted the provenance footer.
+
+    The second half of this test used to read app.js's ``dataTable`` helper.
+    That helper was exported and called by zero views: every tab hand-rolled
+    its own table, which is why three of them diverged on header casing and
+    cell padding while a shared implementation sat unused. It is deleted, so
+    the invariant is asserted where tables are actually built.
+    """
     assert 'host.innerHTML=""' not in ALL_JS.replace(" ", "")
-    body = _fn_body(APP, "renderBody")
-    assert "tbody.textContent" in body, (
-        "sorting must clear and rebuild only the tbody"
+    assert "dataTable" not in APP, (
+        "app.js exports a table helper again: either every view uses it or "
+        "it does not exist, but an unused shared component is how the views "
+        "drift apart"
     )
+    for name, src in VIEWS.items():
+        if "tbody" not in src:
+            continue
+        assert "tbody.innerHTML" not in src, (
+            f"{name} rebuilds a table body with innerHTML; use "
+            f"tbody.textContent so nothing outside the body is destroyed"
+        )
 
 
 def test_the_chat_subapp_is_built_and_the_view_mounts_it() -> None:
@@ -453,7 +468,7 @@ def test_the_pipeline_health_dot_never_travels_without_its_reason() -> None:
     panel exists to prevent. The one function that renders health must render
     the reason string alongside the dot."""
     body = _fn_body(VIEWS["pipelines"], "healthEl")
-    assert "pl-dot" in body and "reason" in body, (
+    assert "pipe-dot" in body and "reason" in body, (
         "healthEl must render both the dot and md.reason; a dot without its "
         "sentence is decoration"
     )
@@ -632,3 +647,546 @@ def test_the_dashboard_names_the_unconstrained_best_beside_the_headline() -> Non
     assert "if hits were free" in src
     assert 'href = "#planner"' in src and 'href="#solver"' not in src
     assert "#solver" not in src, "no link may point at the removed Solver tab"
+
+
+# -- the pipelines tab: vocabulary, prose, CSS namespace, keyboard ------------
+
+
+def _css_classes(path: Path) -> set[str]:
+    return set(re.findall(r"\.([a-zA-Z][\w-]*)", path.read_text()))
+
+
+def test_pipeline_styles_share_no_class_with_the_planner() -> None:
+    """Both stylesheets are loaded globally on every tab, so a class defined
+    in both is decided by load order, not by intent. It happened: `.pl-gap`
+    and `.pl-log` were planner's on the pipelines page. The prefixes must not
+    overlap."""
+    def prefixed(name: str) -> set[str]:
+        return {c for c in _css_classes(WEB / name)
+                if c.startswith(("pl-", "pipe-"))}
+
+    pipe, planner = prefixed("pipelines.css"), prefixed("planner.css")
+    assert not (pipe & planner), (
+        f"pipelines.css and planner.css both define {sorted(pipe & planner)}; "
+        "whichever loads last wins on both tabs"
+    )
+    assert pipe and not [c for c in pipe if c.startswith("pl-")], (
+        "the pipelines prefix must not be `pl-`; planner owns it"
+    )
+
+
+def test_every_pipeline_state_and_status_has_words_and_a_dot() -> None:
+    """A state or ledger status with no entry in the lookup prints its own
+    snake_case enum at the reader. Both vocabularies come from the panel's
+    declared schemas, so a new enum server-side fails here first."""
+    src = VIEWS["pipelines"]
+    board = get_script("pipeline_board").result_schema
+    board = board["oneOf"][0] if "oneOf" in board else board
+    row = board["properties"]["rows"]["items"]["properties"]
+    states = row["health"]["properties"]["state"]["enum"]
+    statuses = row["runs"]["items"]["properties"]["status"]["enum"]
+
+    def entries(name: str) -> set[str]:
+        m = re.search(rf"const {name} = \{{(.*?)\}};", src, re.S)
+        assert m, f"{name} not found in the pipelines view"
+        return set(re.findall(r"(\w+):", m.group(1)))
+
+    for name, wanted in (("STATE_DOT", states), ("STATE_WORD", states),
+                         ("RUN_DOT", statuses), ("RUN_WORD", statuses)):
+        missing = set(wanted) - entries(name)
+        assert not missing, f"{name} has no entry for {sorted(missing)}"
+    # The words are English, never the enum itself.
+    for word in ("no_source", "skipped_fresh"):
+        m = re.search(r"const RUN_WORD = \{(.*?)\};", src, re.S)
+        assert f'"{word}"' not in m.group(1), (
+            f"RUN_WORD renders the raw enum {word}"
+        )
+
+
+def test_pipeline_rows_are_operable_and_labelled() -> None:
+    """The rows are div-based buttons opening a drawer: they need the role,
+    both activation keys, and a dialog the focus actually moves into. The
+    grid's columns need names, since eight positional cells fold to two."""
+    src = _strip_comments(VIEWS["pipelines"])
+    assert 'setAttribute("role", "button")' in src, "rows need a button role"
+    assert re.search(r'e\.key [!=]== " "', src), (
+        "Space must activate a row, not scroll the page"
+    )
+    assert 'setAttribute("role", "dialog")' in src, "the drawer is a dialog"
+    assert 'setAttribute("aria-labelledby"' in src, "the dialog needs a name"
+    assert "close.focus()" in src, "focus must move into the drawer"
+    assert "opener.focus()" in src, "focus must return to the row on close"
+    assert "const COLUMNS = [" in src, "the grid's columns must be named once"
+    assert "dataset.label" in src, "each cell must carry its column's name"
+
+
+def test_pipeline_prose_holds_the_house_style() -> None:
+    """No em-dash asides and one placeholder glyph, in any string the
+    pipelines tab prints."""
+    src = _strip_comments(VIEWS["pipelines"])
+    strings = [m.group(0) for m in _JS_STRING.finditer(src)]
+    bad = [s[:60] for s in strings if "—" in s]
+    assert not bad, f"em-dashes in pipelines strings: {bad}"
+    curly = [s[:60] for s in strings if set(s) & set("“”‘’")]
+    assert not curly, f"curly quotes in pipelines strings: {curly}"
+    assert 'const NONE = "–"' in VIEWS["pipelines"], (
+        "the one placeholder is an en dash"
+    )
+    # A fallback glyph reads as data; four of them read as four things.
+    fallbacks = re.findall(r"""(?:\?\?|\|\||:)\s*("[^"]*")""", src)
+    stray = [f for f in fallbacks if f.strip('"') in ("?", "—", "null")]
+    assert not stray, (
+        f"a second placeholder glyph is back: {stray}; NONE is the only one"
+    )
+
+
+def test_pipeline_times_use_the_shared_span_vocabulary() -> None:
+    """"43h" and "86m" are arithmetic, not a reading. relTime affixes the
+    direction onto app.js's fmtSpan/fmtAge and computes no ladder of its
+    own."""
+    src = VIEWS["pipelines"]
+    assert "fmtSpan" in src and "fmtAge" in src, (
+        "the shared helpers must be imported, not re-implemented"
+    )
+    body = _fn_body(src, "relTime")
+    assert "fmtSpan(" in body and "fmtAge(" in body
+    assert "60" not in body, "relTime is computing its own units again"
+
+
+# --------------------------------------------------------------------------
+# The Account card and the Planner's run/plan seam, both exercised rather than
+# only scanned. The zero-build views are ES modules, so a tiny DOM shim and
+# `node` render them for real: a crafted status object reaches the same code
+# the browser runs, and no real token is touched.
+# --------------------------------------------------------------------------
+
+import json
+import shutil
+import subprocess
+
+_SHIM = """
+class N {
+  constructor(tag) { this.tag = tag; this.className = ""; this.attrs = {};
+                     this.kids = []; this._t = ""; }
+  set textContent(v) { this._t = v == null ? "" : String(v); this.kids = []; }
+  get textContent() {
+    return this._t + this.kids.map(k => typeof k === "string" ? k : k.textContent).join("");
+  }
+  appendChild(n) { this.kids.push(n); return n; }
+  append(...xs) { for (const x of xs) this.kids.push(x); }
+  setAttribute(k, v) { this.attrs[k] = v; }
+  querySelectorAll() { return []; }
+}
+globalThis.document = { createElement: t => new N(t) };
+function walk(n, out) {
+  if (typeof n === "string") { out.push({ cls: "", text: n }); return out; }
+  out.push({ cls: n.className || "", text: n.textContent });
+  for (const k of n.kids) walk(k, out);
+  return out;
+}
+"""
+
+
+def _render(tmp_path, view: str, body: str) -> dict:
+    """Render `view` in node with a DOM shim; `body` leaves `result` set."""
+    node = shutil.which("node")
+    if not node:                       # the suite must not need a JS runtime
+        import pytest
+        pytest.skip("node is not installed")
+    # `.mjs` so node reads both as modules without a package.json of its own
+    shutil.copy(WEB / "js" / "app.js", tmp_path / "app.mjs")
+    src = (WEB / "js" / "views" / f"{view}.js").read_text()
+    (tmp_path / f"{view}.mjs").write_text(src.replace('"/js/app.js"', '"./app.mjs"'))
+    (tmp_path / "run.mjs").write_text(
+        _SHIM
+        + f'const view = await import("./{view}.mjs");\n'
+        + body
+        + "\nconsole.log(JSON.stringify(result));\n"
+    )
+    done = subprocess.run([node, str(tmp_path / "run.mjs")],
+                          capture_output=True, text=True, cwd=tmp_path)
+    assert done.returncode == 0, done.stderr
+    return json.loads(done.stdout)
+
+
+#: A revoked grant, as `/api/account/status` reports it: the refresh token is
+#: still stored and its own `exp` is months away, the last success still names
+#: the team, and the ONLY contrary signal is `last_attempt.ok = false`. This is
+#: the shape that used to render "Connected as i-test" under a green dot.
+_REVOKED = {
+    "ok": True, "entry_id": 4490171, "refresh_stored": True,
+    "access": {"expires_at": "2026-09-08T10:37:17+00:00", "expired": True, "days_left": 0},
+    "refresh": {"expires_at": "2027-03-07T02:37:17+00:00", "expired": False, "days_left": 179},
+    "last_ok": {"at": "2026-09-05T02:37:18+00:00", "entry_id": 4490171,
+                "entry_name": "i-test", "player_name": "Nripesh Pradhan"},
+    "last_attempt": {"at": "2026-09-08T02:37:18+00:00", "ok": False,
+                     "stage": "refresh", "error_class": "refresh_refused"},
+    "squad_source": "public",
+    "squad_source_reason": "the last live check failed, so the panels fall back "
+                           "to public picks until a verify succeeds",
+    "summary": "access token expired (exp 2026-09-08 10:37Z); refresh token "
+               "unexpired (exp 2027-03-07 02:37Z, 179 days left; the issuer can "
+               "still revoke it)",
+}
+
+
+def test_a_revoked_grant_reads_as_broken_not_as_connected(tmp_path) -> None:
+    """The blocker: `refresh_stored && squad_source == "private"` decided the
+    headline and `last_ok.entry_name` filled it, so a revoked grant kept its
+    green dot and its team name while the only true signal sat in grey at the
+    bottom. The last attempt now decides the headline."""
+    nodes = _render(tmp_path, "account",
+                    f"const host = document.createElement('div');\n"
+                    f"view.renderStatus(host, {json.dumps(_REVOKED)});\n"
+                    f"const result = walk(host, []);")
+    text = nodes[0]["text"]
+    assert "Connected as" not in text, "a revoked grant still claims a connection"
+    assert "Connection broken" in text
+    assert "valid until" not in text, (
+        "the refresh token's own expiry may not be printed as validity: the "
+        "issuer revokes before `exp`, which is the whole defect"
+    )
+    # the server's own sentence, which the card never rendered
+    assert _REVOKED["summary"] in text
+    # the fix used to appear only after a second Verify
+    assert "Log in again at fantasy.premierleague.com" in text
+    # the enum stays out of the copy, in both directions
+    assert "refresh_refused" not in text
+    assert "the issuer refused the refresh token" in text
+    # the state dot is the broken one, not the connected one
+    dots = [n["cls"] for n in nodes if "acct-dot" in n["cls"]]
+    assert dots == ["acct-dot off"], dots
+    # and the failure is styled as an error, not as one more muted line
+    assert any("acct-err" in n["cls"] for n in nodes), (
+        "the failure line must not be the same grey as every other line"
+    )
+
+
+def test_a_working_connection_still_reads_as_connected(tmp_path) -> None:
+    """The other half of the blocker: the broken branch must not swallow a
+    live account. This is the live shape of `/api/account/status`."""
+    ok = dict(_REVOKED,
+              last_attempt={"at": "2026-09-08T02:37:18+00:00", "ok": True,
+                            "stage": "done", "error_class": None},
+              squad_source="private",
+              squad_source_reason="live from your FPL account")
+    nodes = _render(tmp_path, "account",
+                    f"const host = document.createElement('div');\n"
+                    f"view.renderStatus(host, {json.dumps(ok)});\n"
+                    f"const result = walk(host, []);")
+    text = nodes[0]["text"]
+    assert "Connected as i-test (Nripesh Pradhan)" in text
+    assert "Connection broken" not in text
+    assert [n["cls"] for n in nodes if "acct-dot" in n["cls"]] == ["acct-dot on"]
+
+
+def test_an_empty_submit_does_not_claim_a_read_failed(tmp_path) -> None:
+    """Nothing was pasted, so nothing failed to be read, and no server stage
+    ran to name. The sentence under the headline is prose, not a `pre`."""
+    out = {"ok": False, "error_class": "empty_paste",
+           "message": "Paste the Cookie header or the two tokens, then press "
+                      "Verify and save."}
+    nodes = _render(tmp_path, "account",
+                    f"const host = document.createElement('div');\n"
+                    f"view.renderOutcome(host, {json.dumps(out)});\n"
+                    f"const result = walk(host, []);")
+    text = nodes[0]["text"]
+    assert "Nothing was pasted" in text
+    assert "could not be read" not in text
+    assert "stage" not in text, "the stage enum is out of the user-facing copy"
+    src = VIEWS["account"]
+    assert 'el("pre", "acct-msg"' not in src, "prose is a paragraph, not a pre"
+    assert 'el("p", "acct-msg"' in src
+
+
+def test_no_server_error_class_or_stage_enum_reaches_the_account_copy() -> None:
+    """Internal identifiers stay internal: every branch reads the FAILURE /
+    FAILURE_TITLE / STAGE tables rather than printing `out.error_class` or
+    `out.stage` into a sentence."""
+    src = _strip_comments(VIEWS["account"])
+    assert "(stage: " not in src
+    assert "${out.stage}" not in src and "${out.error_class}" not in src
+    assert "${st.last_attempt.error_class" not in src
+    assert "st.summary" in src, "the server's own summary must be rendered"
+
+
+def test_the_account_card_folds_the_steps_and_footers_its_provenance() -> None:
+    """Account was the only tab with no provenance footer, and it led with
+    four DevTools steps while already connected."""
+    src = _strip_comments(VIEWS["account"])
+    assert "provenance" in src and "provenance({" in src
+    assert 'el("details", "acct-stepfold")' in src
+    assert 'steps.open = state === "absent"' in src
+    assert "CARD_TITLE[state]" in src, "the card is titled by connection state"
+
+
+def test_the_planner_does_not_reimplement_the_age_vocabulary() -> None:
+    """"112.2h ago" is the format the owner asked to be removed. The planner
+    imports fmtAge and keeps no ladder of its own."""
+    src = VIEWS["planner"]
+    imports = re.search(r"import \{(.*?)\} from \"/js/app\.js\"", src, re.S)
+    assert imports and "fmtAge" in imports.group(1), (
+        "the shared helper must be imported, not re-implemented"
+    )
+    assert "function ageText" not in src, "the local age helper is gone"
+    assert "toFixed(1)}h ago" not in src
+
+
+def test_the_planner_ties_the_run_status_to_the_plan_it_produced() -> None:
+    """The rail printed one run's settings, times and log above a plan card
+    built by a different run. The status block now says which."""
+    src = _strip_comments(VIEWS["planner"])
+    assert "function runOwnsPlan(" in src
+    assert "generated_at" in _fn_body(src, "runOwnsPlan"), (
+        "the test is the plan's own stamp against the run's window"
+    )
+    assert "Last run, not the run behind the plan card" in src
+    assert "/position" not in src, (
+        "the per-position candidate cap is not the size of the search and no "
+        "longer rides in a settings headline"
+    )
+    assert "candidate moves solved in full" in src, (
+        "the screened/solved counts belong beside the gain, not in a footer"
+    )
+
+
+def test_an_alternative_that_is_part_of_the_plan_is_labelled(tmp_path) -> None:
+    """"Odegaard to Tavernier, +4.8" was listed as an alternative the plan
+    beat while being exactly half of the plan's own two transfers."""
+    chosen = {"out": [184029, 466052], "in": [201658, 243298], "n_transfers": 2}
+    half = {"out": [184029], "in": [201658], "n_transfers": 1}
+    other = {"out": [244850], "in": [201658], "n_transfers": 1}
+    result = _render(tmp_path, "planner",
+                     f"const result = {{"
+                     f"half: view.subsetMove({json.dumps(half)}, {json.dumps(chosen)}),"
+                     f"other: view.subsetMove({json.dumps(other)}, {json.dumps(chosen)}),"
+                     f"self: view.subsetMove({json.dumps(chosen)}, {json.dumps(chosen)})}};")
+    assert result["half"] is True, "half of the chosen move is part of it"
+    assert result["other"] is False, "a genuine alternative is not"
+    assert result["self"] is False, "the plan is not a subset of itself"
+    assert "part of the headline plan" in VIEWS["planner"]
+
+
+def test_the_must_keep_rail_says_when_nothing_is_selected() -> None:
+    """Fifteen names under "locked in every gameweek" read as fifteen locks."""
+    src = _strip_comments(VIEWS["planner"])
+    assert "None selected: the solver may sell any of the" in src
+    assert 'keepBox.classList.toggle("pl-none"' in src
+    assert ".pl-toggles.pl-none" in (WEB / "planner.css").read_text(), (
+        "the dimmed state needs the rule that dims it"
+    )
+
+
+def test_the_pool_heading_and_footer_count_the_same_set() -> None:
+    """"ALL 639 PLAYERS" over "showing 40 of 637": the two players the plan
+    buys were subtracted from one number and not the other."""
+    src = _strip_comments(VIEWS["planner"])
+    assert "res.candidates.length} players" not in src
+    assert "players you do not hold in GW" in src
+    assert "const addable = res.candidates.filter(c => !heldNow.has(c.code)).length" in src
+
+
+# ======================================================== the Creators tab
+#
+# Ten defects an independent reviewer found against the live DOM. Each one had
+# a symptom a screenshot could see and no test could, so each gets one here.
+
+CREATORS = VIEWS["creators"]
+CREATORS_CSS = (WEB / "creators.css").read_text()
+
+
+def _js_string_literals(src: str) -> list[tuple[int, str]]:
+    """Every string literal, with its line. Comments are not strings.
+
+    A hand-rolled scan rather than a regex: the file mixes ', " and template
+    literals, and the rendered prose is what the house rule governs, while the
+    comments explaining that prose are not rendered at all.
+    """
+    out, i, n, line = [], 0, len(src), 1
+    in_comment, quote, buf, start = False, None, [], 1
+    esc = False
+    while i < n:
+        ch = src[i]
+        if ch == "\n":
+            line += 1
+        if in_comment:
+            if src.startswith("*/", i):
+                in_comment = False
+                i += 2
+                continue
+            i += 1
+            continue
+        if quote:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == quote:
+                out.append((start, "".join(buf)))
+                quote = None
+                i += 1
+                continue
+            else:
+                buf.append(ch)
+            i += 1
+            continue
+        if src.startswith("/*", i):
+            in_comment = True
+            i += 2
+            continue
+        if src.startswith("//", i):
+            while i < n and src[i] != "\n":
+                i += 1
+            continue
+        if ch in "\"'`":
+            quote, buf, start = ch, [], line
+            i += 1
+            continue
+        i += 1
+    return out
+
+
+def test_no_rendered_string_in_the_creators_tab_carries_an_em_dash() -> None:
+    """The owner's rule, enforced where the strings are written.
+
+    "–" is exempt: it is the app's null glyph and its numeric range separator,
+    a symbol rather than punctuation inside a sentence.
+    """
+    bad = [(line, text) for line, text in _js_string_literals(CREATORS)
+           if "—" in text or " -- " in text]
+    assert bad == [], f"rewrite the sentence, do not swap the punctuation: {bad}"
+
+
+def test_plural_returns_null_on_a_null_count() -> None:
+    """`creator_report_card` sends `n_total: null` for 9 of 31 cards. Four call
+    sites interpolated it and the tab printed the literal string "null" nine
+    times. Null in, null out, so no caller can stringify it by accident."""
+    src = _strip_comments(CREATORS)
+    assert "n == null ? null :" in src, "plural() must refuse a null count"
+    # ...and nothing interpolates n_total into a template without a guard.
+    assert not re.search(r"\$\{plural\([^)]*n_total", src), (
+        "a null count reached a template again")
+    assert not re.search(r"\$\{c?l?\.?claims?\.n_total\}", src), (
+        "n_total interpolated bare")
+
+
+def test_an_unscored_record_falls_back_to_the_payloads_reason() -> None:
+    """The count is not always available; the reason always is."""
+    src = _strip_comments(CREATORS)
+    assert "function unscored(cl, tail, short)" in src
+    # every one of the four sites goes through it
+    assert src.count("unscored(") >= 5, "a site still formats its own count"
+
+
+def test_the_team_verdict_is_gated_on_quotable_not_on_a_null_boolean() -> None:
+    """`min_gw_measured` is 10 and every measured person has n_gw 3 with
+    `quotable: false`. The card rendered "beats cohort: yes" directly above the
+    reason saying three gameweeks is below the floor."""
+    src = _strip_comments(CREATORS)
+    assert "p.beats_baseline == null ? `under the" not in src
+    assert 'fact("beats the baseline", p.quotable' in src, (
+        "the floor decides this, not the boolean")
+    # the compact card qualifies it too, rather than printing a bare delta
+    assert "const one = p => p.quotable" in src
+
+
+def test_the_under_floor_class_is_actually_styled() -> None:
+    """`verdict()` appended a `few` class below the floor and nothing styled
+    it, so a verdict from 12 claims was painted the same full red as one from
+    274 and only an 11.5px word differed."""
+    assert ".few" in CREATORS_CSS, "the class the JS emits has no rule"
+    for sel in (".cx-rc.few", ".cx-rctag.few", ".cx-rcard.few"):
+        assert sel in CREATORS_CSS, f"{sel} carries colour that the count denies"
+    # the report card must actually receive the class
+    src = _strip_comments(CREATORS)
+    assert 'el("button", "cx-rcard " + v.cls' in src
+    assert 'el("button", "cx-rcard " + coin(' not in src
+
+
+def test_one_creator_count_is_drawn_and_it_says_what_the_others_are() -> None:
+    """20, 31 and 28 for one population, twelve pixels apart and unlabelled."""
+    src = _strip_comments(CREATORS)
+    assert "function cardCensus()" in src and "function censusLine()" in src
+    assert "censusLine()} · floor" in src
+    assert 'plural((rc.cards || []).length, "creator")' not in src, (
+        "the raw card count is back in the heading")
+
+
+def test_the_board_scope_and_its_own_note_are_rendered() -> None:
+    """`scope.applied`, `scope.excluded` (4 sources), `record_note` and
+    `mine_reason` were all computed by the panel and read nowhere."""
+    src = _strip_comments(CREATORS)
+    for key in ("res.scope", "sc.excluded", "res.record_note", "res.mine_reason"):
+        assert key in src, f"the panel computes {key} and the page drops it"
+    assert "function scopeLine()" in src
+
+
+def test_the_source_button_does_not_call_a_filtered_list_all_of_them() -> None:
+    """HIDDEN_STATES drops 3 of 43 sources and the button said "all 40"."""
+    src = _strip_comments(CREATORS)
+    assert "`all ${shown.length} sources`" not in src
+    assert "fetchable sources" in src
+    assert "const dropped = total - shown.length" in src
+
+
+def test_the_record_strip_draws_no_permanently_empty_group() -> None:
+    """"Record leaders" whose only possible content was "nobody above chance",
+    beside "Laggards", which is a judgment this surface otherwise avoids."""
+    src = _strip_comments(CREATORS)
+    assert "Laggards" not in src and "Record leaders" not in src
+    assert "Interval below a coin flip" in src
+    assert "if (!list.length) return null;" in src, "an empty group is still drawn"
+    # and the strip reconciles its two chips with the honesty line's three
+    assert "of them over the floor" in src
+
+
+def test_the_compact_team_line_is_capped_at_two_people() -> None:
+    """Fantasy Football Hub has seven; they rendered on one 400-character
+    line that never wrapped."""
+    src = _strip_comments(CREATORS)
+    assert "const SHOWN = 2;" in src
+    assert "more, in the card" in src
+
+
+def test_a_repeated_fpl_entry_is_named_as_a_repeat() -> None:
+    """Three cards resolve to entry 176749 and drew three identical team
+    results with nothing saying it is one person counted three times."""
+    src = _strip_comments(CREATORS)
+    assert "cardsByEntry" in src
+    assert "also on ${also.join" in src or "`also on ${also.join(\", \")}`" in src
+    assert ".cx-samewho" in CREATORS_CSS
+
+
+def test_the_age_helper_is_the_shared_one() -> None:
+    """`relAge` introduced "yesterday" and "2mo ago", words no other tab uses.
+    The span now comes from app.js; only the freshness class stays local."""
+    src = _strip_comments(CREATORS)
+    assert re.search(r"import \{[^}]*\bfmtAge\b[^}]*\} from \"/js/app\.js\"", src), (
+        "the shared span helper is not imported")
+    assert "fmtAge(iso)" in src, "the local helper still writes its own words"
+    assert "yesterday" not in src
+    assert "mo ago" not in src
+    assert "export function fmtAge" in APP, "the shared helper must still exist"
+
+
+def test_a_failed_panel_body_is_folded_not_interpolated() -> None:
+    """`errBox` printed the whole response body and the honesty line put it
+    mid-sentence, so a traceback landed inside a paragraph."""
+    src = _strip_comments(CREATORS)
+    assert "const statusLine =" in src and "function failFold(" in src
+    assert "`The record could not be read: ${rcErr}`" not in src
+    assert "failFold(rcErr" in src
+    assert "errBox(rcErr)" not in src, "the whole body is printed again"
+    assert "${rcErr}" not in src, "the whole body is interpolated again"
+    assert ".cx-raw" in CREATORS_CSS, "the folded body needs somewhere to sit"
+
+
+def test_the_loading_affordance_has_one_glyph_and_one_capitalisation() -> None:
+    src = _strip_comments(CREATORS)
+    assert "Measuring the record…" not in src, (
+        "the same fact was capitalised two ways twelve pixels apart")
+    assert src.count("measuring the record…") >= 3
+    # one glyph: the single character "…", never a trailing "..."
+    dotted = [(line, text) for line, text in _js_string_literals(CREATORS)
+              if re.search(r"[A-Za-z]\.\.\.(?!\.)\s*$", text)]
+    assert dotted == [], f"the ellipsis is spelled with dots: {dotted}"

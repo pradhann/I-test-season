@@ -109,8 +109,8 @@ _ROW_SCHEMA: dict[str, Any] = {
             "additionalProperties": False,
             "required": ["state", "reason", "consecutive_failures"],
             "properties": {
-                "state": {"enum": ["ok", "failing", "stale", "running",
-                                   "never_ran", "disabled"]},
+                "state": {"enum": ["ok", "failing", "refused", "stale",
+                                   "running", "never_ran", "disabled"]},
                 "reason": {"type": "string",
                            "description": "Renderable prose. The reason IS the product; "
                                           "a bare dot is forbidden downstream."},
@@ -157,12 +157,15 @@ BOARD_RESULT: dict[str, Any] = {
         "summary": {
             "type": "object",
             "additionalProperties": False,
-            "required": ["n_ok", "n_failing", "n_stale", "n_never_ran",
-                         "n_running", "n_disabled", "month_credits",
-                         "month_credits_cap"],
+            "required": ["n_ok", "n_failing", "n_refused", "n_stale",
+                         "n_never_ran", "n_running", "n_disabled",
+                         "month_credits", "month_credits_cap"],
             "properties": {
                 "n_ok": {"type": "integer"},
                 "n_failing": {"type": "integer"},
+                "n_refused": {"type": "integer",
+                              "description": "Runs that finished without an error and "
+                                             "without fetching: no_source or refused."},
                 "n_stale": {"type": "integer"},
                 "n_never_ran": {"type": "integer"},
                 "n_running": {"type": "integer"},
@@ -239,8 +242,8 @@ def pipeline_board(wh) -> dict[str, Any]:
     for row in rows:
         row["runs"] = runs.get(row["id"], [])
 
-    counts = {"ok": 0, "failing": 0, "stale": 0, "never_ran": 0,
-              "running": 0, "disabled": 0}
+    counts = {"ok": 0, "failing": 0, "refused": 0, "stale": 0,
+              "never_ran": 0, "running": 0, "disabled": 0}
     month = 0.0
     families: list[str] = []
     for row in rows:
@@ -256,6 +259,7 @@ def pipeline_board(wh) -> dict[str, Any]:
         "summary": {
             "n_ok": counts["ok"],
             "n_failing": counts["failing"],
+            "n_refused": counts["refused"],
             "n_stale": counts["stale"],
             "n_never_ran": counts["never_ran"],
             "n_running": counts["running"],

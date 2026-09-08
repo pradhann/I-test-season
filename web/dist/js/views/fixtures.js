@@ -39,7 +39,8 @@
    fixtures.css, which owns them.
 */
 
-import { runPanel, el, emptyBox, provenance, fmt1, fmt2 } from "/js/app.js";
+import { runPanel, el, emptyBox, provenance, fmt1, fmt2, fmtSpan, fmtAge }
+  from "/js/app.js";
 import { crest } from "/js/components/clubmark.js";
 
 /* The seven classes of the diverging scale, easy → hard. Defined in CSS, in
@@ -61,6 +62,12 @@ const ord = n => {
   const s = (r >= 11 && r <= 13) ? "th" : (["th", "st", "nd", "rd"][v % 10] || "th");
   return `${v}${s}`;
 };
+/* The ranks are keyed to an (opponent, venue) pair, and `is_home` is the ROW
+   CLUB's venue, so the opponent's venue is the other one: when we host HUL,
+   the ranked pair is HUL away. Three sentences read `is_home` as the
+   opponent's and named the wrong half of a 40-pair population. */
+const oppPair = (opponent, isHome) =>
+  `${opponent} ${isHome ? "away" : "at home"}`;
 /* Plain words for a rank out of twenty, so the club drawer can open with
    "elite club, tough run" before any number. Bands, not a model. */
 const tierClub = r => (r == null ? null : r <= 4 ? "elite" : r <= 8 ? "strong"
@@ -97,19 +104,32 @@ function ageHours(s) {
   const d = parseTs(s);
   return d ? (Date.now() - d.getTime()) / 3.6e6 : null;
 }
-function ageText(h) {
-  if (h == null) return "age unknown";
-  if (h < 1) return `${Math.max(1, Math.round(h * 60))}m old`;
-  if (h < 48) return `${Math.round(h)}h old`;
-  return `${Math.round(h / 24)}d old`;
-}
+/* Ages read through the shared vocabulary in app.js (fmtSpan, fmtAge), so a
+   span reads the same here as on every other tab. This file used to round its
+   own way and printed "5d old" where the rest of the app printed "4d 16h". */
 function kickoffText(s) {
   const d = parseTs(s);
   if (!d) return null;
+  /* Kickoffs are served in UTC and the topbar prints UTC, so this prints UTC
+     and labels it. Rendering the browser's local zone with no suffix showed
+     "Sat 07:00 AM" for a 14:00 UTC kickoff. */
   return d.toLocaleString(undefined, {
-    weekday: "short", day: "numeric", month: "short",
+    timeZone: "UTC", weekday: "short", day: "numeric", month: "short",
     hour: "2-digit", minute: "2-digit",
-  });
+  }) + " UTC";
+}
+
+/* The count of players you own at a club, as a labelled pip. A bare digit
+   beside a club abbreviation read as a scoreline ("MUN 2 v mci 1"), so the
+   word travels with the number; the legend keys it. `title` only where the
+   element has no hover card of its own, so the fact is never printed twice. */
+function ownPip(held, title) {
+  const pip = el("span", "fx-own", `own ${held.length}`);
+  const said = `you hold ${held.length} player${held.length === 1 ? "" : "s"} `
+    + `here: ${held.join(", ")}`;
+  pip.setAttribute("aria-label", said);
+  if (title) pip.title = said;
+  return pip;
 }
 
 /* A section that has no data says WHICH data and WHY, never whitespace. */
@@ -562,8 +582,11 @@ function buildModel(res) {
    rates live in the tooltip and the drawers, where they read as rates.
 
    n >= 3: two outlined pills carrying the RESIDUALS against the club's own
-   fitted rating — the actual form diagnostic — with xg_against flipped so
-   positive is always good. Pill tint uses the page's diverging vocabulary at
+   fitted rating, which is form and not a rating, with xg_against flipped so
+   positive is always good. They say "form" on the pill: labelled ATT/DEF they
+   sat two lines above the club's ATTACK/DEFENCE rating ranks, two different
+   quantities under one pair of names, and the best-rated defence in the
+   league read "DEF -1.3". Pill tint uses the page's diverging vocabulary at
    13%, but the text wears --ink and the shape is a bordered pill, so it can
    never be misread as a fixture cell and no ramp colour is ever text ink.
 
@@ -579,12 +602,12 @@ function formChipSpec(form) {
     return {
       state: "resid",
       pills: [
-        { cls: attR >= 0 ? "up" : "dn", text: `ATT ${sgn1(attR)}`,
+        { cls: attR >= 0 ? "up" : "dn", text: `att form ${sgn1(attR)}`,
           title: `xG for, vs the fitted rating: ${sgn2(attR)} over ${n} `
             + `match${n === 1 ? "" : "es"}. A residual against the fitted `
             + "rating; it says the colour might be wrong; it never changes "
             + "the colour." },
-        { cls: flip >= 0 ? "up" : "dn", text: `DEF ${sgn1(flip)}`,
+        { cls: flip >= 0 ? "up" : "dn", text: `def form ${sgn1(flip)}`,
           title: `xG against, vs the fitted rating (flipped so positive is `
             + `good): ${sgn2(flip)} over ${n} match${n === 1 ? "" : "es"}.` },
       ],
@@ -659,29 +682,18 @@ export default async function fixtures(host) {
     + "averages them. The upper band of every cell is what your attackers face; "
     + "the lower band is what your defenders face."));
 
-  const s2 = el("p", "fx-claim");
-  s2.appendChild(document.createTextNode("Colour holds "));
-  s2.appendChild(el("b", null, "your own club at league average"));
-  s2.appendChild(document.createTextNode(
-    " and asks only what the opponent does, at that venue. Two clubs facing the "
-    + "same opponent get the same cell colour "));
-  s2.appendChild(el("b", null, "on purpose"));
-  s2.appendChild(document.createTextNode(
-    ": this is a fixture view, not a power ranking. The fixture-specific "
-    + "number, with your own club's strength in it, is one click away in every "
-    + "cell."));
-
   const calibEl = el("div", "fx-calib");
   calibEl.hidden = true;                 // shown only once it has something to say
   card.appendChild(calibEl);
 
-  /* The two sentences above are the page's method, and the method is worth one
-     click, not six lines above every visit. They live in a disclosure with the
-     panel's own notes -- which say nearly the same thing -- so the reasoning is
-     in exactly one place and the grid is the first thing on screen. */
+  /* The sentence above is the page's method, and the method is worth one
+     click, not six lines above every visit. The league-average anchor had a
+     second, hardcoded paragraph here; the panel's own note says the same
+     thing and is printed directly below, so the copy is gone and the served
+     note is the one place it lives. */
   const howBox = el("details", "fx-how");
   const howSum = el("summary", null, "How to read this grid");
-  howBox.append(howSum, s1, s2);
+  howBox.append(howSum, s1);
   const noteBox = el("div", "fx-hownotes");
   howBox.appendChild(noteBox);
   card.appendChild(howBox);
@@ -822,16 +834,38 @@ export default async function fixtures(host) {
        no estimation noise in it, and the empirical max-minus-min over twenty
        fitted effects is biased upward by sampling noise. So one is a floor and
        the other a ceiling. Printing the midpoint would invent a precision
-       neither has -- the bracket is the honest object. */
-    const mLo = model
-      ? Math.min(num(model.fixture_swing_attack_pts), num(model.fixture_swing_defence_pts))
-      : null;
-    const eHi = emp ? num(emp.outfield_fixture_pts_6gw) : null;
-    const gws = (model && num(model.horizon_gws)) || (M.gws.length || null);
-    const ratios = [model && num(model.ratio_attack), model && num(model.ratio_defence),
-                    emp && num(emp.outfield_ratio)].filter(v => v != null);
+       neither has; the bracket is the honest object.
 
-    if (mLo != null && eHi != null) {
+       ONE BRACKET PER SIDE. The single bracket took its floor as a minimum
+       across the two model figures and its ceiling from the pooled outfield
+       AVERAGE, so it printed 2.8-5.4 while the dot plot one click down showed
+       DEF 6.0 and FWD 6.4, both outside it. An attacker and a defender are
+       two different questions on this page everywhere else; the calibration
+       line is no exception. */
+    const gws = (model && num(model.horizon_gws)) || (M.gws.length || null);
+    const byPos = (emp && Array.isArray(emp.by_position)) ? emp.by_position : [];
+    const measured = names => {
+      const vs = byPos.filter(r => names.includes(String(r.position || "")))
+        .map(r => num(r.fixture_pts_6gw)).filter(v => v != null);
+      return vs.length ? Math.max(...vs)
+        : (emp ? num(emp.outfield_fixture_pts_6gw) : null);
+    };
+    const band = (floor, ceiling) => {
+      const vs = [floor, ceiling].filter(v => v != null);
+      if (!vs.length) return null;
+      return `${fmt1(Math.min(...vs))}–${fmt1(Math.max(...vs))} pts`;
+    };
+    const attBand = model ? band(num(model.fixture_swing_attack_pts),
+                                 measured(["MID", "FWD"])) : null;
+    const defBand = model ? band(num(model.fixture_swing_defence_pts),
+                                 measured(["GKP", "DEF"])) : null;
+    /* every ratio the disclosure shows, so the printed bracket contains the
+       numbers a click can find rather than a subset of them */
+    const ratios = [model && num(model.ratio_attack), model && num(model.ratio_defence),
+                    emp && num(emp.outfield_ratio),
+                    ...byPos.map(r => num(r.ratio))].filter(v => v != null);
+
+    if (emp && attBand && defBand && ratios.length) {
       /* ONE always-on line — the essay lives behind the disclosure. On a
          Friday the reader needs the verdict ("tie-breaker"), not the method. */
       calibEl.hidden = false;
@@ -840,8 +874,10 @@ export default async function fixtures(host) {
       line.appendChild(el("b", null, "tie-breakers"));
       line.appendChild(document.createTextNode(
         `: over ${gws} GWs the best-minus-worst schedule is worth `));
-      line.appendChild(el("b", "fx-cal-hi", `${fmt1(mLo)}–${fmt1(eHi)} pts`));
-      line.appendChild(document.createTextNode(" per asset; which club you own is worth "));
+      line.appendChild(el("b", "fx-cal-hi", attBand));
+      line.appendChild(document.createTextNode(" to an attacker and "));
+      line.appendChild(el("b", "fx-cal-hi", defBand));
+      line.appendChild(document.createTextNode(" to a defender; which club you own is worth "));
       line.appendChild(el("b", "fx-cal-hi",
         `${fmt1(Math.min(...ratios))}–${fmt1(Math.max(...ratios))}×`));
       line.appendChild(document.createTextNode(" that."));
@@ -851,8 +887,10 @@ export default async function fixtures(host) {
       disc.appendChild(el("summary", null, "How this was measured"));
       const why = el("p", "sub");
       why.appendChild(document.createTextNode(
-        `The low end is the model, which carries no estimation noise and is `
-        + `therefore a floor. The high end is measured on `));
+        `Each low end is the model's own figure for that side, which carries no `
+        + `estimation noise and is therefore a floor. Each high end is the `
+        + `largest measured position effect on that side (attackers: MID and `
+        + `FWD; defenders: GKP and DEF), measured on `));
       why.appendChild(el("b", null,
         emp.by_position
           ? `${emp.by_position.reduce((a, r) => a + (num(r.n_starts) || 0), 0).toLocaleString()} starts`
@@ -961,7 +999,8 @@ export default async function fixtures(host) {
             + "; behind every colour";
         }
         row.appendChild(el("span", "what", what));
-        row.appendChild(el("span", "age", h == null ? "age unknown" : ageText(h)));
+        row.appendChild(el("span", "age",
+          h == null ? "age unknown" : `${fmtSpan(h)} old`));
         row.appendChild(el("span", "rule",
           broken ? (served || "no data")
           : thr == null ? "no staleness rule"
@@ -972,7 +1011,9 @@ export default async function fixtures(host) {
           i.as_of ? `as of ${i.as_of}` : null,
           i.rows != null ? `${Number(i.rows).toLocaleString()} rows` : null,
           i.detail ? String(i.detail) : null,
-          i.effect_when_stale ? `when stale: ${String(i.effect_when_stale).replace(/ -- /g, "; ")}` : null,
+          /* printed verbatim: the panel's own sentences are grammatical now,
+             and a blind " -- " to "; " substitution here made them not be */
+          i.effect_when_stale ? `when stale: ${String(i.effect_when_stale)}` : null,
           i.refresh_job ? `refreshed by ${i.refresh_job}` : null,
           i.last_job_outcome ? `last run: ${i.last_job_outcome}` : null,
           on ? "click again to close the inspector" : "click to inspect this input",
@@ -993,7 +1034,8 @@ export default async function fixtures(host) {
     const chip = el("span", "fx-inchip" + (h == null ? " missing" : h > 72 ? " stale" : h > 36 ? " warn" : ""));
     chip.appendChild(el("span", "freshdot " + (h == null ? "bad" : h > 72 ? "bad" : h > 36 ? "warn" : "good")));
     chip.appendChild(el("b", null, "fixture list"));
-    chip.appendChild(el("span", "age", ageText(h)));
+    chip.appendChild(el("span", "age",
+      h == null ? "age unknown" : `${fmtSpan(h)} old`));
     chip.title = `fact_fixture as of ${res.as_of || "unknown"}`;
     freshRow.appendChild(chip);
 
@@ -1072,7 +1114,7 @@ export default async function fixtures(host) {
     const thr = num(i.stale_after_hours);
     const kv = el("div", "fx-kv");
     const add = (k, v) => { kv.appendChild(el("span", "k", k)); kv.appendChild(el("span", "v", v)); };
-    add("age", h == null ? "unknown" : ageText(h));
+    add("age", h == null ? "unknown" : `${fmtSpan(h)} old`);
     if (i.as_of) add("as of", String(i.as_of));
     if (i.state) add("state", String(i.state));
     if (i.rows != null) add("rows", Number(i.rows).toLocaleString());
@@ -1085,10 +1127,10 @@ export default async function fixtures(host) {
       const fill = el("div", "fill" + (frac >= 0.75 ? " warn" : ""));
       fill.style.width = `${(frac * 100).toFixed(1)}%`;
       bar.appendChild(fill);
-      bar.title = `${ageText(h)} of a ${Math.round(thr)}h budget`;
+      bar.title = `${fmtSpan(h)} of a ${Math.round(thr)}h budget`;
       drawer.appendChild(bar);
       drawer.appendChild(el("p", "sub",
-        `${ageText(h)} of a ${ruleText(thr)} staleness budget`
+        `${fmtSpan(h)} of a ${ruleText(thr)} staleness budget`
         + (h > thr ? "; over budget" : "")));
     } else if (thr == null) {
       drawer.appendChild(el("p", "sub",
@@ -1301,17 +1343,19 @@ export default async function fixtures(host) {
     const tearRow = (g, quiet) => {
       const top = g[0];
       const r = el("div", "vrow tear" + (quiet ? " quiet" : ""));
-      r.appendChild(el("span", "vlab", quiet ? "and the other way" : "the torn opponent"));
+      /* The two rows differ by the SIGN of the gap, so the label says which
+         side of the split the pair favours rather than restating "torn". */
+      r.appendChild(el("span", "vlab", (num(top.gap) || 0) > 0
+        ? "easier for defenders" : "easier for attackers"));
       const txt = el("span", "txt");
-      txt.appendChild(el("b", null,
-        `${top.opponent} ${top.is_home ? "home" : "away"}`));
+      txt.appendChild(el("b", null, oppPair(top.opponent, top.is_home)));
       /* the population is every opponent at both venues (20 x 2 = 40), not
          40 fixtures: the bracket says so where the number is printed */
       const pop = num(M.res.scale && M.res.scale.population) || nClubs * 2;
       txt.appendChild(document.createTextNode(
         `: ${ord(top.attack_rank)} easiest of ${pop} for your attackers, `
         + `${ord(top.defence_rank)} easiest of ${pop} for your defenders `
-        + `(every opponent, home and away); `
+        + `(every opponent, at each venue); `
         + g.map(d => `${d.short_name} GW${d.gw}`).join(" · ")));
       r.appendChild(txt);
       const open = el("button", "chip", "open");
@@ -1337,11 +1381,12 @@ export default async function fixtures(host) {
       turns.sort((a, b) => a.rank - b.rank);
       for (const u of turns.slice(0, 2)) {
         const r = el("div", "vrow fx-turnrow");
-        r.appendChild(el("span", "vlab", "your fixture turn"));
+        r.appendChild(el("span", "vlab", "easy run, club you hold"));
         const txt = el("span", "txt");
         txt.appendChild(el("b", null, u.t.short));
         txt.appendChild(document.createTextNode(
-          `: schedule for your ${u.what}: ${ord(u.rank)} easiest of ${nClubs}; you hold ${u.names.join(", ")}`));
+          `: schedule for your ${u.what} is ${ord(u.rank)} easiest of ${nClubs}. `
+          + `You hold ${u.names.join(", ")}.`));
         r.appendChild(txt);
         const open = el("button", "chip", "open");
         open.title = `jump to ${u.t.short}'s row on the board`;
@@ -1363,7 +1408,7 @@ export default async function fixtures(host) {
     const groups = relevantOf(allGroups);
     if (!allGroups.length) {
       const r = el("div", "vrow tear");
-      r.appendChild(el("span", "vlab", "the torn opponent"));
+      r.appendChild(el("span", "vlab", "attack vs defence gap"));
       r.appendChild(el("span", "txt",
         "no torn fixtures in this window: a real finding, not an empty "
         + "state; the split changes no decision here"));
@@ -1423,7 +1468,7 @@ export default async function fixtures(host) {
 
     stripEl.hidden = false;
     const lab = el("span", "vlab",
-      `GW${gw0} · hardest → easiest`);
+      `GW${gw0} · hardest → easiest · kickoffs UTC`);
     lab.title = "this week's fixtures through the attack lens; the captain "
       + "sanity check; each club's swatch is its own attack-lens colour";
     stripEl.appendChild(lab);
@@ -1438,7 +1483,7 @@ export default async function fixtures(host) {
         s.appendChild(el("b", null,
           caps ? x.t.short.toUpperCase() : x.t.short.toLowerCase()));
         if (ownedNames(x.t.code))
-          s.appendChild(el("span", "own", String(ownedNames(x.t.code).length)));
+          s.appendChild(ownPip(ownedNames(x.t.code)));
         return s;
       };
       chip.appendChild(side(home, true));
@@ -1446,7 +1491,8 @@ export default async function fixtures(host) {
       chip.appendChild(side(away, false));
       const ko = parseTs(home.c.kickoff);
       if (ko) chip.appendChild(el("span", "ko",
-        ko.toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" })));
+        ko.toLocaleString(undefined, { timeZone: "UTC", weekday: "short",
+          hour: "2-digit", minute: "2-digit" })));
       hover.attach(chip, () => [
         `${home.t.short} v ${away.t.short} · GW${gw0}`,
         kickoffText(home.c.kickoff),
@@ -1607,13 +1653,12 @@ export default async function fixtures(host) {
     nm.appendChild(el("span", null, t.short));
     if (promoted) nm.appendChild(promoTag());
     /* the ownership pip: a count, because "you own 2 here" is the fact the
-       rusher cross-references from memory today (FFS ticker's my-team pin) */
+       rusher cross-references from memory today (FFS ticker's my-team pin).
+       The count carries the word "own": beside a club abbreviation a bare
+       digit read as a scoreline ("MUN 2 v mci 1"). The legend keys it. */
     if (held) {
       d.classList.add("own");
-      const pip = el("span", "fx-own", String(held.length));
-      pip.setAttribute("aria-label",
-        `you hold ${held.length} player${held.length === 1 ? "" : "s"} here: ${held.join(", ")}`);
-      nm.appendChild(pip);
+      nm.appendChild(ownPip(held));
     }
     if (t.tornRows && t.tornRows.length) {
       const z = el("i", "fx-torn2", "⇄");
@@ -1730,7 +1775,6 @@ export default async function fixtures(host) {
 
     /* the styled hover/focus card replaces the native title: the same
        numbers, instantly, reachable by keyboard (the cell is a button) */
-    const venue = c.isHome ? "home" : "away";
     const pop = num(M.res.scale && M.res.scale.population) || M.teams.length * 2;
     hover.attach(btn, () => [
       `${t.short} ${c.isHome ? "v" : "at"} ${c.opponent} · GW${slot.gw}${slot.double ? " (double)" : ""}`,
@@ -1741,18 +1785,19 @@ export default async function fixtures(host) {
           ? `blended difficulty ${fmt2(c.blended)} (not split; see the note above)`
           : "no fitted rating for this fixture",
       c.rankAtt != null && c.rankDef != null
-        ? `${c.opponent} ${venue}: ${ord(c.rankAtt)} easiest of ${pop} for your attackers, `
-          + `${ord(c.rankDef)} easiest of ${pop} for your defenders (every opponent, home and away)`
+        ? `ranked as ${oppPair(c.opponent, c.isHome)}: ${ord(c.rankAtt)} easiest of `
+          + `${pop} for your attackers, ${ord(c.rankDef)} easiest of ${pop} for your `
+          + "defenders (every opponent, at each venue)"
         : null,
       torn ? String(torn.sentence || "") : null,
       c.marketState
         ? `market: ${c.marketState}`
           + (c.nBooks != null ? ` · ${c.nBooks} books` : "")
-          + (c.marketAgeH != null ? ` · ${ageText(c.marketAgeH)}` : "")
+          + (c.marketAgeH != null ? ` · ${fmtSpan(c.marketAgeH)} old` : "")
         : null,
       ownedNames(t.code)
         ? `you hold ${ownedNames(t.code).length} at ${t.short}` : null,
-      `${venue} · click for the match detail`,
+      `${t.short} ${c.isHome ? "at home" : "away"} · click for the match detail`,
     ].filter(Boolean).join("\n"));
     btn.onclick = () => openFixture(t, slot, c);
     return btn;
@@ -1808,6 +1853,9 @@ export default async function fixtures(host) {
       keys.appendChild(keyItem(null, `schedule rank = how easy this club's next ${M.gws.length} fixtures are for players you own from it; 1st = easiest of ${M.teams.length} clubs`));
     if (M.anySplit)
       keys.appendChild(keyItem(null, `club rank = the club's own fitted strength; 1st = best of ${M.teams.length}`));
+    if (SQ && SQ.byClub && SQ.byClub.size)
+      keys.appendChild(keyItem(null,
+        "own 2 = you hold 2 players at that club"));
     keys.appendChild(keyItem("promo", PROMO_NOTE));
     keys.appendChild(keyItem(null, "hover a cell for its numbers"));
     L.appendChild(keys);
@@ -1899,11 +1947,7 @@ export default async function fixtures(host) {
       const tr = el("tr");
       const tdc = el("td", null, team.short);
       const held = ownedNames(team.code);
-      if (held) {
-        const pip = el("span", "fx-own", String(held.length));
-        pip.title = `you hold ${held.join(", ")}`;
-        tdc.appendChild(pip);
-      }
+      if (held) tdc.appendChild(ownPip(held, true));
       tr.appendChild(tdc);
       for (const g of M.gws) {
         const slot = team.byGw.get(g);
@@ -2241,7 +2285,8 @@ export default async function fixtures(host) {
       r.appendChild(el("span", "lv",
         (v == null ? "–" : sgn2(v))
         + (rank != null
-            ? ` · ${c.opponent} ${c.isHome ? "home" : "away"}: ${ord(rank)} easiest of ${pop} for your ${k} (every opponent, home and away)`
+            ? ` · ranked as ${oppPair(c.opponent, c.isHome)}: ${ord(rank)} easiest of `
+              + `${pop} for your ${k} (every opponent, at each venue)`
             : "")));
       return r;
     };
@@ -2273,7 +2318,7 @@ export default async function fixtures(host) {
       const h = num(ratings.age_hours) ?? ageHours(ratings.as_of);
       const fd = parseTs(ratings.as_of);
       fresh.appendChild(mastFreshChip("ratings",
-        (h == null ? "age unknown" : ageText(h))
+        (h == null ? "age unknown" : `${fmtSpan(h)} old`)
         + (fd ? ` · fit includes matches through ${fd.toLocaleDateString(undefined,
               { day: "numeric", month: "short" })}` : ""),
         false, String(ratings.detail || "")));
@@ -2281,7 +2326,7 @@ export default async function fixtures(host) {
     fresh.appendChild(mastFreshChip("market",
       c.marketState !== "priced"
         ? (c.marketState || "absent")
-        : [c.marketAgeH != null ? ageText(c.marketAgeH) : "age unknown",
+        : [c.marketAgeH != null ? `${fmtSpan(c.marketAgeH)} old` : "age unknown",
            c.nBooks != null ? `${c.nBooks} books` : null].filter(Boolean).join(" · "),
       c.marketState !== "priced",
       "the market is never blended into any difficulty; see the Market act"));
@@ -2327,9 +2372,9 @@ export default async function fixtures(host) {
     const asm = el("p", "sub");
     asm.textContent = `The grid held ${t.short} at league average and asked only `
       + `what ${c.opponent} does ${c.isHome ? "away" : "at home"}. That is why `
-      + `every club visiting ${c.opponent} gets this same colour. The `
-      + "fixture-specific number; the one with " + t.short + "'s own strength "
-      + "in it, belongs here.";
+      + `every club ${c.isHome ? "visiting" : "hosting"} ${c.opponent} gets this `
+      + `same colour. The number that includes ${t.short}'s own strength belongs `
+      + "here.";
     A1.appendChild(asm);
 
     const rel = c.raw && (c.raw.relative_attack != null || c.raw.relative_defence != null);
@@ -2351,11 +2396,11 @@ export default async function fixtures(host) {
         gapText(
           "This is the drawer's job and it cannot do it yet: the panel returns "
           + "opponent-only ease and no relative (own-club-adjusted) figure. It "
-          + "would come from the same fit; our own ",
+          + "would come from the same fit, with our own ",
           codeSpan("attack_O"), " and ", codeSpan("defence_O"),
-          " added back in place of the league-average anchor; and the page will "
-          + "not compute it in the browser, because a number modelled in the UI "
-          + "is a number nobody can audit.")));
+          " added back in place of the league-average anchor. The page will not "
+          + "compute it in the browser, because a number modelled in the UI is a "
+          + "number nobody can audit.")));
     }
 
     A1.appendChild(el("h2", null, "The match, as probabilities"));
@@ -2392,7 +2437,7 @@ export default async function fixtures(host) {
       kvm.appendChild(el("span", "k", "market"));
       kvm.appendChild(el("span", "v",
         `${c.nBooks != null ? c.nBooks + " books, " : ""}`
-        + `${c.marketAgeH != null ? ageText(c.marketAgeH) : "age unknown"}`));
+        + `${c.marketAgeH != null ? fmtSpan(c.marketAgeH) + " old" : "age unknown"}`));
       A2.appendChild(kvm);
       A2.appendChild(kvNote(
         "Priced, and deliberately not blended into the colour.",
@@ -2420,7 +2465,7 @@ export default async function fixtures(host) {
     } else if (c.marketWeight === 0) {
       A2.appendChild(namedGap("Market weight 0.00.", gapText(
         c.marketAgeH != null
-          ? `The newest quote behind this fixture is ${ageText(c.marketAgeH)}, past the cutoff, `
+          ? `The newest quote behind this fixture is ${fmtSpan(c.marketAgeH)} old, past the cutoff, `
           : "No usable quote covers this fixture, ",
         "so the market contributes nothing to the colour. The number above is "
         + "the fitted model alone.")));
@@ -2428,7 +2473,7 @@ export default async function fixtures(host) {
       const kvm = el("div", "fx-kv");
       const addM = (k, v) => { kvm.appendChild(el("span", "k", k)); kvm.appendChild(el("span", "v", v)); };
       addM("market weight", fmt2(c.marketWeight));
-      if (c.marketAgeH != null) addM("newest quote", ageText(c.marketAgeH));
+      if (c.marketAgeH != null) addM("newest quote", `${fmtSpan(c.marketAgeH)} old`);
       if (c.nBooks != null) addM("books", String(c.nBooks));
       if (c.marketResidual != null) addM("refit residual", fmt2(c.marketResidual));
       A2.appendChild(kvm);
@@ -2500,7 +2545,7 @@ export default async function fixtures(host) {
         kv.appendChild(el("span", "k", String(i.name || "–")));
         const h = num(i.age_hours) ?? ageHours(i.as_of);
         kv.appendChild(el("span", "v",
-          [h == null ? "age unknown" : ageText(h),
+          [h == null ? "age unknown" : `${fmtSpan(h)} old`,
            i.detail ? String(i.detail) : null].filter(Boolean).join(" · ")));
       }
       A.A5.appendChild(kv);
@@ -2527,7 +2572,7 @@ export default async function fixtures(host) {
       const meta = [
         mk.state ? `state ${mk.state}` : null,
         mk.n_books != null ? `${mk.n_books} books` : null,
-        num(mk.age_hours) != null ? ageText(num(mk.age_hours)) : null,
+        num(mk.age_hours) != null ? `${fmtSpan(num(mk.age_hours))} old` : null,
         mk.devig_method ? `devig ${mk.devig_method}` : null,
         num(mk.overround_h2h) != null ? `overround ${fmt2(mk.overround_h2h)}` : null,
       ].filter(Boolean).join(" · ");
@@ -2557,7 +2602,7 @@ export default async function fixtures(host) {
       const dk = el("i", "market");
       dk.title = `market ${(k * 100).toFixed(1)}%`
         + (num(d.market_age_hours) != null
-            ? ` · ${ageText(num(d.market_age_hours))}` : "");
+            ? ` · ${fmtSpan(num(d.market_age_hours))} old` : "");
       db.append(dm, dk);
       row.appendChild(db);
       const gp = num(d.gap_pp);
@@ -2673,7 +2718,7 @@ export default async function fixtures(host) {
         row.appendChild(el("b", null, n.player || "–"));
         if (n.chance != null) row.appendChild(el("span", "chance", `${n.chance}%`));
         const meta = [n.status_text || null,
-          n.as_of ? ageText(ageHours(n.as_of)) : null].filter(Boolean).join(" · ");
+          fmtAge(n.as_of) ? `${fmtAge(n.as_of)} old` : null].filter(Boolean).join(" · ");
         if (meta) row.appendChild(el("span", "meta", meta));
         box.appendChild(row);
       }
@@ -2784,7 +2829,7 @@ export default async function fixtures(host) {
         if (q.topic)
           head.appendChild(el("span", "tag", String(q.topic).replace(/_/g, " ")));
         const meta = [q.creator,
-                      q.published_at ? ageText(ageHours(q.published_at)) : null]
+                      fmtAge(q.published_at) ? `${fmtAge(q.published_at)} old` : null]
           .filter(Boolean).join(" · ");
         if (meta) head.appendChild(el("span", "who", meta));
         row.appendChild(head);
@@ -2809,7 +2854,7 @@ export default async function fixtures(host) {
                             a.style.textDecoration = "none"; }
         line.appendChild(a);
         if (q.age_hours != null)
-          line.appendChild(document.createTextNode(` · ${ageText(q.age_hours)}`));
+          line.appendChild(document.createTextNode(` · ${fmtSpan(q.age_hours)} old`));
         if (q.confidence) line.appendChild(document.createTextNode(` · ${q.confidence}`));
         box.appendChild(line);
       }
@@ -2975,7 +3020,7 @@ export default async function fixtures(host) {
       disc.appendChild(el("summary", null,
         `The fit: attack ${sgn2(num(rt.attack))} · defence ${sgn2(num(rt.defence))} goals vs average`
         + (num(rt.matches_seen) != null ? ` · ${rt.matches_seen} matches` : "")
-        + (fh != null ? ` · fitted ${ageText(fh)}` : "")
+        + (fh != null ? ` · fitted ${fmtSpan(fh)} old` : "")
         + (fd ? `, on results to ${fd.toLocaleDateString(undefined, { day: "numeric", month: "short" })}` : "")));
       const kv = el("div", "fx-kv");
       const add = (a, b) => { kv.appendChild(el("span", "k", a)); kv.appendChild(el("span", "v", b)); };

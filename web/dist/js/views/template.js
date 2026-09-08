@@ -192,8 +192,8 @@ function makeTip(wrap) {
    a warning for a set nobody described would be worse than staying quiet. */
 const TAG_INFO = {
   elite_list: {
-    why: "Managers on the curated elite list — the intended population of " +
-         "this pool and the reason it is worth measuring at all.",
+    why: "Managers on the curated elite list. This is the intended " +
+         "population of the pool and the reason it is worth measuring.",
   },
   winner: {
     why: "Past overall winners. Twelve people, so every share they move is " +
@@ -207,21 +207,21 @@ const TAG_INFO = {
     off: true, warn: true,
     why: "Your own mini-league opponents. Their picks correlate with each " +
          "other and with yours, so including them makes the field look more " +
-         "like your squad than it really is. Off by default for that reason — " +
-         "turn it on when the question is “am I winning my mini-league”, not " +
-         "“what is the elite template”.",
+         "like your squad than it really is. Off by default for that " +
+         "reason. Turn it on when the question is “am I winning my " +
+         "mini-league”, not “what is the elite template”.",
   },
   snowball: {
     off: true, warn: true, danger: true,
     why: "UNTRUSTWORTHY. These entries were reached by walking the leagues of " +
-         "seed ids that have since gone stale — the ids no longer identify the " +
-         "managers they were recorded as. Whoever is in this set, it is not " +
+         "seed ids that have since gone stale, so the ids no longer identify " +
+         "the managers they were recorded as. Whoever is in this set, it is not " +
          "reliably who the crawl says it is. Never in the default field.",
   },
   "(no manager row)": {
     off: true, warn: true,
-    why: "Squads stored with no manager row to classify them — a crawl bug, " +
-         "counted rather than dropped.",
+    why: "Squads stored with no manager row to classify them. A crawl " +
+         "bug, counted rather than dropped.",
   },
 };
 const tagInfo = t => TAG_INFO[t] || {};
@@ -262,7 +262,7 @@ function availChip(status) {
   chip.appendChild(el("span", "aword", word));
   chip.setAttribute("role", "img");
   chip.setAttribute("aria-label", `availability: ${word}`);
-  chip.title = `Availability: ${word} — FPL status flag “${status}”. The ` +
+  chip.title = `Availability: ${word}, from FPL status flag “${status}”. The ` +
     `payload carries no chance-of-playing percentage, so none is invented.`;
   return chip;
 }
@@ -663,7 +663,7 @@ export default async function view(host) {
   const baselineLabel = b => {
     if (!b) return "game";
     const d = baselineDesc(b);
-    return `${b.short || b.label}${d ? ` — ${d}` : ""}`;
+    return `${b.short || b.label}${d ? ` (${d})` : ""}`;
   };
 
   /* The low-n watermark: the n is already printed, but printing n is not the
@@ -674,7 +674,7 @@ export default async function view(host) {
     svg.appendChild(sv("text", {
       x: W / 2, y: H / 2, class: "lownwm", "text-anchor": "middle",
       "aria-hidden": "true",
-    }, `n=${f.n} — quantized`));
+    }, `n=${f.n}, quantized`));
   }
 
   /* An accessible mark: <title>, tabindex, aria-label, and keyboard open —
@@ -726,7 +726,7 @@ export default async function view(host) {
                       eo_elite: "LFPL elite EO" };
   const isCrawl = f => !!f && (f.kind === "cohort" || f.kind === "segments");
   function fieldName(f) {
-    if (!f) return "—";
+    if (!f) return "none";
     if (isCrawl(f)) return f.n != null ? `crawl ${f.n}` : `crawl ${f.key}`;
     if (f.provider === "livefpl")
       return LFPL_NAME[f.metric] || LFPL_NAME[f.key] || `LFPL ${f.metric || f.key}`;
@@ -748,12 +748,29 @@ export default async function view(host) {
       ? d.toLocaleDateString(undefined, { day: "numeric", month: "short" })
       : "date unknown";
   };
-  /* Every row prints n, gw and as-of. A crawl under the floor prints why it is
-     not quotable INSTEAD of a count that could be read as one. */
+  /* Every row prints its denominator, gw and as-of. A crawl under the floor
+     prints why it is not quotable INSTEAD of a count that could be read as
+     one, and a field with no manager count says WHY it has none rather than
+     printing nothing: an unknown denominator and an unstated one look the
+     same on screen, and only one of them is honest. The payload already
+     carries the sentence, so the short form is derived from it here. */
+  const STAMP_MAX = 46;
+  function denomStamp(f) {
+    const d = String(f.denominator || "").trim();
+    if (!d) return "no denominator stated";
+    /* The first clause of the panel's own sentence, which is the population
+       itself; the rest is the caveat and stays in the title. A comma inside a
+       number is not a clause break: splitting on it turned "the provider's
+       top-10,000 sample" into "the provider's top-10". */
+    const head = d.split(/[.;:]|,(?!\d)| — /)[0].trim() || d;
+    const short = head.length > STAMP_MAX
+      ? head.slice(0, STAMP_MAX - 1).trimEnd() + "…" : head;
+    return f.kind === "fpl" ? `${short}, share not a count` : short;
+  }
   function fieldStamp(f) {
-    return [f.n != null ? (lowN(f) ? `n=${f.n} — too small to quote`
+    return [f.n != null ? (lowN(f) ? `n=${f.n}, too small to quote`
                                    : `${f.n} managers`)
-                        : (f.kind === "fpl" ? "share, not a count" : null),
+                        : denomStamp(f),
             f.gw != null ? `GW${f.gw}` : "no gameweek stamp",
             shortDate(f.as_of)].filter(Boolean).join(" · ");
   }
@@ -806,7 +823,7 @@ export default async function view(host) {
     b.title = `${g.label}\n% of: ${g.denominator}\n` +
       `${g.players ?? "?"} players measured · ${a.text}` +
       (small
-        ? `\n\nn=${g.n}: below the ${MIN_N}-manager floor — every share is a ` +
+        ? `\n\nn=${g.n}: below the ${MIN_N}-manager floor, so every share is a ` +
           `multiple of ${(100 / g.n).toFixed(0)}%, so this field cannot be ` +
           `quoted and is not selectable.`
         : "") +
@@ -873,7 +890,15 @@ export default async function view(host) {
         (caveat ? " caveated" : ""));
       chip.appendChild(el("span", "segbox", on ? "✓" : ""));
       chip.append(` ${c.label || c.tag}`);
-      if (c.n != null) chip.appendChild(el("span", "cnt", String(c.n)));
+      /* The count on the chip is managers WITH a stored squad, which is the
+         only count that can enter a denominator. When the set has members the
+         crawl never reached, the chip says both numbers: a bare "20" on the
+         expert set reads as twenty measurable managers when the answer is
+         none, and the gap is the whole reason that chip is inert. */
+      if (c.n != null)
+        chip.appendChild(el("span", "cnt" + (c.n ? "" : " empty"),
+          c.n_pool != null && c.n_pool !== c.n
+            ? `${c.n} of ${c.n_pool} crawled` : String(c.n)));
       if (danger) chip.appendChild(el("span", "segwarn", "!"));
       else if (caveat) chip.appendChild(el("span", "segcav", "*"));
       const why = tagWhy(c);
@@ -881,7 +906,7 @@ export default async function view(host) {
          denominator. `n_pool` is how many carry the tag at all, and the gap
          between them is the part of the set nothing here can measure. */
       chip.title = `${c.label || c.tag}` +
-        (c.n != null ? ` — ${c.n} with a stored squad` : "") +
+        (c.n != null ? `. ${c.n} with a stored squad` : "") +
         (c.n_pool != null && c.n != null && c.n_pool !== c.n
           ? ` of ${c.n_pool} tagged (${c.n_pool - c.n} have no squad on file, ` +
             `so they are in no denominator here)` : "") +
@@ -904,9 +929,9 @@ export default async function view(host) {
       const defNames = [...m.def].map(t => nameOf(m, t)).join(", ");
       reset.title =
         `The panel's own default selection: ${defNames}. It leaves out your ` +
-        `mini-league — people you happen to play rather than a selected elite, ` +
-        `and the one set that contains your own entry — and anything the crawl ` +
-        `marks untrustworthy.`;
+        `mini-league, which is people you happen to play rather than a ` +
+        `selected elite and the one set that contains your own entry. It ` +
+        `also leaves out anything the crawl marks untrustworthy.`;
       reset.disabled = sameSet(sel, m.def);
       reset.onclick = () => {
         segSel[m.key] = new Set(m.def);
@@ -933,7 +958,7 @@ export default async function view(host) {
       status.append(el("b", null, "Sets are disclosed, not selectable. "),
         `This build's ownership_eo panel publishes no segment parameter ` +
         `(checked against /api/panels), so all ${universe.length} sets above` +
-        (flag.length ? ` — ${flag.join(" and ")} included` : "") +
+        (flag.length ? `, ${flag.join(" and ")} included` : "") +
         ` are inside every number on this page. Recutting EO over a subset is ` +
         `arithmetic only the panel can do: it holds the picks, the browser ` +
         `holds only the totals.`);
@@ -947,15 +972,15 @@ export default async function view(host) {
       if (segError === EMPTY_SEL)
         status.append(el("b", null, "Nothing selected. "),
           "A field of nobody has no ownership to measure, so nothing was " +
-          `asked for — the numbers on screen are still the ones served for ` +
+          `asked for. The numbers on screen are still the ones served for ` +
           `${stale}. Put a set back.`);
       else
         status.append(el("b", null, "That selection was refused. "),
-          `${segError} — the numbers on screen are still the ones served for ` +
+          `${segError}. The numbers on screen are still the ones served for ` +
           `${stale}.`);
     } else if (!served) {
       status.className = "segstatus warn";
-      status.append("Selection not applied yet — the numbers on screen were " +
+      status.append("Selection not applied yet. The numbers on screen were " +
         `served for ${nameList(m, m.applied)}.`);
     } else {
       status.append(
@@ -980,7 +1005,7 @@ export default async function view(host) {
       body.appendChild(el("p", "sub",
         `The ${inField.length} sets in the field carry ${sum} memberships ` +
         `between them over ${n ?? "an unstated number of"} distinct managers` +
-        (m.overlap ? ` — ${m.overlap} entries hold two tags and are counted ` +
+        (m.overlap ? `: ${m.overlap} entries hold two tags and are counted ` +
                      `under both` : ": an entry can hold two tags and is " +
                      "counted under both") +
         `. The denominator is the distinct count, never the sum.`));
@@ -993,8 +1018,8 @@ export default async function view(host) {
     if (m.unresolved)
       body.appendChild(el("p", "sub",
         `${m.unresolved} entries in the union hold at least one pick this ` +
-        `engine could not resolve to a player — a hole in the crawl, counted ` +
-        `rather than hidden.`));
+        `engine could not resolve to a player. That is a hole in the crawl, ` +
+        `counted rather than hidden.`));
     if (m.note) body.appendChild(el("p", "sub", m.note));
 
     for (const c of universe.filter(x => tagDanger(x) && isOn(x))) {
@@ -1010,7 +1035,7 @@ export default async function view(host) {
       cb.appendChild(el("span", "tlabel", "Read with"));
       for (const c of caveats) {
         const line = el("div", "cav");
-        line.append(el("b", null, (c.label || c.tag) + " — "), tagWhy(c));
+        line.append(el("b", null, (c.label || c.tag) + ": "), tagWhy(c));
         cb.appendChild(line);
       }
       body.appendChild(cb);
@@ -1055,7 +1080,7 @@ export default async function view(host) {
       `Field map: ${off} players sit ${BAND}pp+ off the game`);
     mapCard.appendChild(el("p", "sub",
       `Every player, positioned by what the game holds (horizontal) against ` +
-      `what ${f.label} holds (vertical) — same measure, same units on both ` +
+      `what ${f.label} holds (vertical). Same measure, same units on both ` +
       `axes. The diagonal is where the two agree; distance from it IS the ` +
       `gap, so the template, the neutral middle and the fades are places on ` +
       `the page rather than numbers to compare.`));
@@ -1067,10 +1092,10 @@ export default async function view(host) {
     };
     key.append(
       zone("heavy", "Template",
-        `field is ${BAND}pp+ heavier than the game — cover it or carry the risk`),
-      zone("mid", "Neutral", "field and game agree — this holding is noise"),
+        `field is ${BAND}pp+ heavier than the game: cover it or carry the risk`),
+      zone("mid", "Neutral", "field and game agree, so this holding is noise"),
       zone("light", "Fade",
-        `field is ${BAND}pp+ lighter — a real differential lives here`));
+        `field is ${BAND}pp+ lighter, so a real differential lives here`));
     mapCard.appendChild(key);
 
     const pts = sourceRows()
@@ -1135,15 +1160,15 @@ export default async function view(host) {
       { x: sx(dom) - 6, y: sy(dom) + 16, class: "diaglabel end" },
       "field = game"));
     svg.appendChild(sv("text", { x: L + 12, y: T + 18, class: "zonelabel" },
-      "TEMPLATE — the field is heavier here"));
+      "TEMPLATE: the field is heavier here"));
     svg.appendChild(sv("text", { x: W - R - 12, y: H - B - 12,
                                  class: "zonelabel end" },
-      "FADE — the field is lighter here"));
+      "FADE: the field is lighter here"));
     svg.appendChild(sv("text", { x: (L + W - R) / 2, y: H - 8, class: "axis" },
-      `the game — ${b.short || b.label} ${MEASURE[measure].short} %`));
+      `the game, ${b.short || b.label} ${MEASURE[measure].short} %`));
     svg.appendChild(sv("text", { x: 0, y: 0, class: "axis",
                                  transform: `translate(15 ${(T + H - B) / 2}) rotate(-90)` },
-      `the field — ${f.short || f.label} ${MEASURE[measure].short} %`));
+      `the field, ${f.short || f.label} ${MEASURE[measure].short} %`));
 
     const scale = rampScale();
     const marks = sv("g", {});
@@ -1430,8 +1455,8 @@ export default async function view(host) {
       card.title = `${dispName(p.r)}: ${p.s.toFixed(0)}% of ${f.n ?? "?"} ` +
         `start him${capPct != null ? `, ${capPct.toFixed(0)}% captain him` : ""}` +
         `\n${words}.` +
-        (e != null ? `\nExposure ${signed(e)} — see the exposure strip below ` +
-                     `for what that number means.` : "");
+        (e != null ? `\nExposure ${signed(e)}. The exposure strip below says ` +
+                     `what that number means.` : "");
       const open = () => showDetail(p.r);
       card.onclick = open;
       card.onkeydown = ev => {
@@ -1532,6 +1557,34 @@ export default async function view(host) {
              basis: `the ${list.length} players this panel serves` };
   }
 
+  /* How much of the selected field's EO is a triple-captain chip, over the
+     same basis the headline sums. Null when this field cannot split the term
+     (an external feed publishes one blended number and no head counts) or
+     when nobody played the chip, so the note appears only where it is a fact
+     about the week on screen. */
+  function chipInflation() {
+    const w = res.whatif;
+    let pp = 0, players = 0, managers = 0, splittable = false;
+    const add = (tcPp, tripled) => {
+      if (tcPp == null) return;
+      splittable = true;
+      if (tcPp > 0) { pp += tcPp; players++; managers += tripled || 0; }
+    };
+    if (w && Array.isArray(w.players) && w.field === fieldKey)
+      for (const p of w.players) add(p.field_eo_tc_pp, p.field_tripled_by);
+    else {
+      const codes = new Set();
+      for (const r of (res.rows || []).concat(res.differentials || [])) {
+        if (codes.has(r.code)) continue;
+        codes.add(r.code);
+        const m = r.fields?.[fieldKey];
+        if (m) add(m.eo_tc_pp, m.tripled_by);
+      }
+    }
+    return splittable && pp > 0
+      ? { pp: pp / 100, players, managers } : null;
+  }
+
   /* The one explanation, built from the selected field's own head counts and
      the page's own worst hole — never a hard-coded example. */
   function worstHole() {
@@ -1564,7 +1617,7 @@ export default async function view(host) {
         `${fieldName(f)} publishes no effective ownership`,
         "Exposure is your multiplier minus the field's EO. This field only " +
         "reports head-count ownership, and a multiplier minus a head count " +
-        "is not a number — pick a field that publishes EO."));
+        "is not a number. Pick a field that publishes EO."));
       return;
     }
 
@@ -1586,26 +1639,67 @@ export default async function view(host) {
     stats.appendChild(t);
     stripCard.appendChild(stats);
 
+    /* CHIP MULTIPLIERS ARE KEPT AND LABELLED. A triple captain is a 3× in the
+       stored squads, so it is in the field's EO and in every subtraction on
+       this page. It is also a chip that cannot repeat, which makes the same
+       number a fair reading of last week and a poor forward baseline. The
+       panel serves the chip term separately (eo_tc_pp), so the size of it is
+       printed here rather than left inside the total. */
+    const chipTerm = chipInflation();
+    if (chipTerm)
+      stripCard.appendChild(Object.assign(
+        el("p", "sub chipnote",
+          `Triple-captain chips are ${chipTerm.pp.toFixed(2)} of the ` +
+          `${(uncovered + covered).toFixed(2)} effective ownership this field ` +
+          `carries in total` + (f.gw != null ? ` at GW${f.gw}` : "") +
+          `: ${chipTerm.players === 1 ? "one player"
+            : `${chipTerm.players} players`} at 3× for ` +
+          `${chipTerm.managers}` + (f.n != null ? ` of the ${f.n}` : "") +
+          ` managers. Those units do not come back next week.`),
+        { title: `Every multiplier the field applied is kept, chips included, ` +
+                 `because the identity subtracts what they actually played. ` +
+                 `The chip part is named so it is not read as a standing ` +
+                 `level: without it the field carries ` +
+                 `${(uncovered + covered - chipTerm.pp).toFixed(2)} in total.` }));
+
     /* THE minus sign, and the only place its meaning is written down. */
     const w = worstHole();
     if (w) {
       const nm = dispName(w.r), n = w.f.n;
-      const benched = !!w.f.benched_by;
-      const cnt = benched ? w.f.started_by : w.f.owned_by;
+      const started = w.f.started_by != null ? w.f.started_by : w.f.owned_by;
+      const cap = w.f.captained_by, tc = w.f.tripled_by;
       const s = Math.abs(w.e).toFixed(2);
-      const counted = n != null && w.f.captained_by != null && cnt != null;
+      /* The head counts only explain the number if they ADD UP to it. One
+         multiplier unit per starter, one more per captain, one more per
+         triple captain: that sum is exactly Σ multipliers, so it is stated
+         and then divided. Where a count is missing the sentence drops to the
+         share the field publishes rather than printing arithmetic that does
+         not close. */
+      const units = started != null && cap != null
+        ? started + cap + (tc || 0) : null;
+      const closes = units != null && n
+        && Math.abs(100 * units / n - (w.f.eo ?? NaN)) <= 0.2;
       stripCard.appendChild(el("p", "sub means",
-        (counted
-          ? `${cnt} of the ${n} ${benched ? "start" : "own"} ${nm} and ` +
-            `${w.f.captained_by} captain him, so the average rival has `
+        (closes
+          ? `${started} of the ${n} start ${nm}, ${cap} captain him` +
+            (tc ? ` and ${tc} triple-captain him` : "") +
+            `. That is ${units} multipliers over ${n} managers, so the ` +
+            `average rival has `
           : `${fieldName(f)} puts ${pct(w.v ?? val(w.r, fieldKey, "eo"))} ` +
             `effective ownership on ${nm}, so the average rival has `) +
         `${s} of a ${nm}. You have none, so his every point moves the field ` +
         `${s} further ahead of you. That is what −${s} means.`));
+      if (closes && tc && w.f.eo_ex_tc != null)
+        stripCard.appendChild(el("p", "sub means",
+          `${tc} of those multipliers are the triple-captain chip. Drop them ` +
+          `and the field holds ${pct(w.f.eo_ex_tc)} of ${nm}, or ` +
+          `${(w.f.eo_ex_tc / 100).toFixed(2)} each. Both numbers are real: ` +
+          `${s} is what GW${f.gw} cost you, ${(w.f.eo_ex_tc / 100).toFixed(2)} ` +
+          `is what a week without the chip would.`));
       const go = el("a", "coverlink", "cover this hole →");
       go.href = "#home";
-      go.title = "Opens the Dashboard and focuses the verdict/solver card — " +
-                 "the plan that says what to sell to fund him.";
+      go.title = "Opens the Dashboard and focuses the verdict and solver " +
+                 "card, the plan that says what to sell to fund him.";
       go.addEventListener("click", focusDashboardPlan);
       stripCard.appendChild(go);
     }
@@ -1664,16 +1758,18 @@ export default async function view(host) {
       `charts below are showing. Squad read via ${res.squad.source}` +
       (res.squad.gw != null ? ` at GW${res.squad.gw}` : "") +
       (res.squad.has_multipliers ? "."
-        : ", which supplies roles but not multipliers — captain is taken as 2× " +
-          "and a triple-captain chip would make it 3×.") +
+        : ", which supplies roles but not multipliers, so captain is taken " +
+          "as 2× and a triple-captain chip would make it 3×.") +
       (assumed ? ` ${assumed} multipliers here are inferred from your squad ` +
                  `role rather than read.` : ""),
       `Σ over the players you hold is ${signed(sum15)}. Read it with the ` +
-      `identity, not as a score: every legal squad spends exactly 12 ` +
+      `identity, not as a score: a chip-free squad spends exactly 12 ` +
       `multiplier units, so that sum equals 12 minus the field EO you DO ` +
-      `cover, and it RISES when the field EO you do not cover rises. The ` +
-      `headline above is the half of it that varies in the direction you ` +
-      `actually want to watch.`,
+      `cover, and it RISES when the field EO you do not cover rises. A ` +
+      `triple captain makes it 13 and a bench boost 15 or more, which is why ` +
+      `the field's EO can carry chip units your side of the subtraction does ` +
+      `not. The headline above is the half of it that varies in the ` +
+      `direction you actually want to watch.`,
       `Bars under 0.08 are left out: at that size the term is smaller than ` +
       `the rounding on the field's own share.`,
     ], "how exposure is computed");
@@ -1758,7 +1854,7 @@ export default async function view(host) {
       const sel = el("select");
       for (const f of opts) {
         const o = el("option", null,
-          lowN(f) ? `${f.label} — n=${f.n}, too small to quote` : f.label);
+          lowN(f) ? `${f.label}, n=${f.n}, too small to quote` : f.label);
         o.value = f.key;
         o.disabled = f.key === other;
         if (lowN(f)) o.className = "lown";
@@ -1801,7 +1897,7 @@ export default async function view(host) {
     const warns = [];
     if (A.gw != null && B2.gw != null && A.gw !== B2.gw)
       warns.push(`${A.short || A.label} is GW${A.gw}, ${B2.short || B2.label} is ` +
-                 `GW${B2.gw} — part of every split below is just the week apart.`);
+                 `GW${B2.gw}, so part of every split below is just the week apart.`);
     for (const f of [A, B2])
       if (f.same_values_as_gw != null)
         warns.push(`${f.label} is stamped GW${f.gw} but is byte-identical to ` +
@@ -1942,7 +2038,7 @@ export default async function view(host) {
     if (lowN(A) || lowN(B2)) {
       const s = lowN(A) ? A : B2;
       compareCard.appendChild(el("p", "warnline",
-        `${s.label} is ${s.n} managers — every one of its shares is a ` +
+        `${s.label} is ${s.n} managers, so every one of its shares is a ` +
         `multiple of ${(100 / s.n).toFixed(0)}%, so the biggest “splits” ` +
         `here are quantization, not disagreement. It is never a default; ` +
         `you picked it, and the chart is watermarked while it is on.`));
@@ -1969,7 +2065,7 @@ export default async function view(host) {
       const line = el("p", "sub");
       line.append("Both fields already agree on ",
         el("b", null, agree.map(p => dispName(p.r)).join(", ")),
-        ` — held at ${BAND}%+ by both and within ` +
+        `, held at ${BAND}%+ by both and within ` +
         `${Math.max(...agree.map(p => Math.abs(p.d))).toFixed(1)}pp. Those are ` +
         `insurance, not a decision.`);
       compareCard.appendChild(line);
@@ -2125,7 +2221,7 @@ export default async function view(host) {
     filterRow.appendChild(el("span", "tlabel", "Show"));
     const rs = el("span", "seg");
     for (const [k, label, title] of [
-      ["template", "Template", "ranked by the live EO metric — the field's core"],
+      ["template", "Template", "ranked by the live EO metric, the field's core"],
       ["diff", "Differentials",
        `low-owned players with the best consensus xPts` +
        (res.xpts_gw != null ? ` at GW${res.xpts_gw}` : "")],
@@ -2285,8 +2381,8 @@ export default async function view(host) {
       th(f ? (f.short || f.label) : "field", { kind: "field" },
          { title: f ? `% of: ${f.denominator}` : "" }),
       th("gap", { kind: "gap" },
-         { title: "field minus game, in percentage points — the whole point " +
-                  "of the page" }),
+         { title: "field minus game, in percentage points, which is the " +
+                  "whole point of the page" }),
       th("cap %", { kind: "cap" },
          { title: "share of that cohort captaining him; blank where the " +
                   "field publishes no captaincy" }),
@@ -2417,7 +2513,7 @@ export default async function view(host) {
     drawer.appendChild(el("p", "sub",
       "One row per measurable field, each with the denominator its percentage " +
       "is a percentage of. Blank means that field does not publish that " +
-      "measure — never zero."));
+      "measure, which is not the same as zero."));
     const wrap = el("div", "scroll-x");
     const t = el("table", "data");
     const th_ = el("thead"), hr = el("tr");
@@ -2451,7 +2547,7 @@ export default async function view(host) {
     t.appendChild(tb); wrap.appendChild(t); drawer.appendChild(wrap);
     if (allFields.some(f => f.same_values_as_gw != null))
       drawer.appendChild(el("p", "sub",
-        "* that field's values are byte-identical to an earlier gameweek — " +
+        "* that field's values are byte-identical to an earlier gameweek: " +
         "the provider re-stamped a settled week, it is not a new forecast."));
 
     // the identity, spelled out for this one player
@@ -2460,13 +2556,13 @@ export default async function view(host) {
     if (v == null) {
       drawer.appendChild(el("p", "sub",
         `${f.label} publishes no effective ownership for him, so no exposure ` +
-        `can be stated. (Exposure is always EO — a multiplier minus a ` +
-        `head-count share would not mean anything.)`));
+        `can be stated. Exposure is always EO, because a multiplier minus a ` +
+        `head-count share would not mean anything.`));
     } else if (m.v == null) {
       drawer.appendChild(el("p", "sub",
         r.in_squad === true
           ? "You own him, but the squad read supplied no role, so the " +
-            "multiplier — and therefore the exposure — is unknown."
+            "multiplier is unknown, and so is the exposure."
           : "Your squad is unreadable, so your side of the identity is unknown."));
     } else {
       const e = m.v - v / 100;
@@ -2543,7 +2639,8 @@ export default async function view(host) {
         `sets the segment selection` +
         (sl.n != null ? ` (${sl.n} managers)` : "") +
         ` behind the diff and the what-if simulator. They are different sets ` +
-        `— a level from one and a trend from the other never share a sentence.`);
+        `of managers, so a level from one and a trend from the other never ` +
+        `share a sentence.`);
       if (fd.note) body.appendChild(el("p", "sub", fd.note));
       body.appendChild(line);
     }
@@ -2551,7 +2648,7 @@ export default async function view(host) {
     const mlN = mlF?.mini_league_n ?? fd?.measured_cohort?.mini_league_n;
     if (mlN && isCrawl(mlF))
       body.appendChild(el("p", "sub",
-        `The field on screen includes your ${mlN} mini-league rivals — a set ` +
+        `The field on screen includes your ${mlN} mini-league rivals, a set ` +
         `the default selection excludes. Their picks correlate with yours, ` +
         `which pulls every gap here towards zero.`));
     body.appendChild(el("p", "sub",
@@ -2565,7 +2662,7 @@ export default async function view(host) {
     const ls = res.last_season;
     if (ls?.rows?.length) {
       body.appendChild(el("h2", null,
-        `Last season's final template — ${ls.season} GW${ls.gw}`));
+        `Last season's final template, ${ls.season} GW${ls.gw}`));
       body.appendChild(el("p", "sub",
         "The old season's end state, NOT current EO. It is shown here, behind " +
         "a fold, precisely so it can never be read as this week's field."));
@@ -2588,7 +2685,7 @@ export default async function view(host) {
       }
       t.appendChild(tb); wrap.appendChild(t); body.appendChild(wrap);
       if (ls.rows.length > LS_MAX) body.appendChild(el("p", "sub",
-        `Top ${LS_MAX} of ${ls.rows.length} — it is context, not a working set.`));
+        `Top ${LS_MAX} of ${ls.rows.length}. It is context, not a working set.`));
     }
     body.appendChild(provenance(prov));
     foot.appendChild(d);

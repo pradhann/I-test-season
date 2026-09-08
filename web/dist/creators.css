@@ -868,6 +868,33 @@ tr.cx-srcline.legacy td, tr.cx-srcline.blocked td { color: var(--faint); }
 .cx-rc.below .cx-rcstat { color: var(--bad); }
 .cx-rc.above .cx-rcstat { color: var(--good); }
 .cx-rc.legacy { border-style: dashed; }
+
+/* ============================================ under the floor, drawn faint
+ *
+ * `verdict()` appends `few` when a record has fewer scored claims than
+ * `min_scored_claims`. Nothing styled it, so a verdict from 12 claims was
+ * painted the same full red as one from 274 and only an 11.5px word told the
+ * reader which was which. Colour must not assert what the count denies: the
+ * hue still says which side of the coin flip, the saturation says how much
+ * evidence stands behind it. `--muted` is the mix target so the result lands
+ * in the app's own neutral in both themes. */
+.cx-rc.few .cx-rcstat,
+.cx-rctag.few { color: color-mix(in oklab, currentColor 45%, var(--muted)); }
+.cx-rc.few.below .cx-rcstat { color: color-mix(in oklab, var(--bad) 45%, var(--muted)); }
+.cx-rc.few.above .cx-rcstat { color: color-mix(in oklab, var(--good) 45%, var(--muted)); }
+.cx-rctag.few.below { color: color-mix(in oklab, var(--bad) 45%, var(--muted));
+  border-color: color-mix(in oklab, var(--bad) 20%, var(--line)); }
+.cx-rctag.few.above { color: color-mix(in oklab, var(--good) 45%, var(--muted));
+  border-color: color-mix(in oklab, var(--good) 20%, var(--line)); }
+/* the card carries it too: the 3px left rule is the loudest mark on the grid */
+.cx-rcard.few.below { border-left-color: color-mix(in oklab, var(--bad) 40%, var(--line)); }
+.cx-rcard.few.above { border-left-color: color-mix(in oklab, var(--good) 40%, var(--line)); }
+.cx-rcard.few.below .cx-rccoin { color: color-mix(in oklab, var(--bad) 45%, var(--muted)); }
+.cx-rcard.few.above .cx-rccoin { color: color-mix(in oklab, var(--good) 45%, var(--muted)); }
+.cx-rcard.few.below .cx-range-band { background: color-mix(in oklab, var(--bad) 18%, var(--surface)); }
+.cx-rcard.few.above .cx-range-band { background: color-mix(in oklab, var(--good) 18%, var(--surface)); }
+/* a dashed left rule: the same "not established" mark the tables already use */
+.cx-rcard.few { border-left-style: dashed; }
 .cx-count.cue { background: repeating-linear-gradient(135deg, var(--raised) 0 3px,
                                                       var(--surface) 3px 6px); }
 .cx-count.own { border-color: color-mix(in oklab, var(--accent) 55%, var(--line)); }
@@ -1014,3 +1041,20 @@ tr.cx-gridrow.unread td.unread { background-image: repeating-linear-gradient(135
 .cx-linkish:focus-visible { outline: 2px solid var(--s1); outline-offset: 2px; }
 .cx-sqcard.bench { opacity: .82; }
 .cx-sqcard.bench .cx-sqmeta::after { content: " · bench"; }
+
+/* two names and a count on the compact team line (defect: seven people on one
+   400-character line that never wrapped) */
+.cx-rcmore { color: var(--faint); font-size: 11px; white-space: nowrap; }
+/* the same FPL entry attached to more than one card */
+.cx-samewho { font-size: 10px; letter-spacing: .04em; color: var(--warn);
+              border: 1px dashed color-mix(in oklab, var(--warn) 45%, var(--line));
+              border-radius: 4px; padding: 0 5px; white-space: nowrap; }
+/* what the board read, and what it left out */
+.cx-scope { margin: 2px 0 8px; font-size: 12px; color: var(--muted);
+            line-height: 1.55; }
+.cx-scope .cx-disclose { margin-top: 3px; }
+/* a failed panel body, folded rather than interpolated into a sentence */
+.cx-raw { margin: 4px 0 0; padding: 7px 9px; max-height: 240px; overflow: auto;
+          background: var(--surface); border: 1px solid var(--line);
+          border-radius: 6px; font-family: var(--mono); font-size: 11px;
+          white-space: pre-wrap; word-break: break-word; color: var(--muted); }

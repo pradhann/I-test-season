@@ -200,7 +200,7 @@ _SEGMENT_META: dict[str, tuple[str, bool, str | None, str | None]] = {
     ),
     "mini_league": (
         "Your own mini-league opponents", True, None,
-        "These are people you happen to play, not a selected elite — and your "
+        "These are people you happen to play, not a selected elite. Your "
         "own entry is one of them, so selecting this set puts you inside the "
         "field you are measuring yourself against.",
     ),
@@ -224,8 +224,9 @@ _SEGMENT_META: dict[str, tuple[str, bool, str | None, str | None]] = {
         "The finding is recorded in docs/platform/PANEL_LEDGER.md (2026-08-27, "
         "\"NOT salvageable ... must not be treated as an elite cohort in any "
         "skill, copying or EO analysis\"). The rows are kept rather than "
-        "deleted — deleting real observations to tidy a taxonomy would be "
-        "worse — and are offered here only so the disclosure is visible.",
+        "deleted, because deleting real observations to tidy a taxonomy "
+        "would be worse, and are offered here only so the disclosure is "
+        "visible.",
         None,
     ),
 }
@@ -277,10 +278,20 @@ _MEASURE = {
         "own": {"type": ["number", "null"]},        # head-count share, percent
         "eo": {"type": ["number", "null"]},         # Σ multipliers / n, percent
         "cap": {"type": ["number", "null"]},        # captaincy share, percent
+        # The triple-captain part of `eo`, in the same percentage points, and
+        # `eo` with that part taken out. A 3x multiplier is a chip that cannot
+        # repeat, so an EO read as a forward-looking baseline needs the two
+        # numbers side by side: eo = eo_ex_tc + eo_tc_pp, and eo_ex_tc is the
+        # one that reconciles with own + cap. Present only on fields measured
+        # from stored squads here; null on cohort and external feeds, which
+        # publish an EO with the chip already folded in and no way to split it.
+        "eo_tc_pp": {"type": ["number", "null"]},
+        "eo_ex_tc": {"type": ["number", "null"]},
         "owned_by": {"type": ["integer", "null"]},
         "started_by": {"type": ["integer", "null"]},
         "benched_by": {"type": ["integer", "null"]},
         "captained_by": {"type": ["integer", "null"]},
+        "tripled_by": {"type": ["integer", "null"]},   # managers at 3x
         # The manager count behind this measurement — the denominator carried
         # ON the number, so no cohort-derived share ever travels without its
         # n. Absent for fields with no countable denominator (FPL global,
@@ -406,7 +417,7 @@ _SEGMENT = {
 _DIFF_ROW = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["code", "name", "in_squad", "in_template"],
+    "required": ["code", "name", "in_squad", "in_panel_rows"],
     "properties": {
         "code": {"type": "integer"},
         "name": {"type": "string"},
@@ -415,7 +426,14 @@ _DIFF_ROW = {
         "team_code": {"type": ["integer", "null"]},
         "price": {"type": ["number", "null"]},
         "in_squad": {"type": ["boolean", "null"]},   # null = squad unreadable
-        "in_template": {"type": "boolean"},          # present in `rows`
+        # Present in this payload's own `rows` array, which is the top
+        # `limit` players by `rows_ranked_by` (LiveFPL predicted EO where that
+        # feed covers the season, FPL marginal ownership otherwise). It was
+        # called `in_template` and that name was wrong twice over: the ranking
+        # is an external EO, not a crawl, and the page's Template XV is a
+        # different thing built from the field's own start counts. The list it
+        # refers to is `rows`, so a reader can check every flag.
+        "in_panel_rows": {"type": "boolean"},
         "in_field_top": {"type": "boolean"},         # top of the selected field
         "your_mult": {"type": ["integer", "null"]},
         "your_role": {"type": ["string", "null"]},
@@ -427,10 +445,15 @@ _DIFF_ROW = {
         "your_eo_pct": {"type": ["number", "null"]},
         "your_own_pct": {"type": ["number", "null"]},   # 100.0 or 0.0
         "field_eo_pct": {"type": ["number", "null"]},
+        # field_eo_pct with the triple-captain third unit removed, and the
+        # size of that unit. See `_MEASURE` for why both are served.
+        "field_eo_ex_tc_pct": {"type": ["number", "null"]},
+        "field_eo_tc_pp": {"type": ["number", "null"]},
         "field_own_pct": {"type": ["number", "null"]},
         "field_cap_pct": {"type": ["number", "null"]},
         "field_owned_by": {"type": ["integer", "null"]},
         "field_captained_by": {"type": ["integer", "null"]},
+        "field_tripled_by": {"type": ["integer", "null"]},
         # The selection's denominator, on every row — a field_* share never
         # travels without its n.
         "field_n": {"type": ["integer", "null"]},
@@ -460,8 +483,11 @@ _WHATIF_PLAYER = {
         "your_mult": {"type": ["integer", "null"]},
         "in_squad": {"type": ["boolean", "null"]},
         "field_eo_pct": {"type": ["number", "null"]},
+        "field_eo_ex_tc_pct": {"type": ["number", "null"]},
+        "field_eo_tc_pp": {"type": ["number", "null"]},
         "field_own_pct": {"type": ["number", "null"]},
         "field_cap_pct": {"type": ["number", "null"]},
+        "field_tripled_by": {"type": ["integer", "null"]},
         "xpts": {"type": ["number", "null"]},
     },
 }
@@ -475,6 +501,9 @@ _MOMENTUM_POINT = {
         "n_managers": {"type": ["integer", "null"]},
         "own_pct": {"type": ["number", "null"]},
         "eo_pct": {"type": ["number", "null"]},
+        # The triple-captain part of eo_pct for that week, so a spike in the
+        # series can be read as a chip week rather than as a trend.
+        "eo_tc_pp": {"type": ["number", "null"]},
         "cap_pct": {"type": ["number", "null"]},
     },
 }
@@ -502,6 +531,9 @@ RESULT_SCHEMA: dict[str, Any] = {
     "properties": {
         "season": {"type": "string"},
         "rows": {"type": "array", "items": _ROW},
+        # The metric `rows` is ordered by. `diff[].in_panel_rows` points at
+        # this list, so the reader can audit the flag against it.
+        "rows_ranked_by": {"type": ["string", "null"]},
         "differentials": {"type": "array", "items": _ROW},
         "last_season": {
             "type": ["object", "null"],
@@ -851,19 +883,20 @@ def _squad_state(wh, season: str) -> tuple[dict[int, dict] | None, dict[str, Any
 #: label has to say so or the two silently merge in the reader's head.
 _EXTERNAL_META = {
     "eo_predicted": (
-        "Whole game — predicted EO", "all FPL",
+        "Whole game, predicted EO", "all FPL",
         "every FPL entry, as the provider models it for the upcoming deadline",
         None,
     ),
     "eo_top10k": (
         "LiveFPL top-10k EO", "top 10k",
-        "the provider's top-10,000 sample — its definition, not a crawl of ours",
+        "the provider's top-10,000 sample, on its definition, not a crawl "
+        "of ours",
         ("Sampled and defined by the provider; this engine cannot audit its "
          "denominator."),
     ),
     "eo_elite": (
         "LiveFPL elite EO", "LiveFPL elite",
-        ("the provider's own 'elite' sample — unrelated to the crawled elite "
+        ("the provider's own 'elite' sample, unrelated to the crawled elite "
          "cohort below"),
         ("Same word, different population: this is LiveFPL's elite, not the "
          "crawled elite pool."),
@@ -1028,6 +1061,16 @@ def _segment_ownership(wh, season: str, segments: list[str]) -> dict[int, dict]:
     the live warehouse elite_list(250) + winner(12) + elite_named(8) is 270 set
     memberships over 262 distinct managers — so a sum of set sizes would be a
     denominator that no one is in.
+
+    THE TRIPLE-CAPTAIN TERM IS SPLIT OUT. ``eo`` keeps every multiplier the
+    managers actually applied, chips included, because that is what the
+    identity subtracts. But a multiplier of 3 is a chip that cannot repeat, so
+    the part of ``eo`` it contributes is measured separately as ``eo_tc_pp``
+    (= 100 × the count of 3x picks / n) and ``eo_ex_tc`` is what is left. On
+    GW3 2026-27 Haaland is 238.2 EO, of which 42.0 is 110 triple captains;
+    ``eo_ex_tc`` is 196.2, which is own 98.1 + captain 98.1 exactly. Only the
+    triple captain is separable here: a bench boost gives a benched player a
+    multiplier of 1 and there is no chip column to tell that from a start.
     """
     if not segments:
         return {}
@@ -1067,10 +1110,14 @@ def _segment_ownership(wh, season: str, segments: list[str]) -> dict[int, dict]:
                                    THEN b.entry_id END) AS benched_by,
                count(DISTINCT CASE WHEN b.is_captain THEN b.entry_id END)
                    AS captained_by,
+               count(DISTINCT CASE WHEN coalesce(b.multiplier, 0) >= 3
+                                   THEN b.entry_id END) AS tripled_by,
                100.0 * count(DISTINCT b.entry_id) / n.n_managers AS own_pct,
                100.0 * count(DISTINCT CASE WHEN b.is_captain THEN b.entry_id END)
                      / n.n_managers AS captain_pct,
-               100.0 * sum(coalesce(b.multiplier, 0)) / n.n_managers AS eo_pct
+               100.0 * sum(coalesce(b.multiplier, 0)) / n.n_managers AS eo_pct,
+               100.0 * sum(greatest(coalesce(b.multiplier, 0) - 2, 0))
+                     / n.n_managers AS eo_tc_pp
         FROM base b
         JOIN n ON n.gw = b.gw
         LEFT JOIN dp ON dp.season = b.season AND dp.element_id = b.element_id
@@ -1092,14 +1139,21 @@ def _segment_ownership(wh, season: str, segments: list[str]) -> dict[int, dict]:
             # crawl, counted and reported rather than dropped at the join.
             slot["unresolved_entries"] = _i(r["owned_by"]) or 0
             continue
+        eo = _f(r["eo_pct"], 1)
+        tc_pp = _f(r["eo_tc_pp"], 1)
         slot["by_code"][code] = {
             "own": _f(r["own_pct"], 1),
-            "eo": _f(r["eo_pct"], 1),
+            "eo": eo,
             "cap": _f(r["captain_pct"], 1),
+            # The chip term, named rather than buried inside eo.
+            "eo_tc_pp": tc_pp,
+            "eo_ex_tc": (round(eo - tc_pp, 1)
+                         if eo is not None and tc_pp is not None else None),
             "owned_by": _i(r["owned_by"]),
             "started_by": _i(r["started_by"]),
             "benched_by": _i(r["benched_by"]),
             "captained_by": _i(r["captained_by"]),
+            "tripled_by": _i(r["tripled_by"]),
         }
     return out
 
@@ -1420,6 +1474,14 @@ def ownership_eo(
                            -(c["own_pct"] or 0)))
     key_marginal = (lambda c: -(c["own_pct"] or 0))
     template = sorted(all_rows, key=key_live if have_live_eo else key_marginal)[:limit]
+    # What `rows` is ranked by, named on the payload so `diff[].in_panel_rows`
+    # can be checked against the list it refers to. It is an EXTERNAL ranking,
+    # not the crawled field, and not the page's Template XV.
+    rows_ranked_by = (
+        "eo_pred_pct, LiveFPL predicted effective ownership for the whole game"
+        if have_live_eo else
+        "own_pct, FPL marginal selected-by percent"
+    )
 
     diffs = sorted(
         (c for c in all_rows
@@ -1483,14 +1545,16 @@ def ownership_eo(
     parts = []
     if live_bits:
         parts.append("Live EO: " + "; ".join(live_bits)
-                     + ". Values are cohort fractions × captaincy — over 100% is normal.")
+                     + ". Values are cohort fractions × captaincy, so over "
+                       "100% is normal.")
     else:
         parts.append(f"No external EO feed covers {season}; the template is "
                      f"ranked by FPL marginal ownership instead.")
     if stale_bits:
         parts.append("Stale (other season, shown only as \"last season's final "
                      "template\", never merged into current): " + "; ".join(stale_bits) + ".")
-    parts.append("own_pct is FPL's marginal selected-by % — no captaincy weighting.")
+    parts.append("own_pct is FPL's marginal selected-by %, with no "
+                 "captaincy weighting.")
     metrics_note = " ".join(parts)
 
     others = "; ".join(
@@ -1502,9 +1566,11 @@ def ownership_eo(
             f"{cohort} own%/EO% observed from {elite_cohort} crawled managers' "
             f"locked GW{elite_gw} squads (fact_manager_pick, via "
             f"sem_elite_ownership). EO is the mean FPL multiplier those "
-            f"{elite_cohort} managers applied — 0 benched, 1 started, 2 "
-            f"captain, 3 triple captain — so it is not ownership and can "
-            f"exceed 100%. Cohorts are mutually exclusive: an entry sampled by "
+            f"{elite_cohort} managers applied: 0 benched, 1 started, 2 "
+            f"captain, 3 triple captain. It is not ownership and can exceed "
+            f"100%. A triple-captain week lifts it by a whole unit per "
+            f"manager who played the chip, and that unit cannot repeat. "
+            f"Cohorts are mutually exclusive: an entry sampled by "
             f"both crawls counts as top1k only, never in both denominators."
             + (f" Also on file: {others}." if others else "")
         )
@@ -1539,12 +1605,12 @@ def ownership_eo(
 
     fields: list[dict[str, Any]] = [{
         "key": "global",
-        "label": "Whole game — FPL ownership",
+        "label": "Whole game, FPL ownership",
         "short": "all FPL",
         "kind": "fpl",
         "role": "baseline",
         "measures": ["own"],
-        "denominator": "every FPL entry — FPL publishes the share, not the "
+        "denominator": "every FPL entry. FPL publishes the share, not the "
                        "entry count, so no manager count is claimed here",
         "provider": "fpl",
         "metric": "selected_by_pct",
@@ -1556,8 +1622,8 @@ def ownership_eo(
         "as_of": as_of,
         "live": True,
         "same_values_as_gw": None,
-        "note": "Marginal ownership — no captaincy weighting. It is not an EO, "
-                "so it never shares an axis with one.",
+        "note": "Marginal ownership, with no captaincy weighting. It is not "
+                "an EO, so it never shares an axis with one.",
         "composition": None,
         "overlaps": None,
     }]
@@ -1636,11 +1702,13 @@ def ownership_eo(
             "live": True,
             "same_values_as_gw": None,
             "note": "Observed squads, not a model: EO is the mean FPL "
-                    "multiplier these managers actually applied. A small "
-                    "denominator makes every share coarse — one manager is "
+                    "multiplier these managers actually applied, chips "
+                    "included, so a triple-captain week reads high and cannot "
+                    "repeat. A small denominator makes every share coarse: "
+                    "one manager is "
                     + (f"{100.0 / n:.2f} percentage points." if n else "one row.")
                     + (f" Includes {ml_n} of the owner's own mini-league "
-                       f"opponents — a set the default selection excludes; "
+                       f"opponents, a set the default selection excludes and "
                        f"this measured cohort does not." if ml_n else ""),
             "composition": comp,
             "overlaps": bool(comp) and sum(x["n"] for x in comp) > (n or 0),
@@ -1698,7 +1766,7 @@ def ownership_eo(
         sel_denominator = (
             f"the {sel_n} DISTINCT managers in the union of "
             f"{', '.join(resolved)} with a stored GW{sel_gw} squad"
-            + (f" — not {sum_of_sets}: the sets overlap, {overlap} manager"
+            + (f", not {sum_of_sets}: the sets overlap and {overlap} manager"
                f"{'s' if overlap != 1 else ''} carry more than one tag"
                if overlap else "")
         )
@@ -1799,22 +1867,23 @@ def ownership_eo(
     by_code_row = {r["code"]: r for r in all_rows}
     field_top = [c for c, _m in sorted(
         sel_by_code.items(), key=lambda kv: -(kv[1]["eo"] or 0))[:limit]]
-    template_codes = {r["code"] for r in template}
+    rows_codes = {r["code"] for r in template}
     squad_codes = set(squad) if squad is not None else set()
     readable = bool(squad_meta.get("readable"))
     has_mult = bool(squad_meta.get("has_multipliers"))
 
     if not readable:
         your_note = ("your squad could not be read, so your side of the "
-                     "identity is unknown — not zero")
+                     "identity is unknown, which is not zero")
     elif not has_mult:
         your_note = ("your squad read carries no multipliers, so ownership can "
-                     "be compared but EO cannot — not assumed to be 1x")
+                     "be compared but EO cannot, and it is not assumed "
+                     "to be 1x")
     else:
         your_note = None
 
     diff_rows: list[dict[str, Any]] = []
-    for code in sorted(squad_codes | template_codes | set(field_top)):
+    for code in sorted(squad_codes | rows_codes | set(field_top)):
         r = by_code_row.get(code)
         m = sel_by_code.get(code)
         in_squad = r["in_squad"] if r else (code in squad_codes if squad is not None else None)
@@ -1835,11 +1904,14 @@ def ownership_eo(
             f_own = m["own"] if m else 0.0
             f_eo = m["eo"] if m else 0.0
             f_cap = m["cap"] if m else 0.0
+            f_eo_tc = m["eo_tc_pp"] if m else 0.0
+            f_eo_ex = m["eo_ex_tc"] if m else 0.0
             f_owned = m["owned_by"] if m else 0
             f_capped = m["captained_by"] if m else 0
+            f_tripled = m["tripled_by"] if m else 0
         else:
-            f_own = f_eo = f_cap = None
-            f_owned = f_capped = None
+            f_own = f_eo = f_cap = f_eo_tc = f_eo_ex = None
+            f_owned = f_capped = f_tripled = None
         diff_rows.append({
             "code": code,
             "name": r["name"] if r else str(code),
@@ -1848,17 +1920,20 @@ def ownership_eo(
             "team_code": r["team_code"] if r else None,
             "price": r["price"] if r else None,
             "in_squad": in_squad,
-            "in_template": code in template_codes,
+            "in_panel_rows": code in rows_codes,
             "in_field_top": code in set(field_top),
             "your_mult": your_mult,
             "your_role": r["your_role"] if r else None,
             "your_eo_pct": your_eo,
             "your_own_pct": your_own,
             "field_eo_pct": f_eo,
+            "field_eo_ex_tc_pct": f_eo_ex,
+            "field_eo_tc_pp": f_eo_tc,
             "field_own_pct": f_own,
             "field_cap_pct": f_cap,
             "field_owned_by": f_owned,
             "field_captained_by": f_capped,
+            "field_tripled_by": f_tripled,
             "field_n": sel_n if sel_n else None,
             "edge_eo_pct": (round(your_eo - f_eo, 1)
                             if your_eo is not None and f_eo is not None else None),
@@ -1883,10 +1958,19 @@ def ownership_eo(
             "in_squad": r["in_squad"],
             "field_eo_pct": (sel_by_code.get(r["code"], {}).get("eo", 0.0)
                              if sel_n else None),
+            "field_eo_ex_tc_pct": (
+                sel_by_code.get(r["code"], {}).get("eo_ex_tc", 0.0)
+                if sel_n else None),
+            "field_eo_tc_pp": (
+                sel_by_code.get(r["code"], {}).get("eo_tc_pp", 0.0)
+                if sel_n else None),
             "field_own_pct": (sel_by_code.get(r["code"], {}).get("own", 0.0)
                               if sel_n else None),
             "field_cap_pct": (sel_by_code.get(r["code"], {}).get("cap", 0.0)
                               if sel_n else None),
+            "field_tripled_by": (
+                sel_by_code.get(r["code"], {}).get("tripled_by", 0)
+                if sel_n else None),
             "xpts": r["xpts"],
         } for r in all_rows],
         "n": sel_n,
@@ -1898,7 +1982,7 @@ def ownership_eo(
             "player is 100 × the multiplier you give him, so swapping, "
             "benching or re-captaining changes only your own numbers.",
             "edge_eo_pct = your_eo_pct − field_eo_pct, per player, for any "
-            "hypothetical squad — field_eo_pct is fixed while the selection "
+            "hypothetical squad. field_eo_pct is fixed while the selection "
             "and the gameweek are fixed.",
             "Net exposure: Σ over your XI of (your_eo_pct − field_eo_pct), and "
             "any subset of it. It is a sum of per-player terms already served.",
@@ -1910,7 +1994,7 @@ def ownership_eo(
         "not_safe_to_recompute": [
             "field_eo_pct / field_own_pct / field_cap_pct for a different "
             "SELECTION of segments. Those are measured over a different set of "
-            "managers and a different denominator — refetch with `segments`.",
+            "managers and a different denominator. Refetch with `segments`.",
             "Anything for a different gameweek. The field's numbers are "
             f"GW{sel_gw} squads; there is no client-side way to age them.",
             "xpts under a different gameweek or a new projection run.",
@@ -1925,7 +2009,11 @@ def ownership_eo(
             f"Every current-season player is listed, so any swap-in resolves "
             f"without another round trip. Where the field owns a player "
             f"0 times, field_own_pct and field_eo_pct are a MEASURED 0.0 over "
-            f"the same {sel_n} squads — not a missing value."
+            f"the same {sel_n} squads, which is not a missing value. "
+            f"field_eo_pct keeps every multiplier those managers applied, "
+            f"chips included; field_eo_ex_tc_pct is the same number with the "
+            f"triple-captain third unit taken out, and field_eo_tc_pp is the "
+            f"size of that unit."
             if sel_n else
             "No field is selected, so every field_* value is null. Select at "
             "least one segment with a stored squad."
@@ -1953,7 +2041,7 @@ def ownership_eo(
             dl = str(d.iloc[0]["deadline_utc"])
     if mom_available:
         mom_reason = (f"{len(mom_gws)} gameweeks of stored squads for this "
-                      f"selection: GW{mom_gws[0]}–GW{mom_gws[-1]}.")
+                      f"selection: GW{mom_gws[0]} to GW{mom_gws[-1]}.")
     elif mom_gws:
         mom_reason = (
             f"Only GW{mom_gws[0]} squads exist for this selection, and one "
@@ -1981,6 +2069,7 @@ def ownership_eo(
                     "n_managers": slot["n_managers"],
                     "own_pct": m["own"] if m else 0.0,
                     "eo_pct": m["eo"] if m else 0.0,
+                    "eo_tc_pp": m["eo_tc_pp"] if m else 0.0,
                     "cap_pct": m["cap"] if m else 0.0,
                 })
             mom_series.append({
@@ -2029,7 +2118,7 @@ def ownership_eo(
         },
         "note": (
             f"Two populations answer to the word \"field\" in this payload: "
-            f"the measured cohort (cohort:{cohort} — the elite_* columns and "
+            f"the measured cohort (cohort:{cohort}, the elite_* columns and "
             f"rows[].fields) and the segment selection (rows[].fields"
             f"[\"selected\"], diff, whatif). They are different sets of "
             f"managers with different denominators; a level from one and a "
@@ -2047,6 +2136,7 @@ def ownership_eo(
     return {
         "season": season,
         "rows": template,
+        "rows_ranked_by": rows_ranked_by,
         "differentials": diffs,
         "segments": segment_rows,
         "selection": selection,

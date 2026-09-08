@@ -487,7 +487,7 @@ def load_ratings(wh, season: str) -> tuple[_Ratings | None, str | None]:
     df = df[df["season"].astype(str) == season]
     if df.empty:
         return None, (
-            f"{RATINGS_NAME} holds no {season} clubs -- it was fitted for a "
+            f"{RATINGS_NAME} holds no {season} clubs. It was fitted for a "
             f"different season. Rebuild it: {BUILD_HINT}."
         )
     return _Ratings(df), None
@@ -1067,7 +1067,7 @@ def _team_form(wh, season: str, now: dt.datetime, ratings: _Ratings | None
         }
         if n < FORM_MIN_MATCHES:
             entry["unavailable"] = (
-                f"{n} completed match{'' if n == 1 else 'es'} this season -- below "
+                f"{n} completed match{'' if n == 1 else 'es'} this season, below "
                 f"the {FORM_MIN_MATCHES} needed for the residual to mean anything. "
                 f"The per-game figures are shown; the residual is not."
             )
@@ -1230,8 +1230,8 @@ def fixture_board(
             oo = _blank_lens(ratings_reason or "no fitted ratings artefact")
             fs = _blank_lens(ratings_reason or "no fitted ratings artefact")
         elif not ratings.has(team, opp):
-            unrated = (f"{label} is not in the stored fit -- the fixture was added "
-                       f"or rescheduled after the last ratings build")
+            unrated = (f"{label} is not in the stored fit. The fixture was added "
+                       f"or rescheduled after the last ratings build.")
             oo, fs = _blank_lens(unrated), _blank_lens(unrated)
         else:
             pair = population["by_pair"][(opp, is_home)]
@@ -1253,7 +1253,7 @@ def fixture_board(
                     "defence_rank": int(oo["defence_rank"]),
                     "gap": rank_gap,
                     "sentence": (
-                        f"GW{gw} - {venue} {label}: {oo['attack_rank']} of "
+                        f"GW{gw}, {venue} {label}: {oo['attack_rank']} of "
                         f"{population['population']} as an attacking fixture, "
                         f"{oo['defence_rank']} as a defensive one. It is a good "
                         f"{easier} fixture and a poor {harder} one; a blended "
@@ -1415,8 +1415,8 @@ def fixture_board(
             rows=None if ratings is None else len(ratings.codes),
             missing=ratings is None,
             effect_when_stale=(
-                "the split difficulties are still shown -- a week-old fitted rating "
-                "beats a made-up fresh one -- but the fit predates recent results"
+                "the split difficulties are still shown, because a week-old fitted "
+                "rating beats a made-up fresh one, but the fit predates recent results"
             ),
             detail=ratings_detail,
         ),
@@ -1433,7 +1433,7 @@ def fixture_board(
             stale_after_hours=ODDS_STALE_HOURS, rows=len(odds),
             missing=odds.empty,
             effect_when_stale=(
-                f"the market is not in any difficulty on this board -- it never is -- "
+                f"the market is not in any difficulty on this board and never is, "
                 f"but a price older than {ODDS_USELESS_HOURS:.0f}h predates the team "
                 f"news that decides the fixture and the drilldown marks it expired"
             ),
@@ -1464,8 +1464,9 @@ def fixture_board(
     notes.append(
         "Colour holds your own club at league average and asks only what the "
         "opponent does at that venue, so two clubs facing the same opponent get "
-        "the same cell -- on purpose. The fixture-specific number, with your own "
-        "club's strength in it, is on the same cell under `fixture_specific`."
+        "the same cell. That is on purpose. The fixture-specific number, with "
+        "your own club's strength in it, is on the same cell under "
+        "`fixture_specific`."
     )
     if odds_reason is None and per_fixture_odds:
         notes.append(
@@ -1685,7 +1686,7 @@ def _safe_q(wh, table: str, sql: str, params: tuple = ()) -> tuple[pd.DataFrame,
         text = str(exc)
         if "does not exist" in text or "Catalog Error" in text:
             return pd.DataFrame(), (
-                f"`{table}` is not in this warehouse -- it is created by a feature "
+                f"`{table}` is not in this warehouse. It is created by a feature "
                 f"migration that has not run here, so there is nothing to show and "
                 f"nothing to infer"
             )
@@ -1701,7 +1702,7 @@ def _model_block(ratings: _Ratings | None, reason: str | None,
         return _gap(reason or "no fitted ratings artefact")
     if not ratings.has(home, away):
         return _gap(
-            "one or both clubs are absent from the stored fit -- the fixture was "
+            "one or both clubs are absent from the stored fit. The fixture was "
             "added or rescheduled after the last ratings build"
         )
     pop = ratings.population()
@@ -1744,7 +1745,7 @@ def _model_block(ratings: _Ratings | None, reason: str | None,
         "p_home_win": round(p_h, 4), "p_draw": round(p_d, 4), "p_away_win": round(p_a, 4),
         "p_over_2_5": round(prob_over(mat, 2.5), 4),
         "home_xg": round(mu, 4), "away_xg": round(lam, 4),
-        "basis": "fixture_specific -- both clubs' own fitted ratings, which is the "
+        "basis": "fixture_specific: both clubs' own fitted ratings, which is the "
                  "honest prediction. The board's colour uses opponent_only instead.",
     }
     return out
@@ -1784,7 +1785,7 @@ def _market_block(wh, season: str, fixture_id: int, now: dt.datetime,
             "p_home_clean_sheet": None, "p_away_clean_sheet": None,
             "warning": (
                 "This is NOT a posted market. Every clean_sheet row in fact_odds "
-                "carries bookmaker='derived#poisson' -- it is our own inversion of "
+                "carries bookmaker='derived#poisson'. It is our own inversion of "
                 "the 1X2 and totals prices, written back. Books do post a real "
                 "clean-sheet market; this warehouse does not ingest it."
             ),
@@ -1807,7 +1808,7 @@ def _market_block(wh, season: str, fixture_id: int, now: dt.datetime,
     fo = quotes.get(key)
     if fo is None:
         return _gap(
-            "the 1X2 rows for this fixture are incomplete -- no single bookmaker "
+            "the 1X2 rows for this fixture are incomplete. No single bookmaker "
             "quoted all three selections, so there is nothing to de-vig"
         ), derived
 
@@ -1846,8 +1847,8 @@ def _market_block(wh, season: str, fixture_id: int, now: dt.datetime,
         },
         "staleness_effect": {
             "priced": "the price is inside the 12h window and reflects current team news",
-            "stale": f"older than {ODDS_STALE_HOURS:.0f}h -- shown, but it predates any press conference since",
-            "expired": f"older than {ODDS_USELESS_HOURS:.0f}h -- shown greyed as a contrast only",
+            "stale": f"older than {ODDS_STALE_HOURS:.0f}h; shown, but it predates any press conference since",
+            "expired": f"older than {ODDS_USELESS_HOURS:.0f}h; shown greyed as a contrast only",
             "unpriced": "no quote",
         }[state],
         "casing_workaround": (
@@ -1905,7 +1906,7 @@ def _news_block(wh, season: str, codes: tuple[int, int], now: dt.datetime) -> di
     if rows.empty:
         return _gap(
             "no player at either club carries a non-available status at this "
-            "instant -- which is a real answer, not a missing one"
+            "instant, which is a real answer, not a missing one"
         )
     by: dict[str, list[dict[str, Any]]] = {}
     for r in rows.itertuples(index=False):
@@ -1955,8 +1956,9 @@ def _intel_block(wh, season: str, codes: tuple[int, int], now: dt.datetime) -> d
         "unavailable": None if len(items) or len(duties) else (
             missing or "no team-level set-piece or press-conference item for either club"),
         "framing": (
-            "Set pieces are shown as DUTY -- who takes them -- and never as a team "
-            "trait. Set-piece goals-over-expected barely persists season to season, "
+            "Set pieces are shown as DUTY, meaning who takes them, and never as a "
+            "team trait. Set-piece goals-over-expected barely persists season to "
+            "season, "
             "so 'this club over-performs on set pieces' is not a durable claim; "
             "'this player takes the corners' is."
         ),
@@ -2113,7 +2115,7 @@ def _team_talk_block(wh, season: str, codes: tuple[int, int], now: dt.datetime) 
         return _gap(
             "content_insight holds 0 rows. The extraction is wired into both "
             "writers now, so this means no analysed item has yet produced a "
-            "team-level observation -- run `fpl-content backfill-insights` to "
+            "team-level observation. Run `fpl-content backfill-insights` to "
             "recover them from analyses already on disk.",
             rows=0,
         )
@@ -2140,7 +2142,7 @@ def _team_talk_block(wh, season: str, codes: tuple[int, int], now: dt.datetime) 
     n_unresolved = 0 if unresolved.empty else int(unresolved.iloc[0]["n"])
     unresolved_note = (
         f" {n_unresolved} team-level insight(s) this season name a club the "
-        f"resolver refused to guess at (ASR mangles club names -- this "
+        f"resolver refused to guess at (ASR mangles club names; this "
         f"warehouse holds 'suddenland' and 'ipsswitch'); they are excluded "
         f"here rather than attached to the nearest-looking club."
         if n_unresolved else ""
@@ -2154,7 +2156,7 @@ def _team_talk_block(wh, season: str, codes: tuple[int, int], now: dt.datetime) 
         "available": True, "unavailable": None,
         "items": rows.to_dict("records"),
         "note": "Clubs are resolved once at write time by exact then "
-                "containment match, never by edit distance -- on this season's "
+                "containment match, never by edit distance. On this season's "
                 "twenty clubs nearest-match sends 'forester' to Brentford."
                 + unresolved_note,
     }
@@ -2321,8 +2323,8 @@ def fixture_detail(
             "note": "xG for is summed over the club's players; xG against takes one "
                     "representative value per team-match, because "
                     "expected_goals_conceded is written per player and every "
-                    "outfielder carries the team's value -- summing it gives ~30 "
-                    "xGC for a single fixture.",
+                    "outfielder carries the team's value, so summing it gives "
+                    "~30 xGC for a single fixture.",
         },
         "team_news": news,
         "intel": intel,

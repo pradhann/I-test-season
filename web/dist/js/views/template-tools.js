@@ -66,6 +66,11 @@ const sgn2 = v => v == null ? "–"
   : `${v > 0 ? "+" : v < 0 ? "−" : ""}${Math.abs(v).toFixed(2)}`;
 const mult = v => v == null ? "–" : `${Number(v).toFixed(2)}×`;
 const multS = v => v == null ? "–" : `${Number(v)}×`;
+/* Tracking exposure is a SUM of per-player distances, not a multiple of
+   anything, so it is printed without the multiplication sign the multipliers
+   it is built from carry. Its size also depends on how many players the chosen
+   field prices, which is why every place it appears prints that count too. */
+const sum2 = v => v == null ? "–" : Number(v).toFixed(2);
 function ord(n) {
   if (n == null) return "–";
   const r = Math.round(n), t = r % 100;
@@ -120,7 +125,7 @@ export function renderTools(host, ctx) {
   const railCard = el("section", "card tt");
   host.append(card, railCard);
 
-  const head = () => card.appendChild(el("h2", null, "Would this move raise your risk?"));
+  const head = () => card.appendChild(el("h2", null, "What a move does to your risk"));
 
   // ---- guards ---------------------------------------------------------
   if (!field) {
@@ -212,6 +217,24 @@ export function renderTools(host, ctx) {
   };
   const level = priced.reduce((a, r) => a + gap(r), 0);
 
+  /* THE CHIP TERM, NAMED. A field measured from stored squads keeps every
+     multiplier those managers applied, so a triple captain sits in its EO as a
+     third unit. That is right for what the week cost, and wrong as a baseline
+     for the next one, because the chip cannot repeat. The panel splits the
+     term out (eo_tc_pp), so where it exists this card prints its size instead
+     of pricing a move off a number nobody can explain. Fields that publish one
+     blended EO and no head counts carry no such term and get no chip. */
+  const chip = (() => {
+    let pp = 0, players = 0, managers = 0, splittable = false;
+    for (const r of priced) {
+      const m = fOf(r);
+      if (!m || m.eo_tc_pp == null) continue;
+      splittable = true;
+      if (m.eo_tc_pp > 0) { pp += m.eo_tc_pp; players++; managers += m.tripled_by || 0; }
+    }
+    return splittable && pp > 0 ? { pp, players, managers } : null;
+  })();
+
   /* The two halves of Δ. sell() is what letting a man go does on its own;
      buy() is what taking a man in at multiplier m does on its own. Their sum
      is exact — every other player's term is untouched by the swap. */
@@ -272,13 +295,16 @@ export function renderTools(host, ctx) {
   const lede = el("p", "rm-lede");
   lede.append(
     "Your tracking exposure is ",
-    Object.assign(el("b", "big", mult(level)), {
+    Object.assign(el("b", "big", sum2(level)), {
       title: `Σ |your multiplier − ${field.label} effective ownership| over ` +
-             `the ${priced.length} players on this page it measures. It is a ` +
-             `distance from the average rival, not a points forecast.`,
+             `the ${priced.length} players on this page it measures. A sum of ` +
+             `distances, in multiplier units. It is not a multiple of ` +
+             `anything and it is not a points forecast.`,
     }),
-    ". Lower means you track the field more closely; higher is a bigger bet " +
-    "in both directions.");
+    `, summed over the ${priced.length} players this field prices here. ` +
+    `Lower means you track the field more closely; higher is a bigger bet in ` +
+    `both directions. A field that prices more players scores higher on this, ` +
+    `so compare it across moves, not across fields.`);
   card.appendChild(lede);
 
   const basis = el("div", "toolbar");
@@ -304,6 +330,17 @@ export function renderTools(host, ctx) {
           "this field, so they are absent from the exposure above. It is a " +
           "coverage hole, not a zero."
         : "Your squad as this page read it." }));
+  if (chip)
+    basis.appendChild(Object.assign(el("span", "chip warn",
+      `incl. ${chip.managers} triple captains`),
+      { title: `${field.label} keeps every multiplier its managers applied, ` +
+               `so ${chip.managers} triple-captain chips on ${chip.players} ` +
+               `player${chip.players === 1 ? "" : "s"} add ` +
+               `${(chip.pp / 100).toFixed(2)} to the effective ownership this ` +
+               `card prices against. A chip cannot repeat, so a move ranked ` +
+               `on that part of the number is priced off last week rather ` +
+               `than next. The per-player split is on the exposure card ` +
+               `above.` }));
   if (anyAssumed)
     basis.appendChild(Object.assign(el("span", "chip warn", "multipliers inferred"),
       { title: "The squad read supplies roles but not multipliers, so captain " +
@@ -335,16 +372,23 @@ export function renderTools(host, ctx) {
        is the thing carrying the number; otherwise the owner count. Fields that
        publish no counts get the EO they do publish, never an invented head. */
     const f = fOf(r) || {};
+    /* Where the field is chip-inflated on this player, the split is quoted
+       with the total: the EO the card prices with, and the EO left once the
+       triple captains are out of it. */
+    const tc = f.tripled_by && f.eo_ex_tc != null
+      ? ` ${f.tripled_by} of them played a triple captain on him, which is ` +
+        `${pct(f.eo - f.eo_ex_tc)} of that; without it he is ${pct(f.eo_ex_tc)}.`
+      : "";
     if (f.n != null && f.owned_by != null) {
       if (m === 2 && f.captained_by != null && f.captained_by > 0)
         return { s: `${f.captained_by}/${f.n} captain`, t:
           `${f.captained_by} of the ${f.n} managers in ${field.label} captain ` +
           `him, and ${f.owned_by} own him, which is ${pct(f.eo)} effective ` +
-          `ownership.` };
+          `ownership.` + tc };
       return { s: `${f.owned_by}/${f.n} own`, t:
         `${f.owned_by} of the ${f.n} managers in ${field.label} own him` +
         (f.captained_by ? `, ${f.captained_by} captain him` : "") +
-        `, which is ${pct(f.eo)} effective ownership.` };
+        `, which is ${pct(f.eo)} effective ownership.` + tc };
     }
     return { s: `EO ${pct(eoOf(r))}`, t:
       `${field.label} publishes ${pct(eoOf(r))} effective ownership for him ` +
@@ -384,18 +428,19 @@ export function renderTools(host, ctx) {
     cell.appendChild(who);
     tr.appendChild(cell);
 
-    tr.appendChild(Object.assign(el("td", "n", mult(level + mv.d)),
+    tr.appendChild(Object.assign(el("td", "n", sum2(level + mv.d)),
       { title: `Tracking exposure after the move, on the same ` +
-               `${priced.length}-player basis as the ${mult(level)} above.` }));
+               `${priced.length}-player basis as the ${sum2(level)} above.` }));
 
     const dc = el("td", "n d");
     /* A swap that moves nothing must not claim a direction. Bench for bench is
        the honest zero: neither multiplier ever applies, so no exposure moves. */
+    /* The arrow and the group heading already carry the direction; a third
+       LOWER/HIGHER word beside them said the same thing a third time. */
     const flat = Math.abs(mv.d) < 0.005;
     if (flat) dc.append(el("span", "mag", "0.00"), el("span", "w", "no change"));
     else dc.append(el("span", "arrow", mv.d > 0 ? "▲" : "▼"),
-                   el("span", "mag", Math.abs(mv.d).toFixed(2)),
-                   el("span", "w", mv.d > 0 ? "higher" : "lower"));
+                   el("span", "mag", Math.abs(mv.d).toFixed(2)));
     dc.title =
       `${sgn2(mv.d)} tracking exposure. Letting ${dName(mv.out)} go is ` +
       `${sgn2(sellTerm(mv.out))} on its own; taking ${dName(mv.inn)} in at ` +
@@ -415,7 +460,7 @@ export function renderTools(host, ctx) {
       for (const mv of lowers) moveRow(mv, "down");
     }
     if (raises.length) {
-      sepRow("moves that raise your risk");
+      sepRow("moves that raise it");
       for (const mv of raises) moveRow(mv, "up");
     }
     card.appendChild(tbl);
@@ -555,8 +600,12 @@ export function renderTools(host, ctx) {
       candWrap.appendChild(el("p", "sub", term
         ? `${list.length} of the ${pool.length} this field can price` + posNote +
           ` match “${query.trim()}”, heaviest first.`
-        : `The players ${field.short || field.label} is heaviest on that you ` +
-          `do not own` + posNote + `.`));
+        /* The field's short name is a key ("selected"), so interpolating it
+           as a subject produced "The players selected is heaviest on that you
+           do not own." The field is named on the basis line above; here the
+           sentence only has to say what the list is and how it is sorted. */
+        : `The ${pool.length} players you do not own` + posNote +
+          `, ordered by this field's effective ownership, heaviest first.`));
       const grid = el("div", "ttcands");
       for (const r of list.slice(0, 12)) {
         const b = el("button", "ttcand");
@@ -580,8 +629,8 @@ export function renderTools(host, ctx) {
     for (const old of [...tb.querySelectorAll("tr.rm-mine, tr.rm-mysep")]) old.remove();
     if (outCode == null || inCode == null) {
       manBody.appendChild(el("p", "sub",
-        "Pick one out and one in. Nothing is computed until both are chosen. " +
-        "a half-specified swap has no term."));
+        "Pick one out and one in. A half-specified swap has no term, so " +
+        "nothing is computed until both are chosen."));
       return;
     }
     const out = uni.get(outCode), inn = uni.get(inCode);
@@ -783,6 +832,14 @@ export function renderTools(host, ctx) {
       "gameweek. Nothing on this card can be re-aimed at a different set or a " +
       "different week without refetching the panel.");
   }
+  if (chip)
+    item("Chips.",
+      ` ${field.label} is measured from squads that were played, so ` +
+      `${chip.managers} triple captains sit inside its effective ownership ` +
+      `and add ${(chip.pp / 100).toFixed(2)} to the exposure above. Those ` +
+      `units cannot repeat next week. The numbers are kept as measured and ` +
+      `the chip part is named rather than removed, so a move ranked here is ` +
+      `ranked on what the field actually did.`);
   item("Coverage.",
     ` this card prices ${priced.length} players` +
     (wiPlayers ? ` of the ${wiPlayers.length} the panel lists` : "") +

@@ -21,7 +21,7 @@
  */
 
 import { runPanel, getJSON, postJSON, el, emptyBox, errBox, provenance,
-         faceImg, fmtPrice, fmt1 } from "/js/app.js";
+         faceImg, fmtPrice, fmt1, fmtAge } from "/js/app.js";
 
 /* ------------------------------------------------------------------ utils */
 const NS = "http://www.w3.org/2000/svg";
@@ -34,16 +34,15 @@ function sv(tag, attrs, text) {
 
 const parseTs = iso => iso ? new Date(String(iso).replace(" ", "T")) : null;
 
+/* Age of a stamp, in the app's words. The span itself comes from the shared
+   `fmtAge` so this tab says "3h 12m ago" exactly as every other tab does;
+   only the freshness class is local, because only this tab draws a dot. */
 function relAge(iso) {
+  const span = fmtAge(iso);
   const d = parseTs(iso);
-  if (!d || isNaN(d)) return { text: "date unknown", cls: "bad" };
+  if (span == null || !d || isNaN(d)) return { text: "date unknown", cls: "bad" };
   const h = (Date.now() - d) / 3.6e6;
-  const text = h < 1 ? "just now"
-    : h < 24 ? `${Math.round(h)}h ago`
-    : h < 48 ? "yesterday"
-    : h < 720 ? `${Math.round(h / 24)}d ago`
-    : `${Math.round(h / 730)}mo ago`;
-  return { text, cls: h < 72 ? "good" : h < 336 ? "warn" : "bad" };
+  return { text: `${span} ago`, cls: h < 72 ? "good" : h < 336 ? "warn" : "bad" };
 }
 
 function clock(s) {
@@ -54,7 +53,13 @@ function clock(s) {
   return h ? `${h}:${pad(m)}:${pad(sec)}` : `${m}:${pad(sec)}`;
 }
 
-const plural = (n, one, many) => `${n} ${n === 1 ? one : (many || one + "s")}`;
+/* A count and its noun. Returns NULL when there is no count: the report card
+   sends `n_total: null` for a creator whose claims were never scoreable, and
+   a template that interpolated it printed the literal string "null" nine
+   times on this page. Null in, null out; every call site has to decide what
+   to say instead, and the payload always carries a `reason` to say it with. */
+const plural = (n, one, many) =>
+  n == null ? null : `${n} ${n === 1 ? one : (many || one + "s")}`;
 
 /* 353 of 594 stored items have url_basis "enclosure" — the item URL IS the
    .mp3, so "open episode" is a lie for more than half the corpus. Prefer the
@@ -80,7 +85,7 @@ function tier(extractor) {
              note: "a language model read the passage and returned a verbatim quote" };
   if (e === "cue")
     return { key: "cue", label: "keyword window", model: null,
-             note: "a keyword landed near this player's name — not an opinion, a search hit" };
+             note: "a keyword landed near this player's name; a search hit, not an opinion" };
   return { key: "unknown",
            label: "method not recorded",
            model: null,
@@ -128,6 +133,59 @@ const COIN = {
   unmeasured: { cls: "none", word: "unmeasured", short: "unmeasured" },
 };
 const coin = v => COIN[v] || COIN.unmeasured;
+
+/* LOADING AFFORDANCES, one glyph and one capitalisation. The glyph is the
+   single character "…", never three dots. Status text that occupies its own
+   element is lowercase ("measuring the record…", "fetching…"); a status
+   sentence that follows a full stop is sentence case, because that is what a
+   sentence is; a button mid-action keeps the case of its own resting label
+   ("Stop this" becomes "Stopping…", "stop" becomes "stopping…"). The page
+   used to ship "Measuring the record…" and "measuring the record…" for the
+   same fact, twelve pixels apart. */
+
+/* A failed panel call arrives as the whole response body, which for a server
+   error is a traceback. Interpolated into a sentence it buries the page. The
+   first line is the part that says what happened; the rest goes in a fold. */
+const statusLine = e => {
+  const text = String((e && e.message) || e || "").trim();
+  /* app.js throws `${script}: HTTP ${status} ${body}`, so the status line is
+     everything up to the code and the body starts right after it. Anything
+     else is cut at its first newline. */
+  const http = text.match(/^(.{1,80}?:\s*HTTP\s*\d{3})\b/);
+  const first = http ? http[1] : text.split("\n", 1)[0];
+  return first.length > 140 ? first.slice(0, 137) + "…" : first;
+};
+
+/* The status line, with the full body behind a summary that is not a lie
+   about its own length. */
+function failFold(e, lead) {
+  const text = String((e && e.message) || e || "").trim();
+  const line = statusLine(e);
+  const p = el("p", "cx-honest warn");
+  p.append(lead ? `${lead} ${line}` : line);
+  if (text.length > line.length) {
+    const d = el("details", "cx-disclose");
+    d.appendChild(el("summary", null, "the full response body"));
+    d.appendChild(el("pre", "cx-raw", text));
+    p.appendChild(d);
+  }
+  return p;
+}
+
+/* What to say about a record with nothing scored. `n_total` is null for 9 of
+   the 31 cards, so a count is not always available; the payload's own
+   `reason` always is, and it is the more useful sentence anyway. `tail` is
+   the clause that follows a count when there IS one.
+
+   `short` is for the pill chip, which is one line on a flex row and cannot
+   hold a 93-character sentence. Every caller that passes it also carries the
+   full reason on the element's `title`, so nothing is dropped. */
+function unscored(cl, tail, short) {
+  const n = plural(cl && cl.n_total, "claim");
+  if (n) return `${n}, ${tail}`;
+  if (short) return tail;
+  return (cl && cl.reason) || "nothing scored, and the payload gives no reason";
+}
 
 /* The one-word label every chip carries. `too few` wins under the floor: a
    record with fewer scored claims than `min_scored_claims` is drawn but is
@@ -197,6 +255,10 @@ export default async function creators(host) {
   /* the report card: one payload, keyed by creator, carried by every chip */
   let rc = null, rcErr = null;
   const rcByCreator = new Map();
+  /* entry_id -> the creators whose card carries it. Three cards resolve to
+     entry 176749 and each drew the same three gameweeks as if they were
+     three independent results. They are one manager, counted three times. */
+  const cardsByEntry = new Map();
   const LEGACY = new Set(["user-shared"]);   // a pseudo-source, not a creator
 
   /* the source strip */
@@ -293,6 +355,9 @@ export default async function creators(host) {
     body.appendChild(errBox(e));
     return;
   }
+  /* The board carries `record_note` and `scope`, both of which the top card
+     prints; it was drawn before this resolved, so draw it again. */
+  renderTop();
   defaultGw = res.gw ?? null;
   gwSel = defaultGw;
   if (defaultGw != null) {
@@ -593,7 +658,15 @@ export default async function creators(host) {
       const r = await runPanel("creator_report_card", {});
       rc = r.result; rcErr = null;
       rcByCreator.clear();
-      for (const c of rc.cards || []) rcByCreator.set(c.creator, c);
+      cardsByEntry.clear();
+      for (const c of rc.cards || []) {
+        rcByCreator.set(c.creator, c);
+        for (const p of (c.team || {}).people || []) {
+          if (p.entry_id == null) continue;
+          if (!cardsByEntry.has(p.entry_id)) cardsByEntry.set(p.entry_id, new Set());
+          cardsByEntry.get(p.entry_id).add(c.creator);
+        }
+      }
     } catch (e) { rcErr = String(e.message || e); }
     if (topCard.isConnected) { renderTop(); if (res) render(); }
   }
@@ -602,21 +675,103 @@ export default async function creators(host) {
     topCard.textContent = "";
     topCard.appendChild(el("h2", null, "Creators"));
     topCard.appendChild(honestyLine());
+    const sc = scopeLine();
+    if (sc) topCard.appendChild(sc);
+    const cv = coverageLine();
+    if (cv) topCard.appendChild(cv);
     topCard.appendChild(sourceStrip());
   }
 
-  /* THE HONESTY LINE, once. Computed from the report card, never typed. */
-  function honestyLine() {
-    const p = el("p", "cx-honest");
-    if (rcErr) { p.classList.add("warn"); p.append(`The record could not be read: ${rcErr}`); return p; }
-    if (!rc) { p.append("Measuring the record…"); return p; }
-    const cards = (rc.cards || []).filter(c => !LEGACY.has(c.creator) && c.claims.measured);
-    let hits = 0, scored = 0, below = 0, above = 0;
-    for (const c of cards) {
-      hits += c.claims.hits; scored += c.claims.n_scored;
-      if (c.claims.vs_coin_flip === "below") below++;
-      if (c.claims.vs_coin_flip === "above") above++;
+  /* WHAT THE BOARD IS READING, and what it is not. `creator_board.scope`
+     names the roster it applied and the sources it left out; the page read
+     neither, so four sources were dropped silently. `mine_reason` is the
+     board's own sentence about the squad it could not read, and was also
+     never drawn. */
+  /* HOW MUCH OF WHAT WE FETCHED HAS BEEN READ. Fetching and analysing run on
+     separate budgets, so an item sits in the corpus for days before a claim is
+     extracted from it. Without this the board showed a take from four days ago
+     beside a show published this morning, and "their latest take is old" could
+     not be told apart from "we have not read them yet". */
+  function coverageLine() {
+    const c = res && res.coverage;
+    if (!c || !c.items) return null;
+    const p = el("p", "cx-scope");
+    p.appendChild(document.createTextNode(c.note));
+    const behind = (c.by_source || []).filter(r => r.unread > 0);
+    if (behind.length) {
+      const d = el("details", "cx-disclose");
+      d.appendChild(el("summary", null, "which feeds are behind"));
+      const list = el("div", "cx-thin sub");
+      for (const r of behind) {
+        const line = el("div", null,
+          `${r.source_key}: ${plural(r.unread, "item")} queued`
+          + (r.newest_unread
+              ? `, newest ${fmtAge(r.newest_unread)} old` : ""));
+        list.appendChild(line);
+      }
+      d.appendChild(list);
+      p.appendChild(d);
     }
+    return p;
+  }
+
+  function scopeLine() {
+    const sc = res && res.scope;
+    if (!sc && !(res && res.mine_reason)) return null;
+    const p = el("p", "cx-scope");
+    if (sc) {
+      const shows = (sc.shows || []).length;
+      const out = sc.excluded || [];
+      p.append(`Board scope: ${sc.applied || "unstated"}` +
+               (shows ? `, ${plural(shows, "show")}` : "") + ".");
+      if (out.length) {
+        const d = el("details", "cx-disclose");
+        d.appendChild(el("summary", null,
+          `${plural(out.length, "source")} outside it, not read here`));
+        d.appendChild(el("div", "cx-thin sub", out.join(", ")));
+        p.appendChild(d);
+      }
+      if (sc.reason) p.append(` ${sc.reason}`);
+    }
+    if (res.mine_reason) p.append(` ${res.mine_reason}`);
+    return p;
+  }
+
+  /* THE HONESTY LINE, once. Computed from the report card, never typed. */
+  /* ONE count of the population, quoted everywhere. The card payload holds
+     31 rows and the page used to print three different numbers for them
+     twelve pixels apart: 20 (measured, non-legacy), 31 (raw) and 28 (what
+     the grid actually draws). All three were true of different sets and none
+     said which. This names each set once. */
+  function cardCensus() {
+    const all = (rc && rc.cards) || [];
+    const legacy = all.filter(c => LEGACY.has(c.creator));
+    const real = all.filter(c => !LEGACY.has(c.creator));
+    const drawn = real.filter(c => c.claims.measured || c.team.measured);
+    return {
+      total: all.length,
+      legacy: legacy.length,
+      drawn: drawn.length,
+      unscored: real.length - drawn.length,
+      claimsMeasured: real.filter(c => c.claims.measured).length,
+    };
+  }
+
+  /* The census as a sentence, for a section heading. */
+  function censusLine() {
+    const n = cardCensus();
+    let t = `${plural(n.drawn, "creator")} drawn`;
+    const rest = [];
+    if (n.unscored) rest.push(`${n.unscored} with nothing scored yet`);
+    if (n.legacy) rest.push(`${plural(n.legacy, "legacy pseudo-source")}`);
+    if (rest.length) t += ` of ${n.total} cards, ${rest.join(" and ")}`;
+    return t;
+  }
+
+  function honestyLine() {
+    if (rcErr) return failFold(rcErr, "The record could not be read:");
+    const p = el("p", "cx-honest");
+    if (!rc) { p.append("measuring the record…"); return p; }
     const earned = (rc.cards || []).filter(c => c.claims.earned);
     if (earned.length) {
       p.appendChild(el("b", null,
@@ -626,10 +781,37 @@ export default async function creators(host) {
     } else {
       p.appendChild(el("b", null, "Nobody has earned a weight."));
     }
-    if (scored) p.append(` ${pct(hits / scored)} of ${scored} scored calls hit across ` +
-      `${plural(cards.length, "creator")}: ${below} below a coin flip, ${above} above.`);
+    /* The board writes this sentence itself, from the same rows, and writes
+       it better than the arithmetic below. Prefer it; the fallback runs only
+       when the board has not loaded or did not send one. */
+    if (res && res.record_note) p.append(` ${res.record_note}`);
+    else p.append(` ${recordSentence()}`);
     p.title = rc.note || "";
     return p;
+  }
+
+  /* The fallback for `record_note`. The below-chance count is split by the
+     floor, because the strip below draws only the ones that clear it and two
+     different numbers for one fact is what this line used to ship. */
+  function recordSentence() {
+    const floor = rc.min_scored_claims;
+    const cards = (rc.cards || []).filter(c => !LEGACY.has(c.creator) && c.claims.measured);
+    let hits = 0, scored = 0;
+    const below = [], above = [];
+    for (const c of cards) {
+      hits += c.claims.hits; scored += c.claims.n_scored;
+      if (c.claims.vs_coin_flip === "below") below.push(c);
+      if (c.claims.vs_coin_flip === "above") above.push(c);
+    }
+    if (!scored) return `No scored call yet across ${plural(cards.length, "creator")}.`;
+    const over = v => v.filter(c => c.claims.n_scored >= floor).length;
+    const split = (v, word) =>
+      `${v.length} ${word}` +
+      (v.length && over(v) !== v.length
+        ? ` (${over(v)} over the ${floor}-claim floor)` : "");
+    return `${pct(hits / scored)} of ${scored} scored calls hit across ` +
+      `${plural(cards.length, "measured creator")}: ` +
+      `${split(below, "below a coin flip")}, ${split(above, "above")}.`;
   }
 
   function mainShows() {
@@ -642,7 +824,7 @@ export default async function creators(host) {
     const row = el("div", "cx-srcrow");
     box.appendChild(row);
     if (srcErr) {
-      row.appendChild(el("span", "cx-provline warn", `sources: ${srcErr}`));
+      row.appendChild(el("span", "cx-provline warn", `sources: ${statusLine(srcErr)}`));
       return box;
     }
     if (!src) { row.appendChild(el("span", "cx-skelrow")); return box; }
@@ -681,8 +863,24 @@ export default async function creators(host) {
     row.appendChild(meta);
 
     const acts = el("span", "cx-srcacts");
+    /* "all N sources" was false: the strip drops `blocked` and `legacy`, so
+       the button counted 40 of 43 and called it all of them. It is the
+       fetchable list, and the button now says which list it is. */
+    const total = (src.sources || []).length;
+    const dropped = total - shown.length;
     const list = el("button", "cx-srclist" + (srcOpen ? " on" : ""),
-      srcOpen ? "hide the list" : `all ${shown.length} sources`);
+      srcOpen ? "hide the list"
+              : `${shown.length} fetchable sources` +
+                (dropped ? ` of ${total}` : ""));
+    if (dropped) {
+      const byState = {};
+      for (const s of src.sources || [])
+        if (HIDDEN_STATES.has(s.state)) byState[s.state] = (byState[s.state] || 0) + 1;
+      list.title = `${dropped} of ${total} are not listed: ` +
+        Object.entries(byState).map(([k, n]) => `${n} ${k}`).join(", ") +
+        ". Neither state is a feed, so neither can be fetched, and counting " +
+        "them as sources would overstate what this page reads.";
+    }
     list.setAttribute("aria-expanded", String(srcOpen));
     list.onclick = () => { srcOpen = !srcOpen; if (!srcOpen) srcFilter = null; renderTop(); };
     acts.appendChild(list);
@@ -1194,7 +1392,7 @@ export default async function creators(host) {
   function expiryText(job) {
     const left = expiryLeft(job);
     if (left == null) return "the payload carried no preview_expires_utc";
-    if (left <= 0) return "the 30 minutes are up — asking the server";
+    if (left <= 0) return "the 30 minutes are up; asking the server";
     const m = Math.floor(left / 60), s = Math.floor(left % 60);
     return `${m}m ${String(s).padStart(2, "0")}s left`;
   }
@@ -1328,15 +1526,15 @@ export default async function creators(host) {
     if (job.state === "down") {
       d.appendChild(failLine("Link ingestion is not deployed on this server.",
         `${job.error}. The board above is a different service and is ` +
-        "unaffected — nothing on this page is stale because of it. When the " +
-        "endpoint lands, this bar starts working with no change here."));
+        "unaffected, so nothing on this page is stale because of it. When " +
+        "the endpoint lands, this bar starts working with no change here."));
       return d;
     }
     if (job.state === "declined") {
       d.appendChild(failLine("The source declined the request.",
-        `${job.error}. That is the site saying no — private, age-gated or ` +
-        "rate-limited. This has stopped and will NOT retry: retrying a 403 " +
-        "or a 429 is how a source starts refusing everything.", "stop"));
+        `${job.error}. The URL is private, age-gated or rate-limited. ` +
+        "This has stopped and does not retry, because repeated 403 and 429 " +
+        "responses can get the whole source blocked.", "stop"));
       return d;
     }
     if (job.state === "robots") {
@@ -1363,19 +1561,18 @@ export default async function creators(host) {
     }
     if (job.state === "notepisode") {
       d.appendChild(failLine("That link is not an episode.",
-        `${job.error} — there is no substantive text behind it. An FPL league ` +
-        "invite has been ingested this way before and became an article " +
-        "titled `a6fgym`. Paste a video or an episode page instead."));
+        `${job.error} There is no substantive text behind this URL, so ` +
+        "there is nothing to transcribe or analyse. Paste a video or an " +
+        "episode page instead."));
       d.appendChild(el("div", "sub",
-        "This skipped the preview halt too: a refusal is an answer, not a " +
-        "spend to decide about."));
+        "No preview was offered: nothing would have been spent either way."));
       return d;
     }
     if (job.state === "nomedia") {
       d.appendChild(failLine("No captions published, and no audio file behind the page.",
-        `${job.error}. There is nothing to read and nothing to transcribe. If ` +
-        "this is a podcast, paste the episode's YouTube link instead — that " +
-        "usually has captions and takes about four seconds."));
+        `${job.error}. There is nothing to read and nothing to transcribe. ` +
+        "For a podcast, the episode's YouTube link usually has captions, " +
+        "which is the four-second path rather than the transcription one."));
       return d;
     }
     if (job.state === "passed") {
@@ -1412,7 +1609,7 @@ export default async function creators(host) {
         box.appendChild(el("div", "sub",
           "That is not the same as never having run. The transcription and " +
           "analysis finished and " + (id ? `item ${id} was written, then ` : "what they wrote was ") +
-          "discarded — hidden from every read path, not deleted. GPU seconds " +
+          "discarded: hidden from every read path, not deleted. GPU seconds " +
           "were spent. Restoring it is possible; the archive still has it."));
       }
       box.appendChild(againRow(job, "Paste it again"));
@@ -1435,9 +1632,9 @@ export default async function creators(host) {
     } else if (job.path) {
       const p = el("div", "cx-job-path");
       p.append(job.path === "captions"
-        ? "Captions path — measured at about 286× realtime."
+        ? "Captions path, measured at about 286× realtime."
         : job.path === "asr"
-          ? "No captions, so local speech-to-text — measured at about 11.5× realtime."
+          ? "No captions, so local speech-to-text, measured at about 11.5× realtime."
           : `Path: ${job.path}.`);
       d.appendChild(p);
     }
@@ -1451,7 +1648,7 @@ export default async function creators(host) {
       const ok = el("div", "cx-job-ok");
       ok.append(el("b", null, "Ingested."),
         job.item_id ? ` Stored as ${job.item_id}. ` : " ",
-        "It joins the board on the next panel read — reload to see it.");
+        "It joins the board on the next panel read; reload to see it.");
       d.appendChild(ok);
       d.appendChild(renderTake(job));
     } else {
@@ -1465,15 +1662,15 @@ export default async function creators(host) {
         acts.appendChild(el("span", "sub",
           job.stage === "transcribe" || job.stage === "analyse"
             ? "The transcribe/analyse call cannot be interrupted mid-way. A " +
-              "stop now lets it finish and discards what it wrote — that costs " +
-              "the seconds either way, and this row will say so."
+              "stop now lets it finish and discards what it wrote. The " +
+              "seconds are spent either way, and this row will say so."
             : "Nothing has been written yet, so stopping now is clean by " +
               "ordering rather than by cleanup."));
         d.appendChild(acts);
       }
       d.appendChild(el("div", "sub",
         "This keeps running on the server if you leave the page. This ledger " +
-        "does not — it stops updating when the view unmounts."));
+        "does not; it stops updating when the view unmounts."));
     }
     return d;
   }
@@ -1505,7 +1702,7 @@ export default async function creators(host) {
     if (name) {
       who.appendChild(el("b", null, name));
       if (pv.creator == null)
-        who.appendChild(el("span", "chip warn", "unresolved — this is the channel name"));
+        who.appendChild(el("span", "chip warn", "unresolved; this is the channel name"));
       else if (pv.tracked === true)
         who.appendChild(el("span", "chip s1", "on your panel"));
       else if (pv.tracked === false)
@@ -1553,7 +1750,7 @@ export default async function creators(host) {
         gw.basis === "stated" ? el("span", "chip s1", "stated in the content") : null);
     } else {
       fact("Gameweek", "none derived",
-        "the payload carried no gameweek block for this preview — with no " +
+        "the payload carried no gameweek block for this preview. With no " +
         "publication date there is no deadline to place it against, and none " +
         "is invented.");
     }
@@ -1597,12 +1794,12 @@ export default async function creators(host) {
     } else {
       line.append(el("b", null, "No ETA for this one."),
         " " + (pv.eta_reason || "the payload gave no eta_s and no eta_reason, " +
-               "so there is nothing to quote — no number is invented here."));
+               "so there is nothing to quote, and no number is invented here."));
     }
     cost.appendChild(line);
     const path = el("div", "cx-pv-why");
     path.append(pathLabel(pv.transcript_path),
-      pv.path_reason ? ` — ${pv.path_reason}` : " — the payload carried no path_reason.");
+      pv.path_reason ? `. ${pv.path_reason}` : ". The payload carried no path_reason.");
     cost.appendChild(path);
     if (pv.eta_s != null && pv.eta_basis)
       cost.appendChild(el("div", "cx-pv-why", `measured basis: ${pv.eta_basis}`));
@@ -1632,7 +1829,7 @@ export default async function creators(host) {
     const until = fmtWhen(job.expires);
     job.expEl = el("b", null, expiryText(job));
     exp.append(job.expEl, until
-      ? ` to decide — this preview is held until ${until}, then it expires and you paste the link again.`
+      ? ` to decide. This preview is held until ${until}, then it expires and you paste the link again.`
       : ". The payload carried no preview_expires_utc, so when this parks out is unknown to this page.");
     box.appendChild(exp);
     return box;
@@ -1680,7 +1877,7 @@ export default async function creators(host) {
       row.appendChild(el("span", "cx-stage-mark",
         halt ? "◆" : state === "done" ? "✓" : state === "now" ? "◐" : "○"));
       row.appendChild(el("span", "cx-stage-name", nm));
-      if (halt) row.appendChild(el("span", "cx-stage-note", "parked — your call"));
+      if (halt) row.appendChild(el("span", "cx-stage-note", "parked, your call"));
       if (!parked && state === "now" && job.pct != null) {
         const barwrap = el("span", "cx-stage-bar");
         const fill = el("span", "cx-stage-fill");
@@ -1735,7 +1932,7 @@ export default async function creators(host) {
     if (!r) {
       box.appendChild(el("div", "sub",
         "The payload carried no `result` block, so what this became is not " +
-        "readable from here — open the board to see it."));
+        "readable from here; open the board to see it."));
       return box;
     }
     if (!r.take) {
@@ -2196,10 +2393,11 @@ export default async function creators(host) {
     let stat;
     if (legacy) stat = "legacy pseudo-source";
     else if (!card) stat = rc ? "no card" : rcErr ? "card unavailable" : "card loading";
-    else if (!cl.measured) stat = `${cl.n_total} claims, none scored`;
+    else if (!cl.measured) stat = unscored(cl, "none scored", true);
     else stat = `${pct(cl.hit_rate)} · n ${cl.n_scored} · ${v.word}`;
     b.appendChild(el("span", "cx-rcstat", stat));
     b.title = (card ? card.headline : "the report card has not loaded") + "\n" +
+      (card && cl && !cl.measured && cl.reason ? cl.reason + "\n" : "") +
       (legacy ? "links pasted by hand; there is no person behind this label"
               : "open the creator: squad, transfers, record");
     b.onclick = e => {
@@ -2229,7 +2427,7 @@ export default async function creators(host) {
     const box = el("div", "cx-recstrip");
     if (!rc) {
       box.appendChild(el("span", "cx-tiny",
-        rcErr ? `record unavailable: ${rcErr}` : "measuring the record…"));
+        rcErr ? `record unavailable: ${statusLine(rcErr)}` : "measuring the record…"));
       return box;
     }
     const floor = rc.min_scored_claims;
@@ -2239,18 +2437,37 @@ export default async function creators(host) {
       .sort((a, b) => b.claims.wilson_lo95 - a.claims.wilson_lo95).slice(0, 3);
     const lag = pool.filter(c => c.claims.vs_coin_flip === "below")
       .sort((a, b) => a.claims.wilson_lo95 - b.claims.wilson_lo95).slice(0, 3);
-    const group = (label, list, empty) => {
+    /* A heading whose only possible content is "nobody" reads as a broken
+       section, so an empty group is not drawn at all; the meta line below
+       says the group is empty, which is the same fact without the furniture.
+       The labels describe the test rather than judging the person. */
+    const group = (label, list) => {
+      if (!list.length) return null;
       const g = el("span", "cx-recgroup");
       g.appendChild(el("span", "cx-reclabel", label));
-      if (!list.length) g.appendChild(el("span", "cx-tiny", empty));
       for (const c of list) g.appendChild(rcChip(c.creator));
       return g;
     };
-    box.appendChild(group("Record leaders", lead, "nobody above chance"));
-    box.appendChild(group("Laggards", lag, "nobody below chance"));
+    const gAbove = group("Interval above a coin flip", lead);
+    const gBelow = group("Interval below a coin flip", lag);
+    if (gAbove) box.appendChild(gAbove);
+    if (gBelow) box.appendChild(gBelow);
     const m = el("span", "cx-tiny cx-recmeta");
-    m.append(`${plural(pool.length, "creator")} clear the floor of ${floor} scored calls; ` +
-      "a leader's or laggard's 95% interval excludes a coin flip; ordered by Wilson lower bound. " +
+    /* The honesty line counts every measured creator; this strip counts only
+       the ones over the floor. Both numbers are stated here, so the strip
+       showing two chips beside a line that said three is not a discrepancy
+       the reader has to resolve alone. */
+    const measured = (rc.cards || []).filter(c => !LEGACY.has(c.creator) && c.claims.measured);
+    const allBelow = measured.filter(c => c.claims.vs_coin_flip === "below").length;
+    const allAbove = measured.filter(c => c.claims.vs_coin_flip === "above").length;
+    const said = (n, drawn, word) =>
+      n === drawn ? `${n} ${word}` : `${n} ${word}, ${drawn} of them over the floor`;
+    if (!lead.length && !lag.length)
+      m.append("No creator over the floor has an interval clear of a coin flip. ");
+    m.append(`${plural(pool.length, "creator")} clear the floor of ${floor} scored calls. ` +
+      `Across all ${measured.length} measured: ` +
+      `${said(allBelow, lag.length, "below")}, ${said(allAbove, lead.length, "above")}. ` +
+      "Ordered by Wilson lower bound. " +
       `Source creator_report_card, read ${relAge(rc.as_of).text}.`);
     m.title = rc.note || "";
     box.appendChild(m);
@@ -2379,13 +2596,13 @@ export default async function creators(host) {
     h.appendChild(h3);
     if (rc) {
       const m = el("span", "cx-tiny");
-      m.append(`${plural((rc.cards || []).length, "creator")} · floor ${rc.min_scored_claims} scored · read ${relAge(rc.as_of).text}`);
+      m.append(`${censusLine()} · floor ${rc.min_scored_claims} scored · read ${relAge(rc.as_of).text}`);
       m.title = "a record under the floor is drawn but never quotable as a rank";
       h.appendChild(m);
     }
     sec.appendChild(h);
     if (!rc && !rcErr) sec.appendChild(skeleton(1));
-    else if (rcErr) sec.appendChild(errBox(rcErr));
+    else if (rcErr) sec.appendChild(failFold(rcErr, "The report card could not be read:"));
     else {
       const cards = (rc.cards || []).slice().sort((a, b) =>
         (LEGACY.has(a.creator) - LEGACY.has(b.creator)) ||
@@ -2403,7 +2620,7 @@ export default async function creators(host) {
           const b = el("button", "cx-thinrow");
           b.appendChild(el("span", "cx-dot hollow"));
           b.appendChild(el("b", null, c.creator));
-          b.appendChild(el("span", "sub", ` · ${plural(c.claims.n_total, "claim")}, none scoreable yet`));
+          b.appendChild(el("span", "sub", ` · ${unscored(c.claims, "none scoreable yet")}`));
           b.title = c.headline;
           b.onclick = () => openCard(c);
           list.appendChild(b);
@@ -2438,11 +2655,19 @@ export default async function creators(host) {
     if (LEGACY.has(c.creator)) return document.createComment("legacy pseudo-source omitted");
     const cl = c.claims, tm = c.team;
     const legacy = false;
-    const card = el("button", "cx-rcard " + coin(cl.vs_coin_flip).cls + (legacy ? " legacy" : ""));
+    /* `verdict` carries the floor, `coin` does not. The card used to take
+       the raw coin class, so a verdict from 12 claims was painted the same
+       full red as one from 274 and only a small word said otherwise. The
+       `few` class desaturates it; the hue still says which direction. */
+    const v = verdict(cl, rc && rc.min_scored_claims);
+    const card = el("button", "cx-rcard " + v.cls + (legacy ? " legacy" : ""));
     const nm = el("div", "cx-rcname");
     nm.appendChild(el("b", null, c.creator));
     if (legacy) nm.appendChild(el("span", "cx-legacy", "legacy pseudo-source"));
-    nm.appendChild(el("span", "cx-rccoin", cl.measured ? coin(cl.vs_coin_flip).word : "no scored claim"));
+    const word = el("span", "cx-rccoin", cl.measured ? coin(cl.vs_coin_flip).word : "no scored claim");
+    if (v.few) word.title = `${cl.n_scored} scored, under the ` +
+      `${rc.min_scored_claims}-claim floor: drawn, not ranked`;
+    nm.appendChild(word);
     card.appendChild(nm);
     if (cl.measured) {
       card.appendChild(rangeBar(cl));
@@ -2452,7 +2677,7 @@ export default async function creators(host) {
       card.appendChild(st);
       if ((cl.by_gw || []).length) card.appendChild(gwBars(cl.by_gw));
     } else {
-      card.appendChild(el("div", "cx-rcstat", `${plural(cl.n_total, "claim")}, none scored yet`));
+      card.appendChild(el("div", "cx-rcstat", unscored(cl, "none scored yet")));
     }
     if (tm.measured) card.appendChild(teamLine(tm));
     card.title = c.headline;
@@ -2501,11 +2726,36 @@ export default async function creators(host) {
     const d = el("div", "cx-rcteam");
     d.appendChild(el("span", "cx-rcchan", "team"));
     const ppl = (tm.people || []).filter(p => p.n_gw);
-    d.append(ppl.map(p =>
-      `${p.person}: ${p.points} pts / ${plural(p.n_gw, "GW")}, ${signed(p.mean_delta)} per GW vs cohort`)
-      .join(" · ") || tm.reason);
-    d.title = tm.reason || "";
+    if (!ppl.length) {
+      d.append(tm.reason || "no crawled squad");
+      d.title = tm.reason || "";
+      return d;
+    }
+    /* Two names and a count. Fantasy Football Hub has seven people and the
+       full list ran to a 400-character line that never wrapped. */
+    const SHOWN = 2;
+    const head = ppl.slice(0, SHOWN);
+    const one = p => p.quotable
+      ? `${p.person}: ${p.points} pts over ${plural(p.n_gw, "GW")}, ` +
+        `${signed(p.mean_delta)} per GW vs ${baselineWord(tm)}`
+      : `${p.person}: ${p.points} pts over ${plural(p.n_gw, "GW")}, ` +
+        `under the ${tm.min_gw_measured}-GW floor so not compared`;
+    d.append(head.map(one).join(" · "));
+    if (ppl.length > SHOWN)
+      d.appendChild(el("span", "cx-rcmore",
+        ` +${ppl.length - SHOWN} more, in the card`));
+    d.title = ppl.map(p =>
+      `${p.person}: ${p.points} pts over ${plural(p.n_gw, "GW")}, ${signed(p.mean_delta)} per GW`)
+      .join("\n") + (tm.reason ? `\n${tm.reason}` : "");
     return d;
+  }
+
+  /* What the team channel is measured against, in the payload's own words.
+     The baseline is a parameter of the card, not a constant, so the label is
+     read rather than typed. */
+  function baselineWord(tm) {
+    const b = (tm && tm.baseline) || (rc && rc.baseline) || {};
+    return b.label || b.kind || "the baseline";
   }
 
   /* The full card, in the drawer. Three labelled channels. */
@@ -2535,7 +2785,8 @@ export default async function creators(host) {
       host.appendChild(rangeBar(cl, true));
       const facts = el("dl", "cx-facts");
       const fact = (k, v) => { facts.appendChild(el("dt", null, k)); facts.appendChild(el("dd", null, v)); };
-      fact("hit rate", `${pct(cl.hit_rate)} (${cl.hits} of ${cl.n_scored} scored, ${cl.n_total} recorded)`);
+      fact("hit rate", `${pct(cl.hit_rate)} (${cl.hits} of ${cl.n_scored} scored`
+        + (cl.n_total == null ? ")" : `, ${cl.n_total} recorded)`));
       fact("95% interval", `${pct(cl.wilson_lo95)} to ${pct(cl.wilson_hi95)}`);
       fact("vs coin flip", coin(cl.vs_coin_flip).word);
       fact("weight", `${Number(cl.weight).toFixed(2)} · ${cl.earned ? "earned" : "not earned"} (floor ${cl.min_scored_claims})`);
@@ -2580,21 +2831,49 @@ export default async function creators(host) {
           a.href = `https://fantasy.premierleague.com/entry/${p.entry_id}/history`;
           a.target = "_blank"; a.rel = "noopener noreferrer";
           t.appendChild(a);
+          /* The same entry on more than one card is one manager's season
+             appearing more than once. Say so beside the number, so the
+             repeated points are never read as independent evidence. */
+          const also = [...(cardsByEntry.get(p.entry_id) || [])]
+            .filter(n => n !== c.creator);
+          if (also.length) {
+            const w = el("span", "cx-samewho",
+              `also on ${also.join(", ")}`);
+            w.title = `entry ${p.entry_id} is attached to ` +
+              `${plural(also.length + 1, "card")}. The gameweek points below ` +
+              "are that one manager's, repeated, not separate results.";
+            t.appendChild(w);
+          }
         }
         box.appendChild(t);
         if (p.n_gw) {
           const facts = el("dl", "cx-facts");
           const fact = (k, v) => { facts.appendChild(el("dt", null, k)); facts.appendChild(el("dd", null, v)); };
-          fact("points", `${p.points} over ${plural(p.n_gw, "GW")} (cohort ${p.baseline_points})`);
+          fact("points", `${p.points} over ${plural(p.n_gw, "GW")} ` +
+            `(${baselineWord(tm)} ${p.baseline_points})`);
           fact("delta per GW", `${signed(p.mean_delta)}` +
             (p.delta_ci95 ? `, 95% ${signed(p.delta_ci95[0])} to ${signed(p.delta_ci95[1])}` : ""));
-          fact("beats cohort", p.beats_baseline == null ? `under the ${tm.min_gw_measured}-GW floor` : p.beats_baseline ? "yes" : "no");
+          /* The floor decides this, not the boolean. `beats_baseline` can be
+             true or false while `quotable` is false, and printing "yes" one
+             line above the reason that says three gameweeks is under a ten
+             gameweek floor is the card contradicting itself. */
+          fact("beats the baseline", p.quotable
+            ? (p.beats_baseline == null ? "the interval spans zero, so neither"
+               : p.beats_baseline ? "yes" : "no")
+            : `not established: ${plural(p.n_gw, "GW")} measured, floor is ${tm.min_gw_measured}`);
           if (p.latest_overall_rank != null) fact("overall rank", p.latest_overall_rank.toLocaleString());
           box.appendChild(facts);
           if ((p.gws || []).length) {
             const t2 = el("table", "data cx-byaction");
             const hr = el("tr");
-            for (const l of ["GW", "pts", "cohort", "delta", "bench", "hits"]) hr.appendChild(el("th", l === "GW" ? "" : "num", l));
+            /* "cohort" was the baseline when the card had one; the baseline
+               is a parameter now, so the column is named for its role and
+               the label goes on the header's title. */
+            for (const l of ["GW", "pts", "baseline", "delta", "bench", "hits"]) {
+              const th = el("th", l === "GW" ? "" : "num", l);
+              if (l === "baseline") th.title = baselineWord(tm);
+              hr.appendChild(th);
+            }
             t2.appendChild(hr);
             for (const g of p.gws) {
               const tr = el("tr");
@@ -2833,7 +3112,7 @@ export default async function creators(host) {
     for (const code of codes) {
       const th = el("th", "cx-colh");
       th.appendChild(el("span", "cx-colname", cname(code)));
-      th.title = `${cname(code)} — ` +
+      th.title = `${cname(code)}: ` +
         `${plural(touch.get(code).size, "person", "people")} touched him` +
         (rowByCode.has(code) ? "" : "\nonly a watch call; he is on nobody's buy or sell list");
       hr.appendChild(th);
@@ -2881,7 +3160,7 @@ export default async function creators(host) {
         const lane = laneOf.get(code);
         if (lane) {
           const cell = el("span", "cx-cell own-" + lane);
-          cell.title = `${cname(code)} — ${laneLabel(lane).toLowerCase()}`;
+          cell.title = `${cname(code)}: ${laneLabel(lane).toLowerCase()}`;
           td.appendChild(cell);
         }
         tr.appendChild(td);
@@ -3100,7 +3379,7 @@ export default async function creators(host) {
       a.textContent = ts ? `${k.label} at ${ts}` : k.label;
       a.title = [item && item.title, k.why,
                  claim && claim.start_s == null
-                   ? "no timestamp on this claim — the link opens at the start"
+                   ? "no timestamp on this claim; the link opens at the start"
                    : null].filter(Boolean).join("\n");
       foot2.appendChild(a);
     } else {
@@ -3153,14 +3432,15 @@ export default async function creators(host) {
     const card = rcByCreator.get(show);
     if (!card) {
       line.appendChild(el("span", "cx-tiny",
-        rc ? "no report card for this creator" : rcErr ? `record unavailable: ${rcErr}` : "measuring the record…"));
+        rc ? "no report card for this creator"
+          : rcErr ? `record unavailable: ${statusLine(rcErr)}` : "measuring the record…"));
       return line;
     }
     const cl = card.claims;
     const v = verdict(cl, rc.min_scored_claims);
     const tag = el("span", "cx-rctag big " + v.cls,
       cl.measured ? `${pct(cl.hit_rate)} · ${cl.hits} of ${cl.n_scored} scored · ${v.word}`
-                  : `${plural(cl.n_total, "claim")}, none scored yet`);
+                  : unscored(cl, "none scored yet"));
     tag.title = cl.reason || card.headline || "";
     line.appendChild(tag);
     for (const p of ((card.team || {}).people || []).filter(p => p.n_gw)) {
@@ -3480,7 +3760,7 @@ export default async function creators(host) {
       agreed: false, voices: 0, anyCue: 0, anyLlm: 0, cueOnly: false,
       __unnamed: true,
       reason: `Nobody on the panel named ${name} for GW${res.gw} in this ` +
-        `window — he is here because somebody owns him, which is the one ` +
+        `window. He is here because somebody owns him, which is the one ` +
         `thing a transcript can never tell you.`,
     });
   }
@@ -3550,12 +3830,12 @@ export default async function creators(host) {
             "Nobody on the panel named him.",
             `He is here because he is in somebody's fifteen. No claim in this ` +
             `window names him for GW${res.gw}, so there is nothing said to ` +
-            "show — that is the quiet holding, not a failed lookup.")
+            "show. That is the quiet holding, not a failed lookup.")
         : emptyBox(
             "No stored claim for this player carries a quote.",
             "He is counted above from the consensus rollup, but the per-creator " +
             "record for these sources holds no quoted claim on him inside its own " +
-            "window — the two windows differ. Nothing has been invented to fill " +
+            "window; the two windows differ. Nothing has been invented to fill " +
             "the gap."));
     }
     for (const { creator, item, c } of claims) {
@@ -3581,7 +3861,7 @@ export default async function creators(host) {
       }
       if (c.quote) d.appendChild(quoteBlock(c.quote, c, item));
       else d.appendChild(el("p", "sub",
-        "This claim carries no quote — it is a keyword window, and there is " +
+        "This claim carries no quote: it is a keyword window, and there is " +
         "no sentence to show you."));
       list.appendChild(d);
     }

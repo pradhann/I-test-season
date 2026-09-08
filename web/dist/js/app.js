@@ -49,55 +49,16 @@ export function errBox(e) { return el("div", "err", String(e.message || e)); }
 
 export function provenance(prov) {
   if (!prov) return el("span");
+  // The age, not the raw ISO microsecond stamp: every tab's footer printed
+  // "2026-09-08T05:37:11.501911+00:00" directly under body text saying "read
+  // just now". The exact instant stays reachable in the title.
+  const span = prov.generated_at ? fmtAge(prov.generated_at) : null;
+  const age = span ? `read ${span} ago` : null;
   const bits = [prov.script, (prov.repo_sha || "").slice(0, 7),
-                prov.generated_at].filter(Boolean);
-  return el("div", "provenance", bits.join(" · "));
-}
-
-/* Sortable data table. Sorting re-renders ONLY tbody — the provenance line
-   outside survives (the old UI deleted it on first header click). */
-export function dataTable(columns, rows, host) {
-  const wrap = el("div", "scroll-x");
-  const table = el("table", "data");
-  const thead = el("thead"); const tbody = el("tbody");
-  table.append(thead, tbody); wrap.appendChild(table);
-  let sortKey = null, sortDir = -1;
-
-  const tr = el("tr");
-  for (const c of columns) {
-    const th = el("th", c.num ? "num" : "", c.label);
-    th.onclick = () => {
-      sortDir = sortKey === c.key ? -sortDir : -1; sortKey = c.key;
-      [...thead.querySelectorAll("th")].forEach(h => h.classList.remove("sorted"));
-      th.classList.add("sorted");
-      renderBody();
-    };
-    tr.appendChild(th);
-  }
-  thead.appendChild(tr);
-
-  function renderBody() {
-    const data = [...rows];
-    if (sortKey) data.sort((a, b) => {
-      const x = a[sortKey], y = b[sortKey];
-      if (x == null) return 1; if (y == null) return -1;
-      return (typeof x === "number" ? x - y : String(x).localeCompare(String(y))) * -sortDir;
-    });
-    tbody.textContent = "";
-    for (const r of data) {
-      const trr = el("tr");
-      for (const c of columns) {
-        const td = el("td", c.num ? "num" : "");
-        if (c.render) { const out = c.render(r); out && td.appendChild(out); }
-        else td.textContent = r[c.key] ?? "–";
-        trr.appendChild(td);
-      }
-      tbody.appendChild(trr);
-    }
-  }
-  renderBody();
-  if (host) host.appendChild(wrap);
-  return wrap;
+                age].filter(Boolean);
+  const d = el("div", "provenance", bits.join(" · "));
+  if (prov.generated_at) d.title = `generated ${prov.generated_at}`;
+  return d;
 }
 
 /* inline magnitude bar: sequential single hue, value printed beside (the

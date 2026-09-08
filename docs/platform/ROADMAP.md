@@ -1,8 +1,9 @@
 # i-test platform — what works, what's next
 
-Written 2026-08-20, branch `platform`. Everything under "Shipped" was observed
-working and is committed; everything under "Next" is honestly not done. Row
-counts are real reads from the warehouse, not estimates.
+Written 2026-08-20, last checked against the warehouse and the code on
+2026-09-08. Everything under "Shipped" was observed working and is committed;
+everything under "Next" is honestly not done. Row counts are real reads from
+the warehouse, not estimates, and carry the date they were read.
 
 ---
 
@@ -35,6 +36,19 @@ plausible-looking number.
 | `content_claim` | 144 | creator claims, player-resolved |
 | `fact_manager_season` | 12,854 | elite-manager skill panel |
 | `projection_weight` | **0** | correct: no track record exists until GW1 resolves |
+
+Re-read 2026-09-08, after three gameweeks settled:
+
+| Table | Rows | Notes |
+|---|---:|---|
+| `content_item` | 890 | 505 descriptions, 234 articles, 151 transcripts |
+| `content_claim` | 2,545 | 306 of the 890 items analysed; the rest are a budgeted backlog |
+| `fact_manager_gw` | 23,799 managers | 3,409 with picks read; the top-1k crawl grows the tail nightly |
+| `fact_manager_pick` | 62,790 | |
+| `fact_player_match_stats` | 6,229 | third-party per-match reads, now write-on-change |
+| `projection_weight` | 18 | three fits, `thru-gw1` to `thru-gw3`; earned, not assumed |
+| `fact_projection_score` | 177 | per-provider MAE and RMSE against the all-provider mean |
+| `dim_event.avg_entry_score` | 3 gameweeks | FPL's own field average: 50, 81, 51 |
 
 **Projection providers integrated** (the thesis: copy, never invent):
 
@@ -98,12 +112,17 @@ Remaining, honestly:
 - state-dependent risk (master prompt Phase 2.3) is NOT wired: `fpl solve`
   uses the stylised balanced archetype
 
-### 2. Projection ensemble
-Tables and providers exist; the blend does not. Needs: per-provider calibration
-against GW1 actuals → `projection_weight` (currently 0 rows, correctly), then a
-blended projection selectable per solver run. Until a track record exists the
-user picks the source explicitly — the oracle rule (weight 0 without evidence)
-already holds.
+### 2. Projection ensemble — SHIPPED (2026-09-07)
+`score_projections` runs nightly in `post_gw`, scoring every provider against
+settled actuals and refitting inverse-MSE weights. Three fits exist
+(`thru-gw1`, `thru-gw2`, `thru-gw3`) and `sem_projection_consensus_weighted`
+serves the blend beside the equal-weight consensus. The Projections tab shows
+both and defaults to equal weights, which is the honest default while the
+track record is three gameweeks deep. `premierinjuries` still earns 0 with
+`n_obs` 0, which is the oracle rule working, not a gap.
+Remaining: the solver reads the equal-weight consensus, not the earned blend.
+That is a deliberate hold until the weights have more than three gameweeks
+behind them.
 
 ### 3. Discipline layer
 Presser-day gating, banked-transfer valuation (the solver's telescoping FT value
@@ -123,24 +142,30 @@ Pending: the top-1k sampler run **after GW1 locks** (picks are only public
 post-deadline — pre-GW1 the honest answer is labelled ownership marginals), and
 cohort captaincy/chip rates measured from the crawl.
 
-### 6. Fixture difficulty from our own ratings
-`fixture_ticker` currently returns opponents and home/away only — no difficulty
-— so the UI renders those cells neutral rather than inventing a colour. The
-Dixon-Coles fit that would supply real difficulty takes ~1 minute, well past a
-panel's 10s budget, so this needs a **cached ratings artefact** written by the
-nightly job and read by the panel. That is the single cheapest upgrade to the
-dashboard's usefulness.
+### 6. Fixture difficulty from our own ratings — SHIPPED (2026-09-07)
+`fixture_ticker` is deleted, not retired. `fixture_ratings.parquet` is written
+by the scheduled `fixture_ratings_refit` task and read by the Fixtures board,
+which colours a fixed-domain diverging scale with a published unit, states its
+clip count, and shows the market beside the model rather than blended into it.
+The calibration is disclosed on the page: over six gameweeks the best-minus-
+worst schedule is worth 2.8 to 6.4 points to an attacker and 4.6 to 6.0 to a
+defender.
 
-### 7. UI depth
-Current page renders every panel the API declares. Next: multi-source projection
-comparison with source selection, elite/template EO panel, watchlist with
-triggers, creator consensus with track records, team-news feed, and the chat pane
-(the API route exists and answers through the deterministic router today).
+### 7. UI depth — SHIPPED, and rebuilt twice since (2026-09-08)
+Nine tabs, each with its own panel set: Dashboard, Planner (solver and grid in
+one tab), Projections, EliteFPL, Creators, Fixtures, Pipelines, Chat, Account.
+Multi-source projection comparison with source selection and measured accuracy,
+the effective-ownership and template board, creator consensus with backtested
+report cards, and the chat pane are all in. The Dashboard states where the
+season stands against FPL's published field average, and refuses to render a
+solver plan that was solved against a squad the manager no longer holds.
+Remaining: a watchlist with triggers, and a team-news feed.
 
-### 8. ASR for podcasts
-Benchmarking found MLX-Whisper ~5× faster than faster-whisper on this machine.
-Pending: the transcription module, the nightly time-budgeted backfill, and the
-press-conference source inventory.
+### 8. ASR for podcasts — SHIPPED (2026-09-07)
+`content_transcribe` runs nightly under a time budget, `audio_retention` sweeps
+the cache behind it, and 151 of the 890 content items now carry a real
+transcript rather than a description. Remaining: the press-conference source
+inventory, which is item 9's neighbour.
 
 ### 9. Confirmed lineups
 No source ingested. The T-90m task exists and honestly records `no_source`; a
@@ -161,15 +186,20 @@ A chip-funded recommendation now declares the chip it plays.
 
 ## Known gaps and honest caveats
 
-- **`projection_weight` is empty and should be.** Nothing has a measured track
-  record before GW1 resolves. Any blend before then is a guess wearing a number.
+- **`projection_weight` is three gameweeks deep, which is not a track record.**
+  It is earned rather than assumed, and the weights it produces are real, but
+  three observations is far too few to act on. The consensus the solver reads
+  stays equal-weighted for that reason, and the Projections tab hides measured
+  accuracy behind a fold rather than leading with it.
 - **Squad panel needs a token refresh.** `fpl myteam auth` (or letting the
   refresh run) repopulates it; until then it renders its honest empty state.
   Access tokens last 8h, the refresh token ~6 months.
-- **The UI was not visually verified in a browser.** It is served (HTTP 200),
-  its JS parses, and every layout the API declares has a renderer — but a
-  sign-in popup blocked browser automation at build time. Open
-  `localhost:8321` and confirm.
+- **Two upstream feeds are down or partial, and the pages say so.**
+  football-data.co.uk returns 503 on every path, so the derived odds markets
+  are 19 days stale and every market cell renders "stale" or "unpriced" with
+  its reason rather than a colour. The content analysis queue is budget-capped
+  by design, so 116 items published in the last 10 days are fetched but not
+  yet analysed.
 - **Rank constants are calibration-dependent.** `D* ≈ −1.06τ` comes from a
   specific edge/variance calibration; re-derive per season rather than treating
   it as a law of nature.

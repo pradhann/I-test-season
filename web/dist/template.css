@@ -53,6 +53,9 @@
 .chip .cnt { margin-left: 6px; font-family: var(--mono); font-size: 10.5px;
              color: var(--faint); }
 .chip.src.on .cnt { color: inherit; opacity: .85; }
+/* A set with no measurable manager: the count is still printed, as "0 of 20
+   crawled", so the reader can see the gap rather than an inert chip. */
+.chip .cnt.empty { color: var(--warn); }
 .chip.dim { color: var(--faint); }
 
 /* ---- the field map ------------------------------------------------------ */
@@ -123,6 +126,12 @@ svg.fieldmap .mark:hover { stroke: var(--ink); }
          padding: 9px 12px; border-radius: 9px;
          background: var(--raised);
          border-left: 3px solid var(--tpl-heavy); }
+/* The chip term, sitting above the sentence that explains the minus sign. It
+   is a caveat on the headline rather than a second reading of it, so it takes
+   the warn edge and not the diverging pair the terms themselves use. */
+.chipnote { max-width: 74ch; margin: 6px 0 2px; padding: 8px 12px;
+            border-radius: 9px; background: var(--raised);
+            border-left: 3px solid var(--warn); line-height: 1.55; }
 .coverlink { display: inline-block; margin: 0 0 10px; font-size: 11.5px;
              color: var(--s1); text-decoration: none; }
 .coverlink:hover { text-decoration: underline; }

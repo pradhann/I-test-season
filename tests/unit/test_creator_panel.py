@@ -1676,3 +1676,120 @@ def test_player_chatter_serves_the_namesake_disambiguator(seeded_db):
     assert res["disambiguator"] == "C. Palmer (MCI)"
     solo = run_script("player_chatter", {"code": HAALAND}, db=seeded_db).result
     assert solo["disambiguator"] is None
+
+
+# --------------------------------------------------------- the house prose rule
+#
+# The owner's rule is hard: no em-dashes and no ASCII " -- " pairs in anything a
+# reader sees. These strings are written here and rendered verbatim by the
+# Creators tab, so the guard belongs at the source rather than in the renderer.
+# 55 pairs used to arrive from `creator_report_card` and 12 from `creator_board`
+# and print raw, including "on the same gameweeks -- the same convention
+# projection_scoring uses".
+
+import ast as _ast
+from pathlib import Path as _Path
+
+_CREATORS_PY = _Path(__file__).resolve().parents[2] / "fpl_edge" / "platform" / "scripts" / "creators.py"
+
+#: `_plain` is the function that REMOVES the pair, so its own literals are the
+#: pattern it matches and are the one legitimate occurrence in the module.
+_DASH_EXEMPT = {"_plain"}
+
+
+def _runtime_strings(path):
+    """Every string constant that can reach a payload: docstrings excluded."""
+    tree = _ast.parse(path.read_text())
+    docs, exempt = set(), set()
+    for node in _ast.walk(tree):
+        if isinstance(node, (_ast.Module, _ast.FunctionDef, _ast.AsyncFunctionDef,
+                             _ast.ClassDef)):
+            body = node.body
+            if (body and isinstance(body[0], _ast.Expr)
+                    and isinstance(body[0].value, _ast.Constant)
+                    and isinstance(body[0].value.value, str)):
+                docs.add(id(body[0].value))
+        if (isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef))
+                and node.name in _DASH_EXEMPT):
+            for sub in _ast.walk(node):
+                exempt.add(id(sub))
+    return [(n.lineno, n.value) for n in _ast.walk(tree)
+            if isinstance(n, _ast.Constant) and isinstance(n.value, str)
+            and id(n) not in docs and id(n) not in exempt]
+
+
+def test_no_panel_string_carries_a_dash_aside():
+    bad = [(line, text) for line, text in _runtime_strings(_CREATORS_PY)
+           if " -- " in text or "—" in text]
+    assert bad == [], (
+        "the house rule bans em-dashes and ' -- ' pairs in rendered prose; "
+        f"rewrite the sentence rather than swapping the punctuation: {bad}")
+
+
+def test_plain_turns_a_seeded_dash_into_a_sentence_break():
+    """Some reasons are seed data (data/panels/*.yaml), not code.
+
+    The panel cannot edit the YAML on the way past, but it must not hand the
+    UI a string the house rule forbids either.
+    """
+    from fpl_edge.platform.scripts.creators import _plain
+
+    assert _plain("Anonymous by design -- there is no person to resolve.") == (
+        "Anonymous by design; there is no person to resolve.")
+    # A capitalised tail is a new sentence, not a clause.
+    assert _plain("Deliberately left null -- Attach picks instead.") == (
+        "Deliberately left null. Attach picks instead.")
+    assert _plain(None) is None
+    assert _plain("no dash here") == "no dash here"
+
+
+# ------------------------------------- how much of the corpus has been read --
+# Fetching and analysing run on separate budgets: an item lands in
+# content_item the night it publishes, and a claim is extracted only when the
+# capped analysis queue reaches it. On 2026-09-08 that left 432 of 733 items
+# from the last 30 days fetched and unread, with nothing on the page saying so,
+# which made "their latest take is four days old" ambiguous between "they have
+# not spoken" and "we have not read them".
+
+
+def test_the_board_reports_how_much_of_the_corpus_is_still_unread(seeded_db):
+    cov = board(seeded_db)["coverage"]
+    assert cov["items"] >= cov["analysed"] >= 0
+    assert cov["items"] - cov["analysed"] == len(
+        [r for r in cov["by_source"] for _ in range(r["unread"])]
+    ), "the per-source counts must sum to the unread total"
+    assert str(cov["items"]) in cov["note"]
+
+
+def test_an_unread_item_names_its_feed_and_its_age(seeded_db):
+    with Warehouse(seeded_db) as wh:
+        _source(wh, "pod_quiet", "Quiet Pod", "podcast",
+                "https://example.invalid/quiet")
+        _item(wh, "unread_row", "pod_quiet", "Quiet Pod", "podcast",
+              "Nobody read this", "https://example.invalid/quiet/1",
+              NOW - dt.timedelta(hours=3), "transcript")
+    cov = board(seeded_db)["coverage"]
+    by_key = {r["source_key"]: r for r in cov["by_source"]}
+    assert by_key["pod_quiet"]["unread"] == 1
+    assert by_key["pod_quiet"]["newest_unread"] is not None
+    assert "queued" in cov["note"]
+
+
+def test_a_fully_read_corpus_says_so_rather_than_showing_a_backlog(tmp_path):
+    """"Nothing queued" and "nothing fetched" are different, and the note has
+    to distinguish them."""
+    path = tmp_path / "read.duckdb"
+    wh = Warehouse(path)
+    from fpl_edge.ingest.content.store import ContentStore
+
+    ContentStore(wh)
+    _source(wh, "yt_one", "One", "youtube", "https://example.invalid/one")
+    _item(wh, "i1", "yt_one", "One", "youtube", "T", WATCH_URL,
+          NOW - dt.timedelta(hours=2), "transcript")
+    _claim(wh, "c1", "i1", "One", "yt_one", HAALAND, "Haaland", "buy",
+           NOW - dt.timedelta(hours=2))
+    wh.close()
+    cov = board(path)["coverage"]
+    assert cov["analysed"] == cov["items"] == 1
+    assert "has been read" in cov["note"]
+    assert cov["by_source"] == []

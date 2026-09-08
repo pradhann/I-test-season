@@ -191,8 +191,9 @@ class TokenManager:
         # cookie that was never the problem. Only a live grant proves validity.
         parts.append(
             f"refresh token {'EXPIRED' if rexp <= now else 'unexpired'} "
-            f"(exp {rexp:%Y-%m-%d %H:%MZ}, {max(0, (rexp - now).days)} days left; "
-            f"the issuer can still revoke it -- only a live refresh proves it works)"
+            f"(exp {rexp:%Y-%m-%d %H:%MZ}, {max(0, (rexp - now).days)} days "
+            f"left). The issuer can still revoke it. Only a live refresh "
+            f"proves it works"
         )
         return "; ".join(parts)
 

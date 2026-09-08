@@ -185,3 +185,36 @@ def test_rows_land_in_fact_player_match_stats_and_read_back_point_in_time(tmp_pa
             "fact_player_match_stats"
         )
         assert before.empty
+
+
+def test_a_refetch_at_a_new_instant_writes_nothing_when_the_data_is_the_same(
+        tmp_path):
+    """A settled gameweek's rows never change, but the fetch stamps a new
+    as_of every night. A plain append therefore wrote the same 400 GW1 rows on
+    each of seven consecutive nights: 3,113 stored rows for 400 facts, and
+    seven identical point-in-time snapshots for a reader to pick between.
+    Write-on-change keeps the first observation and counts the rest.
+    """
+    players = _players()
+    rows, _ = fci.to_stat_rows(
+        _pms(), players, season="2026-27", gw=1, as_of=AS_OF,
+        valid_codes=_codes(players),
+    )
+    later, _ = fci.to_stat_rows(
+        _pms(), players, season="2026-27", gw=1,
+        as_of=AS_OF + dt.timedelta(days=1), valid_codes=_codes(players),
+    )
+    with Warehouse(tmp_path / "w.duckdb") as wh:
+        written, unchanged = wh.append_measured(
+            "fact_player_match_stats", rows, change_dedup=True)
+        assert (written, unchanged) == (11, 0)
+
+        written, unchanged = wh.append_measured(
+            "fact_player_match_stats", later, change_dedup=True)
+        assert written == 0, "a nightly refetch of settled data wrote rows"
+        assert unchanged == 11, "the refetch must be counted, not silent"
+
+        # One observation per fact, so a point-in-time read has no choice to
+        # make and the table does not grow with the calendar.
+        stored = wh.sql("SELECT count(*) n FROM fact_player_match_stats")
+        assert int(stored.iloc[0]["n"]) == 11

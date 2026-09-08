@@ -252,3 +252,60 @@ def test_forecast_provenance_is_read_off_the_parquets_own_rows():
     prov_l = forecast_provenance(legacy, gws=[4, 5])
     assert prov_l["forecast_source"] == "engine"
     assert prov_l["engine_fill_share"] is None, "unmeasured is null, never 0.0"
+
+
+# ---------------------------------------- the squad the plan was solved for --
+# A plan is a statement about ONE squad: `out` and `in` are diffed against the
+# fifteen held when the solve ran. Applied to a different fifteen they build a
+# squad the optimiser never scored. On 2026-09-08 that reached the dashboard
+# as a starting XI naming a player the squad card did not list, because the
+# solve predated the account connection and neither surface could tell.
+
+
+def test_the_artefact_records_the_squad_it_was_solved_against():
+    rec = _rec()
+    xi = list(rec.chosen.plan.decisions[0].starting_xi)
+    art = serialize_recommendation(
+        rec, generated_at=dt.datetime(2026, 9, 1, 12, 0, tzinfo=UTC),
+        max_candidates=25, seconds=60.0,
+        squad_before=[131, *xi], squad_source="PRIVATE_API",
+    )
+    assert art["squad_before"] == sorted([131, *xi]), (
+        "sorted, so a diff against the held squad is stable"
+    )
+    assert art["squad_source"] == "PRIVATE_API"
+
+
+def test_an_unrecorded_squad_is_an_empty_list_not_a_false_claim():
+    art = serialize_recommendation(
+        _rec(), generated_at=dt.datetime(2026, 9, 1, 12, 0, tzinfo=UTC),
+        max_candidates=25, seconds=60.0,
+    )
+    assert art["squad_before"] == []
+    assert art["squad_source"] is None
+
+
+def test_a_starting_xi_outside_the_post_transfer_squad_is_refused():
+    """Writing it would publish a lineup the optimiser never scored."""
+    rec = _rec()
+    with pytest.raises(ValueError, match="self-inconsistent"):
+        serialize_recommendation(
+            rec, generated_at=dt.datetime(2026, 9, 1, 12, 0, tzinfo=UTC),
+            max_candidates=25, seconds=60.0,
+            # The XI defaults to 100..110; hold none of it and sell 131.
+            squad_before=[131, 900, 901],
+        )
+
+
+def test_a_consistent_plan_passes_the_check():
+    rec = _rec()
+    xi = list(rec.chosen.plan.decisions[0].starting_xi)
+    art = serialize_recommendation(
+        rec, generated_at=dt.datetime(2026, 9, 1, 12, 0, tzinfo=UTC),
+        max_candidates=25, seconds=60.0,
+        # sell 131, buy 202, and hold every player the XI names
+        squad_before=[131, *xi],
+    )
+    after = (set(art["squad_before"]) - set(art["chosen"]["out"])) \
+        | set(art["chosen"]["in"])
+    assert set(art["chosen"]["starting_xi"]) <= after

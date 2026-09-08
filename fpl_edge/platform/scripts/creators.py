@@ -96,6 +96,7 @@ from fpl_edge.eval.creator_report_card import (
     provider_key,
     team_channel,
 )
+from fpl_edge.platform.prose_style import normalize_prose
 from fpl_edge.platform.registry import register_script
 from fpl_edge.platform.scripts.common import (
     POSITION_NAME,
@@ -313,6 +314,25 @@ def _s(x) -> str | None:
         return None
     text = str(x)
     return text if text and text.lower() != "nat" else None
+
+
+def _plain(x) -> str | None:
+    """House style on a string this module did not write.
+
+    Some ``*_reason`` values are seed data (``data/panels/*.yaml``) rather than
+    code, and the owner's rule bans the ASCII ``--`` pair the seed rows use as
+    an aside. The panel renders these verbatim, so the pair is turned into a
+    sentence break here rather than left for the UI to paper over. Nothing else
+    about the text is touched.
+    """
+    text = _s(x)
+    if text is None:
+        return None
+    while " -- " in text:
+        head, _, tail = text.partition(" -- ")
+        joiner = ". " if tail[:1].isupper() else "; "
+        text = head.rstrip(",;: ") + joiner + tail.lstrip()
+    return text
 
 
 def _iso(x) -> str | None:
@@ -592,7 +612,13 @@ def _take(analysis: dict[str, Any] | None, model: str | None, resolver,
           display: dict[str, Any] | None = None) -> dict[str, Any] | None:
     if analysis is None:
         return None
-    bullets = [str(b) for b in (analysis.get("summary") or []) if str(b).strip()]
+    # The house prose rule applied on the way out. These bullets are model
+    # output stored in content_analysis, so the rows already written cannot be
+    # rewritten at the source, and an em-dash reaching the page is the same
+    # defect whoever typed it. normalize_prose rewrites the punctuation
+    # losslessly; it never drops a finding.
+    bullets = [normalize_prose(str(b))
+               for b in (analysis.get("summary") or []) if str(b).strip()]
     take: dict[str, Any] = {
         "summary": "\n".join(bullets),
         "summary_bullets": bullets,
@@ -644,7 +670,7 @@ def _take_reason(latest: dict[str, Any] | None, has_transcript: bool) -> str:
         return ("no item has ever been collected from this creator's sources, "
                 "so there is nothing to summarise")
     what = {
-        "description": "the video description / show notes only -- YouTube "
+        "description": "the video description / show notes only. YouTube "
                        "transcripts are not collected (robots.txt disallows "
                        "the caption route), so there is no speech to analyse",
         "article": "the article text",
@@ -764,7 +790,7 @@ def _entries(wh, present: set[str], moment: dt.datetime
             "name": _s(r.get("entry_api_name")) or str(r["display_name"]),
             "verified": bool(r.get("entry_verified")),
             "source_url": _s(r.get("entry_source_url")),
-            "reason": _s(r.get("entry_reason")),
+            "reason": _plain(r.get("entry_reason")),
         }
         bucket = out.setdefault(show, {"people": []})
         bucket["people"].append(person)
@@ -835,7 +861,7 @@ def _panel_roster(wh, present: set[str]) -> tuple[list[dict[str, Any]], str | No
             "entry_id": _i(r.get("entry_id")),
             "entry_name": _s(r.get("entry_api_name")),
             "verified": bool(r.get("entry_verified")),
-            "reason": _s(r.get("entry_reason")),
+            "reason": _plain(r.get("entry_reason")),
             "shows": shows.get(key, []),
         })
     return out, None
@@ -943,7 +969,7 @@ def _resolve_gw(wh, gw: int | None, moment: dt.datetime,
         if latest is not None:
             return latest, (
                 f"no future deadline is on file, so this falls back to GW"
-                f"{latest} -- the latest gameweek any visible claim names. "
+                f"{latest}, the latest gameweek any visible claim names. "
                 f"That is the corpus talking, not the calendar."
             )
     return None, (
@@ -1435,6 +1461,33 @@ BOARD_RESULT: dict[str, Any] = {
         "creators": {"type": "array", "items": _CREATOR},
         "consensus": {"type": "array", "items": _CONSENSUS},
         "record_note": {"type": "string"},
+        # How much of what has been FETCHED has been READ. The analysis queue
+        # is budget-capped by design, so items land in content_item long
+        # before any claim is extracted from them. Without this the board
+        # showed a creator's take from four days ago beside a show published
+        # this morning and said nothing about the difference.
+        "coverage": {
+            "type": ["object", "null"],
+            "additionalProperties": False,
+            "required": ["window_days", "items", "analysed", "note"],
+            "properties": {
+                "window_days": {"type": "integer"},
+                "items": {"type": "integer"},
+                "analysed": {"type": "integer"},
+                "newest_unread": {"type": ["string", "null"]},
+                "note": {"type": "string"},
+                "by_source": {"type": "array", "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["source_key", "unread", "newest_unread"],
+                    "properties": {
+                        "source_key": {"type": "string"},
+                        "unread": {"type": "integer"},
+                        "newest_unread": {"type": ["string", "null"]},
+                    },
+                }},
+            },
+        },
         # Why every `mine.in_squad` is null, when it is. Always populated when
         # the squad could not be read; null when it could.
         "mine_reason": {"type": ["string", "null"]},
@@ -1783,7 +1836,7 @@ def creator_board(wh, *, days: int = 30, gw: int | None = None,
             },
             "latest_reason": None if row is not None else (
                 "every source registered for this creator has been probed and "
-                "has yielded no item yet -- see sources[].last_status"
+                "has yielded no item yet; see sources[].last_status"
             ),
             "take": take,
             "take_reason": None if take is not None else _take_reason(
@@ -1816,9 +1869,65 @@ def creator_board(wh, *, days: int = 30, gw: int | None = None,
         "consensus": _consensus(wh, claims, gw, moment, roles, panel_by_code,
                                 panel_meta, display),
         "record_note": _record_note(weights),
+        "coverage": _analysis_coverage(wh, present, days, moment),
         "mine_reason": mine_reason,
         "panel_squads": panel_meta,
     }
+
+
+def _analysis_coverage(wh, present: set[str], days: int,
+                       moment: dt.datetime) -> dict[str, Any] | None:
+    """How much of the fetched content has actually been read.
+
+    Fetching and analysing are separate steps on separate budgets. An item
+    reaches ``content_item`` the night it publishes; a claim is extracted from
+    it only when the analysis queue reaches it, and that queue is capped so a
+    backlog is the normal state rather than a fault. The board could not say
+    so, which made "this creator's latest take is four days old" ambiguous
+    between "they have not spoken" and "we have not read them".
+    """
+    if "content_item" not in present or "content_claim" not in present:
+        return None
+    since = moment - dt.timedelta(days=int(days))
+    totals = q(
+        wh,
+        "SELECT count(*) AS items, "
+        "  count(*) FILTER (WHERE i.item_id IN "
+        "    (SELECT item_id FROM content_claim)) AS analysed "
+        "FROM content_item i WHERE i.published_at >= ?",
+        (since,),
+    )
+    if totals.empty:
+        return None
+    items = _i(totals.iloc[0]["items"]) or 0
+    analysed = _i(totals.iloc[0]["analysed"]) or 0
+    unread = items - analysed
+    by_source = q(
+        wh,
+        "SELECT i.source_key, count(*) AS unread, "
+        "       max(i.published_at) AS newest "
+        "FROM content_item i "
+        "WHERE i.published_at >= ? "
+        "  AND i.item_id NOT IN (SELECT item_id FROM content_claim) "
+        "GROUP BY 1 ORDER BY 2 DESC LIMIT 8",
+        (since,),
+    )
+    rows = [{"source_key": str(r["source_key"]),
+             "unread": _i(r["unread"]) or 0,
+             "newest_unread": _iso(r["newest"])}
+            for r in by_source.to_dict("records")]
+    newest = max((r["newest_unread"] for r in rows if r["newest_unread"]),
+                 default=None)
+    if not unread:
+        note = (f"Every one of the {items} items published in the last "
+                f"{days} days has been read.")
+    else:
+        note = (f"{analysed} of {items} items published in the last {days} "
+                f"days have been read. {unread} are fetched and still queued: "
+                f"the analysis budget caps how many are read per night, so a "
+                f"take can be older than the show it came from.")
+    return {"window_days": int(days), "items": items, "analysed": analysed,
+            "newest_unread": newest, "note": note, "by_source": rows}
 
 
 def _record_note(weights: dict[str, dict[str, Any]]) -> str:
@@ -2200,7 +2309,7 @@ def _squad(wh, entry: dict[str, Any] | None, present: set[str],
     if target is None or target not in available:
         return None, (
             f"no crawled squad for GW{int(gw)} for this entry. "
-            f"{_gw_list(available)} on file, so the gameweek is selectable -- "
+            f"{_gw_list(available)} on file, so the gameweek is selectable; "
             f"this one simply has not been crawled. A squad is public only "
             f"once its deadline has passed."
             if gw is not None else
@@ -2295,7 +2404,7 @@ def _transfers(wh, entry: dict[str, Any] | None, present: set[str],
     """
     base = (
         "a gameweek's transfers become public only after its deadline, and the "
-        "season's first gameweek has none behind it -- every GW1 squad is an "
+        "season's first gameweek has none behind it. Every GW1 squad is an "
         "initial selection, not a transfer. An empty list here is the correct "
         "state of the world, not a missing ingest."
     )
@@ -2936,14 +3045,14 @@ def _said(wh, code: int, moment: dt.datetime, present: set[str],
                     f"nothing was said about this player {scope}. The panel "
                     f"did speak about him for other gameweeks: "
                     f"{_by_gw_phrase([b for b in by_gw if b['gw'] != int(gw)])}"
-                    f". This is a gameweek filter, not silence -- switch the "
+                    f". This is a gameweek filter, not silence; switch the "
                     f"gameweek to read those."
                 ), by_gw
             return [], (
                 f"nothing was said about this player {scope}, but "
                 f"{sum(b['n'] for b in by_gw)} statements about him sit "
                 f"outside that window ({_by_gw_phrase(by_gw)}). This is the "
-                f"day window, not silence -- widen `days`, or ask for a "
+                f"day window, not silence; widen `days`, or ask for a "
                 f"gameweek, which is not day-bounded."
             ), by_gw
         reach = _of_pool(coverage.get("said"), coverage.get("pool"))
@@ -3040,7 +3149,7 @@ def player_chatter(wh, *, code: int, days: int = 30,
     if name is None:
         return empty(
             f"no player with code {code} exists in {SEASON_DEFAULT}. This is a "
-            f"stable PlayerCode, not an element_id -- the two differ and "
+            f"stable PlayerCode, not an element_id; the two differ, and "
             f"passing an element_id here finds nobody."
         )
     # A bare web_name can name two players (two Palmers). When it does, the
@@ -3274,8 +3383,17 @@ def _card_baseline(wh, present: set[str], moment: dt.datetime, kind: str,
                    ) -> tuple[dict[int, dict[str, Any]], str, str]:
     """The number a creator's gameweek is compared against, and what it IS.
 
-    Two baselines, both actually in this warehouse, and the label travels with
+    Three baselines, all actually in this warehouse, and the label travels with
     every number so a reader can never mistake one for the other:
+
+    ``field_average``
+        FPL's own published ``average_entry_score``: 50 in GW1, 81 in GW2, 51
+        in GW3. The number a reader means by "beat the field", and the default.
+        It is polled in every bootstrap-static fetch and, until dim_event
+        gained the column, was persisted nowhere -- which is why this function
+        used to report it as a gap and compare creators against each other
+        instead. A gameweek FPL has not settled has no average and is skipped
+        rather than compared against a zero.
 
     ``cohort_mean``
         The mean gameweek score of the OTHER measured panel members on the SAME
@@ -3291,12 +3409,33 @@ def _card_baseline(wh, present: set[str], moment: dt.datetime, kind: str,
         like the game's. Offered because a rival-relative number is sometimes
         what is wanted, labelled so it cannot be read as the field.
 
-    The baseline a reader would want first -- FPL's own published
-    ``average_entry_score``, 50 in GW1 and 81 in GW2 -- is fetched in every
-    bootstrap poll and persisted nowhere: ``dim_event`` carries only
-    ``(season, gw, deadline_utc, is_finished, as_of)``. That is reported as a
-    named gap rather than approximated by one of the two above.
     """
+    if kind == "field_average":
+        rows = q(
+            wh,
+            "SELECT gw, avg_entry_score, ranked_count FROM ("
+            "  SELECT *, row_number() OVER ("
+            "    PARTITION BY season, gw ORDER BY as_of DESC) rn "
+            "  FROM dim_event WHERE season = ? AND as_of <= ?"
+            ") WHERE rn = 1 AND avg_entry_score IS NOT NULL ORDER BY gw",
+            (SEASON_DEFAULT, moment),
+        )
+        by_gw = {
+            int(r["gw"]): {"points": _f(r["avg_entry_score"], 2),
+                           "n": _i(r.get("ranked_count"))}
+            for r in rows.to_dict("records")
+            if _i(r.get("gw")) is not None
+        }
+        if not by_gw:
+            return {}, kind, (
+                "no gameweek in this season has settled yet, so FPL has "
+                "published no average entry score to compare against"
+            )
+        return by_gw, kind, (
+            "FPL's own average_entry_score for the gameweek, over every ranked "
+            "entry in the game. This is the field, not a sample of it."
+        )
+
     if kind == "crawled_pool_median":
         if "fact_manager_gw" not in present:
             return {}, kind, ("fact_manager_gw is not in this warehouse, so no "
@@ -3330,7 +3469,7 @@ def _card_baseline(wh, present: set[str], moment: dt.datetime, kind: str,
              for gw, v in per_gw.items() if v}
     return by_gw, "cohort_mean", (
         "mean gameweek score of the measured panel members themselves, on the "
-        "same gameweeks -- the same convention projection_scoring uses, where "
+        "same gameweeks. This is the convention projection_scoring uses, where "
         "the baseline is the all-provider mean on the same observations. It "
         "answers 'better than the other creators', not 'better than the field'."
     )
@@ -3378,7 +3517,7 @@ CARD_PARAMS: dict[str, Any] = {
         # call. A name means one card, which is what the player drawer and a
         # chat answer ask for.
         "creator": {"type": ["string", "null"], "default": None},
-        "baseline": {"enum": list(BASELINE_KINDS), "default": "cohort_mean"},
+        "baseline": {"enum": list(BASELINE_KINDS), "default": "field_average"},
         # Exposed so a caller can SEE the floor move rather than wonder why a
         # rate is quotable on one surface and not another. It defaults to the
         # same MIN_SCORED_CLAIMS earned_weight() runs on and lowering it does
@@ -3550,7 +3689,7 @@ def _card_headline(creator: str, claims: dict[str, Any], numeric: dict[str, Any]
                 "that interval sits below the coin flip")
         parts.append(
             f"{claims.get('hits')} of {n} scored claims hit ({pct}, 95% CI "
-            f"{lo}-{hi}) -- {tail}"
+            f"{lo}-{hi}): {tail}"
             + ("" if claims.get("quotable") else
                f", and {n} is under the {claims.get('min_scored_claims')}-claim "
                f"floor, so it is not a rank")
@@ -3561,14 +3700,25 @@ def _card_headline(creator: str, claims: dict[str, Any], numeric: dict[str, Any]
     measured = [p for p in team.get("people") or [] if p["n_gw"] > 0]
     if measured:
         best = max(measured, key=lambda p: p.get("mean_delta") or -1e9)
-        parts.append(
-            f"their team is read for {len(measured)} of "
-            f"{len(team.get('people') or [])} verified member(s); "
-            f"{best['person']} averages "
-            f"{best.get('mean_delta'):+.1f} points per gameweek vs the "
-            f"{team['baseline']['kind']} over {best['n_gw']} gameweek(s), "
-            f"which at this sample is a record and not an edge"
-        )
+        read = (f"their team is read for {len(measured)} of "
+                f"{len(team.get('people') or [])} verified member(s)")
+        delta = best.get("mean_delta")
+        if delta is None:
+            # A crawled gameweek with no baseline point beside it: the points
+            # are known, the comparison is not. Saying so beats a "+0.0".
+            parts.append(
+                f"{read}; {best['person']} scored {best.get('points')} over "
+                f"{best['n_gw']} gameweek(s), with no baseline on those "
+                f"gameweeks to compare against"
+            )
+        else:
+            base = (team.get("baseline") or {})
+            against = base.get("label") or base.get("kind") or "baseline"
+            parts.append(
+                f"{read}; {best['person']} averages {delta:+.1f} points per "
+                f"gameweek against {against} over {best['n_gw']} gameweek(s), "
+                f"which at this sample is a record and not an edge"
+            )
     elif team.get("people"):
         parts.append("their verified team has not been crawled yet")
     else:
@@ -3587,7 +3737,7 @@ def _card_headline(creator: str, claims: dict[str, Any], numeric: dict[str, Any]
 
 
 def creator_report_card(wh, *, creator: str | None = None,
-                        baseline: str = "cohort_mean",
+                        baseline: str = "field_average",
                         min_scored: int = MIN_SCORED_CLAIMS) -> dict[str, Any]:
     """One creator's backtested record, in three channels that never merge.
 
@@ -3646,7 +3796,9 @@ def creator_report_card(wh, *, creator: str | None = None,
     gws = _card_gws(wh, present, moment, all_ids)
     baseline_by_gw, baseline_kind, baseline_reason = _card_baseline(
         wh, present, moment, baseline, gws)
-    baseline_label = ("mean of the measured panel cohort"
+    baseline_label = ("FPL's published average entry score"
+                      if baseline_kind == "field_average"
+                      else "mean of the measured panel cohort"
                       if baseline_kind == "cohort_mean"
                       else "median of the crawled manager pool")
     numeric_rows = _card_projection_scores(wh, present, known)
@@ -3694,7 +3846,10 @@ def creator_report_card(wh, *, creator: str | None = None,
     cards.sort(key=lambda c: (-(c["claims"]["n_scored"] or 0),
                               c["creator"]))
 
-    gaps = _card_gaps(present, people_by_show, gws, numeric_rows, people_reason)
+    field_average_gws = (
+        len(baseline_by_gw) if baseline_kind == "field_average" else 0)
+    gaps = _card_gaps(present, people_by_show, gws, numeric_rows,
+                      people_reason, field_average_gws)
     return {
         "as_of": moment.isoformat(),
         "season": SEASON_DEFAULT,
@@ -3724,24 +3879,25 @@ def creator_report_card(wh, *, creator: str | None = None,
 def _card_gaps(present: set[str], people_by_show: dict[str, list[dict[str, Any]]],
                gws: dict[int, list[dict[str, Any]]],
                numeric_rows: dict[str, Any],
-               people_reason: str | None) -> list[dict[str, Any]]:
+               people_reason: str | None,
+               field_average_gws: int = 0) -> list[dict[str, Any]]:
     """What this card could not measure, named, with the thing that would fix it.
 
     A gap list is the honest half of a report card. Every entry here is a
     checked fact about THIS warehouse at this instant, not a remembered one.
     """
     gaps: list[dict[str, Any]] = []
-    gaps.append({
-        "key": "field_average",
-        "what": "FPL's own average_entry_score -- the number a reader means by "
-                "'the field average' -- is in every bootstrap-static poll and "
-                "is persisted nowhere. dim_event carries only (season, gw, "
-                "deadline_utc, is_finished, as_of), so the team channel has to "
-                "fall back on a cohort or pool baseline.",
-        "fix": "add average_entry_score (and highest_score) to dim_event in "
-               "fpl_edge/ingest/fpl_api.py and re-ingest; the team channel "
-               "then gains a third, correct baseline with no change here.",
-    })
+    if not field_average_gws:
+        gaps.append({
+            "key": "field_average",
+            "what": "no gameweek this season carries FPL's own "
+                    "average_entry_score yet, so 'beat the field' has nothing "
+                    "to measure against and the team channel falls back on a "
+                    "cohort or pool baseline.",
+            "fix": "the column exists on dim_event and is written by "
+                   "fpl_edge/ingest/fpl_api.py; it fills in as soon as a "
+                   "gameweek settles.",
+        })
     if "creator_entry" in present:
         gaps.append({
             "key": "creator_entry_empty",

@@ -1241,3 +1241,145 @@ def test_squad_source_names_the_public_read_and_its_one_fix(db):
     assert src["fix"] == "uv run fpl myteam auth"
     assert src["as_of"] == sq["as_of"].replace(" ", "T")
     assert "captain_close_call_xpts" in brief["thresholds"]
+
+
+# ------------------------------------------------- where the season stands --
+# The objective is P(top-1k) and the dashboard could not say what rank the
+# season was at. GW3 scored 23 against a field average of 51 and the overall
+# rank fell from 141,593 to 769,533 with nothing on the page reporting it.
+
+
+def _seed_standing(db, rows, *, averages=True):
+    """The manager's own crawled gameweeks, plus FPL's published averages."""
+    from fpl_edge.ingest.rivals.schema import migrate as rivals_migrate
+    from fpl_edge.platform.scripts.brief import USER
+
+    with Warehouse(db) as wh:
+        rivals_migrate(wh)
+        wh.append("fact_manager_gw", pd.DataFrame([
+            {"entry_id": int(USER.entry_id), "season": SEASON, "gw": r["gw"],
+             "points": r["points"], "points_on_bench": r.get("bench", 0),
+             "event_transfers": 0, "event_transfers_cost": r.get("hit", 0),
+             "overall_rank": r["rank"], "as_of": T0}
+            for r in rows
+        ]))
+        if averages:
+            wh.append("dim_event", pd.DataFrame([
+                {"season": SEASON, "gw": r["gw"], "is_finished": True,
+                 "deadline_utc": pd.Timestamp("2026-08-28 17:30", tz="UTC"),
+                 "as_of": T0 + dt.timedelta(hours=1),
+                 "avg_entry_score": r["field"], "highest_score": None,
+                 "ranked_count": None}
+                for r in rows if r.get("field") is not None
+            ]))
+
+
+def test_the_standing_measures_my_gameweeks_against_the_published_field(db):
+    _seed_standing(db, [
+        {"gw": 1, "points": 75, "field": 50, "rank": 238376},
+        {"gw": 2, "points": 107, "field": 81, "rank": 141593, "bench": 18},
+        {"gw": 3, "points": 23, "field": 51, "rank": 769533, "bench": 10},
+    ])
+    st = run_script("dashboard_brief", {}, db=db).result["standing"]
+    assert [g["delta"] for g in st["gws"]] == [25.0, 26.0, -28.0]
+    assert st["overall_rank"] == 769533
+    # FPL ranks count upward from the top, so a positive move is a fall.
+    assert st["rank_move"] == 769533 - 141593
+    assert st["total_points"] == 205
+    assert st["vs_field_total"] == 23.0
+    assert st["reason"] is None
+
+
+def test_a_gameweek_with_no_published_average_is_not_compared_against_zero(db):
+    """FPL reports 0 for an unplayed gameweek. Reading that as the field's
+    score would tell a manager they beat the world by their whole total."""
+    _seed_standing(db, [{"gw": 1, "points": 75, "field": None, "rank": 238376}],
+                   averages=False)
+    st = run_script("dashboard_brief", {}, db=db).result["standing"]
+    assert st["gws"][0]["points"] == 75
+    assert st["gws"][0]["field"] is None
+    assert st["gws"][0]["delta"] is None
+    assert st["vs_field_total"] is None
+    assert "average entry score" in st["reason"]
+
+
+def test_an_uncrawled_entry_says_so_rather_than_showing_an_empty_season(db):
+    st = run_script("dashboard_brief", {}, db=db).result["standing"]
+    assert st["gws"] == []
+    assert "no crawled gameweek" in st["reason"]
+
+
+# ------------------------------------- a plan solved against another squad --
+
+
+def test_a_plan_solved_against_a_different_squad_is_refused(db, tmp_path):
+    """A plan's `out` and `in` are diffed against the fifteen held when it was
+    solved. Applied to a different fifteen they build a squad the optimiser
+    never scored: on 2026-09-08 that surfaced as a starting XI naming a player
+    the dashboard's own squad card did not list."""
+    _write_transfer_plan(tmp_path, "2099-09-05T15:00:00+00:00")
+    plan_path = tmp_path / "transfer_plan.json"
+    plan = json.loads(plan_path.read_text())
+    plan["squad_before"] = [*SQUAD_CODES[:-1], 999999]
+    plan["squad_source"] = "PRIVATE_API"
+    plan_path.write_text(json.dumps(plan))
+
+    brief = run_script("dashboard_brief", {}, db=db).result
+    assert brief["solve"]["state"] == "superseded"
+    assert brief["solve"]["plan"] is None, (
+        "a plan priced against another squad must not render as guidance"
+    )
+    assert "different squad" in brief["solve"]["reason"]
+    assert any(a["rule"] == "solve_superseded" for a in brief["alerts"])
+
+
+def test_a_plan_solved_against_this_squad_is_not_refused(db, tmp_path):
+    _write_transfer_plan(tmp_path, "2099-09-05T15:00:00+00:00")
+    plan_path = tmp_path / "transfer_plan.json"
+    plan = json.loads(plan_path.read_text())
+    plan["squad_before"] = list(SQUAD_CODES)
+    plan_path.write_text(json.dumps(plan))
+
+    brief = run_script("dashboard_brief", {}, db=db).result
+    assert brief["solve"]["state"] != "superseded"
+    assert brief["solve"]["plan"] is not None
+
+
+def test_a_plan_that_records_no_squad_says_it_cannot_be_checked(db, tmp_path):
+    """"Cannot check" and "checked and matches" are different claims."""
+    _write_transfer_plan(tmp_path, "2099-09-05T15:00:00+00:00")
+    brief = run_script("dashboard_brief", {}, db=db).result
+    assert brief["solve"]["state"] != "superseded"
+    assert any("does not record the squad" in w["detail"]
+               for w in brief["watch_log"] if w["check"] == "solver")
+
+
+def test_freshness_measures_the_plans_age_not_its_distance_to_the_deadline(
+        db, tmp_path):
+    """The word answers "how old is this". It used to answer "how close is
+    the deadline", so a plan solved minutes ago read "aging" for the four days
+    before the deadline came within the window, however current it was."""
+    now = dt.datetime.now(UTC)
+    _write_transfer_plan(tmp_path, (now - dt.timedelta(minutes=36)).isoformat())
+    assert run_script("dashboard_brief", {}, db=db).result["solve"]["state"] \
+        == "fresh"
+
+    _write_transfer_plan(tmp_path, (now - dt.timedelta(hours=20)).isoformat())
+    assert run_script("dashboard_brief", {}, db=db).result["solve"]["state"] \
+        == "aging", "a plan that has lived through a price change is not fresh"
+
+
+def test_a_passed_deadline_outranks_a_changed_squad(db, tmp_path):
+    """Both are true when a deadline passes, since the squad usually changes
+    with it. "Stale" is the fuller statement: prices moved and points were
+    scored as well. "Superseded" is for the case where only the fifteen did."""
+    _write_transfer_plan(tmp_path, "2026-08-20T00:00:00+00:00",
+                         horizon=(2, 3, 4))
+    plan_path = tmp_path / "transfer_plan.json"
+    plan = json.loads(plan_path.read_text())
+    plan["squad_before"] = [*SQUAD_CODES[:-1], 999999]
+    plan_path.write_text(json.dumps(plan))
+
+    brief = run_script("dashboard_brief", {}, db=db).result
+    assert brief["solve"]["state"] == "stale"
+    assert brief["solve"]["plan"] is None

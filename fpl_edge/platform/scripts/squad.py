@@ -170,8 +170,8 @@ def squad_overview(wh, *, season: str, entry_id: int | None = None) -> dict[str,
     except Exception as exc:  # noqa: BLE001 - a panel reports, it does not crash
         return empty(
             f"Could not read squad for entry {eid}: {type(exc).__name__}: {exc}. "
-            f"Before GW1 FPL publishes nothing publicly -- run `fpl myteam auth` "
-            f"once, or text /setsquad with your 15."
+            f"Before GW1 FPL publishes nothing publicly. Connect your account "
+            f"on the Account tab, or text /setsquad with your 15."
         )
 
     if state is None or state.picks is None:
@@ -233,7 +233,7 @@ def squad_overview(wh, *, season: str, entry_id: int | None = None) -> dict[str,
             p_haul_generated = dt.datetime.fromtimestamp(
                 artefact.stat().st_mtime, dt.UTC).isoformat()
         p_haul_source = (
-            f"engine simulation ({PROJECTION_NAME}) — no provider publishes "
+            f"engine simulation ({PROJECTION_NAME}). No provider publishes "
             f"a haul probability")
 
     def card(pick) -> dict[str, Any]:
@@ -266,7 +266,7 @@ def squad_overview(wh, *, season: str, entry_id: int | None = None) -> dict[str,
     bench = [card(p) for p in state.picks if not p.is_starter]
 
     flags = [
-        f"{c['name']}: {c['status']}" + (f" — {c['news']}" if c["news"] else "")
+        f"{c['name']}: {c['status']}" + (f". {c['news']}" if c["news"] else "")
         for c in starters + bench
         if c["status"] in ("i", "s", "d", "u")
     ]
@@ -290,8 +290,8 @@ def squad_overview(wh, *, season: str, entry_id: int | None = None) -> dict[str,
         chips = []
         notes.append(f"chip status unavailable: {type(exc).__name__}: {exc}")
     if not chips:
-        notes.append("chip ledger not served by this squad source — "
-                     "used/available chips are unknown, not all-available.")
+        notes.append("chip ledger not served by this squad source. Used "
+                     "and available chips are unknown, not all-available.")
 
     source = getattr(state.provenance, "name", str(state.provenance))
     return {

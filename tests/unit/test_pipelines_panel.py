@@ -99,12 +99,34 @@ def test_board_serves_the_registry_with_history_and_a_true_summary(db):
     assert s["n_failing"] == states.count("failing")
     assert s["n_ok"] == states.count("ok")
     assert s["n_never_ran"] == states.count("never_ran")
-    assert (s["n_ok"] + s["n_failing"] + s["n_stale"] + s["n_never_ran"]
-            + s["n_running"] + s["n_disabled"]) == len(res["rows"])
+    assert (s["n_ok"] + s["n_failing"] + s["n_refused"] + s["n_stale"]
+            + s["n_never_ran"] + s["n_running"]
+            + s["n_disabled"]) == len(res["rows"])
     assert s["month_credits"] == pytest.approx(12.0)
     assert s["month_credits_cap"] == 500.0
     # The family order is served so the view never invents a sort.
     assert set(res["families"]) == {t.family for t in registry.TASKS}
+
+
+def test_a_refused_run_is_its_own_state_and_never_reads_as_ok(db):
+    """A run that refused for lack of a source did not succeed. Counting only
+    `error` toward the failure streak left the row green with the sentence
+    "last run succeeded inside its cadence" over a run that fetched nothing;
+    the summary counted it as ok on top."""
+    with Warehouse(db) as wh:
+        _ledger_row(wh, "content_fast_rss", status="ok", age_h=2.0)
+        _ledger_row(wh, "content_fast_rss", status="no_source", age_h=0.2,
+                    note="no_source: no fast-tier sources registered")
+    res = run_script("pipeline_board", db=db).result
+    row = {r["id"]: r for r in res["rows"]}["content_fast_rss"]
+    assert row["health"]["state"] == "refused"
+    assert "succeeded" not in row["health"]["reason"]
+    assert "no source was available" in row["health"]["reason"]
+    # the enum itself never travels into the sentence
+    assert "no_source" not in row["health"]["reason"]
+    states = [r["health"]["state"] for r in res["rows"]]
+    assert res["summary"]["n_refused"] == states.count("refused") == 1
+    assert res["summary"]["n_ok"] == states.count("ok")
 
 
 def test_board_history_is_capped_per_pipeline(db):

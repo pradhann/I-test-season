@@ -32,7 +32,7 @@ operating map. **Bold** = scheduled today; *italics* = manual-only today.
 | **results settlement** | FPL live API | nightly post_gw (refuses un-finalised GWs) | fact_player_fixture |
 | my-team (public/private) | FPL API (+OAuth for private) | manual / on-demand | data/myteam/*.json (not warehouse) |
 | **fixture ratings refit** (Dixon-Coles club split) | local warehouse only | **daily 11:00 UTC** (`fixture_ratings_refit`, ~2.5s) | fixture_ratings.parquet, fixture_calibration.parquet. Was hand-run only and went 227h stale while the nightly job refreshed the deprecated blend |
-| **points forecast refresh** (model fit -> forecast.parquet) | local warehouse only | **daily 11:30 UTC** (`forecast_refresh`, points objective, 30s MILP cap) | forecast.parquet for the next open horizon. Only `fpl solve` writes it and nothing rolled it forward: on 2026-09-07 it covered GW3-7 while the squad-anchored solver wanted GW4-8 and refused to score 32 unprojected players |
+| **points forecast refresh** (model fit -> forecast.parquet) | local warehouse only | **daily 11:30 UTC** (`forecast_refresh`, points objective, 30s MILP cap) | forecast.parquet for the next open horizon. Only `fpl solve` writes it and nothing rolled it forward: on 2026-09-07 it covered GW3-7 while the squad-anchored solver wanted GW4-8 and refused to score 32 unprojected players. Its first scheduled run failed because `--forecast-only` did not exist yet and the task ran the whole MILP; the flag landed the same day and the task has been green since |
 
 ### B · Odds (metered: 500 credits/month)
 | Pipeline | Schedule today | Freshness gate |
@@ -86,6 +86,18 @@ double-fired, an idempotent `dag_firing` ledger claimed before running, and
 honest outcome rows (`delivered/quiet/skipped_stale/no_source/error`).
 post_gw is the calendar-daily settlement chain. The design question is not
 "build a scheduler" — it is "promote the one we have to own everything".
+
+**How an outcome becomes a health state (2026-09-08).** The board used to
+count only `error` toward the failure streak, so a run that correctly
+refused for lack of a source came back green with the sentence "last run
+succeeded inside its cadence", which was false. `no_source` and `refused`
+now map to their own health state with their own dot and plain words;
+`skipped_fresh` stays healthy but says the fetch was skipped because the
+data was already fresh, rather than claiming a success. No ledger enum
+reaches the reader. The health reason is the first line of the run's own
+detail, taken before the appended log tail, so a Python traceback can no
+longer be sliced mid-path into the one string the row exists to carry;
+the full tail stays one click away in the drawer.
 
 ---
 

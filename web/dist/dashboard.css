@@ -520,3 +520,39 @@ table.db-watch td { border-bottom: 1px solid var(--line); }
   .pitch .row, .bench { gap: 8px; }
   .al-kind { width: 64px; }
 }
+
+/* ---- where the season stands -------------------------------------------
+   The manager's own gameweeks against FPL's published average for the same
+   gameweek. Measured fact on both sides, so the delta carries good/bad
+   status colour rather than the model scale --s1 the projection numbers use. */
+.db-standing[hidden] { display: none; }
+.db-sthead { display: flex; align-items: baseline; justify-content: space-between;
+             gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+.db-sthead h2 { margin: 0; }
+.db-strank { text-align: right; }
+.db-strank b { font: 700 20px var(--mono); font-variant-numeric: tabular-nums;
+               display: block; }
+.db-strank .sub { font-size: 11.5px; color: var(--muted); }
+.db-stgws { display: grid; gap: 8px;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.db-stgw { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
+           background: var(--surface); display: grid; gap: 2px; }
+.db-stlab { font: 650 10.5px var(--mono); letter-spacing: .08em;
+            color: var(--faint); font-style: normal; text-transform: uppercase; }
+.db-stgw b { font: 700 22px var(--mono); font-variant-numeric: tabular-nums; }
+.db-stdelta { font: 600 12px var(--mono); font-variant-numeric: tabular-nums; }
+.db-stdelta.up { color: var(--good); }
+.db-stdelta.down { color: var(--bad); }
+.db-stdelta.flat { color: var(--muted); font-weight: 400; font-family: inherit; }
+.db-stsub { font-size: 11px; color: var(--muted); }
+.db-stfoot { margin: 10px 0 0; font-size: 12.5px; color: var(--muted); }
+
+/* Validator output belongs on the page but behind a fold: it addresses
+   whoever maintains the prompt, not the manager reading the briefing. */
+.ib-rejects { margin-top: 8px; }
+.ib-rejects > summary { font-size: 11.5px; color: var(--muted); cursor: pointer; }
+.ib-rejects > p { margin: 6px 0 0; font-size: 11.5px; }
+
+/* A plan that overspends is a blocker, not a footnote: FPL rejects it. */
+.vd-unaffordable { color: var(--bad); display: block; margin-top: 2px;
+                   font-size: 12.5px; }

@@ -70,9 +70,29 @@ def ingest_bootstrap(wh: Warehouse, fetcher: Fetcher | None = None) -> dict[str,
         body_path=str(got.body_path), http_status=got.http_status,
     )
 
+    def _event_result(e: dict, key: str) -> int | None:
+        """A finished event's published result, or None.
+
+        FPL reports average_entry_score = 0 and highest_score = null for a
+        gameweek that has not been played. Persisting that zero would give any
+        "versus the field" comparison a baseline of nothing, so an unfinished
+        event stores NULL and every reader has to say it does not know yet.
+        """
+        if not e.get("finished"):
+            return None
+        v = e.get(key)
+        return None if v is None else int(v)
+
     events = pd.DataFrame([
         {"season": season, "gw": e["id"], "deadline_utc": _ts(e["deadline_time"]),
-         "is_finished": e["finished"], "as_of": as_of}
+         "is_finished": e["finished"],
+         # The field's own score for the gameweek. Polled every run and
+         # persisted nowhere until now, which is why "better than the field"
+         # had to fall back on a cohort mean of the panel itself.
+         "avg_entry_score": _event_result(e, "average_entry_score"),
+         "highest_score": _event_result(e, "highest_score"),
+         "ranked_count": _event_result(e, "ranked_count"),
+         "as_of": as_of}
         for e in bs["events"]
     ])
 

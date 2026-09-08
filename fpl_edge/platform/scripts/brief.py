@@ -121,7 +121,14 @@ THRESHOLDS: dict[str, float | int] = {
     "standout_margin_xpts": 3.0,
     "standout_horizon_gws": 4,
     "fixture_rank_move": 6,
-    "solve_fresh_window_h": 4,
+    # How old a plan may be and still read "fresh". This measures the plan's
+    # AGE, which is the question the word answers. It used to measure the
+    # plan's distance to the next deadline, so a plan solved 36 minutes ago
+    # read "aging" for the four days before the deadline came within four
+    # hours of it, no matter how current it was. Twelve hours, because prices
+    # settle nightly and team news moves daily: a plan that has lived through
+    # one of those has not seen it.
+    "solve_fresh_window_h": 12,
     "tile_cap": 6,
     # "Moves to consider" — deterministic rules, every gate echoed here.
     "move_cap": 3,
@@ -337,6 +344,12 @@ _PLAN = {
         "forecast_engine_fill_share": {"type": ["number", "null"]},
         "hits": {"type": ["integer", "null"]},
         "hit_points": {"type": ["integer", "null"]},
+        # What the plan leaves in the bank once its moves are made. The
+        # dashboard printed each transfer's price change and never the net or
+        # the balance, so a plan that cannot be executed read as a normal
+        # recommendation and would have been rejected at the FPL site.
+        # Negative means the plan is not affordable.
+        "bank_after_tenths": {"type": ["integer", "null"]},
         "chip": {"type": ["string", "null"]},
         "notes": {"type": "array", "items": {"type": "string"}},
         "bounds": {"type": ["string", "null"]},
@@ -361,7 +374,7 @@ _SOLVE = {
     "required": ["state"],
     "properties": {
         "state": {"type": "string",
-                  "enum": ["fresh", "aging", "stale", "missing"]},
+                  "enum": ["fresh", "aging", "stale", "superseded", "missing"]},
         "reason": {"type": ["string", "null"]},
         "generated_at": {"type": ["string", "null"]},
         "age_hours": {"type": ["number", "null"]},
@@ -640,6 +653,43 @@ _VERDICT = {
 #: Header stats: the budget of the whole decision (free transfers, bank) and
 #: the chip verdict, surfaced top-level instead of buried in the solver card.
 #: Every number names its source clock; a stale plan's FT count says so.
+#: Where the season actually stands, gameweek by gameweek, against FPL's own
+#: published average for that gameweek. The objective is P(top-1k) and the
+#: dashboard could not say what rank the season was at: GW3 scored 23 against a
+#: field average of 51 and the overall rank fell from 141,593 to 769,533 with
+#: nothing on the page reporting it. ``points`` is the manager's own crawled
+#: gameweek; ``field`` is dim_event.avg_entry_score, NULL for a gameweek FPL
+#: has not settled; ``delta`` is the difference and is null whenever either
+#: side is.
+_STANDING = {
+    "type": ["object", "null"],
+    "additionalProperties": False,
+    "required": ["entry_id", "gws", "reason"],
+    "properties": {
+        "entry_id": {"type": ["integer", "null"]},
+        "overall_rank": {"type": ["integer", "null"]},
+        "rank_move": {"type": ["integer", "null"]},
+        "total_points": {"type": ["integer", "null"]},
+        "vs_field_total": {"type": ["number", "null"]},
+        "as_of": {"type": ["string", "null"]},
+        "reason": {"type": ["string", "null"]},
+        "gws": {"type": "array", "items": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["gw", "points", "field", "delta"],
+            "properties": {
+                "gw": {"type": "integer"},
+                "points": {"type": ["integer", "null"]},
+                "field": {"type": ["number", "null"]},
+                "delta": {"type": ["number", "null"]},
+                "bench_points": {"type": ["integer", "null"]},
+                "hit_cost": {"type": ["integer", "null"]},
+                "overall_rank": {"type": ["integer", "null"]},
+            },
+        }},
+    },
+}
+
 _HEADER = {
     "type": "object",
     "additionalProperties": False,
@@ -700,6 +750,7 @@ RESULT: dict[str, Any] = {
         "moves_suppressed": {"type": "integer"},
         "verdict": _VERDICT,
         "header": _HEADER,
+        "standing": _STANDING,
         # Sources of the squad card's two projection columns, threaded from
         # squad_overview: xPts is the provider consensus (the Projections tab's
         # own numbers, so the two surfaces cannot disagree); p_haul is the
@@ -1856,7 +1907,60 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
         in_codes = [int(c) for c in chosen.get("in", [])]
         cap_code = chosen.get("captain")
 
-        if gen is not None and last_deadline is not None and gen < last_deadline:
+        # A plan describes ONE squad: its `out` and `in` are diffed against the
+        # fifteen held when the solve ran. Apply them to a different fifteen and
+        # the result is a squad the optimiser never scored. This fired for real
+        # on 2026-09-08: a plan solved against the public GW3 picks was rendered
+        # beside a squad card reading live from the connected account, and its
+        # starting XI named a player the card did not list.
+        solved_against = [int(c) for c in (tplan.get("squad_before") or [])]
+        held_now = sorted(int(c) for c in squad_codes) if squad_codes else []
+        superseded = bool(solved_against and held_now
+                          and set(solved_against) != set(held_now))
+        if not solved_against and held_now:
+            # An artefact written before squad_before existed. "Cannot check"
+            # and "checked and matches" are different claims, so say which.
+            watch.append({"check": "solver", "status": "gap",
+                          "detail": "this plan does not record the squad it "
+                                    "was solved against, so it cannot be "
+                                    "checked against your fifteen; the next "
+                                    "solver run records it",
+                          "source_panel": "solve_plan",
+                          "as_of": solve["generated_at"]})
+
+        # Precedence: a passed deadline first. It is the stronger statement
+        # and covers more ground, because prices moved and points were scored
+        # as well as the squad changing. Superseded is for the case where the
+        # calendar is fine and only the fifteen moved underneath the plan.
+        stale_by_deadline = (gen is not None and last_deadline is not None
+                             and gen < last_deadline)
+        if superseded and not stale_by_deadline:
+            gone = sorted(set(solved_against) - set(held_now))
+            got = sorted(set(held_now) - set(solved_against))
+            solve["state"] = "superseded"
+            solve["reason"] = (
+                f"the plan was solved against a different squad: "
+                f"{len(gone)} player(s) it assumed you held are not in your "
+                f"fifteen, and {len(got)} you hold were not in it. Its moves "
+                f"were priced against that squad, so they do not apply here. "
+                f"Re-run the solver."
+            )
+            alerts.append({
+                "rule": "solve_superseded", "kind": "SOLVER", "priority": 0,
+                "codes": [*gone, *got], "players": [],
+                "numbers": {"age_hours": solve["age_hours"],
+                            "players_differing": float(len(gone) + len(got))},
+                "news": None, "status": None, "reason": solve["reason"],
+                "source_panel": "solve_plan",
+                "source_as_of": solve["generated_at"],
+                "drill": {"tab": "planner"},
+            })
+            watch.append({"check": "solver", "status": "gap",
+                          "detail": f"plan solved against a squad differing by "
+                                    f"{len(gone) + len(got)} player(s)",
+                          "source_panel": "solve_plan",
+                          "as_of": solve["generated_at"]})
+        elif stale_by_deadline:
             solve["state"] = "stale"
             solve["reason"] = (
                 f"transfer plan generated {gen.date().isoformat()} for "
@@ -1882,8 +1986,8 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
                           "as_of": solve["generated_at"]})
         else:
             fresh_h = float(THRESHOLDS["solve_fresh_window_h"])
-            if (gen is not None and next_deadline is not None
-                    and gen >= next_deadline - dt.timedelta(hours=fresh_h)):
+            age_h = solve.get("age_hours")
+            if age_h is not None and float(age_h) <= fresh_h:
                 solve["state"] = "fresh"
             else:
                 solve["state"] = "aging"
@@ -2023,6 +2127,9 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
                 "gain_over_roll": (float(tplan["gain_over_roll"])
                                    if tplan.get("gain_over_roll") is not None
                                    else None),
+                "bank_after_tenths": (int(chosen["bank_after_tenths"])
+                                      if chosen.get("bank_after_tenths")
+                                      is not None else None),
                 # Which forecast the gain is priced in: consensus (what every
                 # other surface shows) or the engine model, with the engine
                 # fill share when the consensus left gaps.
@@ -2113,6 +2220,9 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
             "age_hours": plan.get("age_hours"),
             "free_transfers": plan.get("free_transfers"),
             "hits": plan.get("hits"),
+            # Money, so the reader learns here rather than at the FPL site
+            # that the plan cannot be executed.
+            "bank_after_tenths": plan.get("bank_after_tenths"),
         }
         t_src, t_as_of = "solve_plan", plan_as_of
         # the rule moves dissent only where they differ from the solver
@@ -2131,7 +2241,8 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
                 "drill": mv.get("drill") or {"focus": "moves"},
             })
     elif moves:
-        t_rule = ("rule_moves_solver_stale" if solve["state"] == "stale"
+        t_rule = ("rule_moves_solver_stale"
+                  if solve["state"] in ("stale", "superseded")
                   else "rule_moves_solver_missing")
         t_moves = [{"out": m["out"], "in": m["in"]} for m in moves]
         t_numbers = {"n_rule_moves": len(moves)}
@@ -2139,7 +2250,7 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
     else:
         t_rule, t_moves, t_numbers = "no_move_named", [], {}
         t_src, t_as_of = "dashboard_brief", None
-    if plan is None and solve["state"] in ("stale", "missing"):
+    if plan is None and solve["state"] in ("stale", "superseded", "missing"):
         # the overruled/absent solver is itself a dissent entry, dated
         t_dissent.append({
             "voice": "solver", "rule": f"solve_{solve['state']}",
@@ -2200,6 +2311,18 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
             c_numbers["solver_vs_consensus"] = gap_x
             c_numbers["divergence_gate"] = float(
                 THRESHOLDS["captain_divergence_xpts"])
+        # What the armband change is worth, on the captain's OWN line. The
+        # number existed in suggested_xi and the view had to reach across two
+        # blocks to print it, so the one free action on the page -- no
+        # transfer, no hit, a couple of expected points -- went unquoted.
+        # Null when the pick is already the locked armband: there is no swap.
+        if suggested_xi is not None:
+            my_cap_ref = suggested_xi.get("your_captain")
+            delta = suggested_xi.get("captain_delta_xpts")
+            if (my_cap_ref and delta is not None
+                    and my_cap_ref.get("code") != cap_pick["code"]):
+                c_numbers["captain_delta_xpts"] = float(delta)
+                c_numbers["your_captain_code"] = int(my_cap_ref["code"])
     c_dissent: list[dict[str, Any]] = []
     if suggested_xi and cap_pick is not None:
         cn = suggested_xi.get("captain_numbers") or {}
@@ -2312,6 +2435,81 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
         "chip_state": solve["state"],
     }
 
+    # ---- season standing: my gameweeks against FPL's own field average ----
+    # The objective is P(top-1k) and the dashboard could not say where the
+    # season stood. GW3 scored 23 against a field average of 51 and the rank
+    # fell from 141,593 to 769,533 with nothing on the page saying so.
+    standing: dict[str, Any] | None = None
+    try:
+        mine = q(
+            wh,
+            "SELECT gw, points, points_on_bench, event_transfers_cost, "
+            "       overall_rank FROM ("
+            "  SELECT *, row_number() OVER ("
+            "    PARTITION BY entry_id, season, gw ORDER BY as_of DESC) rn "
+            "  FROM fact_manager_gw WHERE entry_id = ? AND season = ? "
+            "    AND as_of <= ?"
+            ") WHERE rn = 1 ORDER BY gw",
+            (eid, season, now),
+        )
+        field = q(
+            wh,
+            "SELECT gw, avg_entry_score FROM ("
+            "  SELECT *, row_number() OVER ("
+            "    PARTITION BY season, gw ORDER BY as_of DESC) rn "
+            "  FROM dim_event WHERE season = ? AND as_of <= ?"
+            ") WHERE rn = 1",
+            (season, now),
+        )
+    except Exception:  # noqa: BLE001 - a missing table is a gap, not a crash
+        mine = field = None
+    if mine is None or mine.empty:
+        standing = {
+            "entry_id": eid, "gws": [], "reason":
+            "no crawled gameweek for this entry yet; the manager crawl fills "
+            "this in once it has read the entry's history",
+        }
+    else:
+        by_gw = {}
+        if field is not None and not field.empty:
+            for r in field.to_dict("records"):
+                v = r.get("avg_entry_score")
+                if r.get("gw") is not None and v is not None and v == v:
+                    by_gw[int(r["gw"])] = float(v)
+        rows: list[dict[str, Any]] = []
+        for r in mine.to_dict("records"):
+            g = int(r["gw"])
+            pts = None if r.get("points") is None else int(r["points"])
+            fld = by_gw.get(g)
+            rows.append({
+                "gw": g,
+                "points": pts,
+                "field": fld,
+                "delta": None if pts is None or fld is None else round(pts - fld, 1),
+                "bench_points": (None if r.get("points_on_bench") is None
+                                 else int(r["points_on_bench"])),
+                "hit_cost": (None if r.get("event_transfers_cost") is None
+                             else int(r["event_transfers_cost"])),
+                "overall_rank": (None if r.get("overall_rank") is None
+                                 else int(r["overall_rank"])),
+            })
+        ranks = [x["overall_rank"] for x in rows if x["overall_rank"] is not None]
+        deltas = [x["delta"] for x in rows if x["delta"] is not None]
+        pts_all = [x["points"] for x in rows if x["points"] is not None]
+        standing = {
+            "entry_id": eid,
+            "overall_rank": ranks[-1] if ranks else None,
+            # Negative is an improvement: FPL ranks count upward from the top.
+            "rank_move": (ranks[-1] - ranks[-2]) if len(ranks) > 1 else None,
+            "total_points": sum(pts_all) if pts_all else None,
+            "vs_field_total": round(sum(deltas), 1) if deltas else None,
+            "as_of": sources_as_of.get("squad"),
+            "reason": (None if deltas else
+                       "no settled gameweek carries FPL's average entry score "
+                       "yet, so there is nothing to compare against"),
+            "gws": rows,
+        }
+
     # ---- assemble --------------------------------------------------------
     alerts.sort(key=lambda a: (
         a["priority"],
@@ -2373,6 +2571,7 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
         "moves_suppressed": moves_suppressed,
         "verdict": verdict,
         "header": header,
+        "standing": standing,
         "xpts_source": xpts_source,
         "xpts_as_of": xpts_as_of_v,
         "p_haul_source": p_haul_source,

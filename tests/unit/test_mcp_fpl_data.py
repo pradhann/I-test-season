@@ -83,12 +83,15 @@ def _warehouse(tmp_path, monkeypatch):
         wh.sql("INSERT INTO fact_player_fixture (season, code, fixture_id, gw, "
                "total_points, as_of) VALUES ('2026-27', 999, 11, 2, 9, ?)",
                [AS_OF])
-        wh.sql("INSERT INTO dim_event VALUES ('2026-27', 1, "
-               "'2026-08-14 17:30:00+00', true, ?)", [AS_OF])
-        wh.sql("INSERT INTO dim_event VALUES ('2026-27', 2, "
-               "'2026-08-21 17:30:00+00', false, ?)", [AS_OF])
-        wh.sql("INSERT INTO dim_event VALUES ('2026-27', 3, "
-               "'2099-01-01 17:30:00+00', false, ?)", [AS_OF])
+        # Columns named, not positional: dim_event gained the field's own
+        # gameweek result (avg_entry_score and friends) and a positional
+        # INSERT broke on the arity. A fixture should say which columns it
+        # sets so adding one never rewrites what an old row meant.
+        ev = ("INSERT INTO dim_event (season, gw, deadline_utc, is_finished, "
+              "as_of) VALUES (?, ?, ?, ?, ?)")
+        wh.sql(ev, ["2026-27", 1, "2026-08-14 17:30:00+00", True, AS_OF])
+        wh.sql(ev, ["2026-27", 2, "2026-08-21 17:30:00+00", False, AS_OF])
+        wh.sql(ev, ["2026-27", 3, "2099-01-01 17:30:00+00", False, AS_OF])
         wh.sql("INSERT INTO fact_fixture VALUES ('2026-27', 1, 1, "
                "'2026-08-15 14:00:00+00', 43, 1, true, 3, 1, ?)", [AS_OF])
     finally:

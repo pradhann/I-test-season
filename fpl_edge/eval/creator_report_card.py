@@ -76,12 +76,20 @@ __all__ = [
 #: makes it *quotable*.
 MIN_GW_MEASURED = 10
 
-#: The baselines the team channel understands. ``cohort_mean`` is the default
-#: and mirrors ``projection_scoring``'s convention exactly: the baseline is the
-#: mean of the OTHER measured subjects on the SAME observations. The official
-#: FPL field average would be better and is not in the warehouse -- see the
-#: ``field_average`` gap the panel reports.
-BASELINE_KINDS = ("cohort_mean", "crawled_pool_median")
+#: The baselines the team channel understands.
+#:
+#: ``field_average`` is the default and is FPL's own published
+#: ``average_entry_score`` for the gameweek: 50 in GW1, 81 in GW2, 51 in GW3.
+#: It is what a reader means by "beat the field", and it now sits in
+#: ``dim_event`` -- the ``field_average`` gap this panel used to report.
+#:
+#: ``cohort_mean`` mirrors ``projection_scoring``'s convention exactly: the
+#: baseline is the mean of the OTHER measured subjects on the SAME
+#: observations. It answers "better than the other creators".
+#:
+#: ``crawled_pool_median`` is the crawled rival pool, which is top-1k biased
+#: and must never be read as the field.
+BASELINE_KINDS = ("field_average", "cohort_mean", "crawled_pool_median")
 
 
 def wilson_interval(hits: int, n: int, z: float = 1.96

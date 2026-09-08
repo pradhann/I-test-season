@@ -269,11 +269,18 @@ def _gw(wh, entry_id, gw, points, rank, as_of=SEEDED):
 def seeded_db(tmp_path):
     path = tmp_path / "fpl.duckdb"
     wh = Warehouse(path)
+    # avg_entry_score is FPL's own published average for the gameweek and is
+    # the default baseline: "beat the field" is the question a reader asks,
+    # and comparing creators against each other answered a different one.
     wh.append("dim_event", pd.DataFrame([
         {"season": SEASON, "gw": 1, "is_finished": True,
-         "deadline_utc": NOW - dt.timedelta(days=9), "as_of": SEEDED},
+         "deadline_utc": NOW - dt.timedelta(days=9), "as_of": SEEDED,
+         "avg_entry_score": 50, "highest_score": 131,
+         "ranked_count": 8903411},
         {"season": SEASON, "gw": 2, "is_finished": True,
-         "deadline_utc": NOW - dt.timedelta(days=2), "as_of": SEEDED},
+         "deadline_utc": NOW - dt.timedelta(days=2), "as_of": SEEDED,
+         "avg_entry_score": 81, "highest_score": 161,
+         "ranked_count": 9904815},
     ]))
 
     from fpl_edge.ingest.content.store import ContentStore
@@ -405,10 +412,48 @@ def test_the_cohort_baseline_spans_every_verified_member_not_just_this_card(
     With a one-person cohort the delta is zero by construction, which would
     read as "exactly average" and mean nothing at all.
     """
-    one = card(seeded_db, creator="Small Sample")
+    # Explicit baseline: field_average is the default now that dim_event
+    # carries FPL's own average_entry_score, and this test is about what the
+    # cohort baseline does when one creator is asked for.
+    one = card(seeded_db, creator="Small Sample", baseline="cohort_mean")
     by_gw = {b["gw"]: b for b in one["baseline"]["by_gw"]}
     assert by_gw[1]["n"] == 2, "the baseline collapsed to the requested creator"
     assert by_gw[1]["points"] == pytest.approx((74 + 58) / 2)
+
+
+def test_the_default_baseline_is_the_field_not_the_other_creators(seeded_db):
+    """The question is "did they beat the field", and dim_event now carries
+    FPL's own answer. Comparing a creator against the other creators on the
+    panel answers "better than this room", which is a different claim."""
+    res = card(seeded_db)
+    assert res["baseline"]["kind"] == "field_average"
+    by_gw = {b["gw"]: b for b in res["baseline"]["by_gw"]}
+    assert by_gw[1]["points"] == 50 and by_gw[2]["points"] == 81, (
+        "the baseline must be FPL's published average, verbatim"
+    )
+    # The denominator is the whole game, not a sample of it.
+    assert by_gw[1]["n"] == 8903411
+    assert "average_entry_score" in res["baseline"]["reason"]
+    # And the gap it used to report is gone once the numbers are there.
+    assert "field_average" not in {g["key"] for g in res["gaps"]}
+
+
+def test_an_unsettled_gameweek_contributes_no_field_average(seeded_db):
+    """FPL reports 0 for a gameweek that has not been played. Storing that
+    zero would tell every reader the field scored nothing, so an unfinished
+    event carries NULL and is skipped rather than compared against."""
+    import pandas as pd_
+
+    from fpl_edge.store.warehouse import Warehouse as _W
+    with _W(seeded_db) as wh_:
+        wh_.append("dim_event", pd_.DataFrame([
+            {"season": SEASON, "gw": 3, "is_finished": False,
+             "deadline_utc": NOW + dt.timedelta(days=3), "as_of": SEEDED,
+             "avg_entry_score": None, "highest_score": None,
+             "ranked_count": None},
+        ]))
+    gws = {b["gw"] for b in card(seeded_db)["baseline"]["by_gw"]}
+    assert 3 not in gws, "an unplayed gameweek became a zero baseline"
 
 
 def test_the_pool_baseline_is_labelled_as_not_the_field(seeded_db):
@@ -417,13 +462,44 @@ def test_the_pool_baseline_is_labelled_as_not_the_field(seeded_db):
     assert "must not be read as 'the field'" in res["baseline"]["reason"]
 
 
-def test_the_gaps_name_the_missing_field_average_and_the_uncrawled_entries(
+def test_the_gaps_name_the_uncrawled_entries_and_the_empty_numeric_channel(
         seeded_db):
     gaps = {g["key"]: g for g in card(seeded_db)["gaps"]}
-    assert "field_average" in gaps
-    assert "average_entry_score" in gaps["field_average"]["what"]
     assert "6816" in gaps["uncrawled_entries"]["what"]
     assert gaps["no_numeric_channel"]["fix"]
+
+
+def test_the_field_average_gap_appears_only_while_the_number_is_missing(
+        seeded_db):
+    """The gap list is a claim about THIS warehouse, so it is checked rather
+    than remembered. With averages present the gap is absent; with a newer
+    snapshot carrying none, the same code reports it again."""
+    import pandas as pd_
+
+    from fpl_edge.store.warehouse import Warehouse as _W
+
+    assert "field_average" not in {g["key"] for g in card(seeded_db)["gaps"]}
+
+    # A later observation in which FPL published no average: the point-in-time
+    # read takes the newest row per gameweek, so the baseline empties out.
+    later = SEEDED + dt.timedelta(hours=1)
+    with _W(seeded_db) as wh_:
+        wh_.append("dim_event", pd_.DataFrame([
+            {"season": SEASON, "gw": gw, "is_finished": True,
+             "deadline_utc": NOW - dt.timedelta(days=9 if gw == 1 else 2),
+             "as_of": later, "avg_entry_score": None,
+             "highest_score": None, "ranked_count": None}
+            for gw in (1, 2)
+        ]))
+    res = card(seeded_db)
+    gaps = {g["key"]: g for g in res["gaps"]}
+    assert "field_average" in gaps, (
+        "no gameweek carries an average, so the gap must be reported"
+    )
+    assert "average_entry_score" in gaps["field_average"]["what"]
+    assert res["baseline"]["by_gw"] == [], (
+        "an absent average must not become a zero baseline"
+    )
 
 
 def test_the_ordering_is_by_evidence_not_by_hit_rate(seeded_db):
@@ -436,3 +512,67 @@ def test_a_lower_min_scored_moves_quotable_but_never_the_weight(seeded_db):
     small = _by_name(card(seeded_db, min_scored=5))["Small Sample"]
     assert small["claims"]["quotable"] is True
     assert small["claims"]["weight"] == 0.0 and small["claims"]["earned"] is False
+
+
+# ------------------------------------------------------------ the headline
+#
+# The headline is the one sentence read aloud with no chart beside it, so it
+# has to survive every shape the channels can take and obey the house rule.
+
+def test_the_headline_survives_a_measured_gameweek_with_no_baseline_beside_it():
+    """`field_average` has a row per gameweek FPL has published, and a crawled
+    squad can sit on a gameweek it does not cover. `mean_delta` is then None,
+    and formatting None as "+0.0" would invent a comparison that was never
+    made."""
+    from fpl_edge.platform.scripts.creators import _card_headline
+
+    line, _ = _card_headline(
+        "X", {"n_scored": 0}, {"measured": False},
+        {"people": [{"person": "P", "n_gw": 2, "mean_delta": None, "points": 140}],
+         "baseline": {"kind": "field_average", "label": "the field"}},
+    )
+    assert "140" in line and "2 gameweek(s)" in line
+    assert "no baseline on those gameweeks" in line
+    assert "+0.0" not in line
+
+
+def test_the_headline_names_the_baseline_rather_than_its_key():
+    """"vs the field_average" is an identifier, not a sentence. The payload
+    carries a label written for a reader; the headline uses it."""
+    from fpl_edge.platform.scripts.creators import _card_headline
+
+    line, _ = _card_headline(
+        "X",
+        {"n_scored": 274, "hits": 110, "hit_rate": 0.4, "wilson_lo95": 0.34,
+         "wilson_hi95": 0.46, "vs_coin_flip": "below", "quotable": True,
+         "min_scored_claims": 25},
+        {"measured": False},
+        {"people": [{"person": "P", "n_gw": 3, "mean_delta": 15.0, "points": 227}],
+         "baseline": {"kind": "field_average",
+                      "label": "FPL's published average entry score"}},
+    )
+    assert "FPL's published average entry score" in line
+    assert "field_average" not in line
+
+
+def test_the_headline_obeys_the_house_rule_on_every_branch():
+    from fpl_edge.platform.scripts.creators import _card_headline
+
+    shapes = [
+        ({"n_scored": 0}, {"measured": False}, {"people": []}),
+        ({"n_scored": 12, "hits": 5, "hit_rate": 0.42, "wilson_lo95": 0.2,
+          "wilson_hi95": 0.67, "vs_coin_flip": "indistinguishable",
+          "quotable": False, "min_scored_claims": 25},
+         {"measured": True, "provider": "p", "mae": 1.0, "baseline_mae": 2.0},
+         {"people": [{"person": "P", "n_gw": 0, "mean_delta": None, "points": None}]}),
+        ({"n_scored": 30, "hits": 20, "hit_rate": 0.67, "wilson_lo95": 0.52,
+          "wilson_hi95": 0.8, "vs_coin_flip": "above", "quotable": True,
+          "min_scored_claims": 25},
+         {"measured": False},
+         {"people": [{"person": "P", "n_gw": 4, "mean_delta": 3.0, "points": 200}],
+          "baseline": {"kind": "cohort_mean", "label": "the cohort"}}),
+    ]
+    for claims, numeric, team in shapes:
+        line, _ = _card_headline("X", claims, numeric, team)
+        assert " -- " not in line and "—" not in line, line
+        assert "None" not in line, line
