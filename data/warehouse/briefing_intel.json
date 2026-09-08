@@ -1,106 +1,67 @@
 {
- "generated_at": "2026-09-08T05:47:19.920920+00:00",
+ "generated_at": "2026-09-08T06:44:56.886263+00:00",
  "model": "opus",
  "meta_prompt_hash": "0a3c460b40f8",
  "input_as_of": {
   "squad_overview": "2026-09-08T05:31:12.061852+00:00",
   "projection_table": "2026-09-08T05:31:12.061852+00:00",
   "ownership_eo": "2026-09-08T05:31:12.061852+00:00",
-  "fixture_board": "2026-09-08T05:47:21.215586+00:00",
+  "fixture_board": "2026-09-08T06:45:00.924350+00:00",
   "price_radar": "2026-09-08T05:31:12.061852+00:00",
   "dashboard_brief": "2026-09-07T10:00:19.879508+00:00"
  },
  "items": [
   {
-   "headline": "Haaland 71.2% owned, 95.9% in the elite cohort (n=343), and you do not hold him",
-   "why": "Ownership panel: Haaland global own 71.2%, elite cohort own 95.9% with cap 94.5% (n=343). Projection table has him top at 6.042 xPts GW4; the dashboard tile puts him at 23.16 xPts GW4-7 against Isak's 13.36.",
+   "headline": "Armband on Isak at 4.22 xPts, solver names B.Fernandes at 6.21, delta 1.99",
+   "why": "Isak carries your EO 200.0% against a field EO of 21.8% over 262 managers, 0.4% of whom captain him (ownership_eo). Moving the armband to B.Fernandes adds 1.99 xPts on the GW4 consensus (dashboard_brief).",
    "severity": 1,
    "numbers": [
     {
-     "value": 71.2,
-     "unit": "own %",
+     "value": 200.0,
+     "unit": "your EO %",
      "source_panel": "ownership_eo",
      "as_of": "2026-09-08T05:31:12.061852+00:00"
     },
     {
-     "value": 95.9,
-     "unit": "elite own % (n=343)",
+     "value": 21.8,
+     "unit": "field EO % (n=262)",
      "source_panel": "ownership_eo",
      "as_of": "2026-09-08T05:31:12.061852+00:00"
     },
     {
-     "value": 23.16,
-     "unit": "xPts GW4-7",
+     "value": 0.4,
+     "unit": "field cap % (n=262)",
+     "source_panel": "ownership_eo",
+     "as_of": "2026-09-08T05:31:12.061852+00:00"
+    },
+    {
+     "value": 1.99,
+     "unit": "captain delta xPts GW4",
      "source_panel": "dashboard_brief",
      "as_of": "2026-09-07T10:00:19.879508+00:00"
     },
-    {
-     "value": 13.36,
-     "unit": "xPts GW4-7 Isak",
-     "source_panel": "dashboard_brief",
-     "as_of": "2026-09-07T10:00:19.879508+00:00"
-    }
-   ],
-   "codes": [
-    223094,
-    219168
-   ],
-   "drill": {
-    "drawer": 223094
-   },
-   "source_panels": [
-    "ownership_eo",
-    "projection_table",
-    "dashboard_brief",
-    "squad_overview"
-   ]
-  },
-  {
-   "headline": "Captain: Isak holds the armband at 4.221 xPts, B.Fernandes projects 6.21",
-   "why": "Dashboard brief captain line: solver picks B.Fernandes at 6.21 xPts and p_haul 0.177, your Isak sits at 4.221 xPts and p_haul 0.0895, a 1.99 xPts captain delta. Creator board dissents with 6 armband calls for Palmer.",
-   "severity": 1,
-   "numbers": [
     {
      "value": 6.21,
      "unit": "xPts GW4",
      "source_panel": "dashboard_brief",
      "as_of": "2026-09-07T10:00:19.879508+00:00"
-    },
-    {
-     "value": 4.221,
-     "unit": "xPts GW4",
-     "source_panel": "dashboard_brief",
-     "as_of": "2026-09-07T10:00:19.879508+00:00"
-    },
-    {
-     "value": 1.99,
-     "unit": "captain delta xPts",
-     "source_panel": "dashboard_brief",
-     "as_of": "2026-09-07T10:00:19.879508+00:00"
-    },
-    {
-     "value": 6,
-     "unit": "armband calls",
-     "source_panel": "dashboard_brief",
-     "as_of": "2026-09-07T10:00:19.879508+00:00"
     }
    ],
    "codes": [
-    141746,
     219168,
-    244851
+    141746
    ],
    "drill": {
     "drawer": 141746
    },
    "source_panels": [
-    "dashboard_brief",
-    "squad_overview"
+    "ownership_eo",
+    "dashboard_brief"
    ]
   },
   {
-   "headline": "Gakpo rising at 4,179.9 net/hr, elite own 2.0% (n=343) against top1k own 46.1% (n=597)",
-   "why": "Price radar 18.96h window: Gakpo net +79,263, global own 13.7%. The two cohorts disagree sharply: elite own 2.0% (n=343), top1k own 46.1% (n=597). He is the solver's first move in for Cherki at a 0.6 price saving.",
+   "headline": "Gakpo is the solver's transfer in at 4,179.9 net/hr, elite own 2.0% (n=343)",
+   "why": "Cherki to Gakpo is the first solver move (dashboard_brief), and Gakpo shows +79,263 net over 18.96h, 4,179.9/hr, price unchanged (price_radar, observed flow). Global own 13.7%, elite own 2.0% (n=343) against top1k own 35.6% (n=2686) (ownership_eo).",
    "severity": 1,
    "numbers": [
     {
@@ -110,8 +71,14 @@
      "as_of": "2026-09-08T05:31:12.061852+00:00"
     },
     {
+     "value": 79263,
+     "unit": "net transfers",
+     "source_panel": "price_radar",
+     "as_of": "2026-09-08T05:31:12.061852+00:00"
+    },
+    {
      "value": 13.7,
-     "unit": "own %",
+     "unit": "global own %",
      "source_panel": "ownership_eo",
      "as_of": "2026-09-08T05:31:12.061852+00:00"
     },
@@ -122,14 +89,15 @@
      "as_of": "2026-09-08T05:31:12.061852+00:00"
     },
     {
-     "value": 46.1,
-     "unit": "top1k own % (n=597)",
+     "value": 35.6,
+     "unit": "top1k own % (n=2686)",
      "source_panel": "ownership_eo",
      "as_of": "2026-09-08T05:31:12.061852+00:00"
     }
    ],
    "codes": [
-    243298
+    243298,
+    466052
    ],
    "drill": {
     "drawer": 243298
@@ -141,13 +109,13 @@
    ]
   },
   {
-   "headline": "Solver plan: 2 free transfers, 0 hits, gain_over_roll 19.01 xPts over GW4-6",
-   "why": "Solve plan generated 0.1h ago: Cherki to Gakpo and Ødegaard to Tavernier, both price_delta -0.6, hits 0. It stopped at a 5.56% optimality gap after 153.3 seconds, so it is best-found rather than proven.",
+   "headline": "Solver plan gains 19.01 over rolling across GW4-6, 2 free transfers, 0 hits",
+   "why": "Cherki to Gakpo and Ødegaard to Tavernier gain 19.01 over roll with 0 hits and 12 tenths banked after (dashboard_brief). The solve stopped at a 5.56% optimality gap, and Ødegaard sits at your own 100% against field own 1.9% over 262 managers (ownership_eo).",
    "severity": 1,
    "numbers": [
     {
      "value": 19.0136,
-     "unit": "gain over roll xPts",
+     "unit": "xPts gain over roll, GW4-6",
      "source_panel": "dashboard_brief",
      "as_of": "2026-09-07T10:00:19.879508+00:00"
     },
@@ -162,9 +130,16 @@
      "unit": "free transfers",
      "source_panel": "dashboard_brief",
      "as_of": "2026-09-07T10:00:19.879508+00:00"
+    },
+    {
+     "value": 1.9,
+     "unit": "field own % (n=262)",
+     "source_panel": "ownership_eo",
+     "as_of": "2026-09-08T05:31:12.061852+00:00"
     }
    ],
    "codes": [
+    466052,
     243298,
     184029,
     201658
@@ -173,12 +148,62 @@
     "tab": "solver"
    },
    "source_panels": [
-    "dashboard_brief"
+    "dashboard_brief",
+    "ownership_eo"
    ]
   },
   {
-   "headline": "B.Fernandes bleeding 2,732.8 net/hr while the elite cohort still holds him 49.6% (n=343)",
-   "why": "Price radar over 18.96h: B.Fernandes net -51,823, price change 0 so far. Ownership panel: global own 46.7%, elite cohort own 49.6% and started by 170 of 343. The market is selling a player the elite field has not dropped, and he is the solver's captain at 6.21 xPts.",
+   "headline": "Haaland unowned: 23.16 xPts GW4-7 against Isak 13.36, elite own 95.9% (n=343)",
+   "why": "Haaland projects 23.16 xPts over GW4-7 versus 13.36 for your weakest forward starter Isak (dashboard_brief). Global own 71.2%, elite own 95.9% with 94.5% captaining him (n=343, ownership_eo), at a price of 15.5 with 3 tenths in the bank (squad_overview).",
+   "severity": 2,
+   "numbers": [
+    {
+     "value": 23.16,
+     "unit": "xPts GW4-7",
+     "source_panel": "dashboard_brief",
+     "as_of": "2026-09-07T10:00:19.879508+00:00"
+    },
+    {
+     "value": 13.36,
+     "unit": "xPts GW4-7, weakest starter",
+     "source_panel": "dashboard_brief",
+     "as_of": "2026-09-07T10:00:19.879508+00:00"
+    },
+    {
+     "value": 71.2,
+     "unit": "global own %",
+     "source_panel": "ownership_eo",
+     "as_of": "2026-09-08T05:31:12.061852+00:00"
+    },
+    {
+     "value": 95.9,
+     "unit": "elite own % (n=343)",
+     "source_panel": "ownership_eo",
+     "as_of": "2026-09-08T05:31:12.061852+00:00"
+    },
+    {
+     "value": 3,
+     "unit": "bank tenths",
+     "source_panel": "squad_overview",
+     "as_of": "2026-09-08T05:31:12.061852+00:00"
+    }
+   ],
+   "codes": [
+    223094,
+    219168
+   ],
+   "drill": {
+    "drawer": 223094
+   },
+   "source_panels": [
+    "dashboard_brief",
+    "ownership_eo",
+    "squad_overview"
+   ]
+  },
+  {
+   "headline": "B.Fernandes sold 51,823 net in 19h while carrying the squad's top GW4 xPts",
+   "why": "Price radar records -2,732.8 net/hr over 18.96 hours on B.Fernandes, observed flow with price change 0 tenths so far. Elite own 49.6% (n=343) sits above global 46.7% (ownership_eo), and the solver captains him at 6.21 xPts (dashboard_brief).",
    "severity": 2,
    "numbers": [
     {
@@ -195,7 +220,7 @@
     },
     {
      "value": 46.7,
-     "unit": "own %",
+     "unit": "global own %",
      "source_panel": "ownership_eo",
      "as_of": "2026-09-08T05:31:12.061852+00:00"
     },
@@ -204,6 +229,12 @@
      "unit": "elite own % (n=343)",
      "source_panel": "ownership_eo",
      "as_of": "2026-09-08T05:31:12.061852+00:00"
+    },
+    {
+     "value": 6.21,
+     "unit": "xPts GW4",
+     "source_panel": "dashboard_brief",
+     "as_of": "2026-09-07T10:00:19.879508+00:00"
     }
    ],
    "codes": [
@@ -217,129 +248,11 @@
     "ownership_eo",
     "dashboard_brief"
    ]
-  },
-  {
-   "headline": "Maguire already fell 0.1 at -2,208.1 net/hr; he is on your bench at 2.595 xPts",
-   "why": "Price radar 18.96h: Maguire net -41,873, price_change -1 tenth, global own 12.6%. Squad overview has him benched at 2.595 xPts, and bank is 0.3.",
-   "severity": 2,
-   "numbers": [
-    {
-     "value": -2208.1,
-     "unit": "net/hr",
-     "source_panel": "price_radar",
-     "as_of": "2026-09-08T05:31:12.061852+00:00"
-    },
-    {
-     "value": -1,
-     "unit": "price change tenths",
-     "source_panel": "price_radar",
-     "as_of": "2026-09-08T05:31:12.061852+00:00"
-    },
-    {
-     "value": 2.595,
-     "unit": "xPts GW4",
-     "source_panel": "squad_overview",
-     "as_of": "2026-09-08T05:31:12.061852+00:00"
-    },
-    {
-     "value": 3,
-     "unit": "bank tenths",
-     "source_panel": "squad_overview",
-     "as_of": "2026-09-08T05:31:12.061852+00:00"
-    }
-   ],
-   "codes": [
-    95658
-   ],
-   "drill": {
-    "drawer": 95658
-   },
-   "source_panels": [
-    "price_radar",
-    "squad_overview"
-   ]
-  },
-  {
-   "headline": "Isak at 200% your EO against 21.8% field EO (n=262), the largest single divergence you carry",
-   "why": "Ownership diff panel, GW3 field squads: Isak field own 21.4%, field captained by 1 of 262, edge_eo 178.2 points. Price radar shows him +3,690.8 net/hr with a 1 tenth rise already recorded, so the field is buying him after your entry.",
-   "severity": 2,
-   "numbers": [
-    {
-     "value": 200.0,
-     "unit": "your EO %",
-     "source_panel": "ownership_eo",
-     "as_of": "2026-09-08T05:31:12.061852+00:00"
-    },
-    {
-     "value": 21.8,
-     "unit": "field EO % (n=262)",
-     "source_panel": "ownership_eo",
-     "as_of": "2026-09-08T05:31:12.061852+00:00"
-    },
-    {
-     "value": 178.2,
-     "unit": "edge EO %",
-     "source_panel": "ownership_eo",
-     "as_of": "2026-09-08T05:31:12.061852+00:00"
-    },
-    {
-     "value": 3690.8,
-     "unit": "net/hr",
-     "source_panel": "price_radar",
-     "as_of": "2026-09-08T05:31:12.061852+00:00"
-    }
-   ],
-   "codes": [
-    219168
-   ],
-   "drill": {
-    "drawer": 219168
-   },
-   "source_panels": [
-    "ownership_eo",
-    "price_radar"
-   ]
-  },
-  {
-   "headline": "Arsenal assets face a GW4-6 run ranked 13 for attack, 11 for defence over the horizon",
-   "why": "Fixture board GW4-6: Arsenal attack_ease_sum -0.2369 and defence_ease_sum -0.2191 across sun, bha, LEE, with the GW4 trip to Sunderland rated 34 of 40 for attack. You hold Calafiori at 3.908 xPts and Ødegaard, who the solver moves out.",
-   "severity": 3,
-   "numbers": [
-    {
-     "value": -0.2369,
-     "unit": "attack ease sum GW4-6",
-     "source_panel": "fixture_board",
-     "as_of": "2026-09-08T05:47:21.215586+00:00"
-    },
-    {
-     "value": 34,
-     "unit": "attack rank GW4",
-     "source_panel": "fixture_board",
-     "as_of": "2026-09-08T05:47:21.215586+00:00"
-    },
-    {
-     "value": 3.908,
-     "unit": "xPts GW4",
-     "source_panel": "squad_overview",
-     "as_of": "2026-09-08T05:31:12.061852+00:00"
-    }
-   ],
-   "codes": [
-    466075,
-    184029
-   ],
-   "drill": {
-    "tab": "fixtures"
-   },
-   "source_panels": [
-    "fixture_board",
-    "squad_overview"
-   ]
   }
  ],
  "rejected_n": 0,
  "rejected_reasons": [],
- "duration_s": 46.8,
+ "duration_s": 91.42,
  "dropped_panels": [
   "creator_board"
  ]
