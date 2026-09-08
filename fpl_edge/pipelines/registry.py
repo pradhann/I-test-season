@@ -731,7 +731,15 @@ def run_audio_retention(ctx: TaskContext) -> TaskResult:
     # 2026-09-07); only the rule "delete nothing without a provenance row"
     # kept those sweeps at zero deletions. The real database resolves to the
     # real directory unchanged.
-    cache_dir = Path(ctx.db_path).parent.parent / "raw" / "content" / "asr_audio"
+    # An OVERRIDDEN asr.AUDIO_CACHE (tests monkeypatch it; a deployment may
+    # set it) is honoured; only the shipped default is replaced by the
+    # database-relative path, so the real database still resolves to the
+    # real directory and a tmp database never walks the repo's cache.
+    shipped_default = Path("data/raw/content/asr_audio")
+    if Path(asr.AUDIO_CACHE) != shipped_default:
+        cache_dir = Path(asr.AUDIO_CACHE)
+    else:
+        cache_dir = Path(ctx.db_path).parent.parent / "raw" / "content" / "asr_audio"
     with ctx.read() as wh:
         sweep = asr.sweep_audio_cache(wh, dry_run=False, cache_dir=cache_dir)
     return TaskResult(
