@@ -1,4 +1,4 @@
-/* Template & EO — built around ONE question, not around a table.
+/* EliteFPL (#template; template & EO): built around ONE question, not around a table.
  *
  * The engine's objective is P(top-1k), not expected points, and
  * (docs/platform/rank_objectives.md §0–§1)
@@ -56,7 +56,7 @@
  */
 
 import { runPanel, getJSON, el, emptyBox, errBox, provenance, faceImg,
-         playerCard, fmtPrice, fmt1, fmt2 } from "/js/app.js";
+         playerCard, fmtPrice, fmt1, fmt2, fmtSpan } from "/js/app.js";
 import { renderTools } from "/js/views/template-tools.js";
 // the cross-tab player strip: what the panel owns, said and noticed about him
 import { chatterStrip } from "/js/components/chatter.js";
@@ -75,15 +75,15 @@ const pct = v => v == null ? "–" : `${Number(v).toFixed(1)}%`;
 const signed = v => v == null ? "–"
   : `${v > 0 ? "+" : v < 0 ? "−" : ""}${Math.abs(v).toFixed(1)}`;
 
-/* Same freshness vocabulary as the xPoints view, so a dot means one thing
+/* Same freshness vocabulary as the Projections view, so a dot means one thing
    across the app. Unparseable timestamps say "?" rather than guessing. */
 function ageInfo(iso) {
   if (!iso) return { cls: "bad", text: "age unknown" };
   const h = (Date.now() - new Date(String(iso).replace(" ", "T"))) / 3.6e6;
   if (!isFinite(h)) return { cls: "bad", text: "age unknown" };
-  if (h < 36) return { cls: "good", text: h < 1.5 ? "fresh" : `${Math.round(h)}h old` };
-  if (h < 72) return { cls: "warn", text: `${Math.round(h)}h old` };
-  return { cls: "bad", text: `${Math.round(h / 24)}d old` };
+  if (h < 36) return { cls: "good", text: h < 1.5 ? "fresh" : `${fmtSpan(h)} old` };
+  if (h < 72) return { cls: "warn", text: `${fmtSpan(h)} old` };
+  return { cls: "bad", text: `${fmtSpan(h)} old` };
 }
 
 const MEASURE = {

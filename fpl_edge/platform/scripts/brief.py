@@ -699,7 +699,7 @@ RESULT: dict[str, Any] = {
         "verdict": _VERDICT,
         "header": _HEADER,
         # Sources of the squad card's two projection columns, threaded from
-        # squad_overview: xPts is the provider consensus (the xPoints tab's
+        # squad_overview: xPts is the provider consensus (the Projections tab's
         # own numbers, so the two surfaces cannot disagree); p_haul is the
         # engine simulation with its OWN data-birth instant, which can be
         # weeks older — the two clocks are never conflated.
@@ -789,8 +789,14 @@ def best_legal_xi(squad15: list[dict[str, Any]]) -> dict[str, Any] | None:
         return None
     total, xi, formation = best
     xi_codes = {p["code"] for p in xi}
-    bench = sorted((p for p in squad15 if p["code"] not in xi_codes),
-                   key=xv, reverse=True)
+    # FPL's bench convention: the goalkeeper is ALWAYS bench slot 1 (a
+    # sub keeper only ever replaces the keeper), then the three outfielders
+    # in consensus-xPts order, nulls last. The dashboard pitch draws this
+    # list as served, so the two surfaces stay one order.
+    rest = [p for p in squad15 if p["code"] not in xi_codes]
+    bench = ([p for p in rest if p.get("pos") == "GKP"]
+             + sorted((p for p in rest if p.get("pos") != "GKP"),
+                      key=xv, reverse=True))
     return {"xi": xi, "bench": bench, "formation": formation,
             "xi_xpts": round(total, 2)}
 
@@ -2037,7 +2043,7 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
             }
 
     # ---- projection provenance, threaded from the squad panel ------------
-    # xPts = provider consensus (the xPoints tab's numbers); p_haul = the
+    # xPts = provider consensus (the Projections tab's numbers); p_haul = the
     # engine simulation with its own, possibly much older, data-birth
     # instant. Served side by side, two clocks, never conflated.
     xpts_source = None if sq.get("empty") else sq.get("xpts_source")

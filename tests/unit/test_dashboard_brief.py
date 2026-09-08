@@ -687,7 +687,7 @@ def test_move_rank_carries_the_boards_own_horizon_gws(db, tmp_path):
 
 def test_projection_data_birth_and_source_are_named_at_point_of_use(db):
     """The squad card's TWO projection columns each name their own source
-    and clock: xPts is the provider consensus (the xPoints tab's numbers,
+    and clock: xPts is the provider consensus (the Projections tab's numbers,
     so one player can never wear 5.6 here and 4.7 there), and p_haul is the
     engine simulation with its own, possibly much older, data-birth."""
     sq = run_script("squad_overview", {}, db=db).result
@@ -922,8 +922,8 @@ def test_a_solver_captain_carries_its_disagreement_with_the_consensus(db, tmp_pa
 
 def test_squad_card_xpts_equals_the_xpoints_tab_for_the_same_player(db):
     """The owner's report: Gabriel read 5.6 on the dashboard and 4.7 on the
-    xPoints tab. One player, one gameweek, two surfaces, two numbers — the
-    squad card was quoting a solved simulation artefact while the xPoints
+    Projections tab. One player, one gameweek, two surfaces, two numbers: the
+    squad card was quoting a solved simulation artefact while the Projections
     tab quoted the provider consensus. Both surfaces now read the SAME
     consensus, and this test fails the moment they diverge again."""
     sq = run_script("squad_overview", {}, db=db).result
@@ -935,7 +935,7 @@ def test_squad_card_xpts_equals_the_xpoints_tab_for_the_same_player(db):
         if row is None or p["xpts"] is None:
             continue
         assert p["xpts"] == pytest.approx(row["xpts"], abs=5e-4), (
-            f"{p['name']}: squad card {p['xpts']} vs xPoints {row['xpts']}")
+            f"{p['name']}: squad card {p['xpts']} vs Projections {row['xpts']}")
         seen += 1
     assert seen >= 10, "the comparison must actually cover the squad"
 
@@ -1133,7 +1133,8 @@ def _legal_xi_brute(pool):
 def test_best_xi_is_the_formation_legal_max_by_consensus_xpts(db):
     """The pitch draws ONE lineup: the best legal XI from the 15 by the
     consensus xPts squad_overview serves, captain = its highest xPts, the
-    bench in xPts order, and the locked picks named where they differ."""
+    bench GK-first then in xPts order, and the locked picks named where
+    they differ."""
     sq = run_script("squad_overview", {}, db=db).result
     brief = run_script("dashboard_brief", {}, db=db).result
     bx = brief["best_xi"]
@@ -1149,10 +1150,13 @@ def test_best_xi_is_the_formation_legal_max_by_consensus_xpts(db):
          for k in ("GKP", "DEF", "MID", "FWD")}
     assert n["GKP"] == 1 and 3 <= n["DEF"] <= 5 and 2 <= n["MID"] <= 5 \
         and 1 <= n["FWD"] <= 3
-    # the bench is the other four, in xPts order (nulls last)
+    # the bench is the other four: FPL's convention puts the goalkeeper in
+    # slot 1 ALWAYS, then the outfielders in xPts order (nulls last)
     assert set(bx["bench_codes"]) == set(by_code) - codes
+    assert by_code[bx["bench_codes"][0]]["pos"] == "GKP"
+    assert all(by_code[c]["pos"] != "GKP" for c in bx["bench_codes"][1:])
     bx_x = [by_code[c]["xpts"] if by_code[c]["xpts"] is not None else 0.0
-            for c in bx["bench_codes"]]
+            for c in bx["bench_codes"][1:]]
     assert bx_x == sorted(bx_x, reverse=True)
     # captain = highest consensus xPts IN the XI; candidates are its top 3
     xi_ranked = sorted((by_code[c] for c in codes
@@ -1204,6 +1208,24 @@ def test_best_legal_xi_helper_refuses_an_illegal_squad_and_honours_the_law():
                                                  20, 21, 22, 23, 30}
     # a null xPts counts as 0 and sits last on the bench
     assert found["bench"][-1]["code"] == 32
+
+
+def test_best_legal_xi_bench_puts_the_goalkeeper_first_then_xpts_order():
+    """FPL's bench convention: the sub keeper is ALWAYS bench slot 1 even
+    when an outfielder carries more xPts (the Calvert-Lewin-first bug);
+    the three outfielders then rank by consensus xPts, nulls last."""
+    from fpl_edge.platform.scripts.brief import best_legal_xi
+
+    mk = lambda code, pos, x: {"code": code, "pos": pos, "xpts": x}  # noqa: E731
+    squad = ([mk(1, "GKP", 4.0), mk(2, "GKP", 0.2)]        # weak sub keeper
+             + [mk(10 + i, "DEF", 5.0) for i in range(4)] + [mk(14, "DEF", 1.1)]
+             + [mk(20 + i, "MID", 5.0) for i in range(4)] + [mk(24, "MID", None)]
+             + [mk(30, "FWD", 6.0), mk(31, "FWD", 5.5), mk(32, "FWD", 3.9)])
+    found = best_legal_xi(squad)
+    assert found["formation"] == "4-4-2"
+    bench = [p["code"] for p in found["bench"]]
+    # keeper first despite 0.2 xPts; then FWD 3.9, DEF 1.1, MID null
+    assert bench == [2, 32, 14, 24]
 
 
 def test_squad_source_names_the_public_read_and_its_one_fix(db):

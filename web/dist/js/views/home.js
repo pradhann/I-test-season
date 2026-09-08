@@ -48,7 +48,7 @@
    blanks. */
 
 import { runPanel, getJSON, postJSON, el, errBox, provenance, stat,
-         fmtPrice, fmt1, fmt2 } from "/js/app.js";
+         fmtPrice, fmt1, fmt2, fmtSpan } from "/js/app.js";
 import { attachPlayerDrawer, showPlayerDetail } from "/js/components/playerdrawer.js";
 
 const PHOTO = c =>
@@ -64,13 +64,12 @@ function parseTs(s) {
   return isNaN(d) ? null : d;
 }
 function ageText(iso) {
+  // the SHARED vocabulary (app.js fmtSpan): "Nh Mm", "Nd Nh", "N days"
   const d = parseTs(iso);
   if (!d) return "age unknown";
   const h = (Date.now() - d.getTime()) / 3.6e6;
   if (h < 0) return "in the future?";
-  if (h < 1) return `${Math.max(1, Math.round(h * 60))}m`;
-  if (h < 48) return `${Math.round(h)}h`;
-  return `${Math.round(h / 24)}d`;
+  return fmtSpan(h);
 }
 function clockText(iso) {
   const d = parseTs(iso);
@@ -374,7 +373,7 @@ export default async function home(host) {
                                 "squad value"));
     if (sq && sq.projected_xi_xpts != null) {
       // Σ marks the SUM (the median tile beside it is per starter — 11× the
-      // unit); xPts is the provider consensus, the xPoints tab's own numbers
+      // unit); xPts is the provider consensus, the Projections tab's own numbers
       const gen = shortDate(brief?.xpts_as_of);
       const xi = stat(fmt1(sq.projected_xi_xpts),
                       "Σ XI xPts" + (gen ? ` · consensus ${gen}` : ""));
@@ -481,7 +480,7 @@ export default async function home(host) {
         break;
       case "solver":
         txt = `solver ${String(d.rule).replace("solve_", "")}`
-          + (n.age_hours != null ? ` · ${fmt1(n.age_hours)}h` : "");
+          + (n.age_hours != null ? ` · ${fmtSpan(n.age_hours)}` : "");
         break;
       default:
         txt = d.voice;
@@ -534,7 +533,7 @@ export default async function home(host) {
             + `, solver forecast`);
         if (n.optimality_gap_pct != null)
           numBits.push(`${fmt1(n.optimality_gap_pct)}% gap`);
-        if (n.age_hours != null) numBits.push(`${fmt1(n.age_hours)}h old`);
+        if (n.age_hours != null) numBits.push(`${fmtSpan(n.age_hours)} old`);
         if (n.hits) numBits.push(`${n.hits} hit(s)`);
         break;
       }
@@ -545,7 +544,7 @@ export default async function home(host) {
           numBits.push(`${n.free_transfers} FT carried forward`);
         if (n.optimality_gap_pct != null)
           numBits.push(`${fmt1(n.optimality_gap_pct)}% gap`);
-        if (n.age_hours != null) numBits.push(`${fmt1(n.age_hours)}h old`);
+        if (n.age_hours != null) numBits.push(`${fmtSpan(n.age_hours)} old`);
         break;
       case "rule_moves_solver_stale":
       case "rule_moves_solver_missing": {
@@ -734,7 +733,7 @@ export default async function home(host) {
   function intelProvChip() {
     const chip = el("span", "db-agentchip",
       `agent-written · ${intel?.model || "?"} · `
-      + (intel?.age_hours != null ? `${fmt1(intel.age_hours)}h`
+      + (intel?.age_hours != null ? fmtSpan(intel.age_hours)
                                   : ageText(intel?.generated_at)));
     chip.title = `model-authored briefing`
       + (intel?.generated_at ? ` · generated ${intel.generated_at}` : "")
@@ -1299,8 +1298,18 @@ export default async function home(host) {
     const usable = !!(bestXi && (bestXi.xi_codes || []).length === 11);
     const xiCodes = usable ? bestXi.xi_codes
       : (sq.starters || []).map(x => x.code);
-    const benchCodes = usable ? bestXi.bench_codes
-      : (sq.bench || []).map(x => x.code);
+    // FPL's bench convention: the goalkeeper is ALWAYS slot 1, then the
+    // three outfielders. The best XI's outfielders rank by consensus xPts;
+    // the locked fallback keeps the manager's own outfield order.
+    const benchOrder = (codes, byXpts) => {
+      const ps = codes.map(c => byCode.get(c)).filter(Boolean);
+      const gk = ps.filter(p => p.pos === "GKP");
+      const out = ps.filter(p => p.pos !== "GKP");
+      if (byXpts) out.sort((a, b) => (b.xpts ?? -1) - (a.xpts ?? -1));
+      return [...gk, ...out].map(p => p.code);
+    };
+    const benchCodes = usable ? benchOrder(bestXi.bench_codes, true)
+      : benchOrder((sq.bench || []).map(x => x.code), false);
     capCodeCur = usable
       ? (bestXi.captain ? bestXi.captain.code : null)
       : (lockedCap ? lockedCap.code : null);
@@ -1358,7 +1367,7 @@ export default async function home(host) {
     }
     pitchBody.appendChild(pitch);
 
-    // the bench: a visually distinct tray below the pitch, in xPts order
+    // the bench: a visually distinct tray below the pitch; GK first, then xPts order
     const tray = el("div", "bench db-benchtray");
     tray.appendChild(el("span", "db-benchlbl", "bench"));
     benchCodes.forEach((c, i) => {
@@ -1632,7 +1641,7 @@ export default async function home(host) {
       const cls = S.state === "fresh" ? " s1"
                 : S.state === "aging" ? " warn" : " bad";
       const chip = el("span", "chip" + cls,
-        S.state + (S.age_hours != null ? ` · ${fmt1(S.age_hours)}h old` : ""));
+        S.state + (S.age_hours != null ? ` · ${fmtSpan(S.age_hours)} old` : ""));
       chip.title = S.generated_at
         ? `plan generated ${S.generated_at}` : "no generated_at on the plan";
       head.appendChild(chip);
@@ -1716,7 +1725,7 @@ export default async function home(host) {
           " · " + (plan.optimality_gap_pct != null
               ? `${fmt1(plan.optimality_gap_pct)}% optimality gap`
               : "closed within tolerance")
-          + (plan.age_hours != null ? ` · ${fmt1(plan.age_hours)}h old` : "")
+          + (plan.age_hours != null ? ` · ${fmtSpan(plan.age_hours)} old` : "")
           + (plan.solve_seconds != null
               ? ` · solved in ${Math.round(plan.solve_seconds)}s` : "")
           + (plan.free_transfers != null

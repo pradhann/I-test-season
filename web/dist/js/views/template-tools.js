@@ -1,6 +1,6 @@
 /* The Move Card — "would this move raise my risk against the field?"
  *
- * Owned separately from template.js so the two halves of the Template tab can
+ * Owned separately from template.js so the two halves of the EliteFPL tab can
  * be built in parallel. template.js calls renderTools(host, ctx); everything
  * below that call belongs to this module.
  *

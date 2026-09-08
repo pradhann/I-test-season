@@ -1,10 +1,10 @@
-/* xPoints — the projection matrix (fplreview idiom, designed to be operated).
+/* Projections (#xpoints): the projection matrix (fplreview idiom, designed to be operated).
    One mental model: pick WHOSE numbers (source chips, multi-select), pick
    WHICH gameweeks (toggleable GW chips), then read a matrix where every
    column header sorts. Squad membership is a quiet dot, not a shout. */
 
 import { runPanel, el, emptyBox, errBox, provenance,
-         faceImg, fmtPrice, fmt1, fmt2 } from "/js/app.js";
+         faceImg, fmtPrice, fmt1, fmt2, fmtSpan } from "/js/app.js";
 // the SHARED player drawer: per-source pivot, percentile pizza, Understat
 // profile and the chatter strip — the same surface the dashboard opens
 import { attachPlayerDrawer, showPlayerDetail } from "/js/components/playerdrawer.js";
@@ -19,12 +19,20 @@ export default async function xpoints(host) {
   const srcRow = el("div", "toolbar");
   const wRow = el("div", "toolbar");       // consensus weighting toggle
   const wBox = el("div", "wbox");          // weights table + accuracy strip
+  // ONE closed disclosure holds the toggle, the note, the weights table and
+  // the accuracy strip. The summary states the finding in one line; the
+  // evidence shows only after a click. Open state survives re-renders
+  // because only the children are rewritten, never the element.
+  const wDet = el("details", "wdet");
+  const wSum = el("summary", "sub");
+  wSum.style.cursor = "pointer";
+  wDet.append(wSum, wRow, wBox);
   const gwRow = el("div", "toolbar");
   const filterRow = el("div", "toolbar");
   const body = el("div");
   const foot = el("div");
   const dh = attachPlayerDrawer("xpoints");
-  card.append(srcRow, wRow, wBox, gwRow, filterRow, body, foot);
+  card.append(srcRow, wDet, gwRow, filterRow, body, foot);
   host.appendChild(card);
 
   // ---- state ----
@@ -79,9 +87,9 @@ export default async function xpoints(host) {
   function ageInfo(iso) {
     const h = (Date.now() - new Date(iso.replace(" ", "T"))) / 3.6e6;
     if (!isFinite(h)) return { cls: "bad", text: "?" };
-    if (h < 36) return { cls: "good", text: h < 1.5 ? "fresh" : `${Math.round(h)}h` };
-    if (h < 72) return { cls: "warn", text: `${Math.round(h)}h` };
-    return { cls: "bad", text: `${Math.round(h / 24)}d` };
+    if (h < 36) return { cls: "good", text: h < 1.5 ? "fresh" : fmtSpan(h) };
+    if (h < 72) return { cls: "warn", text: fmtSpan(h) };
+    return { cls: "bad", text: fmtSpan(h) };
   }
   function renderSources() {
     srcRow.textContent = "";
@@ -187,6 +195,16 @@ export default async function xpoints(host) {
              (w ? `, fit of ${fitStamp(w.as_of)} UTC` : "");
     else note = "rows, matrix and totals use equal weights";
     if (note) wRow.appendChild(el("span", "wnote", note));
+    // the one-line finding on the closed disclosure
+    const nProv = (res.active_sources || res.sources || []).length;
+    const scored = (res.provider_accuracy?.scored_gws || []).length;
+    const inside = `earned weights and measured accuracy ` +
+      `(${scored} GW${scored === 1 ? "" : "s"} scored) inside`;
+    wSum.textContent = res.empty ? "Consensus weighting and measured accuracy"
+      : applied === "single_source"
+        ? `${shortName(res.source)} raw, nothing blended; ${inside}`
+        : `Consensus uses ${applied} weights across ${nProv} ` +
+          `provider${nProv === 1 ? "" : "s"}; ${inside}`;
 
     if (weighting === "earned" && applied !== "single_source") {
       if (w) renderWeightsTable(w);
@@ -583,8 +601,8 @@ export default async function xpoints(host) {
     table.appendChild(tbody); wrap.appendChild(table);
     body.appendChild(wrap);
     const priceAge = res.prices_as_of
-      ? `prices as of ${Math.round((Date.now() -
-          new Date(res.prices_as_of.replace(" ", "T"))) / 3.6e6)}h ago`
+      ? `prices as of ${fmtSpan((Date.now() -
+          new Date(res.prices_as_of.replace(" ", "T"))) / 3.6e6)} ago`
       : "price age unknown";
     const blend = res.weighting === "single_source"
       ? `${shortName(res.source)} raw, no blend`

@@ -79,7 +79,7 @@ RESULT: dict[str, Any] = {
         "captain": {"type": ["string", "null"]},
         "vice": {"type": ["string", "null"]},
         # xPts is the PROVIDER CONSENSUS for the next open gameweek — the
-        # same source the xPoints tab renders, so the two surfaces can never
+        # same source the Projections tab renders, so the two surfaces can never
         # disagree about one player again. p_haul has no consensus provider;
         # it stays the engine simulation's, with its OWN data-birth instant
         # so a three-week-old haul probability is never dated by the fresher
@@ -185,7 +185,7 @@ def squad_overview(wh, *, season: str, entry_id: int | None = None) -> dict[str,
     notes: list[str] = []
 
     # xPts: the provider CONSENSUS for the next open gameweek — the exact
-    # numbers the xPoints tab renders. The squad card once read the solved
+    # numbers the Projections tab renders. The squad card once read the solved
     # artefact instead, and the same player wore 5.6 here and 4.7 there.
     import datetime as dt
 
@@ -212,7 +212,7 @@ def squad_overview(wh, *, season: str, entry_id: int | None = None) -> dict[str,
             xpts_as_of = latest_as_of(wh, "fact_projection", season)
             xpts_source = (
                 f"provider consensus of {n_src} source(s), GW{int(xpts_gw)} "
-                f"— the same numbers the xPoints tab shows")
+                f"and the same numbers the Projections tab shows")
     if not xpts:
         notes.append(
             "No projection consensus for the next gameweek, so xPts columns "

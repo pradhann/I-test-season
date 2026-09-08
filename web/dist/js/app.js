@@ -170,6 +170,33 @@ export function fmtPrice(p) { return p == null ? "–" : `£${Number(p).toFixed(
 export function fmt1(x) { return x == null ? "–" : Number(x).toFixed(1); }
 export function fmt2(x) { return x == null ? "–" : Number(x).toFixed(2); }
 
+/* THE age/duration vocabulary, shared by every view: a span in hours reads
+   "Nh Mm" under two days, "Nd Nh" from two days, "N days" past fourteen.
+   "112h 13m" is arithmetic, not a reading; "4d 16h" is what a human says. */
+export function fmtSpan(hours) {
+  if (hours == null || !isFinite(hours)) return "?";
+  const h = Math.max(0, Number(hours));
+  if (h < 1) return `${Math.max(1, Math.round(h * 60))}m`;
+  if (h < 48) {
+    let H = Math.floor(h), M = Math.round((h - H) * 60);
+    if (M === 60) { H += 1; M = 0; }
+    return `${H}h ${M}m`;
+  }
+  if (h < 14 * 24) {
+    let D = Math.floor(h / 24), H = Math.round(h - D * 24);
+    if (H === 24) { D += 1; H = 0; }
+    return H ? `${D}d ${H}h` : `${D}d`;
+  }
+  return `${Math.round(h / 24)} days`;
+}
+/* age of an ISO/"YYYY-MM-DD HH:MM" stamp, through fmtSpan; null when unparseable */
+export function fmtAge(iso) {
+  if (!iso) return null;
+  const d = new Date(String(iso).replace(" ", "T").replace(/\+00:00$/, "Z"));
+  if (isNaN(d)) return null;
+  return fmtSpan((Date.now() - d.getTime()) / 3.6e6);
+}
+
 // ---------- theme (explicit choice wins; else OS preference) ----------
 const THEME_KEY = "itest-theme";
 export function initTheme() {
@@ -192,12 +219,12 @@ export async function mountDeadline(node) {
     const tick = () => {
       const ms = when - Date.now();
       if (ms <= 0) { node.textContent = `GW${d.gw} deadline passed`; return; }
-      const h = Math.floor(ms / 3.6e6), m = Math.floor(ms % 3.6e6 / 6e4);
+      const hours = ms / 3.6e6;
       // urgency register: the countdown changes voice inside 24h
-      node.classList.toggle("urgent", h < 24);
+      node.classList.toggle("urgent", hours < 24);
       node.innerHTML = "";
       node.append(`GW${d.gw} deadline in `);
-      const b = el("b", null, `${h}h ${m}m`);
+      const b = el("b", null, fmtSpan(hours));
       node.append(b, ` · ${when.toUTCString().slice(0, 22)} UTC`);
     };
     tick(); setInterval(tick, 30_000);
