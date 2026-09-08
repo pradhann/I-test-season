@@ -15,7 +15,7 @@
    strip (own-player price risk, template gaps, rise targets — quiet rows
    below the squad, where they belong) → moves to consider (rule cards, not
    the solver) → the SOLVER CARD (the real transfer_plan move with avatars,
-   gain labelled "${fcName(plan)}", live feedback while solving) → the
+   gain labelled in its forecast's name (consensus or engine), live feedback while solving) → the
    rule-based signal tiles (cap 6, suppression disclosed) → the watch log
    folded to one line → foot.
 
@@ -41,7 +41,7 @@
    for the risk/status channel.
 
    SOLVER CURRENCY LAW: gain_over_roll is the solver's own forecast in the
-   plan's objective_mode currency, labelled "${fcName(plan)}" on the card —
+   plan's objective_mode currency, labelled in its forecast's name (consensus or engine) on the card —
    it is never summed or blended with the consensus xPts on the pitch.
 
    Every zone degrades alone (tryPanel memo + named gaps); the page never
