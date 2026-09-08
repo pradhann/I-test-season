@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-07T20:13:15.595024+00:00",
+  "generated_at": "2026-09-08T00:29:12.365183+00:00",
   "season": "2026-27",
   "gw": 4,
   "horizon_gws": [
@@ -13,21 +13,27 @@
   "free_transfers": 2,
   "unlimited_transfers": false,
   "chosen": {
-    "out": [],
-    "in": [],
-    "n_transfers": 0,
+    "out": [
+      95658,
+      184029
+    ],
+    "in": [
+      17761,
+      201658
+    ],
+    "n_transfers": 2,
     "hits": 0,
     "hit_points": 0,
-    "objective": 259.72529799999995,
+    "objective": 274.1559214859356,
     "chip": "",
-    "label": "roll",
-    "bank_after_tenths": 5,
-    "captain": 219168,
-    "vice_captain": 489639,
+    "label": "",
+    "bank_after_tenths": 0,
+    "captain": 141746,
+    "vice_captain": 475168,
     "starting_xi": [
-      95658,
+      17761,
       141746,
-      177815,
+      201658,
       219168,
       226597,
       424876,
@@ -39,27 +45,77 @@
     ]
   },
   "roll": {
-    "objective": 259.72529799999995
+    "objective": 255.87186512731924
   },
-  "gain_over_roll": 0.0,
+  "gain_over_roll": 18.28405635861637,
   "alternatives": [
     {
       "out": [
-        95658,
-        440993,
-        455084,
-        485055
+        466052
       ],
       "in": [
-        108416,
-        232351,
-        243298,
-        473284
+        446008
       ],
-      "n_transfers": 4,
-      "hits": 2,
-      "hit_points": 8,
-      "objective": 299.68230399999993,
+      "n_transfers": 1,
+      "hits": 0,
+      "hit_points": 0,
+      "objective": 261.22117073695676,
+      "chip": "",
+      "label": ""
+    },
+    {
+      "out": [
+        184029
+      ],
+      "in": [
+        201658
+      ],
+      "n_transfers": 1,
+      "hits": 0,
+      "hit_points": 0,
+      "objective": 260.6481207353178,
+      "chip": "",
+      "label": ""
+    },
+    {
+      "out": [
+        466052
+      ],
+      "in": [
+        243298
+      ],
+      "n_transfers": 1,
+      "hits": 0,
+      "hit_points": 0,
+      "objective": 260.1989354975909,
+      "chip": "",
+      "label": ""
+    },
+    {
+      "out": [
+        466052
+      ],
+      "in": [
+        201658
+      ],
+      "n_transfers": 1,
+      "hits": 0,
+      "hit_points": 0,
+      "objective": 259.8508717238997,
+      "chip": "",
+      "label": ""
+    },
+    {
+      "out": [
+        466075
+      ],
+      "in": [
+        17761
+      ],
+      "n_transfers": 1,
+      "hits": 0,
+      "hit_points": 0,
+      "objective": 259.8301125054969,
       "chip": "",
       "label": ""
     }
@@ -68,44 +124,26 @@
   "notes": [
     "EXPECTED_POINTS is a surrogate. It ignores ownership, variance and covariance, so it cannot see that a differential is worth more than its mean when you are chasing a rank. Not the objective this engine is for.",
     "points forecast: table:forecast.parquet",
-    "Stopped at a 6.85% optimality gap (Time limit reached); this plan is the best found, not a proven optimum. Raise time_limit_s, prune the universe with max_candidates_per_position, or fix the chip schedule to close it."
+    "Stopped at a 5.37% optimality gap (Time limit reached); this plan is the best found, not a proven optimum. Raise time_limit_s, prune the universe with max_candidates_per_position, or fix the chip schedule to close it.",
+    "forecast source: consensus; engine_fill 0.0% of horizon rows"
   ],
   "n_candidates_screened": 9,
-  "n_candidates_solved": 0,
-  "solve_seconds": 174.33290841704002,
+  "n_candidates_solved": 8,
+  "solve_seconds": 155.24879137496464,
   "max_hits": 0,
-  "unconstrained": {
-    "out": [
-      95658,
-      440993,
-      455084,
-      485055
-    ],
-    "in": [
-      108416,
-      232351,
-      243298,
-      473284
-    ],
-    "n_transfers": 4,
-    "hits": 2,
-    "hit_points": 8,
-    "objective": 299.68230399999993,
-    "chip": "",
-    "label": "",
-    "gain_over_roll": 39.95700599999998
-  },
+  "unconstrained": null,
   "chips_allowed": false,
+  "forecast_source": "consensus",
+  "forecast_engine_fill_share": 0.0,
+  "forecast_rows_by_source": {
+    "consensus": 2490
+  },
   "constraints": {
     "horizon": 5,
     "max_hits": 0,
     "chips": [],
-    "must_keep": [
-      472769
-    ],
-    "ban": [
-      446008
-    ],
+    "must_keep": [],
+    "ban": [],
     "seconds": 150.0,
     "max_candidates": 20,
     "candidates": 8
