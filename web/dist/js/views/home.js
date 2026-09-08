@@ -15,7 +15,7 @@
    strip (own-player price risk, template gaps, rise targets — quiet rows
    below the squad, where they belong) → moves to consider (rule cards, not
    the solver) → the SOLVER CARD (the real transfer_plan move with avatars,
-   gain labelled "solver forecast", live feedback while solving) → the
+   gain labelled "${fcName(plan)}", live feedback while solving) → the
    rule-based signal tiles (cap 6, suppression disclosed) → the watch log
    folded to one line → foot.
 
@@ -41,7 +41,7 @@
    for the risk/status channel.
 
    SOLVER CURRENCY LAW: gain_over_roll is the solver's own forecast in the
-   plan's objective_mode currency, labelled "solver forecast" on the card —
+   plan's objective_mode currency, labelled "${fcName(plan)}" on the card —
    it is never summed or blended with the consensus xPts on the pitch.
 
    Every zone degrades alone (tryPanel memo + named gaps); the page never
@@ -166,6 +166,18 @@ function skeleton(kind) {
 }
 
 /* ------------------------------------------------------------------ view */
+
+// Name the currency a plan's gain is priced in: "consensus forecast" (what
+// every other surface shows) or "engine forecast" (the engine's own model),
+// with the engine-fill share when the consensus left gaps.
+function fcName(plan) {
+  const src = plan && plan.forecast_source;
+  if (!src) return "solver forecast";
+  const fill = plan.engine_fill_share;
+  return src.startsWith("consensus")
+    ? `consensus forecast${fill ? ` (${Math.round(fill * 100)}% engine fill)` : ""}`
+    : "engine forecast";
+}
 
 export default async function home(host) {
   const dh = attachPlayerDrawer("home");
@@ -530,7 +542,7 @@ export default async function home(host) {
         }
         if (n.gain_over_roll != null)
           numBits.push(`${fmtSigned(n.gain_over_roll, 1)} xPts vs rolling`
-            + `, solver forecast`);
+            + `, ${fcName(plan)}`);
         if (n.optimality_gap_pct != null)
           numBits.push(`${fmt1(n.optimality_gap_pct)}% gap`);
         if (n.age_hours != null) numBits.push(`${fmtSpan(n.age_hours)} old`);
@@ -603,7 +615,7 @@ export default async function home(host) {
         if (ln.rule === "solver_plan_captain" && n.pick_solver_xpts != null)
           numBits.push(`${fmt1(n.pick_solver_xpts)} xPts`
             + `${n.solver_gw != null ? ` GW${n.solver_gw}` : ""}`
-            + `, solver forecast`);
+            + `, ${fcName(plan)}`);
         if (n.pick_xpts != null)
           numBits.push(`consensus ${fmt1(n.pick_xpts)} xPts`);
         if (n.pick_p_haul != null && haulFresh)
@@ -1547,7 +1559,7 @@ export default async function home(host) {
       const line = el("p", "sv-lines sv-uncon");
       line.appendChild(document.createTextNode(
         `if hits were free: ${u.n_transfers} changes, ${u.hits} hits, `
-        + `${fmtSigned(u.gain_over_roll, 1)} xPts vs rolling, solver forecast; `));
+        + `${fmtSigned(u.gain_over_roll, 1)} xPts vs rolling, ${fcName(plan)}; `));
       const a = el("a", null, "see Planner");
       a.href = "#planner";
       line.appendChild(a);
@@ -1720,7 +1732,7 @@ export default async function home(host) {
         line.appendChild(el("b", null,
           `${fmtSigned(plan.gain_over_roll, 1)} xPts`));
         line.appendChild(document.createTextNode(
-          ` over ${hSpan} vs rolling, solver forecast`));
+          ` over ${hSpan} vs rolling, ${fcName(plan)}`));
         line.appendChild(el("span", "sv-gapline",
           " · " + (plan.optimality_gap_pct != null
               ? `${fmt1(plan.optimality_gap_pct)}% optimality gap`

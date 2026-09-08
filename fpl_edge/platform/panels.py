@@ -114,7 +114,7 @@ PANELS: tuple[Panel, ...] = (
     ),
     Panel(
         id="ownership",
-        title="Template & EO",
+        title="EliteFPL",
         script="ownership_eo",
         default_params={"limit": 50},
         layout="table",

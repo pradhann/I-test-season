@@ -333,6 +333,8 @@ _PLAN = {
         "free_transfers": {"type": ["integer", "null"]},
         "unlimited_transfers": {"type": ["boolean", "null"]},
         "gain_over_roll": {"type": ["number", "null"]},
+        "forecast_source": {"type": ["string", "null"]},
+        "forecast_engine_fill_share": {"type": ["number", "null"]},
         "hits": {"type": ["integer", "null"]},
         "hit_points": {"type": ["integer", "null"]},
         "chip": {"type": ["string", "null"]},
@@ -2021,6 +2023,11 @@ def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str
                 "gain_over_roll": (float(tplan["gain_over_roll"])
                                    if tplan.get("gain_over_roll") is not None
                                    else None),
+                # Which forecast the gain is priced in: consensus (what every
+                # other surface shows) or the engine model, with the engine
+                # fill share when the consensus left gaps.
+                "forecast_source": tplan.get("forecast_source"),
+                "forecast_engine_fill_share": tplan.get("forecast_engine_fill_share"),
                 "hits": (int(chosen["hits"])
                          if chosen.get("hits") is not None else None),
                 "hit_points": (int(chosen["hit_points"])

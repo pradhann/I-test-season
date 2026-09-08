@@ -19,7 +19,7 @@
    credential and the page has no business holding it once the server has
    answered. */
 
-import { getJSON, postJSON, el, errBox } from "/js/app.js";
+import { getJSON, postJSON, el, errBox, fmtSpan } from "/js/app.js";
 
 const STEPS = [
   "Log in at fantasy.premierleague.com in this browser.",
@@ -41,15 +41,9 @@ function fmtWhen(iso) {
 }
 
 function fmtAge(iso) {
-  if (!iso) return "never";
-  const ms = Date.now() - new Date(iso).getTime();
-  if (!isFinite(ms)) return String(iso);
-  const m = Math.round(ms / 60000);
-  if (m < 1) return "just now";
-  if (m < 60) return `${m} min ago`;
-  const h = Math.round(m / 60);
-  if (h < 48) return `${h} h ago`;
-  return `${Math.round(h / 24)} days ago`;
+  // shared formatter: minutes, then Nh Mm, then Nd Nh, then N days
+  const h = (iso ? (Date.now() - new Date(iso).getTime()) / 36e5 : null);
+  return h == null || !isFinite(h) ? "?" : fmtSpan(h) + " ago";
 }
 
 function money(tenths) {

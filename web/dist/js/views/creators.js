@@ -2153,8 +2153,8 @@ export default async function creators(host) {
     c.appendChild(who);
 
     const act = el("div", "cx-actions");
-    act.appendChild(crossLink("#xpoints", "xPoints", r));
-    act.appendChild(crossLink("#template", "Template", r));
+    act.appendChild(crossLink("#xpoints", "Projections", r));
+    act.appendChild(crossLink("#template", "EliteFPL", r));
     c.appendChild(act);
     return c;
   }
