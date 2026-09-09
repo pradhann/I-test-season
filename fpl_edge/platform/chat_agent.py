@@ -489,7 +489,7 @@ class ChatAgent:
         conv = self._conv(conv_id)              # raises UnknownConversation
         state = self.running(conv_id)
         if state.get("running"):
-            raise TurnInFlight(conv_id)
+            raise TurnInFlight(conv_id, state.get("since"))
         meta = self.meta(conv_id)
         with self._registry_lock:
             self._convs.pop(conv_id, None)

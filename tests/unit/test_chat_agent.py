@@ -326,6 +326,56 @@ def test_single_flight_second_message_is_refused(tmp_path):
     assert "stopped by user" in events[-1]["payload"]["message"]
 
 
+# -- deleting a conversation --------------------------------------------------
+
+
+def test_delete_removes_the_conversation_and_its_transcript(tmp_path):
+    agent, _ = _agent(tmp_path, transcript=[{"type": "text", "text": "hi"}])
+    keep = agent.create_conversation()["conv_id"]
+    doomed = agent.create_conversation()["conv_id"]
+    agent.start_turn(doomed, "say something")
+    _wait_done(agent, doomed)
+
+    path = agent.root / doomed
+    assert path.is_dir() and any(path.iterdir()), "fixture must write a transcript"
+
+    meta = agent.delete_conversation(doomed)
+    assert meta["conv_id"] == doomed, "returns what went, not a bare success"
+    assert not path.exists(), "the directory and its events are gone"
+    assert [c["conv_id"] for c in agent.list_conversations()] == [keep]
+
+    with pytest.raises(UnknownConversation):
+        agent.delete_conversation(doomed)
+
+
+def test_delete_refuses_while_a_turn_is_in_flight(tmp_path):
+    """The same guard start_turn uses, for the same reason.
+
+    Removing the directory under a running turn leaves the writer appending to
+    an unlinked path and the caller polling a conversation that is gone. The
+    user stops the turn first, which is a deliberate gesture.
+    """
+    agent, _ = _agent(tmp_path, transcript=[], hold_open=True)
+    conv = agent.create_conversation()["conv_id"]
+    agent.start_turn(conv, "slow one")
+
+    with pytest.raises(TurnInFlight):
+        agent.delete_conversation(conv)
+    assert (agent.root / conv).is_dir(), "a refused delete must not delete"
+
+    agent.stop(conv)
+    _wait_done(agent, conv)
+    agent.delete_conversation(conv)
+    assert not (agent.root / conv).exists(), "and it works once the turn ends"
+
+
+def test_delete_rejects_a_malformed_id_before_touching_the_filesystem(tmp_path):
+    agent, _ = _agent(tmp_path)
+    for bad in ("../../etc", "not-a-hex-id", "", "a" * 31):
+        with pytest.raises(UnknownConversation):
+            agent.delete_conversation(bad)
+
+
 # -- timeouts + honest failure -----------------------------------------------
 
 
