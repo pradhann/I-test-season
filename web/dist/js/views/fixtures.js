@@ -522,6 +522,13 @@ function readOpponent(raw, scale) {
     marketResidual: num(o.market_residual),
     priorShare: num(o.rating_prior_share),
     pCleanSheet: num(o.p_clean_sheet),
+    /* The clean-sheet number WITH this club's own defence in it. The grid's
+       colour deliberately holds the club at league average, which is right for
+       comparing fixtures and wrong for "who keeps a clean sheet": Arsenal away
+       at Sunderland is 30% for an average defence and 49% for Arsenal's. A
+       clean sheet is a fact about a specific defence, so this lens uses the
+       fixture-specific figure and says so. */
+    pCleanSheetAdj: num(o.relative_p_clean_sheet),
     pCleanSheetMkt: num(o.p_clean_sheet_market),
     marketState: o.market_state || null,
     raw: o,
@@ -551,6 +558,7 @@ function buildModel(res) {
     const attVals = all.map(c => c.easeAtt).filter(v => v != null);
     const defVals = all.map(c => c.easeDef).filter(v => v != null);
     const blendVals = all.map(c => c.easeBlend).filter(v => v != null);
+    const csVals = all.map(c => c.pCleanSheetAdj).filter(v => v != null);
     const sum = a => (a.length ? a.reduce((x, y) => x + y, 0) : null);
     const mean = a => (a.length ? sum(a) / a.length : null);
 
@@ -565,6 +573,14 @@ function buildModel(res) {
             ? h.attack_xg_sum - scale.anchorAtt * all.length : sum(attVals)),
       defSum: num(h.defence_ease_sum) != null ? num(h.defence_ease_sum) : sum(defVals),
       attMean: mean(attVals), defMean: mean(defVals), blendMean: mean(blendVals),
+      /* Expected clean sheets over the window: the SUM of per-fixture
+         probabilities, which is the expected COUNT (linearity of expectation,
+         no independence assumption needed). A blank gameweek contributes
+         nothing, which is correct -- you cannot keep a clean sheet in a
+         fixture you do not have. n is carried so the mean can be shown too. */
+      csSum: csVals.length ? sum(csVals) : null,
+      csMean: mean(csVals),
+      csN: csVals.length,
       attRankH: num(h.attack_rank), defRankH: num(h.defence_rank),
       rankGap: num(h.rank_gap),
       rating: t.rating || null,
@@ -1449,6 +1465,36 @@ export default async function fixtures(host) {
       verdictEl.appendChild(shortlist("Best for DEF", defTop,
         t => t.defRankH, t => t.defSum, "defenders",
         t => num(t.rating && t.rating.defence_rank)));
+    /* CLEAN SHEETS. A separate shortlist because it answers a separate
+       question, and because it is the one number on this page that must NOT
+       hold the club at league average: a clean sheet is a fact about a
+       specific defence. Arsenal away at Sunderland is 30% for an average
+       defence and 49% for Arsenal's. Expected count over the window is the
+       SUM of per-fixture probabilities -- linearity of expectation, so no
+       independence assumption is smuggled in -- and a blank contributes
+       nothing, which is right. */
+    const csTop = M.teams.filter(t => t.csSum != null)
+      .sort((a, b) => b.csSum - a.csSum).slice(0, 5);
+    if (csTop.length) {
+      const r = el("div", "vrow");
+      r.appendChild(el("span", "vlab", "Clean sheets"));
+      for (const t of csTop) {
+        const b = el("button", "vchip");
+        b.appendChild(crest(t.code, t.short, "s14"));
+        b.appendChild(el("b", null, t.short));
+        b.appendChild(el("span", "rk", fmt1(t.csSum)));
+        hover.attach(b, () => [
+          `${t.short}: ${fmt2(t.csSum)} clean sheets expected over ${range}`,
+          `${Math.round((t.csMean || 0) * 100)}% a game across ${t.csN} `
+            + `fixture${t.csN === 1 ? "" : "s"}`,
+          "With this club's own defence in it, not a league-average one.",
+          `click to jump to ${t.short}'s row`,
+        ].join("\n"));
+        b.onclick = () => bookmark(t);
+        r.appendChild(b);
+      }
+      verdictEl.appendChild(r);
+    }
     } else {
       verdictEl.appendChild(namedGap("No horizon ranks in this payload.",
         "Sort the rail by lens instead; the shortlists render only from the "
@@ -2070,6 +2116,7 @@ export default async function fixtures(host) {
        headers are buttons, the active one carries aria-sort and a persistent
        arrow (FBRef's headers are the reference). Sort values are the same
        eases the cells print; a blank sorts last under either direction. */
+    const anyCs = M.teams.some(t => t.csSum != null);
     const gwVal = (team, g) => {
       const slot = team.byGw.get(g);
       if (!slot || slot.blank || !slot.opps.length) return null;
@@ -2081,6 +2128,7 @@ export default async function fixtures(host) {
       if (key === "att") return M.anySplit ? team.attSum
         : (team.blendMean == null ? null : team.blendMean * team.nFixtures);
       if (key === "def") return team.defSum;
+      if (key === "cs") return team.csSum;
       return gwVal(team, Number(key.slice(3)));       // "gw:<n>"
     };
     const th = (key, label, numeric) => {
@@ -2106,6 +2154,10 @@ export default async function fixtures(host) {
     for (const g of M.gws) hr.appendChild(th(`gw:${g}`, `GW${g}`, true));
     hr.appendChild(th("att", M.anySplit ? "Σ att" : "Σ schedule", true));
     if (M.anySplit) hr.appendChild(th("def", "Σ def", true));
+    /* Expected clean sheets, sortable, because "who keeps a clean sheet" is a
+       question the ease columns cannot answer: they hold the club at league
+       average and a clean sheet belongs to a specific defence. */
+    if (anyCs) hr.appendChild(th("cs", "xCS", true));
     thead.appendChild(hr); t.appendChild(thead);
 
     let rows = sortedTeams();                          // the lens order
@@ -2149,6 +2201,15 @@ export default async function fixtures(host) {
       tr.appendChild(el("td", "num", M.anySplit ? sgn2(team.attSum)
         : sgn2(team.blendMean == null ? null : team.blendMean * team.nFixtures)));
       if (M.anySplit) tr.appendChild(el("td", "num", sgn2(team.defSum)));
+      if (anyCs) {
+        const td = el("td", "num", team.csSum == null ? "–" : fmt2(team.csSum));
+        if (team.csSum != null)
+          td.title = `${fmt2(team.csSum)} clean sheets expected over the window `
+            + `(${Math.round((team.csMean || 0) * 100)}% a game across `
+            + `${team.csN} fixture${team.csN === 1 ? "" : "s"}), with this `
+            + "club's own defence in it";
+        tr.appendChild(td);
+      }
       tb.appendChild(tr);
     }
     t.appendChild(tb); wrap.appendChild(t);
@@ -2160,7 +2221,9 @@ export default async function fixtures(host) {
           + "It is one number, not two."));
     body.appendChild(el("p", "sub",
       "Σ att / Σ def sum the club's schedule over the window: how easy its "
-      + "fixtures are for its own players, not how good the club is."));
+      + "fixtures are for its own players, not how good the club is. xCS is "
+      + "expected clean sheets over the window, and it is the one column that "
+      + "does include the club's own defence."));
     body.appendChild(legend());
   }
 
