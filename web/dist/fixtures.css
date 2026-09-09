@@ -953,3 +953,7 @@ details.card.fx-fold > .sub { color: var(--faint); margin: 6px 0 10px; font-size
   font-variant-numeric: tabular-nums; color: var(--muted);
   margin-left: 10px; white-space: nowrap;
 }
+
+/* The swap sits inside the point-of-view key, because "whose numbers are
+   these" and "show me the other club's" are one question asked twice. */
+.fx-povkey .fx-swap { margin-left: 4px; vertical-align: baseline; }
