@@ -57,31 +57,44 @@
    either theme, or the whole point of matching them is lost. FPL pairs an ink
    with each step because its cells hold text; ours can show two steps in one
    cell, so the label wears a surface plate instead (see .fx-cell .opp) and
-   these inks are used only where one step fills the cell. */
+   these inks are used only where one step fills the cell.
+
+   ONE EXCEPTION, and it is the neutral. FPL's #e7e7e7 is chosen for a white
+   page. Measured against this app's dark card (#16181b) it is 14.4:1 -- the
+   highest-contrast element on the whole page -- so in dark mode the LEAGUE
+   AVERAGE fixture drew more eye than any good or bad one, which inverts what
+   the ramp is for. Dark mode uses #3a3e45 instead: 1.66:1 against the card,
+   so present but quiet, and still dE 55.9 from the green and 37.6 from the
+   red, far above the >=8 gate. Its own ink clears at 8.9:1. Light mode keeps
+   FPL's exact grey. This is a deliberate, measured divergence on one step,
+   not a drift: steps 1, 2, 4 and 5 stay FPL's in both themes. */
 :root {
   --fx-d1: #375523; --fx-d1-ink: #ffffff;   /* 1 easiest */
   --fx-d2: #01fc7a; --fx-d2-ink: #37003c;
-  --fx-d3: #e7e7e7; --fx-d3-ink: #37003c;   /* 3 league average */
   --fx-d4: #ff1b54; --fx-d4-ink: #37003c;
   --fx-d5: #80072d; --fx-d5-ink: #ffffff;   /* 5 hardest */
 }
 
 /* ---------- dark (the identity default) ---------- */
 :root {
+  --fx-d3: #3a3e45; --fx-d3-ink: #e8eaed;   /* 3 league average, softened */
   --fx-cell-ink: #e8eaed;
   --fx-hatch: rgb(255 255 255 / .07);
 }
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) {
+    --fx-d3: #e7e7e7; --fx-d3-ink: #37003c;   /* FPL's own, on a light page */
     --fx-cell-ink: #1a1d21;
     --fx-hatch: rgb(20 24 28 / .09);
   }
 }
 :root[data-theme="light"] {
+  --fx-d3: #e7e7e7; --fx-d3-ink: #37003c;
   --fx-cell-ink: #1a1d21;
   --fx-hatch: rgb(20 24 28 / .09);
 }
 :root[data-theme="dark"] {
+  --fx-d3: #3a3e45; --fx-d3-ink: #e8eaed;
   --fx-cell-ink: #e8eaed;
   --fx-hatch: rgb(255 255 255 / .07);
 }
