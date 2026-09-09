@@ -37,6 +37,9 @@ export const startTurn = (convId, text) =>
     body: JSON.stringify({ text }),
   }).then(json);
 
+export const deleteConversation = (convId) =>
+  fetch(`/api/conversations/${convId}`, { method: "DELETE" }).then(json);
+
 export const stopTurn = (convId) =>
   fetch(`/api/conversations/${convId}/stop`, { method: "POST" }).then(json);
 

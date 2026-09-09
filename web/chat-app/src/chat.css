@@ -48,16 +48,45 @@
                position: relative; min-height: 0; }
 .thread-scroll { flex: 1; overflow-y: auto; min-height: 0;
                  overscroll-behavior: contain; }
+/* A FULL-BLEED GRID, not a capped flex column.
+   Prose wants ~72ch; a document does not. Documents here carry tables and
+   charts, and inside a 72ch measure they were squeezed to 591px in a 962px
+   pane, with a table needing 789px in a 379px box: a horizontal scrollbar
+   inside a page that had 327px of unused room beside it.
+   Three tracks give prose its measure and let a document span the pane, with
+   no JS, no viewport arithmetic and no assumption about the app's left nav. */
 .thread {
-  max-width: 72ch; margin: 0 auto; padding: 20px 22px 12px;
-  display: flex; flex-direction: column; gap: 12px;
+  display: grid;
+  grid-template-columns:
+    [full-start] minmax(0, 1fr)
+    [content-start] min(72ch, 100%) [content-end]
+    minmax(0, 1fr) [full-end];
+  gap: 12px; padding: 20px 22px 12px;
   font-size: 14px; line-height: 1.55;
 }
+.thread > * { grid-column: content; min-width: 0; }
+/* An assistant turn is a .prose wrapper, and the document lives INSIDE it, so
+   the bleed has to be granted twice: .prose takes the full track, then repeats
+   the same three tracks so its own text keeps the 72ch measure while a
+   document inside it spans. No gap here -- the markdown blocks already carry
+   their own margins, and adding one would double every paragraph's spacing. */
+.thread > .prose { grid-column: full; display: grid;
+  grid-template-columns:
+    [full-start] minmax(0, 1fr)
+    [content-start] min(72ch, 100%) [content-end]
+    minmax(0, 1fr) [full-end]; }
+.thread > .prose > * { grid-column: content; min-width: 0; }
+/* Documents take the pane, capped so they do not sprawl on a wide monitor. */
+.thread > .doc-card,
+.thread > .prose > .doc-card { grid-column: full; width: min(100%, 1180px);
+                               justify-self: center; }
 .thread-empty { color: var(--muted); padding: 26px 4px; }
 
 /* user messages: quiet, right-aligned */
 .user-msg {
-  align-self: flex-end; max-width: 85%;
+  /* justify-self, not align-self: the thread is a grid now and align-self
+     moves things on the block axis, which would stop right-aligning these. */
+  justify-self: end; max-width: 85%;
   background: var(--raised); border: 1px solid var(--line);
   border-radius: 10px; padding: 8px 13px;
   white-space: pre-wrap; overflow-wrap: break-word;
@@ -318,3 +347,25 @@
   .thread { padding: 14px 12px 8px; }
   #chat-root { height: calc(100vh - 150px); }
 }
+
+/* ---- delete a conversation ----
+   The row is a button plus an affordance, so it stops being one button. The
+   delete is two-step in place: a transcript is not recoverable once its
+   directory is gone, and a modal for a single row weighs more than the row. */
+.conv-row { display: flex; align-items: stretch; gap: 2px; border-radius: 7px; }
+.conv-row.active { background: var(--raised); }
+.conv-row .conv-item { flex: 1; min-width: 0; background: transparent; }
+.conv-row.active .conv-item { background: transparent; }
+.conv-del, .conv-yes, .conv-no {
+  flex: none; border: 0; background: transparent; cursor: pointer;
+  color: var(--faint); font: inherit; font-size: 11px; padding: 0 7px;
+  border-radius: 6px;
+}
+.conv-del { opacity: 0; font-size: 12px; }
+.conv-row:hover .conv-del,
+.conv-del:focus-visible { opacity: 1; }
+.conv-del:hover { color: var(--bad, #e5534b); background: var(--raised); }
+.conv-confirm { display: flex; align-items: center; gap: 2px; flex: none; }
+.conv-yes { color: var(--bad, #e5534b); font-weight: 650; }
+.conv-yes:hover { background: color-mix(in oklab, var(--bad, #e5534b) 16%, transparent); }
+.conv-no:hover { color: var(--ink); background: var(--raised); }

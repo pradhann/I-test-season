@@ -473,6 +473,29 @@ class ChatAgent:
             self._convs[conv_id] = _Conv(path)
         return meta
 
+    def delete_conversation(self, conv_id: str) -> dict[str, Any]:
+        """Remove a conversation and everything under it. Irreversible.
+
+        Refuses while a turn is in flight: deleting the directory from under a
+        running turn would leave the writer appending to an unlinked path and
+        the UI polling a conversation that no longer exists. Stop it first,
+        which is a gesture the user has to make deliberately.
+
+        Returns the meta of what was deleted so the caller can say which one
+        went, rather than reporting a bare success.
+        """
+        import shutil
+
+        conv = self._conv(conv_id)              # raises UnknownConversation
+        state = self.running(conv_id)
+        if state.get("running"):
+            raise TurnInFlight(conv_id)
+        meta = self.meta(conv_id)
+        with self._registry_lock:
+            self._convs.pop(conv_id, None)
+        shutil.rmtree(conv.path)
+        return meta
+
     def list_conversations(self) -> list[dict[str, Any]]:
         metas = []
         for meta_path in sorted(self.root.glob("*/meta.json")):

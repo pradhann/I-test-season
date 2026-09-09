@@ -10,8 +10,8 @@ import React, {
   useCallback, useEffect, useMemo, useRef, useState,
 } from "react";
 import {
-  createConversation, getEvents, listConversations, startTurn, stopTurn,
-  streamUrl,
+  createConversation, deleteConversation, getEvents, listConversations,
+  startTurn, stopTurn, streamUrl,
 } from "./api.js";
 import {
   applyEvent, applyEvents, deriveTitle, emptyTranscript,
@@ -146,7 +146,11 @@ function useConversation(convId) {
 
 /* ---------------- sidebar ---------------- */
 
-function Sidebar({ conversations, titles, activeId, onSelect, onNew }) {
+function Sidebar({ conversations, titles, activeId, onSelect, onNew, onDelete }) {
+  /* Two-step delete, in place. A transcript is not recoverable once the
+     directory is gone, so the first click asks and the second acts; there is
+     no modal, because a modal for one row is heavier than the row. */
+  const [confirming, setConfirming] = useState(null);
   return (
     <nav className="conv-rail" aria-label="conversations">
       <button type="button" className="new-conv" onClick={onNew}>
@@ -154,16 +158,44 @@ function Sidebar({ conversations, titles, activeId, onSelect, onNew }) {
       </button>
       <div className="conv-list">
         {conversations.map((c) => (
-          <button
-            type="button"
+          <div
             key={c.conv_id}
-            className={"conv-item" + (c.conv_id === activeId ? " active" : "")}
-            onClick={() => onSelect(c.conv_id)}
-            title={titles[c.conv_id] || "conversation"}
+            className={"conv-row" + (c.conv_id === activeId ? " active" : "")}
           >
-            <span className="conv-title">{titles[c.conv_id] || "conversation"}</span>
-            <span className="conv-when">{shortWhen(c.updated || c.created)}</span>
-          </button>
+            <button
+              type="button"
+              className="conv-item"
+              onClick={() => onSelect(c.conv_id)}
+              title={titles[c.conv_id] || "conversation"}
+            >
+              <span className="conv-title">{titles[c.conv_id] || "conversation"}</span>
+              <span className="conv-when">{shortWhen(c.updated || c.created)}</span>
+            </button>
+            {confirming === c.conv_id ? (
+              <span className="conv-confirm">
+                <button
+                  type="button"
+                  className="conv-yes"
+                  onClick={() => { setConfirming(null); onDelete(c.conv_id); }}
+                  title="delete this conversation and its transcript, permanently"
+                >delete</button>
+                <button
+                  type="button"
+                  className="conv-no"
+                  onClick={() => setConfirming(null)}
+                  title="keep it"
+                >keep</button>
+              </span>
+            ) : (
+              <button
+                type="button"
+                className="conv-del"
+                onClick={() => setConfirming(c.conv_id)}
+                aria-label={`delete ${titles[c.conv_id] || "conversation"}`}
+                title="delete this conversation"
+              >✕</button>
+            )}
+          </div>
         ))}
         {!conversations.length && (
           <div className="conv-empty">No conversations yet.</div>
@@ -388,6 +420,24 @@ export default function App() {
     }
   };
 
+  const onDelete = async (convId) => {
+    setSendErr(null);
+    try {
+      await deleteConversation(convId);
+    } catch (e) {
+      /* 409 means a turn is still running. Say which, and leave the row: the
+         list must not show it gone when the server still has it. */
+      setSendErr(`could not delete: ${e.message || e}`);
+      return;
+    }
+    const rest = conversations.filter((c) => c.conv_id !== convId);
+    setConversations(rest);
+    /* Deleting the open conversation has to land somewhere: the next one, or
+       the empty state. Leaving activeId pointing at a deleted id would poll a
+       404 forever. */
+    if (activeId === convId) setActiveId(rest.length ? rest[0].conv_id : null);
+  };
+
   const onSend = async (text) => {
     setSendErr(null);
     let id = activeId;
@@ -430,6 +480,7 @@ export default function App() {
         activeId={activeId}
         onSelect={setActiveId}
         onNew={onNew}
+        onDelete={onDelete}
       />
       <div className="thread-pane">
         <div className="thread-scroll" ref={scrollRef} onScroll={onScroll}>

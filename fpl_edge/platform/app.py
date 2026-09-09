@@ -16,6 +16,7 @@
     POST /api/content/items/{id}/gameweek  correct the gameweek, by hand, on record
     POST /api/conversations           new agent conversation -> {conv_id}
     GET  /api/conversations           conversation metas, newest first
+    DELETE /api/conversations/{id}    delete one conversation (409 in-flight)
     POST /api/conversations/{id}/chat start an agent turn (202; 409 in-flight)
     GET  /api/conversations/{id}/stream  SSE: replay > after, then live
     GET  /api/conversations/{id}/events  JSON page (non-SSE fallback)
@@ -955,6 +956,26 @@ def create_app(db: Path | str = DEFAULT_DB,
     @app.get("/api/conversations")
     def get_conversations() -> JSONResponse:
         return JSONResponse({"conversations": chat_agent.list_conversations()})
+
+    @app.delete("/api/conversations/{conv_id}")
+    def delete_conversation(conv_id: str) -> JSONResponse:
+        """Delete one conversation and its transcript. Irreversible.
+
+        409 while a turn is in flight: the same guard start_turn uses, for the
+        same reason. The caller stops the turn first.
+        """
+        try:
+            meta = chat_agent.delete_conversation(conv_id)
+        except TurnInFlight as exc:
+            return JSONResponse(
+                {"detail": str(exc), **chat_agent.running(conv_id)},
+                status_code=409,
+            )
+        except UnknownConversation as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ChatAgentError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return JSONResponse({"deleted": conv_id, "meta": meta})
 
     @app.post("/api/conversations/{conv_id}/chat")
     def post_conversation_chat(conv_id: str, body: TurnRequest) -> JSONResponse:
