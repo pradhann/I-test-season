@@ -140,7 +140,7 @@ def ingest(season: str = SEASON, *, first_gw: int = 1, last_gw: int = 8,
         ("rotowire", _ingest_rotowire),
         ("premierinjuries", _ingest_premierinjuries),
     ]
-    steps += [(f.key, _github_step(f.key)) for f in github_csv.FEEDS]
+    steps += [(f.key, _github_step(f.key)) for f in github_csv.live_feeds()]
     if only:
         steps = [s for s in steps if s[0] in only]
         missing = set(only) - {s[0] for s in steps}

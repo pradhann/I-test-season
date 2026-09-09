@@ -116,6 +116,12 @@ class Feed:
     cadence: str
     coverage: str
     notes: tuple[str, ...] = field(default_factory=tuple)
+    #: Why this feed is no longer fetched, or None while it is live. A retired
+    #: feed keeps its entry -- deleting it would let someone re-add the source
+    #: in six months without meeting the evidence that retired it -- but it is
+    #: skipped by the ingest run and filtered out of every read surface by
+    #: sem_projection_retired() in store/views.sql. The two must agree.
+    retired: str | None = None
 
     def raw_url(self, path: str) -> str:
         return f"{RAW_BASE}/{self.repo}/{self.ref}/{path}"
@@ -168,6 +174,13 @@ FEEDS: tuple[Feed, ...] = (
     ),
     Feed(
         key="gh_blueladd",
+        retired=(
+            "2026-09-08: worse than the naive baseline on every settled "
+            "gameweek scored (MAE 1.21 and 1.23 against baselines of 1.09 and "
+            "0.86), the only scored provider that loses to its own baseline, "
+            "and the stalest feed of the set. Kept here, and its rows kept in "
+            "projection_normalized, so the judgement stays checkable."
+        ),
         name="fpl-projections (blueladd11)",
         repo="blueladd11-commits-tocode/fpl-projections",
         ref="main",
@@ -265,6 +278,21 @@ FEEDS: tuple[Feed, ...] = (
 )
 
 BY_KEY: dict[str, Feed] = {f.key: f for f in FEEDS}
+
+
+def live_feeds() -> tuple[Feed, ...]:
+    """The feeds an ingest run should fetch: everything not retired.
+
+    A FUNCTION, not a module constant, and deliberately so. A constant would
+    freeze the list at import time, which silently breaks every caller that
+    substitutes FEEDS -- the isolation tests patch it to keep the suite off
+    the network, and a frozen copy sends them straight back onto it. Derive
+    from FEEDS on every call and there is one source of truth.
+
+    BY_KEY still holds every feed, retired ones included, so a stored row can
+    always be explained by the entry that produced it.
+    """
+    return tuple(f for f in FEEDS if f.retired is None)
 
 
 # ---------------------------------------------------------------------------

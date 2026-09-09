@@ -48,7 +48,7 @@ operating map. **Bold** = scheduled today; *italics* = manual-only today.
 | fplform | xp, p_appear, **xp_if_appears** | revises ~daily (values change most days) |
 | fpl_ep | FPL's own ep_next | static for days at a time |
 | gh_fplbench | xp + **xmins on every row** | repo pushes, roughly per-GW |
-| gh_blueladd | xp + partial xmins | repo pushes |
+| gh_blueladd | RETIRED 2026-09-08 | not fetched; lost to its own baseline |
 | gh_apex_airsenal | xp | static 3-4 days between pushes |
 | premierinjuries | **p_appear only** (never xp/xmins) | site updates |
 | livefpl (same CLI) | EO predicted/top10k/elite | daily |

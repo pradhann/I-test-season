@@ -98,7 +98,7 @@ Ranked on coverage × freshness × reliability × licence-cleanliness.
 |---|---|---|---|---|---|---|---|---|
 | 1 | **FPL Form** | ✅ | ✕ | ✅ | 595 players × GW1–8 | Recomputed on request; export is live | Personal use explicitly permitted, publishing forbidden | `POST /export-fpl-form-data.php` → `text/csv` |
 | 2 | **fplbench** (GitHub) | ✅ | ✅ | ✕ | 587 players, next GW | Per-GW file committed pre-deadline, CI-driven | **MIT** + "research and personal modelling use only" | raw.githubusercontent CSV |
-| 3 | **blueladd11** (GitHub) | ✅ | ✅ | ✕ | 469 players × 6 GW horizon | **Hourly**, GitHub Action, archived snapshots | **None** — public, unlicensed | raw.githubusercontent CSV, discovered path |
+| 3 | **blueladd11** (GitHub), **RETIRED 2026-09-08** | ✅ | ✅ | ✕ | 469 players × 6 GW horizon | **Hourly**, GitHub Action, archived snapshots | **None** — public, unlicensed | raw.githubusercontent CSV, discovered path |
 | 4 | **FPL `ep_next`** | ✅ | ✕ | ✅ | 595 players, next GW | Continuous — every price poll sees a fresh value | The official public API | `bootstrap-static` JSON |
 | 5 | **Rotowire lineups** | ✕ | proxy | proxy | 20 team sheets: 220 starters + 88 injury-list names | Upgrades to *confirmed* ~60–75 min before kickoff | robots-permitted + `llms.txt` welcoming bots | Server-rendered HTML |
 | 6 | **Premier Injuries** | ✕ | ✕ | ✅ **explicit %** | 91 flagged players, all 20 clubs | Continuous editorial | `User-agent: * / Disallow:` — fully open | Server-rendered HTML table |
@@ -260,7 +260,7 @@ Columns used: `player_code` (stable code, validated against `dim_player`),
 `pred_points_decomposed` is likewise not stored: two heads from one publisher
 under two provider names is one source voting twice.
 
-**blueladd11** — `GET api.github.com/repos/blueladd11-commits-tocode/fpl-projections/contents/out`
+**blueladd11** (RETIRED 2026-09-08: MAE 1.21/1.23 against baselines 1.09/0.86, the only scored provider that lost to its own baseline. Still fetchable; we stopped reading it.) `GET api.github.com/repos/blueladd11-commits-tocode/fpl-projections/contents/out`
 to discover the newest `projections_gw{gw}_{YYYYMMDDTHHMMSSZ}_gw{gw}.csv`, then
 the raw file. Columns: `element` → remapped, `xp` → `xpts`, `xmins` → `xmins`,
 `xp_next` (semicolon-joined, six values) → **six rows**, `gw` = base + index.

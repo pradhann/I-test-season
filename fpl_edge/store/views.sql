@@ -50,17 +50,44 @@ CREATE OR REPLACE MACRO sem_players(p_as_of) AS TABLE (
 );
 
 -- ---------------------------------------------------------------------------
+-- sem_projection_retired(): sources withdrawn from every read surface, with
+-- the reason and the date, so "why is this source gone?" is answerable in SQL
+-- rather than in a commit message. Retirement is a QUALITY judgement and it
+-- names its evidence; a source that merely stopped publishing is not retired,
+-- it just goes stale and says so.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE MACRO sem_projection_retired() AS TABLE (
+    SELECT * FROM (VALUES
+        ('gh_blueladd', DATE '2026-09-08',
+         'Worse than the naive baseline on settled gameweeks: MAE 1.21 and '
+         || '1.23 against a baseline of 1.09 and 0.86 over n=58 and n=62. It '
+         || 'is the only scored provider that loses to its own baseline. Also '
+         || 'the stalest feed of the set. Rows are kept for audit.')
+    ) AS t(source, retired_on, reason)
+);
+
+-- ---------------------------------------------------------------------------
 -- sem_projections(p_as_of): every provider's numbers, one row per
 -- (source, season, gw, code), joined to identity. player_code IS the stable
 -- FPL code (verified: the projection store resolves identity at ingest).
 -- ---------------------------------------------------------------------------
+--
+-- RETIRED SOURCES. A source listed in sem_projection_retired() is filtered out
+-- HERE, at the one door every consumer comes through, so the consensus, the
+-- panels and the solver's forecast all stop reading it in one edit. Its rows
+-- are NOT deleted: they stay in projection_normalized so the accuracy scoring
+-- that condemned the source can still be recomputed and audited. Retiring is
+-- a claim about a source's quality and it must be checkable after the fact.
 CREATE OR REPLACE MACRO sem_projections(p_as_of) AS TABLE (
     WITH pr AS (
         SELECT * FROM (
             SELECT *, row_number() OVER (
                 PARTITION BY source, season, gw, player_code
                 ORDER BY fetched_at DESC) rn
-            FROM projection_normalized WHERE fetched_at <= p_as_of) WHERE rn = 1
+            FROM projection_normalized
+            WHERE fetched_at <= p_as_of
+              AND source NOT IN (SELECT source FROM sem_projection_retired())
+        ) WHERE rn = 1
     )
     SELECT pr.season, pr.gw, pr.player_code AS code,
            pl.web_name, pl.position, pl.team, pl.price,
@@ -133,6 +160,13 @@ CREATE OR REPLACE MACRO sem_projection_weights(p_as_of) AS TABLE (
     FROM projection_weight w
     JOIN latest_fit USING (fit_id)
     CROSS JOIN track t
+    -- A retired source keeps its stored weight (the fit that produced it is a
+    -- historical fact and is not rewritten), but it must not be SHOWN as a
+    -- live weight: it contributes nothing, because sem_projections filters it
+    -- out and the blend renormalises over the providers that actually appear.
+    -- Serving it here would put a 17% contributor on the Projections tab that
+    -- contributes 0%.
+    WHERE w.provider NOT IN (SELECT source FROM sem_projection_retired())
     ORDER BY w.weight DESC, w.provider
 );
 

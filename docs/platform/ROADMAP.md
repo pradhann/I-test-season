@@ -113,6 +113,14 @@ Remaining, honestly:
   uses the stylised balanced archetype
 
 ### 2. Projection ensemble — SHIPPED (2026-09-07)
+**gh_blueladd retired 2026-09-08**. The first source dropped on measured
+accuracy rather than on access. Scored against settled gameweeks it posted MAE
+1.21 and 1.23 against baselines of 1.09 and 0.86 (n=58, n=62): the only scored
+provider that loses to its own baseline, so averaging it in made the consensus
+worse. Ingest skips it (`github_csv.LIVE_FEEDS`) and every read surface filters
+it (`sem_projection_retired()` in `store/views.sql`); its rows stay in
+`projection_normalized` so the verdict stays recomputable.
+
 `score_projections` runs nightly in `post_gw`, scoring every provider against
 settled actuals and refitting inverse-MSE weights. Three fits exist
 (`thru-gw1`, `thru-gw2`, `thru-gw3`) and `sem_projection_consensus_weighted`

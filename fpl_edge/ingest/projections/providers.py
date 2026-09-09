@@ -66,7 +66,11 @@ import httpx
 from fpl_edge.ingest.http import USER_AGENT
 from fpl_edge.ingest.projections.robots import fetch_policy
 
-Verdict = Literal["ingested", "paywalled", "blocked", "dead", "forbidden", "watchlist"]
+Verdict = Literal["ingested", "paywalled", "blocked", "dead", "forbidden",
+                  "watchlist", "retired"]
+#: "retired" is the only verdict that is a judgement about QUALITY rather
+#: than about access: the feed still fetches fine, and we have stopped
+#: reading it anyway. It must always name the measurement that retired it.
 
 #: When the statuses recorded in this module were observed.
 MEASURED_AT = dt.datetime(2026, 8, 19, 0, 0, tzinfo=dt.timezone.utc)
@@ -659,11 +663,18 @@ PROVIDERS: tuple[Provider, ...] = (
             "costs one per run. raw.githubusercontent is generous."
         ),
         covers_2026_27=True,
-        verdict="ingested",
+        verdict="retired",
         reason=(
-            "HTTP 200, 47,526 bytes, 469 eligible players for GW1 2026-27 with "
-            "xp, xmins, p_start and a six-gameweek horizon, expanded to 2,814 "
-            "rows. 0 unresolved element_ids."
+            "RETIRED 2026-09-08 on measured accuracy, not on access: it still "
+            "fetches (HTTP 200, 469 players, 0 unresolved element_ids). Scored "
+            "against settled gameweeks it posts MAE 1.21 and 1.23 where the "
+            "naive baseline manages 1.09 and 0.86 (n=58, n=62) -- the only "
+            "scored provider that loses to its own baseline, so including it "
+            "made the consensus worse. It was also the stalest feed of the "
+            "set. Ingest skips it (github_csv.LIVE_FEEDS) and every read "
+            "surface filters it (sem_projection_retired in store/views.sql); "
+            "its rows stay in projection_normalized so this verdict can be "
+            "rechecked rather than taken on trust."
         ),
         probe_urls=(
             "https://api.github.com/repos/blueladd11-commits-tocode/fpl-projections/contents/out",

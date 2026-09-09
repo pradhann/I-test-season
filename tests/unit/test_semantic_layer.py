@@ -93,13 +93,40 @@ def test_a_projection_fetched_after_the_instant_is_invisible(wh: Warehouse) -> N
 
 
 def test_consensus_measures_disagreement_not_agreement_theatre(wh: Warehouse) -> None:
-    for provider, xp in (("fplform", 4.0), ("gh_blueladd", 6.0), ("fpl_ep", 5.0)):
+    for provider, xp in (("fplform", 4.0), ("gh_apex_airsenal", 6.0), ("fpl_ep", 5.0)):
         _proj(wh, day=5, xp=xp, provider=provider)
     c = _sem(wh, "sem_projection_consensus", T(10)).iloc[0]
     assert int(c["n_sources"]) == 3
     assert float(c["xpts_mean"]) == 5.0
     assert float(c["xpts_spread"]) == 2.0
     assert c["web_name"] == "Haaland"
+
+
+def test_a_retired_source_is_invisible_to_every_read_but_is_not_deleted(
+        wh: Warehouse) -> None:
+    """Retirement is a read-surface gate, never a delete.
+
+    The source's rows must survive in the raw table -- the accuracy scoring
+    that condemned it has to stay recomputable, or "we retired it because it
+    was worse than baseline" is a claim nobody can check.
+    """
+    retired = wh.sql("SELECT * FROM sem_projection_retired()")
+    assert "gh_blueladd" in set(retired["source"]), "the registry names it"
+    assert retired["reason"].str.len().min() > 40, "a retirement states its evidence"
+
+    for provider, xp in (("fplform", 4.0), ("gh_blueladd", 99.0)):
+        _proj(wh, day=5, xp=xp, provider=provider)
+
+    seen = _sem(wh, "sem_projections", T(10))
+    assert set(seen["source"]) == {"fplform"}, "the retired source is filtered out"
+
+    c = _sem(wh, "sem_projection_consensus", T(10)).iloc[0]
+    assert int(c["n_sources"]) == 1
+    assert float(c["xpts_mean"]) == 4.0, "the retired number never reaches the mean"
+
+    raw = wh.sql(
+        "SELECT count(*) n FROM projection_normalized WHERE source = 'gh_blueladd'")
+    assert int(raw.iloc[0]["n"]) == 1, "the row is kept for audit"
 
 
 def test_form_respects_points_finalisation_time(wh: Warehouse) -> None:
