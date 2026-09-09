@@ -209,9 +209,14 @@ button.fx-inchip:focus-visible { outline: 2px solid var(--s1); outline-offset: 1
 .fx-verdict { display: grid; gap: 6px; margin: 2px 0 10px; }
 .fx-verdict .vrow { display: flex; align-items: center; gap: 6px;
                     flex-wrap: wrap; }
-.fx-verdict .vlab { flex: none; width: 148px; font-size: 10px;
-  letter-spacing: .07em; text-transform: uppercase; font-weight: 700;
-  color: var(--muted); }
+/* A 148px gutter of wrapped uppercase was two lines of shouting to label one
+   line of content, and it pushed every "open" button onto a line of its own.
+   The label is a chip now: it sizes to its words, sits on the baseline of the
+   row it names, and reads as a tag rather than a heading. */
+.fx-verdict .vlab { flex: none; font-size: 10px; font-weight: 700;
+  letter-spacing: .03em; color: var(--muted); white-space: nowrap;
+  padding: 2px 7px; border-radius: 999px; background: var(--raised);
+  border: 1px solid var(--line); }
 .vchip { display: inline-flex; align-items: center; gap: 5px;
   padding: 3px 9px 3px 5px; border-radius: 999px; cursor: pointer;
   border: 1px solid var(--line); background: var(--raised);
@@ -257,15 +262,17 @@ button.fx-inchip:focus-visible { outline: 2px solid var(--s1); outline-offset: 1
 /* The two column heads ARE the sort control: the words that used to repeat on
    every row live here once, and clicking one orders the grid by it. */
 .fx-rhsorts { display: flex; gap: 4px; }
+/* A column head, not a form control: boxed buttons in a boxed header read as
+   an input group sitting where a table header belongs. Flat, with the active
+   column underlined the way a sorted column is underlined anywhere else. */
 .fx-rhsort {
   flex: 1; display: inline-flex; align-items: center; justify-content: center;
-  gap: 2px; padding: 1px 0; border: 1px solid var(--line); border-radius: 3px;
+  gap: 2px; padding: 2px 0 3px; border: 0; border-bottom: 2px solid transparent;
   background: transparent; color: var(--faint); cursor: pointer;
   font: 700 9px/1.2 var(--mono); letter-spacing: .04em;
 }
-.fx-rhsort:hover { color: var(--ink); border-color: var(--ink); }
-.fx-rhsort.on { color: var(--ink); border-color: var(--s1);
-                background: color-mix(in oklab, var(--s1) 12%, transparent); }
+.fx-rhsort:hover { color: var(--ink); }
+.fx-rhsort.on { color: var(--ink); border-bottom-color: var(--s1); }
 .fx-rhsort .arr { font-size: 7px; }
 
 /* left rail: crest · name · form chip, then the rank pair with its bars on
@@ -284,13 +291,43 @@ button.fx-inchip:focus-visible { outline: 2px solid var(--s1); outline-offset: 1
                display: flex; align-items: center; gap: 5px; }
 .fx-rail .rr { grid-column: 1 / -1; display: flex; align-items: center;
                gap: 5px; }
-/* A three-character tag, not a sentence: the words are in the column header
-   once. Reclaiming 70px of every row is what lets the bar be the long thing. */
-.fx-rail .rr i.tag { font: 700 9px/1.15 var(--mono); color: var(--faint);
-                     font-style: normal; width: 22px; letter-spacing: .04em; }
-.fx-rail .rr b { font: 650 11px/1 var(--mono); color: var(--ink);
-                 min-width: 15px; text-align: right;
-                 font-variant-numeric: tabular-nums; }
+/* The two rank chips. They wear the grid's own FDR step for the club's
+   per-game ease, so the rail and the cells speak one colour language and a
+   green ATT chip means the same green as a green cell. The chip is a swatch
+   with a number on it, which is why it needs no bar beside it. */
+.fx-ranks { grid-column: 1 / -1; display: grid;
+            grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 1px; }
+.fx-rk {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 4px; padding: 2px 5px; border-radius: 4px;
+  background: var(--raised); border: 1px solid var(--line); cursor: pointer;
+}
+.fx-rk i { font: 700 8.5px/1 var(--mono); font-style: normal;
+           letter-spacing: .05em; opacity: .8; }
+.fx-rk b { font: 700 12px/1 var(--mono); font-variant-numeric: tabular-nums; }
+/* TINTED, not filled. Filling these with the FDR step made 40 saturated
+   blocks in the rail that outshouted the 120 cells they were meant to
+   summarise -- and FPL's neutral (#e7e7e7) is a bright white plate on a dark
+   surface, so the quietest fixtures drew the most eye. The step tints the
+   chip and paints a solid edge instead: same colour language, a fraction of
+   the weight, and the text stays on the theme's own ink at full contrast. */
+.fx-rk { border-left-width: 3px; }
+.fx-rk.fx-d1 { border-left-color: var(--fx-d1);
+               background: color-mix(in oklab, var(--fx-d1) 22%, var(--raised)); }
+.fx-rk.fx-d2 { border-left-color: var(--fx-d2);
+               background: color-mix(in oklab, var(--fx-d2) 20%, var(--raised)); }
+.fx-rk.fx-d3 { border-left-color: var(--fx-d3);
+               background: color-mix(in oklab, var(--fx-d3) 12%, var(--raised)); }
+.fx-rk.fx-d4 { border-left-color: var(--fx-d4);
+               background: color-mix(in oklab, var(--fx-d4) 20%, var(--raised)); }
+.fx-rk.fx-d5 { border-left-color: var(--fx-d5);
+               background: color-mix(in oklab, var(--fx-d5) 26%, var(--raised)); }
+.fx-rk i { color: var(--faint); }
+.fx-rk b { color: var(--ink); }
+
+/* Method, kickoffs and provenance live under the grid now. */
+.fx-method { margin-top: 14px; padding-top: 12px;
+             border-top: 1px solid var(--line); display: grid; gap: 8px; }
 .fx-promo { cursor: help; }
 /* club strength on the row, beside the run rank: "elite club, hard run" is a
    fact the row shows, not one the reader assembles */
@@ -644,7 +681,7 @@ button.fx-inchip:focus-visible { outline: 2px solid var(--s1); outline-offset: 1
 /* ---------- narrow ---------- */
 @media (max-width: 820px) {
   .fx-grid { --fx-rail: 176px; --fx-col: 72px; }
-  .fx-verdict .vlab { width: 100%; }
+  .fx-verdict .vlab { width: auto; }
 }
 @media (max-width: 420px) {
   /* 72px is the column floor: a double gameweek splits the cell and the
@@ -883,3 +920,23 @@ details.card.fx-fold > .sub { color: var(--faint); margin: 6px 0 10px; font-size
    can never be mistaken for the same fixture. */
 .fx-cell .opp .at { font-style: normal; opacity: .7; margin-right: 1px;
                     font-weight: 600; }
+
+/* The point-of-view key, directly above the club's schedule list. It exists
+   because the same question was asked three times against a legend that lived
+   somewhere else on the page: whose numbers are these, and is + good? */
+.fx-povkey {
+  margin: 0 0 8px; padding: 7px 10px; border-radius: 6px;
+  background: var(--raised); border: 1px solid var(--line);
+  font-size: 12px; line-height: 1.5; color: var(--muted);
+}
+.fx-povkey b { color: var(--ink); font-weight: 650; }
+.fx-povkey b.pos { color: var(--ok, #2e9e5b); }
+.fx-povkey b.neg { color: var(--warn, #d4553f); }
+/* Each half of a pair carries its own tag, so no number is ever a bare float
+   sitting next to another bare float. */
+.fx-lensrow .lv .opp { margin-right: 8px; }
+.fx-lensrow .lv i.pair {
+  font-style: normal; font-family: var(--mono); font-size: 10.5px;
+  font-variant-numeric: tabular-nums; color: var(--muted);
+  margin-left: 10px; white-space: nowrap;
+}

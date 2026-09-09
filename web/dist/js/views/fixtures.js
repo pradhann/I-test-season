@@ -59,6 +59,11 @@ const sgn1 = v => (v == null ? "–" : (v >= 0 ? "+" : "−") + Math.abs(v).toFi
    "+0.44 defence" reads as "concedes 0.44 more", which is the opposite of what
    it says, so the word travels with the number wherever there is room. */
 const easeWord = v => (v == null ? "" : (v >= 0 ? "easier" : "harder"));
+/* One opponent label for the whole page. The grid marked away fixtures and the
+   drawer and table did not, so the same fixture read two ways depending on
+   where you looked at it. Case still carries it too; the marker is what makes
+   it survive a glance. */
+const oppLabel = c => (c && c.isHome === false ? "@" : "") + (c ? c.label : "");
 const sgn2 = v => (v == null ? "–" : (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(2));
 /* "13th", never "#13": a bare number after a letter is how the owner read
    "A 16" as "Arsenal's attack is 16th". Every rank on this page says what is
@@ -691,6 +696,10 @@ export default async function fixtures(host) {
 
   const card = el("section", "card");
   card.appendChild(el("h2", null, "Fixture board"));
+  /* ORDER. This is a tool, and the grid is the tool. Everything that explains
+     the grid now sits under it: a reader who needs the method can reach it in
+     one click, and a reader who came to look at fixtures sees fixtures. The
+     old order spent about half the first screen on prose and provenance. */
 
   /* --- the two load-bearing sentences, in the slot xPoints uses for its --- */
   const s1 = el("p", "fx-claim");
@@ -702,7 +711,7 @@ export default async function fixtures(host) {
 
   const calibEl = el("div", "fx-calib");
   calibEl.hidden = true;                 // shown only once it has something to say
-  card.appendChild(calibEl);
+  // appended below the grid, with the rest of the method
 
   /* The sentence above is the page's method, and the method is worth one
      click, not six lines above every visit. The league-average anchor had a
@@ -714,7 +723,6 @@ export default async function fixtures(host) {
   howBox.append(howSum, s1);
   const noteBox = el("div", "fx-hownotes");
   howBox.appendChild(noteBox);
-  card.appendChild(howBox);
 
   const freshRow = el("div", "fx-fresh");
   const horizonRow = el("div", "toolbar fx-tb");
@@ -727,7 +735,11 @@ export default async function fixtures(host) {
   stripEl.hidden = true;
   const body = el("div");
   const foot = el("div");
-  card.append(freshRow, controls, verdictEl, stripEl, body, foot);
+  /* Controls, the answer in one line, then the grid. Method, kickoffs and
+     provenance follow it. */
+  const methodBox = el("div", "fx-method");
+  methodBox.append(calibEl, howBox, freshRow);
+  card.append(controls, verdictEl, body, stripEl, methodBox, foot);
   host.appendChild(card);
 
   /* The two appendix cards fold, in the house idiom: a summary that states
@@ -1413,7 +1425,7 @@ export default async function fixtures(host) {
         const chip = el("button", "vchip" + (onBoth.has(t.code) ? " both2" : ""));
         chip.appendChild(crest(t.code, t.short, "s14"));
         chip.appendChild(el("b", null, t.short));
-        chip.appendChild(el("span", "rk", `schedule ${ord(rankOf(t))}`));
+        chip.appendChild(el("span", "rk", ord(rankOf(t))));
         const sum = sumOf(t);
         const pg = (sum != null && t.nFixtures) ? sum / t.nFixtures : null;
         const cr = clubRankOf(t);
@@ -1431,10 +1443,10 @@ export default async function fixtures(host) {
       return r;
     };
     if (anyRanks) {
-      verdictEl.appendChild(shortlist("easiest schedules · attackers", attTop,
+      verdictEl.appendChild(shortlist("Best for ATT", attTop,
         t => t.attRankH, t => t.attSum, "attackers",
         t => num(t.rating && t.rating.attack_rank)));
-      verdictEl.appendChild(shortlist("easiest schedules · defenders", defTop,
+      verdictEl.appendChild(shortlist("Best for DEF", defTop,
         t => t.defRankH, t => t.defSum, "defenders",
         t => num(t.rating && t.rating.defence_rank)));
     } else {
@@ -1448,20 +1460,22 @@ export default async function fixtures(host) {
     const tearRow = (g, quiet) => {
       const top = g[0];
       const r = el("div", "vrow tear" + (quiet ? " quiet" : ""));
-      /* The two rows differ by the SIGN of the gap, so the label says which
-         side of the split the pair favours rather than restating "torn". */
-      r.appendChild(el("span", "vlab", (num(top.gap) || 0) > 0
-        ? "easier for defenders" : "easier for attackers"));
+      /* The two rows are the two DIRECTIONS of the split, so the label has to
+         name the direction. Calling both "Most split" read as one fact printed
+         twice, which is exactly the repetition the compaction was for. */
+      r.appendChild(el("span", "vlab",
+        (num(top.gap) || 0) > 0 ? "Favours DEF" : "Favours ATT"));
       const txt = el("span", "txt");
       txt.appendChild(el("b", null, oppPair(top.opponent, top.is_home)));
       /* the population is every opponent at both venues (20 x 2 = 40), not
          40 fixtures: the bracket says so where the number is printed */
       const pop = num(M.res.scale && M.res.scale.population) || nClubs * 2;
       txt.appendChild(document.createTextNode(
-        `: ${ord(top.attack_rank)} easiest of ${pop} for its attackers, `
-        + `${ord(top.defence_rank)} easiest of ${pop} for its defenders `
-        + `(every opponent, at each venue); `
-        + g.map(d => `${d.short_name} GW${d.gw}`).join(" · ")));
+        `: ATT ${ord(top.attack_rank)}, DEF ${ord(top.defence_rank)} of ${pop}`
+        + ` · ` + g.map(d => `${d.short_name} GW${d.gw}`).join(" · ")));
+      txt.title = `Ranked over all ${pop} opponent-venue pairs: this opponent `
+        + `is ${ord(top.attack_rank)} easiest for a visiting attack and `
+        + `${ord(top.defence_rank)} easiest for a visiting defence.`;
       r.appendChild(txt);
       const open = el("button", "chip", "open");
       open.title = `open ${top.short_name} ${top.is_home ? "v" : "at"} `
@@ -1484,21 +1498,24 @@ export default async function fixtures(host) {
           turns.push({ t, names, rank: t.defRankH, what: "defenders" });
       }
       turns.sort((a, b) => a.rank - b.rank);
-      for (const u of turns.slice(0, 2)) {
+      /* One row, not one per club: the label repeated on consecutive lines is
+         a heading pretending to be data. Each club is its own chip, so the
+         row stays clickable per club. */
+      const picked = turns.slice(0, 3);
+      if (picked.length) {
         const r = el("div", "vrow fx-turnrow");
-        r.appendChild(el("span", "vlab", "easy run, club you hold"));
-        const txt = el("span", "txt");
-        txt.appendChild(el("b", null, u.t.short));
-        /* "schedule for your defenders is 1st easiest of 20. You hold Hall."
-           is two sentences for one fact. The rank and the name are the fact. */
-        txt.appendChild(document.createTextNode(
-          `: ${ord(u.rank)} easiest run of ${nClubs} for ${u.what}. `
-          + `You hold ${u.names.join(", ")}.`));
-        r.appendChild(txt);
-        const open = el("button", "chip", "open");
-        open.title = `jump to ${u.t.short}'s row on the board`;
-        open.onclick = () => bookmark(u.t);
-        r.appendChild(open);
+        r.appendChild(el("span", "vlab", "You hold"));
+        for (const u of picked) {
+          const b = el("button", "vchip");
+          b.appendChild(crest(u.t.code, u.t.short, "s14"));
+          b.appendChild(el("b", null, u.t.short));
+          b.appendChild(el("span", "rk",
+            `${u.what === "attackers" ? "ATT" : "DEF"} ${ord(u.rank)}`));
+          b.title = `${u.t.short}: ${ord(u.rank)} easiest run of ${nClubs} for `
+            + `its ${u.what}. You hold ${u.names.join(", ")}.`;
+          b.onclick = () => bookmark(u.t);
+          r.appendChild(b);
+        }
         verdictEl.appendChild(r);
       }
     }
@@ -1515,7 +1532,7 @@ export default async function fixtures(host) {
     const groups = relevantOf(allGroups);
     if (!allGroups.length) {
       const r = el("div", "vrow tear");
-      r.appendChild(el("span", "vlab", "attack vs defence gap"));
+      r.appendChild(el("span", "vlab", "Split"));
       r.appendChild(el("span", "txt",
         "no torn fixtures in this window: a real finding, not an empty "
         + "state; the split changes no decision here"));
@@ -1813,27 +1830,38 @@ export default async function fixtures(host) {
        more fixtures really is more chances. COLOUR is the per-game average,
        so the tint sits on exactly the cells' scale. Length survives colour
        blindness, print and forced-colours on its own. */
-    /* "schedule for your attackers / 1st" was 30 characters of label per rank,
-       twice per row, 20 rows -- the label belongs in the column header, once.
-       The tag is the column, the number is the rank, the bar is the size. The
-       full sentence stays on the accessible label and the hover. */
-    const rr = (tag, what, rank, sum) => {
-      const row = el("span", "rr");
-      row.appendChild(el("i", "tag", tag));
-      row.appendChild(el("b", null, rank == null ? "–" : String(rank)));
-      if (rank != null)
-        row.setAttribute("aria-label",
+    /* Two rank chips, wearing the grid's own FDR colour for the club's
+       per-game ease. The stacked label + number + hairline bar that used to
+       sit here was three visual weights for two facts, and the bars were
+       unreadable at 40px: rank already orders the clubs, and the chip's
+       colour carries the magnitude the bar was drawing. One row of two
+       chips, aligned across all 20 rows, is scannable in a way the old
+       stack was not. */
+    const ranks = el("div", "fx-ranks");
+    const rankChip = (tag, what, rank, sum) => {
+      const c = el("span", "fx-rk");
+      const perGame = sum != null && t.nFixtures ? sum / t.nFixtures : null;
+      const band = perGame == null ? null : cls(perGame, M.scale.dom);
+      if (band) c.classList.add(band);
+      c.appendChild(el("i", null, tag));
+      c.appendChild(el("b", null, rank == null ? "–" : String(rank)));
+      if (rank != null) {
+        c.setAttribute("aria-label",
           `run for this club's ${what}: ${ord(rank)} easiest of ${n} clubs`);
-      row.appendChild(railTrack(sum, railMax, t.nFixtures));
-      return row;
+        hover.attach(c, () => `${t.short}: ${ord(rank)} easiest run of ${n} `
+          + `clubs for its ${what} over ${range}`
+          + (sum == null ? "" : `, ${sgn2(sum)} goals across the window`));
+      }
+      return c;
     };
     if (M.anySplit) {
-      d.appendChild(rr("ATT", "attackers", t.attRankH, t.attSum));
-      d.appendChild(rr("DEF", "defenders", t.defRankH, t.defSum));
+      ranks.append(rankChip("ATT", "attackers", t.attRankH, t.attSum),
+                   rankChip("DEF", "defenders", t.defRankH, t.defSum));
     } else {
       const v = t.blendMean == null ? null : t.blendMean * t.nFixtures;
-      d.appendChild(rr("RUN", "players", null, v));
+      ranks.appendChild(rankChip("RUN", "players", null, v));
     }
+    d.appendChild(ranks);
     d.onclick = () => openClub(t);
     d.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openClub(t); } };
     return d;
@@ -2106,9 +2134,9 @@ export default async function fixtures(host) {
         else {
           const parts = slot.opps.map(c => {
             if (c.easeAtt != null && c.easeDef != null)
-              return `${c.label} ${sgn2(c.easeAtt)}/${sgn2(c.easeDef)}`;
-            if (c.easeBlend != null) return `${c.label} ${sgn2(c.easeBlend)}`;
-            return `${c.label} no fit`;
+              return `${oppLabel(c)} A${sgn2(c.easeAtt)} D${sgn2(c.easeDef)}`;
+            if (c.easeBlend != null) return `${oppLabel(c)} ${sgn2(c.easeBlend)}`;
+            return `${oppLabel(c)} no fit`;
           });
           const first = slot.opps[0];
           const sw = el("span", "sw " + (cls(
@@ -2131,7 +2159,8 @@ export default async function fixtures(host) {
         : `Each cell is the blended ease in ${M.scale.unit}. Positive is easier. `
           + "It is one number, not two."));
     body.appendChild(el("p", "sub",
-      "Σ att / Σ def are the club's schedule summed over the window (how easy its fixtures are for your players), not its strength."));
+      "Σ att / Σ def sum the club's schedule over the window: how easy its "
+      + "fixtures are for its own players, not how good the club is."));
     body.appendChild(legend());
   }
 
@@ -3088,6 +3117,20 @@ export default async function fixtures(host) {
         + "; read its colours gently."));
 
     drawer.appendChild(el("h2", null, "The schedule"));
+    /* The owner read this list three times and still could not tell whose
+       numbers they were. A legend elsewhere on the page does not fix that:
+       the answer has to sit ON the numbers. So the club is named, the sign is
+       spelled out, and each half of every pair wears its own tag. */
+    const key = el("p", "fx-povkey");
+    key.appendChild(document.createTextNode("Both numbers are for "));
+    key.appendChild(el("b", null, t.name || t.short));
+    key.appendChild(document.createTextNode(": "));
+    key.appendChild(el("b", "pos", "+ easier"));
+    key.appendChild(document.createTextNode(" for them, "));
+    key.appendChild(el("b", "neg", "− harder"));
+    key.appendChild(document.createTextNode(
+      ". ATT is what their attackers meet, DEF what their defenders meet."));
+    drawer.appendChild(key);
     const box = el("div", "fx-lens");
     for (const g of M.gws) {
       const slot = t.byGw.get(g);
@@ -3108,17 +3151,25 @@ export default async function fixtures(host) {
           track.appendChild(fill);
         }
         r.appendChild(track);
-        r.appendChild(el("span", "lv",
-          `${c.label} ${c.easeAtt != null && c.easeDef != null
-            ? sgn2(c.easeAtt) + "/" + sgn2(c.easeDef) : sgn2(c.easeBlend)}`));
+        const lv = el("span", "lv");
+        lv.appendChild(el("b", "opp", oppLabel(c)));
+        if (c.easeAtt != null && c.easeDef != null) {
+          lv.appendChild(el("i", "pair",
+            `ATT ${sgn2(c.easeAtt)} ${easeWord(c.easeAtt)}`));
+          lv.appendChild(el("i", "pair",
+            `DEF ${sgn2(c.easeDef)} ${easeWord(c.easeDef)}`));
+        } else {
+          lv.appendChild(el("i", "pair", sgn2(c.easeBlend)));
+        }
+        r.appendChild(lv);
       }
       box.appendChild(r);
     }
     drawer.appendChild(box);
     drawer.appendChild(el("p", "sub",
       M.anySplit
-        ? `Bars: attack lens. Pairs: attack / defence ease, ${M.scale.unit}. `
-          + "A grid cell opens the match."
+        ? `Bar: the attack number. Unit: ${M.scale.unit}. `
+          + "A grid cell opens that match."
         : "One blended number per fixture; the split is unavailable in this "
           + "payload."));
 
@@ -3189,7 +3240,7 @@ export default async function fixtures(host) {
       disc.appendChild(el("p", "sub",
         "These are the club's own strength, which every cell colour holds constant: "
         + "a colour asks only what the opponent does at that venue. The schedule ranks "
-        + "above are how easy the fixtures this club faces are for your players."));
+        + "above are how easy this club's fixtures are for its own players."));
       drawer.appendChild(disc);
     }
   }
