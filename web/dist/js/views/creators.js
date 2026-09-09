@@ -2589,8 +2589,13 @@ export default async function creators(host) {
    */
 
   function renderReportCards() {
-    const sec = el("div", "cx-sec");
-    const h = el("div", "cx-sechead");
+    /* Folded by default. Every claim already carries its creator's record as a
+       chip, so the full card wall is the reference behind those chips, not the
+       thing a reader came for -- and it is the longest block on the page. The
+       summary still carries the census, so what is inside is knowable without
+       opening it. */
+    const sec = el("details", "cx-sec cx-rcsec");
+    const h = el("summary", "cx-sechead");
     const h3 = el("h3", null, "Report cards");
     h3.title = "ordered by claims scored, not by merit";
     h.appendChild(h3);

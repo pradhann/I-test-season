@@ -1058,3 +1058,17 @@ tr.cx-gridrow.unread td.unread { background-image: repeating-linear-gradient(135
           background: var(--surface); border: 1px solid var(--line);
           border-radius: 6px; font-family: var(--mono); font-size: 11px;
           white-space: pre-wrap; word-break: break-word; color: var(--muted); }
+
+/* The report-card wall is a <details>: its head is the summary, so the marker
+   goes where a reader expects a disclosure and the census stays readable while
+   the section is shut. */
+.cx-rcsec > summary { cursor: pointer; list-style: none; }
+.cx-rcsec > summary::-webkit-details-marker { display: none; }
+.cx-rcsec > summary::before {
+  content: "▸"; color: var(--faint); font-size: 10px; margin-right: 2px;
+  display: inline-block; transition: transform .12s ease;
+}
+.cx-rcsec[open] > summary::before { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) {
+  .cx-rcsec > summary::before { transition: none; }
+}
