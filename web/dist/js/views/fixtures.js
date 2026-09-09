@@ -3455,15 +3455,26 @@ export default async function fixtures(host) {
       const fd = ratings ? parseTs(ratings.as_of) : null;
       const fh = ratings ? (num(ratings.age_hours) ?? ageHours(ratings.as_of)) : null;
       const disc = el("details", "fx-how");
+      /* These are LOG MULTIPLIERS, not goals. Printing "+0.43 goals" for an
+         attack of 0.434 was wrong twice over: the parameter multiplies the
+         baseline by exp(0.434) = 1.54, which on a 1.42-goal home baseline is
+         +0.77 goals, not +0.43. And the defence parameter counts goals
+         CONCEDED, so its sign runs opposite to every ease number on this page,
+         where + means easier. A multiplier states both without a convention to
+         remember: x1.54 scored, x0.70 conceded. */
+      const mult = v => (v == null ? "–" : `×${Math.exp(v).toFixed(2)}`);
       disc.appendChild(el("summary", null,
-        `The fit: attack ${sgn2(num(rt.attack))} · defence ${sgn2(num(rt.defence))} goals vs average`
+        `The fit: scores ${mult(num(rt.attack))} · concedes ${mult(num(rt.defence))}`
         + (num(rt.matches_seen) != null ? ` · ${rt.matches_seen} matches` : "")
         + (fh != null ? ` · fitted ${fmtSpan(fh)} old` : "")
         + (fd ? `, on results to ${fd.toLocaleDateString(undefined, { day: "numeric", month: "short" })}` : "")));
       const kv = el("div", "fx-kv");
       const add = (a, b) => { kv.appendChild(el("span", "k", a)); kv.appendChild(el("span", "v", b)); };
-      add("attack", `${sgn2(num(rt.attack))} goals vs a league-average defence, per match`);
-      add("defence", `${sgn2(num(rt.defence))} goals conceded vs average (negative is tighter)`);
+      add("attack", `${mult(num(rt.attack))} the goals of an average club `
+        + `(log parameter ${sgn2(num(rt.attack))})`);
+      add("defence", `${mult(num(rt.defence))} the goals CONCEDED by an average `
+        + `club, so lower is better here, the opposite of the + = easier used `
+        + `elsewhere on this page (log parameter ${sgn2(num(rt.defence))})`);
       if (ar != null) add("attack rank", `${ord(ar)} best of ${n}`);
       if (dr != null) add("defence rank", `${ord(dr)} best of ${n}`);
       if (num(rt.matches_seen) != null) add("matches in the fit", String(rt.matches_seen));
