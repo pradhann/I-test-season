@@ -55,10 +55,10 @@ const num = v => (typeof v === "number" && isFinite(v) ? v : null);
 const sgn1 = v => (v == null ? "–" : (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(1));
 /* Every signed ease on this page is FROM THE ROW CLUB'S POINT OF VIEW, and on
    both axes positive means good for that club: its attackers meet an opponent
-   that concedes more, or its defenders meet one that scores less. A bare
-   "+0.44 defence" reads as "concedes 0.44 more", which is the opposite of what
-   it says, so the word travels with the number wherever there is room. */
-const easeWord = v => (v == null ? "" : (v >= 0 ? "easier" : "harder"));
+   that concedes more, or its defenders meet one that scores less. That is
+   stated ONCE per surface, in the key above the numbers -- it was briefly
+   appended to every value, which made a list of six fixtures read "harder
+   harder easier harder" and buried the numbers it was meant to explain. */
 /* One opponent label for the whole page. The grid marked away fixtures and the
    drawer and table did not, so the same fixture read two ways depending on
    where you looked at it. Case still carries it too; the marker is what makes
@@ -680,13 +680,15 @@ function formChipSpec(form) {
         /* "att form +0.5" never said what the 0.5 was measured against, so it
            read as a rating rather than a gap. The label now carries the
            comparison; the card carries the arithmetic. */
-        { cls: attR >= 0 ? "up" : "dn", text: `att ${sgn1(attR)} vs rating`,
+        { cls: attR >= 0 ? "up" : "dn", text: `att ${sgn1(attR)}`,
+          full: `att ${sgn1(attR)} vs rating`,
           title: `Scoring ${sgn2(attR)} goals a game more than its own fitted `
             + `rating predicts, over the last ${n} `
             + `match${n === 1 ? "" : "es"}. This is a CHECK on the rating, not `
             + "an input to it: it says the colour may be behind the football. "
             + "It never changes the colour." },
-        { cls: flip >= 0 ? "up" : "dn", text: `def ${sgn1(flip)} vs rating`,
+        { cls: flip >= 0 ? "up" : "dn", text: `def ${sgn1(flip)}`,
+          full: `def ${sgn1(flip)} vs rating`,
           title: `Conceding ${sgn2(-flip)} goals a game versus its own fitted `
             + `rating over the last ${n} match${n === 1 ? "" : "es"}, shown `
             + "flipped so positive is always good for you. A check on the "
@@ -706,7 +708,7 @@ function formChipSpec(form) {
     ].filter(Boolean).join(" "),
   };
 }
-function formChipEl(form) {
+function formChipEl(form, terse) {
   const spec = formChipSpec(form);
   if (!spec) return null;               // legacy payload: the chip is absent
   if (spec.state === "smalln") {
@@ -716,7 +718,11 @@ function formChipEl(form) {
   }
   const box = el("span", "formchip resid");
   for (const ps of spec.pills) {
-    const pill = el("b", "pill " + ps.cls, ps.text);
+    /* The rail is 206px and two "att -0.1 vs rating" pills are 240px, so they
+       used to run off it and over the first fixture column. "vs rating" is the
+       notation, and notation is explained once (the legend does it), not
+       repeated on forty pills. The drawers, which have the room, keep it. */
+    const pill = el("b", "pill " + ps.cls, terse ? ps.text : (ps.full || ps.text));
     pill.title = ps.title;
     box.appendChild(pill);
   }
@@ -1945,7 +1951,7 @@ export default async function fixtures(host) {
       nm.appendChild(z);
     }
     d.appendChild(nm);
-    const chip = showDetail ? formChipEl(t.form) : null;
+    const chip = showDetail ? formChipEl(t.form, true) : null;
     if (chip) {
       /* the chip's native titles would double the rail's hover card; fold
          them into one styled card on the chip itself */
@@ -2640,12 +2646,12 @@ export default async function fixtures(host) {
       }
       r.appendChild(track);
       const pop = num(M.res.scale && M.res.scale.population) || M.teams.length * 2;
+      /* No "easier"/"harder" per row: the key above says once what the sign
+         means, and repeating it on every line is the wordiness the key was
+         supposed to remove, not add to. */
       r.appendChild(el("span", "lv",
-        (v == null ? "–" : `${sgn2(v)} ${easeWord(v)}`)
-        + (rank != null
-            ? ` · ${oppPair(c.opponent, c.isHome)} ranks ${ord(rank)} of ${pop} `
-              + "opponent-venues, easiest first"
-            : "")));
+        (v == null ? "–" : sgn2(v))
+        + (rank != null ? ` · ${oppPair(c.opponent, c.isHome)} ${ord(rank)}/${pop}` : "")));
       return r;
     };
     if (c.easeAtt != null || c.easeDef != null) {
@@ -2726,14 +2732,32 @@ export default async function fixtures(host) {
       && (foeSlot.opps || []).find(o => o.opponent === t.short);
 
     A1.appendChild(el("h2", null, "The two answers, for both clubs"));
+    /* The three numbers a reader opened this drawer for, on one line, before
+       any prose. Everything below is the same three with their working shown;
+       this is so the drawer answers before it explains. */
+    const head = el("div", "fx-headline");
+    const hv = (lab, val, title) => {
+      const b = el("span", "hv");
+      b.appendChild(el("i", null, lab));
+      b.appendChild(el("b", null, val));
+      if (title) b.title = title;
+      head.appendChild(b);
+    };
+    head.appendChild(el("span", "who", t.short));
+    if (eAtt(c) != null) hv("ATT", sgn2(eAtt(c)), `${t.short}'s attackers`);
+    if (eDef(c) != null) hv("DEF", sgn2(eDef(c)), `${t.short}'s defenders`);
+    if (c.pCleanSheet != null)
+      hv("CS", `${Math.round(c.pCleanSheet * 100)}%`,
+        `chance ${t.short} keep a clean sheet`);
+    if (head.children.length > 1) A1.appendChild(head);
     if (c.easeAtt != null || c.easeDef != null) {
       const k = el("p", "fx-povkey");
       k.appendChild(el("b", "pos", "+ easier"));
-      k.appendChild(document.createTextNode(" for the club named on the row, "));
+      k.appendChild(document.createTextNode(" · "));
       k.appendChild(el("b", "neg", "− harder"));
       k.appendChild(document.createTextNode(
-        ". The two clubs face different opponents, so the two sides do not "
-        + "mirror each other."));
+        ", for the club it is listed under. The two sides do not mirror: each "
+        + "faces a different opponent."));
       A1.appendChild(k);
     }
     const side = (club, cell, venueWord) => {
@@ -2754,8 +2778,8 @@ export default async function fixtures(host) {
     }
     A1.appendChild(el("p", "sub",
       (c.easeAtt != null && c.easeDef != null)
-        ? `${M.scale.unit}. Positive is easier. Both bars are on the same axis `
-          + "as the grid above, and neither is an average of the other."
+        ? `${M.scale.unit}. Same axis as the grid; neither bar is an average `
+          + "of the other."
         : c.easeBlend != null
           ? "One blended number, because that is all the payload carries. It is "
             + "the average of two different questions."
@@ -3337,14 +3361,13 @@ export default async function fixtures(host) {
        the answer has to sit ON the numbers. So the club is named, the sign is
        spelled out, and each half of every pair wears its own tag. */
     const key = el("p", "fx-povkey");
-    key.appendChild(document.createTextNode("Both numbers are for "));
+    key.appendChild(document.createTextNode("All numbers are for "));
     key.appendChild(el("b", null, t.name || t.short));
-    key.appendChild(document.createTextNode(": "));
+    key.appendChild(document.createTextNode(". "));
     key.appendChild(el("b", "pos", "+ easier"));
-    key.appendChild(document.createTextNode(" for them, "));
+    key.appendChild(document.createTextNode(" · "));
     key.appendChild(el("b", "neg", "− harder"));
-    key.appendChild(document.createTextNode(
-      ". ATT is what their attackers meet, DEF what their defenders meet."));
+    key.appendChild(document.createTextNode(" · ATT their attackers, DEF their defenders."));
     drawer.appendChild(key);
     const box = el("div", "fx-lens");
     for (const g of M.gws) {
@@ -3369,10 +3392,8 @@ export default async function fixtures(host) {
         const lv = el("span", "lv");
         lv.appendChild(el("b", "opp", oppLabel(c)));
         if (c.easeAtt != null && c.easeDef != null) {
-          lv.appendChild(el("i", "pair",
-            `ATT ${sgn2(c.easeAtt)} ${easeWord(c.easeAtt)}`));
-          lv.appendChild(el("i", "pair",
-            `DEF ${sgn2(c.easeDef)} ${easeWord(c.easeDef)}`));
+          lv.appendChild(el("i", "pair", `ATT ${sgn2(c.easeAtt)}`));
+          lv.appendChild(el("i", "pair", `DEF ${sgn2(c.easeDef)}`));
         } else {
           lv.appendChild(el("i", "pair", sgn2(c.easeBlend)));
         }
