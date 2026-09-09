@@ -2538,39 +2538,44 @@ export default async function fixtures(host) {
     /* ---- Act 1 · VERDICT — decides the transfer; board payload, so it
        renders before the detail fetch returns ---- */
     const A1 = act("verdict", "Verdict");
-    A1.appendChild(el("h2", null, `The two answers, for ${t.short}`));
+    /* A FIXTURE HAS TWO SIDES, so this shows two sides. Naming the club fixed
+       "whose number is this" but left "what about the other one", and putting
+       that behind a swap button still made the reader click and hold one set
+       of numbers in their head to compare. Both clubs, both lenses, one view.
+       Nothing is derived here: the opposite side is the opposite club's own
+       cell for this gameweek, read straight off the same payload. */
+    const foe = M.teams.find(x => x.short === c.opponent);
+    const foeSlot = foe && foe.byGw && foe.byGw.get(slot.gw);
+    const foeCell = foeSlot && !foeSlot.blank
+      && (foeSlot.opps || []).find(o => o.opponent === t.short);
+
+    A1.appendChild(el("h2", null, "The two answers, for both clubs"));
     if (c.easeAtt != null || c.easeDef != null) {
       const k = el("p", "fx-povkey");
-      k.appendChild(document.createTextNode("Both numbers are for "));
-      k.appendChild(el("b", null, t.name || t.short));
-      k.appendChild(document.createTextNode(
-        `, ${c.isHome ? "at home to" : "away at"} `));
-      k.appendChild(el("b", null, c.opponent));
-      k.appendChild(document.createTextNode(": "));
       k.appendChild(el("b", "pos", "+ easier"));
-      k.appendChild(document.createTextNode(" for them, "));
+      k.appendChild(document.createTextNode(" for the club named on the row, "));
       k.appendChild(el("b", "neg", "− harder"));
-      k.appendChild(document.createTextNode(". "));
-      /* The question this answers is "what about the other club?", and a
-         sentence telling the reader to go and find the other row is a worse
-         answer than the swap itself. Same fixture, other point of view. */
-      const foe = M.teams.find(x => x.short === c.opponent);
-      const foeSlot = foe && foe.byGw && foe.byGw.get(slot.gw);
-      const foeCell = foeSlot && !foeSlot.blank
-        && (foeSlot.opps || []).find(o => o.opponent === t.short);
-      if (foeCell) {
-        const swap = el("button", "chip fx-swap", `See ${c.opponent}'s side`);
-        swap.title = `The same fixture from ${foe.name || foe.short}'s point of `
-          + "view: their attackers and their defenders";
-        swap.onclick = () => openFixture(foe, foeSlot, foeCell);
-        k.appendChild(swap);
-      } else {
-        k.appendChild(document.createTextNode(
-          "Open the other club's row for their side of it."));
-      }
+      k.appendChild(document.createTextNode(
+        ". The two clubs face different opponents, so the two sides do not "
+        + "mirror each other."));
       A1.appendChild(k);
     }
-    A1.appendChild(lensBars(c, false, t.short));
+    const side = (club, cell, venueWord) => {
+      const h = el("div", "fx-sidehead");
+      h.appendChild(crest(club.code, club.short, "s16"));
+      h.appendChild(el("b", null, club.name || club.short));
+      h.appendChild(el("span", "v", venueWord));
+      A1.appendChild(h);
+      A1.appendChild(lensBars(cell, false, club.short));
+    };
+    side(t, c, c.isHome ? "at home" : "away");
+    if (foeCell && foe) {
+      side(foe, foeCell, foeCell.isHome ? "at home" : "away");
+    } else if (foe) {
+      A1.appendChild(el("p", "sub",
+        `${foe.short}'s own cell for this gameweek is not in this payload, so `
+        + "their side is not shown rather than inferred from this one."));
+    }
     A1.appendChild(el("p", "sub",
       (c.easeAtt != null && c.easeDef != null)
         ? `${M.scale.unit}. Positive is easier. Both bars are on the same axis `

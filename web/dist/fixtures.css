@@ -957,3 +957,19 @@ details.card.fx-fold > .sub { color: var(--faint); margin: 6px 0 10px; font-size
 /* The swap sits inside the point-of-view key, because "whose numbers are
    these" and "show me the other club's" are one question asked twice. */
 .fx-povkey .fx-swap { margin-left: 4px; vertical-align: baseline; }
+
+/* One heading per club inside the verdict, so the two sets of bars can never
+   be read as one list. The crest carries the identity; the venue word is the
+   thing that makes the two sides differ. */
+.fx-sidehead {
+  display: flex; align-items: center; gap: 6px;
+  margin: 12px 0 5px; padding-bottom: 4px;
+  border-bottom: 1px solid var(--line);
+}
+.fx-sidehead:first-of-type { margin-top: 6px; }
+.fx-sidehead b { font-size: 13px; font-weight: 650; color: var(--ink); }
+.fx-sidehead .v {
+  font: 600 9.5px/1 var(--mono); letter-spacing: .05em; color: var(--faint);
+  text-transform: uppercase; padding: 2px 6px; border-radius: 999px;
+  background: var(--raised); border: 1px solid var(--line);
+}
