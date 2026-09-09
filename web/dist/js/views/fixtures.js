@@ -327,6 +327,17 @@ function bucket(ease, dom) {
 }
 /* The FDR number a class carries, for the legend and every tooltip. */
 const fdrOf = cls => CLASSES.indexOf(cls) + 1;
+/* Robust symmetric domain for a population, by the same method the panel uses
+   for its own: cover the bulk and let the tail saturate rather than squashing
+   every ordinary fixture to keep two outliers on scale. Returns the domain and
+   how many values it clips, because a clip count is a fact worth printing. */
+function domainFor(values, floor) {
+  const abs = values.filter(v => v != null).map(Math.abs).sort((a, b) => a - b);
+  if (!abs.length) return { dom: floor, clipped: 0 };
+  const q = abs[Math.min(abs.length - 1, Math.floor(0.95 * abs.length))];
+  const dom = Math.max(floor, Math.ceil(q * 10) / 10);
+  return { dom, clipped: abs.filter(v => v > dom).length };
+}
 const cls = (ease, dom) => { const b = bucket(ease, dom); return b == null ? null : CLASSES[b]; };
 
 /* --------------------------------------------------- payload → view model */
@@ -521,6 +532,11 @@ function readOpponent(raw, scale) {
     nBooks: num(o.n_books),
     marketResidual: num(o.market_residual),
     priorShare: num(o.rating_prior_share),
+    /* The same two eases WITH this club's own attack and defence in them.
+       Both bases travel on every cell so the grid can switch without refetching
+       and without either number being derived from the other. */
+    easeAttClub: num(o.relative_attack),
+    easeDefClub: num(o.relative_defence),
     pCleanSheet: num(o.p_clean_sheet),
     /* The clean-sheet number WITH this club's own defence in it. The grid's
        colour deliberately holds the club at league average, which is right for
@@ -559,6 +575,8 @@ function buildModel(res) {
     const defVals = all.map(c => c.easeDef).filter(v => v != null);
     const blendVals = all.map(c => c.easeBlend).filter(v => v != null);
     const csVals = all.map(c => c.pCleanSheetAdj).filter(v => v != null);
+    const attClubVals = all.map(c => c.easeAttClub).filter(v => v != null);
+    const defClubVals = all.map(c => c.easeDefClub).filter(v => v != null);
     const sum = a => (a.length ? a.reduce((x, y) => x + y, 0) : null);
     const mean = a => (a.length ? sum(a) / a.length : null);
 
@@ -581,6 +599,11 @@ function buildModel(res) {
       csSum: csVals.length ? sum(csVals) : null,
       csMean: mean(csVals),
       csN: csVals.length,
+      /* Club-basis sums. The panel serves horizon ranks for the opponent-only
+         basis only, so the club-basis ranks are computed here from these sums
+         and the page says so rather than passing them off as served. */
+      attSumClub: attClubVals.length ? sum(attClubVals) : null,
+      defSumClub: defClubVals.length ? sum(defClubVals) : null,
       attRankH: num(h.attack_rank), defRankH: num(h.defence_rank),
       rankGap: num(h.rank_gap),
       rating: t.rating || null,
@@ -603,7 +626,26 @@ function buildModel(res) {
   for (const t of teams)
     t.tornRows = divergent.filter(d => num(d.team_code) === t.code);
 
-  return { scale, gws, teams, anySplit, anyBlend, divergent, tornMap, res };
+  /* Club-basis horizon ranks: the panel serves ranks for the opponent-only
+     basis only, so these are computed from the club sums above. 1 = easiest. */
+  for (const key of ["attSumClub", "defSumClub"]) {
+    const rankKey = key === "attSumClub" ? "attRankClub" : "defRankClub";
+    const ordered = teams.filter(t => t[key] != null)
+      .sort((a, b) => b[key] - a[key]);
+    ordered.forEach((t, i) => { t[rankKey] = i + 1; });
+  }
+
+  /* The club basis is a WIDER distribution than the opponent-only one -- the
+     panel's own domain_note says so -- so it gets a domain calibrated on its
+     own population instead of borrowing one that would saturate every strong
+     and weak club alike. Same method the panel uses, applied here and
+     labelled as computed here. */
+  const clubVals = teams.flatMap(t => gws.flatMap(g => (t.byGw.get(g).opps || [])
+    .flatMap(c => [c.easeAttClub, c.easeDefClub])));
+  const club = domainFor(clubVals, scale.dom);
+  const anyClub = clubVals.some(v => v != null);
+  return { scale, gws, teams, anySplit, anyBlend, divergent, tornMap, res,
+           clubDom: club.dom, clubClipped: club.clipped, anyClub };
 }
 
 /* ----------------------------------------------------- the form chip ---
@@ -789,6 +831,30 @@ export default async function fixtures(host) {
      header sets it explicitly and shows an arrow, because "the lens is
      the sort" is only obvious to whoever wrote it. */
   let rowSort = null;             // null | "att" | "def"
+  /* WHICH QUESTION THE GRID IS ANSWERING.
+       "opponent" - your club held at league average, so the cell is a property
+                    of the opponent at that venue and two clubs facing the same
+                    opponent share it. Comparable across clubs and windows,
+                    which is what a fixture ticker is for.
+       "club"     - your club's own attack and defence added back, so the cell
+                    is this club in this fixture. Not comparable across clubs,
+                    and on a wider scale (see clubDomain).
+     Both are served per cell; neither is derived from the other. */
+  let basis = "opponent";
+  /* Every grid render goes through these three, so switching basis can never
+     leave one surface on the other question. The drawers deliberately do NOT
+     use them: they show both bases at once, side by side, which is the whole
+     point of a drawer. */
+  const eAtt = c => (basis === "club" && c && c.easeAttClub != null
+    ? c.easeAttClub : (c ? c.easeAtt : null));
+  const eDef = c => (basis === "club" && c && c.easeDefClub != null
+    ? c.easeDefClub : (c ? c.easeDef : null));
+  const curDom = () => (basis === "club" && M && M.clubDom ? M.clubDom
+    : (M ? M.scale.dom : 0.6));
+  const tAtt = t => (basis === "club" ? t.attSumClub : t.attSum);
+  const tDef = t => (basis === "club" ? t.defSumClub : t.defSum);
+  const tAttRank = t => (basis === "club" ? t.attRankClub : t.attRankH);
+  const tDefRank = t => (basis === "club" ? t.defRankClub : t.defRankH);
   let M = null, prov = null, scriptUsed = null, boardErr = null;
 
   /* ------------------------------------------------- my squad, once ----
@@ -1280,6 +1346,31 @@ export default async function fixtures(host) {
     az.onclick = () => { azSort = !azSort; renderLens(); renderBody(); };
     lensRow.appendChild(az);
 
+    /* THE BASIS SWITCH. Two genuinely different questions, and the page used
+       to answer only the first: "how hard is this fixture for anyone" versus
+       "how hard is it for THIS club". Both are served per cell. */
+    if (M.anyClub) {
+      const bseg = el("span", "seg fx-basis");
+      for (const [k, label, title] of [
+        ["opponent", "Any club",
+          "hold this club at league average, so the cell is a property of the "
+          + "opponent at that venue and two clubs facing it share a colour. "
+          + "Fixed scale, comparable across clubs and windows."],
+        ["club", "This club",
+          "add this club's own attack and defence back, so the cell is this "
+          + "club in this fixture. Wider scale, and NOT comparable between "
+          + "clubs: a strong club's easy fixture and a weak club's easy "
+          + "fixture are different quantities."],
+      ]) {
+        const b = el("button", basis === k ? "on" : "", label);
+        b.title = title;
+        b.setAttribute("aria-pressed", String(basis === k));
+        b.onclick = () => { basis = k; renderLens(); renderBody(); };
+        bseg.appendChild(b);
+      }
+      lensRow.appendChild(bseg);
+    }
+
     /* One switch for every secondary number on the rows, so the default board
        answers one question and the rest is one click away. */
     const det = el("button", "chip" + (showDetail ? " on" : ""), "detail");
@@ -1649,7 +1740,7 @@ export default async function fixtures(host) {
       const side = (x, caps) => {
         const s = el("span", "side");
         s.appendChild(el("i", "sw " + (x.c.easeAtt == null ? "nofit"
-          : (cls(x.c.easeAtt, M.scale.dom) || "fx-d3"))));
+          : (cls(eAtt(x.c), curDom()) || "fx-d3"))));
         s.appendChild(el("b", null,
           caps ? x.t.short.toUpperCase() : x.t.short.toLowerCase()));
         if (ownedNames(x.t.code))
@@ -1717,8 +1808,8 @@ export default async function fixtures(host) {
       t.sort(byRank(() => null,
         x => (x.blendMean == null ? null : x.blendMean * x.nFixtures)));
     else if ((rowSort || lens) === "def" || (rowSort || lens) === "defence")
-      t.sort(byRank(x => x.defRankH, x => x.defSum));
-    else t.sort(byRank(x => x.attRankH, x => x.attSum));
+      t.sort(byRank(x => tDefRank(x), x => tDef(x)));
+    else t.sort(byRank(x => tAttRank(x), x => tAtt(x)));
     return t;
   }
 
@@ -1887,7 +1978,7 @@ export default async function fixtures(host) {
     const rankChip = (tag, what, rank, sum) => {
       const c = el("span", "fx-rk");
       const perGame = sum != null && t.nFixtures ? sum / t.nFixtures : null;
-      const band = perGame == null ? null : cls(perGame, M.scale.dom);
+      const band = perGame == null ? null : cls(perGame, curDom());
       if (band) c.classList.add(band);
       c.appendChild(el("i", null, tag));
       c.appendChild(el("b", null, rank == null ? "–" : String(rank)));
@@ -1901,8 +1992,8 @@ export default async function fixtures(host) {
       return c;
     };
     if (M.anySplit) {
-      ranks.append(rankChip("ATT", "attackers", t.attRankH, t.attSum),
-                   rankChip("DEF", "defenders", t.defRankH, t.defSum));
+      ranks.append(rankChip("ATT", "attackers", tAttRank(t), tAtt(t)),
+                   rankChip("DEF", "defenders", tDefRank(t), tDef(t)));
     } else {
       const v = t.blendMean == null ? null : t.blendMean * t.nFixtures;
       ranks.appendChild(rankChip("RUN", "players", null, v));
@@ -1918,7 +2009,7 @@ export default async function fixtures(host) {
     if (sum != null && max) {
       const perGame = nFixtures ? sum / nFixtures : null;
       const frac = Math.max(-1, Math.min(1, sum / max));
-      const fill = el("div", "fx-fill " + (cls(perGame, M.scale.dom) || "fx-d3"));
+      const fill = el("div", "fx-fill " + (cls(perGame, curDom()) || "fx-d3"));
       if (frac >= 0) { fill.style.left = "50%"; fill.style.width = `${frac * 50}%`; }
       else { fill.style.right = "50%"; fill.style.width = `${-frac * 50}%`; }
       track.appendChild(fill);
@@ -1943,7 +2034,7 @@ export default async function fixtures(host) {
   }
 
   function oneCell(t, slot, c) {
-    const hasSplit = c.easeAtt != null && c.easeDef != null;
+    const hasSplit = eAtt(c) != null && eDef(c) != null;
     const btn = el("button", "fx-cell");
     const torn = (c.fixtureId != null && t.code != null)
       ? M.tornMap.get(`${c.fixtureId}|${t.code}`) : null;
@@ -1953,18 +2044,18 @@ export default async function fixtures(host) {
        missing rating must never wear a colour. */
     const solo = !(M.anySplit && lens === "both" && hasSplit);
     let showAtt = null, showDef = null;
-    if (!solo) { showAtt = c.easeAtt; showDef = c.easeDef; }
-    else if (lens === "attack") showAtt = c.easeAtt;
-    else if (lens === "defence") showAtt = c.easeDef;
-    else showAtt = hasSplit ? c.easeAtt : c.easeBlend;
+    if (!solo) { showAtt = eAtt(c); showDef = eDef(c); }
+    else if (lens === "attack") showAtt = eAtt(c);
+    else if (lens === "defence") showAtt = eDef(c);
+    else showAtt = hasSplit ? eAtt(c) : c.easeBlend;
 
     const known = solo ? showAtt != null : true;
     if (!known) btn.classList.add("nomodel");
     if (solo) btn.classList.add("solo");
 
-    btn.appendChild(el("span", "fx-band att " + (cls(showAtt, M.scale.dom) || "fx-d3")));
+    btn.appendChild(el("span", "fx-band att " + (cls(showAtt, curDom()) || "fx-d3")));
     if (!solo) {
-      btn.appendChild(el("span", "fx-band def " + (cls(showDef, M.scale.dom) || "fx-d3")));
+      btn.appendChild(el("span", "fx-band def " + (cls(showDef, curDom()) || "fx-d3")));
       btn.appendChild(el("span", "seam" + (torn ? " torn" : "")));
     }
     /* Venue was carried by letter case alone (MUN home, mun away). That is
@@ -1993,7 +2084,7 @@ export default async function fixtures(host) {
       `${t.short} ${c.isHome ? "v" : "at"} ${c.opponent} · GW${slot.gw}${slot.double ? " (double)" : ""}`,
       kickoffText(c.kickoff),
       hasSplit
-        ? `attackers ${sgn2(c.easeAtt)} · defenders ${sgn2(c.easeDef)} ${M.scale.unit}`
+        ? `attackers ${sgn2(eAtt(c))} · defenders ${sgn2(eDef(c))} ${M.scale.unit}`
         : c.easeBlend != null
           ? `blended difficulty ${fmt2(c.blended)} (not split; see the note above)`
           : "no fitted rating for this fixture",
@@ -2034,7 +2125,7 @@ export default async function fixtures(host) {
     }
     ramp.appendChild(el("span", "lab", " hard"));
     left.appendChild(ramp);
-    const d = M.scale.dom, u = M.scale.unit;
+    const d = curDom(), u = M.scale.unit;
     const b = x => (M.scale.digits === 2 ? x.toFixed(2) : x.toFixed(1));
     left.appendChild(el("div", "fx-boundaries",
       `${b(-d)}  ${b(-3 * d / 5)}  ${b(-d / 5)} · 0 · ${b(d / 5)}  `
@@ -2042,16 +2133,38 @@ export default async function fixtures(host) {
     left.appendChild(el("div", "lab",
       "the five colours are FPL's own FDR steps; the numbers below them are "
       + "ours, and the unit is on the next line"));
+    /* Which question is on screen, and on whose scale. The club basis borrows
+       nothing from the served domain, so saying "fixed domain" under it would
+       be false. */
+    const bl = el("div", "lab");
+    bl.appendChild(el("b", null, basis === "club" ? "This club: " : "Any club: "));
+    bl.appendChild(document.createTextNode(basis === "club"
+      ? `this club's own attack and defence are in the number. Scale ±${
+          b(curDom())}, computed from the clubs on screen${
+          M.clubClipped ? `, ${M.clubClipped} values clipped` : ""
+        }, so colours are NOT comparable between clubs or windows.`
+      : "this club is held at league average, so the colour is the opponent "
+        + "at that venue and every club facing them shares it."));
+    left.appendChild(bl);
     const unit = el("div", "lab");
     unit.appendChild(document.createTextNode("unit: "));
     unit.appendChild(el("b", null, u));
-    unit.appendChild(document.createTextNode(
-      M.scale.payloadLed
-        ? " · fixed domain, so a colour means the same in every GW"
-        : " · midpoint 0.50 · normalised this season; not comparable across seasons"));
-    if (M.scale.clipped)
+    /* "fixed domain" and the served clip count are facts about the
+       OPPONENT-ONLY calibration. Printing them under the club basis would be
+       a stale claim: that domain is computed here and clips a different
+       number of values, both of which the basis line above states. */
+    if (basis === "club") {
       unit.appendChild(document.createTextNode(
-        ` · ${M.scale.clipped} pairs clipped`));
+        " · scale computed from this window, so not comparable across windows"));
+    } else {
+      unit.appendChild(document.createTextNode(
+        M.scale.payloadLed
+          ? " · fixed domain, so a colour means the same in every GW"
+          : " · midpoint 0.50 · normalised this season; not comparable across seasons"));
+      if (M.scale.clipped)
+        unit.appendChild(document.createTextNode(
+          ` · ${M.scale.clipped} pairs clipped`));
+    }
     left.appendChild(unit);
     L.appendChild(left);
 
@@ -2121,13 +2234,13 @@ export default async function fixtures(host) {
       const slot = team.byGw.get(g);
       if (!slot || slot.blank || !slot.opps.length) return null;
       const c = slot.opps[0];
-      return c.easeAtt != null ? c.easeAtt : c.easeBlend;
+      return eAtt(c) != null ? eAtt(c) : c.easeBlend;
     };
     const keyVal = (team, key) => {
       if (key === "club") return team.short;
-      if (key === "att") return M.anySplit ? team.attSum
+      if (key === "att") return M.anySplit ? tAtt(team)
         : (team.blendMean == null ? null : team.blendMean * team.nFixtures);
-      if (key === "def") return team.defSum;
+      if (key === "def") return tDef(team);
       if (key === "cs") return team.csSum;
       return gwVal(team, Number(key.slice(3)));       // "gw:<n>"
     };
@@ -2185,22 +2298,22 @@ export default async function fixtures(host) {
         if (slot.blank) { td.textContent = "blank"; td.style.color = "var(--faint)"; }
         else {
           const parts = slot.opps.map(c => {
-            if (c.easeAtt != null && c.easeDef != null)
-              return `${oppLabel(c)} A${sgn2(c.easeAtt)} D${sgn2(c.easeDef)}`;
+            if (eAtt(c) != null && eDef(c) != null)
+              return `${oppLabel(c)} A${sgn2(eAtt(c))} D${sgn2(eDef(c))}`;
             if (c.easeBlend != null) return `${oppLabel(c)} ${sgn2(c.easeBlend)}`;
             return `${oppLabel(c)} no fit`;
           });
           const first = slot.opps[0];
           const sw = el("span", "sw " + (cls(
-            first.easeAtt != null ? first.easeAtt : first.easeBlend, M.scale.dom) || "fx-d3"));
+            eAtt(first) != null ? eAtt(first) : first.easeBlend, curDom()) || "fx-d3"));
           td.appendChild(sw);
           td.appendChild(document.createTextNode(parts.join(" · ")));
         }
         tr.appendChild(td);
       }
-      tr.appendChild(el("td", "num", M.anySplit ? sgn2(team.attSum)
+      tr.appendChild(el("td", "num", M.anySplit ? sgn2(tAtt(team))
         : sgn2(team.blendMean == null ? null : team.blendMean * team.nFixtures)));
-      if (M.anySplit) tr.appendChild(el("td", "num", sgn2(team.defSum)));
+      if (M.anySplit) tr.appendChild(el("td", "num", sgn2(tDef(team))));
       if (anyCs) {
         const td = el("td", "num", team.csSum == null ? "–" : fmt2(team.csSum));
         if (team.csSum != null)
