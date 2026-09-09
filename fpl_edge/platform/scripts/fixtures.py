@@ -347,6 +347,39 @@ class _Ratings:
 
     # -- rates ------------------------------------------------------------
 
+    def in_goals(self, team: int) -> dict[str, float]:
+        """The club's two parameters expressed as GOALS PER GAME.
+
+        ``attack`` and ``defence`` are log multipliers, and every consumer that
+        printed them raw was inviting a misreading: an attack of 0.434 is not
+        "+0.43 goals", it multiplies the baseline by exp(0.434) = 1.54, which
+        on a 1.42-goal home baseline is +0.77 goals. And ``defence`` counts
+        goals CONCEDED, so its sign runs opposite to every ease number on the
+        board. Goals per game carry no convention to remember and no sign to
+        invert, so the panel serves them and the UI stops doing arithmetic.
+
+        Both are venue-averaged: the club against a LEAGUE-AVERAGE opponent,
+        half at home and half away, which is what "per game" has to mean for a
+        number that is not attached to a fixture.
+        """
+        scores = sum(
+            float(np.exp(self.c + self.g * h + self.attack[team] + self.dbar))
+            for h in (1.0, 0.0)
+        ) / 2.0
+        concedes = sum(
+            float(np.exp(self.c + self.g * (1.0 - h) + self.abar + self.defence[team]))
+            for h in (1.0, 0.0)
+        ) / 2.0
+        base_scores = sum(
+            float(np.exp(self.c + self.g * h + self.abar + self.dbar))
+            for h in (1.0, 0.0)
+        ) / 2.0
+        return {
+            "scores_pg": round(scores, 3),
+            "concedes_pg": round(concedes, 3),
+            "league_pg": round(base_scores, 3),
+        }
+
     def opponent_only_rates(self, opponent: int, we_are_home: bool) -> tuple[float, float]:
         """``(our goals, their goals)`` for a LEAGUE-AVERAGE club vs ``opponent``.
 
@@ -909,6 +942,12 @@ BOARD_RESULT: dict[str, Any] = {
                             "defence_rank": {"type": "integer"},
                             "is_promoted": {"type": "boolean"},
                             "matches_seen": {"type": "integer"},
+                            "scores_pg": {"type": "number",
+                                          "description": "Goals scored per game against a league-average opponent, venue-averaged."},
+                            "concedes_pg": {"type": "number",
+                                            "description": "Goals conceded per game against a league-average opponent, venue-averaged."},
+                            "league_pg": {"type": "number",
+                                          "description": "The same figure for a league-average club, as the comparison."},
                         },
                     },
                     "horizon": {
@@ -1323,6 +1362,7 @@ def fixture_board(
                 "attack_rank": ranks[0], "defence_rank": ranks[1],
                 "is_promoted": code in ratings.promoted,
                 "matches_seen": ratings.matches_seen.get(code, 0),
+                **ratings.in_goals(code),
             }
         if n_rated:
             row["horizon"] = {
@@ -1728,6 +1768,7 @@ def _model_block(ratings: _Ratings | None, reason: str | None,
             "fixture_specific": _lens(ratings.quantities(mu_f, lam_f), **anchors),
             "rating": {"attack": round(ratings.attack[me], 4),
                        "defence": round(ratings.defence[me], 4),
+                       **ratings.in_goals(me),
                        "is_promoted": me in ratings.promoted,
                        "matches_seen": ratings.matches_seen.get(me, 0)},
         }
@@ -1956,11 +1997,10 @@ def _intel_block(wh, season: str, codes: tuple[int, int], now: dt.datetime) -> d
         "unavailable": None if len(items) or len(duties) else (
             missing or "no team-level set-piece or press-conference item for either club"),
         "framing": (
-            "Set pieces are shown as DUTY, meaning who takes them, and never as a "
-            "team trait. Set-piece goals-over-expected barely persists season to "
-            "season, "
-            "so 'this club over-performs on set pieces' is not a durable claim; "
-            "'this player takes the corners' is."
+            "Duty, meaning who takes them, never a team trait: set-piece "
+            "goals-over-expected barely persists season to season, so 'this "
+            "player takes the corners' is durable and 'this club is good at "
+            "set pieces' is not."
         ),
         "set_piece_duty": {}, "set_piece_items": [], "press_conference": [],
         "as_of": None, "age_hours": None,
@@ -2098,10 +2138,9 @@ def _meetings_block(wh, home: int, away: int, now: dt.datetime, limit: int) -> d
         "orientation": "from the home club's point of view, both venues",
         "matches": matches,
         "caution": (
-            f"{len(matches)} matches across several seasons, with different "
-            f"managers and mostly different players, is not evidence about this "
-            f"one. Head-to-head is the most over-read object in fixture analysis; "
-            f"this section says so where it shows it, not in a footnote."
+            f"{len(matches)} matches across several seasons, different managers "
+            f"and mostly different players: not evidence about this one. "
+            f"Head-to-head is the most over-read object in fixture analysis."
         ),
     }
 

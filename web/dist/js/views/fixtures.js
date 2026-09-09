@@ -2861,12 +2861,9 @@ export default async function fixtures(host) {
       A2.appendChild(kvNote(
         "Priced, and deliberately not blended into the colour.",
         gapText(
-          "The quote is here and it is dated, so you can read it against the "
-          + "model below. It is not averaged into the number above because the "
-          + "blend weight in ", codeSpan("blend.py"),
-          " has never been tuned out of sample; a blend on an untuned constant "
-          + "is a guess wearing a number's clothes. Model and market are shown "
-          + "side by side and the gap between them is left for you to read.")));
+          "Not averaged into the colour: the blend weight in ", codeSpan("blend.py"),
+          " has never been tuned out of sample. Model and market sit side by "
+          + "side and the gap is the finding.")));
     } else if (c.marketWeight == null && c.marketState != null && c.marketState !== "priced") {
       A2.appendChild(namedGap(`No price for this fixture (${c.marketState}).`,
         gapText(
@@ -2907,9 +2904,15 @@ export default async function fixtures(host) {
     const kv = el("div", "fx-kv");
     const addKv = (k, v) => { kv.appendChild(el("span", "k", k)); kv.appendChild(el("span", "v", v)); };
     addKv("panel", scriptUsed);
-    if (c.raw.attack_xg != null) addKv("μ_O (attack lens)", fmt2(c.raw.attack_xg) + " goals");
-    if (c.raw.defence_xg != null) addKv("λ_O (defence lens)", fmt2(c.raw.defence_xg) + " goals");
-    if (c.blended != null) addKv("legacy difficulty", fmt2(c.blended));
+    /* "mu_O" and "lambda_O" are the symbols in the model file, not words. The
+       reader wants to know which club's goals each number is. */
+    if (c.raw.attack_xg != null)
+      addKv("goals this club is expected to score", fmt2(c.raw.attack_xg));
+    if (c.raw.defence_xg != null)
+      addKv("goals the opponent is expected to score", fmt2(c.raw.defence_xg));
+    if (c.blended != null)
+      addKv("the old single-number difficulty", fmt2(c.blended)
+        + " (0-1, kept only so this page can prove it is not using it)");
     if (c.priorShare != null) addKv("rating from prior", `${Math.round(c.priorShare * 100)}%`);
     A5.appendChild(kv);
 
@@ -2954,9 +2957,16 @@ export default async function fixtures(host) {
     recordAct(A.A4, D, raw);
 
     /* provenance extras the detail carries */
-    if (raw && raw.market && raw.market.casing_workaround)
-      A.A5.appendChild(kvNote("Casing workaround, live in this payload.",
-        String(raw.market.casing_workaround)));
+    /* A note about upper-case selections in fact_odds versus lower-case in the
+       de-vigger is a maintenance fact, not something a reader of a fixture
+       needs in prose. It stays -- it is live in this payload and deleting it
+       would hide a real workaround -- but folded. */
+    if (raw && raw.market && raw.market.casing_workaround) {
+      const cw = el("details", "fx-how");
+      cw.appendChild(el("summary", null, "A workaround is active in this payload"));
+      cw.appendChild(el("p", "sub", String(raw.market.casing_workaround)));
+      A.A5.appendChild(cw);
+    }
     if (raw && Array.isArray(raw.inputs) && raw.inputs.length) {
       A.A5.appendChild(el("h2", null, "Inputs"));
       const kv = el("div", "fx-kv");
@@ -3202,12 +3212,9 @@ export default async function fixtures(host) {
       }
       host.appendChild(box);
       host.appendChild(el("p", "sub",
-        "What this warehouse can honestly say about style is team xG for and "
-        + "against, goals versus xG, and clean-sheet rate, split home and away. "
-        + "What it cannot say is PPDA, field tilt, sequence types or line height "
-        + "; that event data is not here, and inventing it would be the worst "
-        + "thing this page could do. Style explains a fixture; it is never "
-        + "allowed into the colour."));
+        "Style here is xG for and against and clean-sheet rate, split home and "
+        + "away. No PPDA, field tilt or line height: that event data is not in "
+        + "this warehouse. Style explains a fixture; it never enters the colour."));
     } else {
       host.appendChild(quietGap(
         "form: no style summary in this payload; and no PPDA or field tilt "
@@ -3279,9 +3286,8 @@ export default async function fixtures(host) {
       }
       host.appendChild(box);
       host.appendChild(el("p", "sub",
-        "These are FPL's own scout links, dated to the first poll that carried "
-        + "them because FPL publishes no timestamp for the field. Treat the age "
-        + "as an upper bound on freshness, not a publication time."));
+        "FPL's own scout links. FPL publishes no timestamp, so the age is dated "
+        + "to the first poll that carried them: an upper bound."));
     } else {
       host.appendChild(quietGap(
         "press & scout links: none reached this fixture"));
@@ -3455,26 +3461,25 @@ export default async function fixtures(host) {
       const fd = ratings ? parseTs(ratings.as_of) : null;
       const fh = ratings ? (num(ratings.age_hours) ?? ageHours(ratings.as_of)) : null;
       const disc = el("details", "fx-how");
-      /* These are LOG MULTIPLIERS, not goals. Printing "+0.43 goals" for an
-         attack of 0.434 was wrong twice over: the parameter multiplies the
-         baseline by exp(0.434) = 1.54, which on a 1.42-goal home baseline is
-         +0.77 goals, not +0.43. And the defence parameter counts goals
-         CONCEDED, so its sign runs opposite to every ease number on this page,
-         where + means easier. A multiplier states both without a convention to
-         remember: x1.54 scored, x0.70 conceded. */
-      const mult = v => (v == null ? "–" : `×${Math.exp(v).toFixed(2)}`);
+      /* GOALS, served by the panel. The stored parameters are log multipliers
+         and the page has no business exponentiating them: "+0.43" is not
+         "+0.43 goals" (it multiplies by 1.54), and the defence parameter counts
+         goals CONCEDED, so its sign runs opposite to every ease number here.
+         Goals per game carry no convention to remember and no sign to invert. */
+      const sc = num(rt.scores_pg), cd = num(rt.concedes_pg), lg = num(rt.league_pg);
+      const gp = v => (v == null ? "–" : fmt2(v));
       disc.appendChild(el("summary", null,
-        `The fit: scores ${mult(num(rt.attack))} · concedes ${mult(num(rt.defence))}`
+        `The fit: scores ${gp(sc)} · concedes ${gp(cd)} goals a game`
+        + (lg != null ? ` · league ${gp(lg)}` : "")
         + (num(rt.matches_seen) != null ? ` · ${rt.matches_seen} matches` : "")
         + (fh != null ? ` · fitted ${fmtSpan(fh)} old` : "")
         + (fd ? `, on results to ${fd.toLocaleDateString(undefined, { day: "numeric", month: "short" })}` : "")));
       const kv = el("div", "fx-kv");
       const add = (a, b) => { kv.appendChild(el("span", "k", a)); kv.appendChild(el("span", "v", b)); };
-      add("attack", `${mult(num(rt.attack))} the goals of an average club `
-        + `(log parameter ${sgn2(num(rt.attack))})`);
-      add("defence", `${mult(num(rt.defence))} the goals CONCEDED by an average `
-        + `club, so lower is better here, the opposite of the + = easier used `
-        + `elsewhere on this page (log parameter ${sgn2(num(rt.defence))})`);
+      if (sc != null) add("scores", `${gp(sc)} a game against an average `
+        + `opponent${lg != null ? `, league average ${gp(lg)}` : ""}`);
+      if (cd != null) add("concedes", `${gp(cd)} a game against an average `
+        + `opponent${lg != null ? `, league average ${gp(lg)}` : ""}`);
       if (ar != null) add("attack rank", `${ord(ar)} best of ${n}`);
       if (dr != null) add("defence rank", `${ord(dr)} best of ${n}`);
       if (num(rt.matches_seen) != null) add("matches in the fit", String(rt.matches_seen));
