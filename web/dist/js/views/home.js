@@ -136,7 +136,9 @@ function citeChip(panel, asOf) {
 
 /* The fixtures tab's seven-class ease ramp, reused verbatim so the pitch's
    opponent chip and the fixtures grid agree by construction. */
-const FX_CLASSES = ["fx-e3", "fx-e2", "fx-e1", "fx-n0", "fx-h1", "fx-h2", "fx-h3"];
+/* FPL's five FDR steps, easiest -> hardest. Same classes and the same
+   thresholds the Fixtures board uses, so one colour vocabulary. */
+const FX_CLASSES = ["fx-d1", "fx-d2", "fx-d3", "fx-d4", "fx-d5"];
 
 const CHIP_NAME = { "3xc": "Triple Captain", bboost: "Bench Boost",
                     wildcard: "Wildcard", freehit: "Free Hit" };
@@ -274,13 +276,11 @@ export default async function home(host) {
     // [-dom, +dom]; positive ease = easier = blue. No domain, no colour.
     if (ease == null || easeDom == null) return null;
     const s = Math.max(-1, Math.min(1, ease / easeDom));
-    if (s >= 5 / 7) return FX_CLASSES[0];
-    if (s >= 3 / 7) return FX_CLASSES[1];
-    if (s >= 1 / 7) return FX_CLASSES[2];
-    if (s > -1 / 7) return FX_CLASSES[3];
-    if (s > -3 / 7) return FX_CLASSES[4];
-    if (s > -5 / 7) return FX_CLASSES[5];
-    return FX_CLASSES[6];
+    if (s >= 3 / 5) return FX_CLASSES[0];
+    if (s >= 1 / 5) return FX_CLASSES[1];
+    if (s > -1 / 5) return FX_CLASSES[2];
+    if (s > -3 / 5) return FX_CLASSES[3];
+    return FX_CLASSES[4];
   }
 
   const pitchCardByCode = new Map();   // code -> .pp element (for drills)

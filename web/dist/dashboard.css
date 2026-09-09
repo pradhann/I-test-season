@@ -281,13 +281,13 @@
           letter-spacing: .02em; }
 /* this sheet loads after fixtures.css, so the ease classes need the extra
    specificity here or the neutral background above would always win */
-.pp-opp.fx-e3 { background: var(--fx-e3); }
-.pp-opp.fx-e2 { background: var(--fx-e2); }
-.pp-opp.fx-e1 { background: var(--fx-e1); }
-.pp-opp.fx-n0 { background: var(--fx-n); }
-.pp-opp.fx-h1 { background: var(--fx-h1); }
-.pp-opp.fx-h2 { background: var(--fx-h2); }
-.pp-opp.fx-h3 { background: var(--fx-h3); }
+/* FPL's five, with FPL's own ink per step: one opponent per pill here, so
+   unlike the two-band fixture cell each pill can wear its step's text colour. */
+.pp-opp.fx-d1 { background: var(--fx-d1); color: var(--fx-d1-ink); }
+.pp-opp.fx-d2 { background: var(--fx-d2); color: var(--fx-d2-ink); }
+.pp-opp.fx-d3 { background: var(--fx-d3); color: var(--fx-d3-ink); }
+.pp-opp.fx-d4 { background: var(--fx-d4); color: var(--fx-d4-ink); }
+.pp-opp.fx-d5 { background: var(--fx-d5); color: var(--fx-d5-ink); }
 .pp-opp i, .pp-min i { color: inherit; opacity: .6; }
 .pp-min { background: var(--raised); color: var(--muted); }
 

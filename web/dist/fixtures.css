@@ -3,84 +3,85 @@
    THE COLOUR SCALE
    ----------------
    The ticker is a heatmap, so the scale is the design. It is DIVERGING because
-   the midpoint is a real quantity — a league-average fixture — and not the
-   middle of whatever happens to be on screen. Two hues plus a neutral gray
-   midpoint, three equal steps per arm, seven classes total:
+   the midpoint is a real quantity -- a league-average fixture -- and not the
+   middle of whatever happens to be on screen. Five classes, two per arm plus
+   the neutral, numbered exactly as FPL numbers its FDR:
 
-       easy  e3  e2  e1  ·n·  h1  h2  h3  hard
-             blue  ←  neutral  →  orange
+       easy   1   2  ·3·  4   5   hard
+              FPL's own difficulty colours
 
-   Blue and orange are the repo's own validated series hues (--s1 / --s2), kept
-   because blue↔orange is the pair that survives protanopia, deuteranopia and
-   tritanopia simultaneously. FPL's own green→red ticker is exactly the family
-   ColorBrewer flags as NOT colour-blind safe, and the green/yellow boundary it
-   collapses on is the very boundary a ticker needs.
+   WHOSE COLOURS THESE ARE, AND WHY. They are lifted verbatim from
+   fantasy.premierleague.com (--ism-color-difficulty-N-background/-text), on
+   the owner's instruction, so that a colour here means what the same colour
+   means everywhere else the owner reads FPL. They are deliberately NOT themed:
+   an FDR 2 is the same green in light and dark, or the consistency is lost.
+   Five classes rather than seven for the same reason -- a step here is an FDR
+   step, not a finer private grading.
 
-   Steps were generated in OKLCH (hue held per arm, lightness and chroma
-   stepped) and checked with the dataviz palette validator, per mode, against
-   that mode's real card surface. What matters for a diverging scale is that
-   the SIGN is never ambiguous, so the gate is blue-step-k vs orange-step-k:
+   WHAT THAT COSTS, MEASURED (OKLab dE x100, Vienot CVD simulation; gate is
+   >=8 for CVD, >=15 for normal vision). Adjacent steps all pass:
 
-     light (surface #ffffff)   step1 ΔE 15.7 protan / 19.0 normal
-                               step2 ΔE 23.1 protan / 28.0 normal
-                               step3 ΔE 29.3 protan / 35.2 normal
-     dark  (surface #16181b)   step1 ΔE 16.2 protan / 19.1 normal
-                               step2 ΔE 23.7 protan / 27.8 normal
-                               step3 ΔE 28.6 protan / 34.2 normal
+       1v2  48.0 normal / 45.6 worst-CVD      3v4  37.9 / 28.3
+       2v3  24.4 normal / 11.9 worst-CVD      4v5  27.4 / 20.3
 
-   All PASS (target ≥8 CVD, hard floor ≥15 normal-vision). Neutral vs step-1
-   also passes in both modes and both arms (ΔE 15.3–16.1 normal).
+   But the two ENDS collide. FDR 1 (#375523) against FDR 5 (#80072d) is
+   dE 20.8 to normal vision and **2.2 under deuteranopia**: to a deuteranope
+   the easiest fixture and the hardest fixture are the same colour. That is
+   inherent to a dark-green/dark-maroon pair and cannot be fixed without
+   leaving FPL's palette, which is the thing being matched. The previous ramp
+   (blue->orange) existed precisely to avoid this and scored >=16 on every
+   CVD pair; it was replaced knowingly, not by oversight.
 
-   The validator's one standing FAIL is `Light-end contrast`: the neutral
-   midpoint sits at 1.34:1 (light) / 1.29:1 (dark) against the card surface.
-   That is inherent to a diverging midpoint — a league-average fixture is meant
-   to be quiet — and it is relieved structurally: every cell carries a 1px
-   --line outline and a 2px gap so its footprint is visible whatever the fill;
-   every cell's tooltip prints its numbers verbatim; a single-lens cell prints
-   its one signed number; and the whole grid has a table view. (The Both lens
-   deliberately prints NO resident numerals — ~240 mono figures on the scan
-   path taxed the glance the two-band cell exists for — so the relief channel
-   is outline + tooltip + solo number + table, never a number per band.)
-   Absence never uses a faint fill: a blank gameweek is hatched and says
-   "blank", a missing model is hollow and says so.
+   The relief is structural, and every channel below is load-bearing rather
+   than decorative: the grid has a table view; every cell prints its numbers in
+   its tooltip; the solo lens prints its signed number in the cell; the
+   verdict strip names the easiest and hardest runs in words; and the ranks
+   ("schedule 1st of 20") are text, not colour. Sign is therefore recoverable
+   without colour everywhere it matters.
 
-   Ink on the fills is one token per theme — no per-step flipping — because
-   every step clears it: light ink on light steps ≥4.16:1, dark ink on dark
-   steps ≥3.91:1.
+   Ink: FPL pairs an ink with each step, and single-step surfaces (the legend
+   swatch, the dashboard pill, the solo cell number) use it. The two-band
+   fixture cell cannot -- one label can sit across #01fc7a and #80072d at once
+   -- so its label wears a surface plate instead. See .fx-cell .opp.
 
    Three theme states, exactly as app.css does it: bare :root is dark (the
    app's identity default), prefers-color-scheme light wins when the reader has
    made no explicit choice, and an explicit data-theme wins in both directions.
+   The five FDR steps sit outside that machinery on purpose.
 */
+
+/* ---------- the five FDR steps: FPL's own tokens, not ours ----------
+   Lifted verbatim from fantasy.premierleague.com's stylesheet
+   (--ism-color-difficulty-N-background / -text). They are deliberately NOT
+   themed: an FDR 2 must be the same green here as it is on the FPL site, in
+   either theme, or the whole point of matching them is lost. FPL pairs an ink
+   with each step because its cells hold text; ours can show two steps in one
+   cell, so the label wears a surface plate instead (see .fx-cell .opp) and
+   these inks are used only where one step fills the cell. */
+:root {
+  --fx-d1: #375523; --fx-d1-ink: #ffffff;   /* 1 easiest */
+  --fx-d2: #01fc7a; --fx-d2-ink: #37003c;
+  --fx-d3: #e7e7e7; --fx-d3-ink: #37003c;   /* 3 league average */
+  --fx-d4: #ff1b54; --fx-d4-ink: #37003c;
+  --fx-d5: #80072d; --fx-d5-ink: #ffffff;   /* 5 hardest */
+}
 
 /* ---------- dark (the identity default) ---------- */
 :root {
-  --fx-e3: #1272db; --fx-e2: #1c60b0; --fx-e1: #244d82;
-  --fx-n:  #2b2d31;
-  --fx-h1: #78371c; --fx-h2: #a13b04; --fx-h3: #c74200;
   --fx-cell-ink: #e8eaed;
   --fx-hatch: rgb(255 255 255 / .07);
 }
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) {
-    --fx-e3: #217ee9; --fx-e2: #5a9df3; --fx-e1: #8cbaf6;
-    --fx-n:  #dcdfe3;
-    --fx-h1: #efa286; --fx-h2: #e87950; --fx-h3: #db500a;
     --fx-cell-ink: #1a1d21;
     --fx-hatch: rgb(20 24 28 / .09);
   }
 }
 :root[data-theme="light"] {
-  --fx-e3: #217ee9; --fx-e2: #5a9df3; --fx-e1: #8cbaf6;
-  --fx-n:  #dcdfe3;
-  --fx-h1: #efa286; --fx-h2: #e87950; --fx-h3: #db500a;
   --fx-cell-ink: #1a1d21;
   --fx-hatch: rgb(20 24 28 / .09);
 }
 :root[data-theme="dark"] {
-  --fx-e3: #1272db; --fx-e2: #1c60b0; --fx-e1: #244d82;
-  --fx-n:  #2b2d31;
-  --fx-h1: #78371c; --fx-h2: #a13b04; --fx-h3: #c74200;
   --fx-cell-ink: #e8eaed;
   --fx-hatch: rgb(255 255 255 / .07);
 }
@@ -249,8 +250,23 @@ button.fx-inchip:focus-visible { outline: 2px solid var(--s1); outline-offset: 1
 }
 .fx-hcell .d { display: block; font-size: 10px; letter-spacing: 0;
                text-transform: none; color: var(--faint); font-weight: 500; }
-.fx-hcell.fx-railhead { text-align: left; left: 0; z-index: 4; }
+.fx-hcell.fx-railhead { text-align: left; left: 0; z-index: 4;
+  display: flex; flex-direction: column; gap: 3px; justify-content: center; }
 .fx-hcell.fx-railhead .d { font-size: 9.5px; }
+.fx-rhtitle { font-weight: 650; }
+/* The two column heads ARE the sort control: the words that used to repeat on
+   every row live here once, and clicking one orders the grid by it. */
+.fx-rhsorts { display: flex; gap: 4px; }
+.fx-rhsort {
+  flex: 1; display: inline-flex; align-items: center; justify-content: center;
+  gap: 2px; padding: 1px 0; border: 1px solid var(--line); border-radius: 3px;
+  background: transparent; color: var(--faint); cursor: pointer;
+  font: 700 9px/1.2 var(--mono); letter-spacing: .04em;
+}
+.fx-rhsort:hover { color: var(--ink); border-color: var(--ink); }
+.fx-rhsort.on { color: var(--ink); border-color: var(--s1);
+                background: color-mix(in oklab, var(--s1) 12%, transparent); }
+.fx-rhsort .arr { font-size: 7px; }
 
 /* left rail: crest · name · form chip, then the rank pair with its bars on
    ONE shared axis. The rank pair is the only way to read the off-lens rank
@@ -268,10 +284,13 @@ button.fx-inchip:focus-visible { outline: 2px solid var(--s1); outline-offset: 1
                display: flex; align-items: center; gap: 5px; }
 .fx-rail .rr { grid-column: 1 / -1; display: flex; align-items: center;
                gap: 5px; }
-/* the label wraps to two lines ("schedule for" / "your attackers") so the
-   plain words fit the rail without eating the track */
-.fx-rail .rr i { font: 600 9px/1.15 var(--mono); color: var(--faint);
-                 font-style: normal; width: 82px; white-space: normal; }
+/* A three-character tag, not a sentence: the words are in the column header
+   once. Reclaiming 70px of every row is what lets the bar be the long thing. */
+.fx-rail .rr i.tag { font: 700 9px/1.15 var(--mono); color: var(--faint);
+                     font-style: normal; width: 22px; letter-spacing: .04em; }
+.fx-rail .rr b { font: 650 11px/1 var(--mono); color: var(--ink);
+                 min-width: 15px; text-align: right;
+                 font-variant-numeric: tabular-nums; }
 .fx-promo { cursor: help; }
 /* club strength on the row, beside the run rank: "elite club, hard run" is a
    fact the row shows, not one the reader assembles */
@@ -329,38 +348,48 @@ button.fx-inchip:focus-visible { outline: 2px solid var(--s1); outline-offset: 1
 }
 .fx-cell:hover { border-color: var(--ink); }
 .fx-cell:focus-visible { outline: 2px solid var(--s1); outline-offset: 1px; }
-.fx-band { position: absolute; left: 0; right: 0; background: var(--fx-n); }
+.fx-band { position: absolute; left: 0; right: 0; background: var(--fx-d3); }
 .fx-band.att { top: 0; height: 52%; }
 .fx-band.def { bottom: 0; height: 48%; }
 .fx-cell .seam { position: absolute; left: 0; right: 0;
                  top: calc(52% - .5px); height: 1px; z-index: 1;
                  background: color-mix(in oklab, var(--surface) 55%, transparent); }
 /* torn: a surface-backed dashed warn line. The surface band is what keeps the
-   dash legible on fx-h2/h3 — a raw warn mark on the hot arm is
-   orange-on-orange in both themes. */
+   dash legible on fx-d4/d5 -- a raw warn mark on the hard steps is
+   red-on-red in both themes. */
 .fx-cell .seam.torn { height: 5px; top: calc(52% - 2.5px);
   background:
     repeating-linear-gradient(90deg, var(--warn) 0 6px, transparent 6px 10px)
       center / 100% 3px no-repeat,
     var(--surface); }
+/* The label sits across BOTH bands, so it can be over #01fc7a and #80072d at
+   once. No single ink clears FPL's five, so the label wears a surface plate --
+   the same trick .seam.torn already uses to stay legible on any step. */
 .fx-cell .opp {
   position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
   font-weight: 750; font-size: 12.5px; letter-spacing: .02em;
-  color: var(--fx-cell-ink); pointer-events: none; z-index: 2;
-  text-shadow: 0 1px 0 rgb(0 0 0 / .06);
+  color: var(--ink); pointer-events: none; z-index: 2;
+  background: color-mix(in oklab, var(--surface) 90%, transparent);
+  padding: 1px 5px; border-radius: 3px;
 }
 /* the one signed number, solo lens only — a lens user is doing arithmetic */
+/* Solo lens: one step fills the cell, so the number can wear that step's own
+   FPL ink -- set per class below rather than one token for all five. */
 .fx-cell.solo .vv {
   position: absolute; right: 5px; bottom: 3px; font-family: var(--mono);
   font-size: 10px; font-variant-numeric: tabular-nums;
-  color: var(--fx-cell-ink); opacity: .85; z-index: 2; pointer-events: none;
+  z-index: 2; pointer-events: none; opacity: .9;
 }
+.fx-cell.solo:has(.fx-d1) .vv { color: var(--fx-d1-ink); }
+.fx-cell.solo:has(.fx-d2) .vv { color: var(--fx-d2-ink); }
+.fx-cell.solo:has(.fx-d3) .vv { color: var(--fx-d3-ink); }
+.fx-cell.solo:has(.fx-d4) .vv { color: var(--fx-d4-ink); }
+.fx-cell.solo:has(.fx-d5) .vv { color: var(--fx-d5-ink); }
 
-/* the seven classes */
-.fx-e3 { background: var(--fx-e3); } .fx-e2 { background: var(--fx-e2); }
-.fx-e1 { background: var(--fx-e1); } .fx-n0 { background: var(--fx-n); }
-.fx-h1 { background: var(--fx-h1); } .fx-h2 { background: var(--fx-h2); }
-.fx-h3 { background: var(--fx-h3); }
+/* the five FDR steps, easiest -> hardest, same numbering as FPL */
+.fx-d1 { background: var(--fx-d1); } .fx-d2 { background: var(--fx-d2); }
+.fx-d3 { background: var(--fx-d3); } .fx-d4 { background: var(--fx-d4); }
+.fx-d5 { background: var(--fx-d5); }
 
 /* single-lens mode: one band fills the cell, so the page never pretends to
    split a number the panel did not split */
@@ -397,8 +426,15 @@ button.fx-inchip:focus-visible { outline: 2px solid var(--s1); outline-offset: 1
              margin-top: 12px; padding-top: 10px;
              border-top: 1px solid var(--line); }
 .fx-ramp { display: flex; align-items: center; gap: 0; }
-.fx-ramp .sw { width: 26px; height: 14px; border: 1px solid var(--line);
-               border-right: 0; }
+.fx-ramp .sw { width: 26px; height: 15px; border: 1px solid var(--line);
+               border-right: 0; font-size: 10px; font-weight: 700;
+               display: inline-flex; align-items: center;
+               justify-content: center; font-variant-numeric: tabular-nums; }
+.fx-ramp .sw.fx-d1 { color: var(--fx-d1-ink); }
+.fx-ramp .sw.fx-d2 { color: var(--fx-d2-ink); }
+.fx-ramp .sw.fx-d3 { color: var(--fx-d3-ink); }
+.fx-ramp .sw.fx-d4 { color: var(--fx-d4-ink); }
+.fx-ramp .sw.fx-d5 { color: var(--fx-d5-ink); }
 .fx-ramp .sw:last-of-type { border-right: 1px solid var(--line); }
 .fx-ramp .sw:first-of-type { border-radius: 3px 0 0 3px; }
 .fx-ramp .sw:last-of-type { border-radius: 0 3px 3px 0; }
@@ -824,3 +860,26 @@ details.card.fx-fold > .sub { color: var(--faint); margin: 6px 0 10px; font-size
 .fx-talk-claim { margin: 3px 0 0; font-size: 12px; color: var(--ink); line-height: 1.5; }
 .fx-talk-quote { margin: 3px 0 0; font-size: 11.5px; color: var(--faint);
                  line-height: 1.5; font-style: italic; }
+
+/* ---------- "How to read this grid": what the number is, how it is made ----
+   A definition list, not prose: four questions with four short answers, each
+   read off the payload. Terms are quiet and fixed-width so the four answers
+   line up and can be scanned rather than read. */
+.fx-deriv {
+  display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px;
+  margin: 10px 0 0; max-width: 88ch; font-size: 12px; line-height: 1.55;
+}
+.fx-deriv dt {
+  color: var(--muted); font-weight: 650; white-space: nowrap;
+}
+.fx-deriv dd { margin: 0; color: var(--faint); }
+@media (max-width: 620px) {
+  .fx-deriv { grid-template-columns: 1fr; gap: 2px; }
+  .fx-deriv dd { margin: 0 0 8px; }
+}
+
+/* The away marker. Quieter than the club code it qualifies, because it is a
+   modifier and not the name, but present enough that two cells reading "MUN"
+   can never be mistaken for the same fixture. */
+.fx-cell .opp .at { font-style: normal; opacity: .7; margin-right: 1px;
+                    font-weight: 600; }
