@@ -151,11 +151,26 @@ def first_season_offsets(matches: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+#: A club must have played at least this many matches before its first-season
+#: offset counts as an OBSERVATION of where promoted clubs land. Below it the
+#: number is mostly noise, and including it is actively harmful rather than
+#: merely uninformative: the spread of the observations IS the prior SD, so one
+#: club's fluke widens the prior, and a wide prior is a weak one. In 2026-27
+#: Hull conceded 0 in its first 3 matches, which with the half-goal smoothing
+#: is a defence offset of -2.14; that single value pushed the defence SD from
+#: 0.22 to 0.93, and the resulting prior was then too weak to shrink Hull --
+#: whose fitted defence came out the best in the league, ahead of Arsenal, on
+#: three games. A club's own small-sample noise must not be allowed to dismantle
+#: the prior that exists to protect it. Half a season is the threshold.
+MIN_PRIOR_MATCHES = 19
+
+
 def fit_promoted_prior(
     matches: pd.DataFrame,
     *,
     routes: pd.DataFrame | None = None,
     min_clubs: int = 3,
+    min_matches: int = MIN_PRIOR_MATCHES,
     allow_fallback: bool = False,
 ) -> PromotedPrior:
     """Estimate the promoted-club prior from observable promotion events.
@@ -164,19 +179,26 @@ def fit_promoted_prior(
     prior-division strength covariate. Supplying it turns the pooled mean into a
     regression; omitting it is fine and is recorded honestly in ``covariate``.
 
+    Only clubs with at least ``min_matches`` played contribute. A club partway
+    through its first season has not yet produced the quantity being estimated
+    -- see :data:`MIN_PRIOR_MATCHES` for what including them did.
+
     Raises :class:`InsufficientHistoryError` rather than inventing a number when
     fewer than ``min_clubs`` promotions are observable, unless the caller
     explicitly accepts :data:`FALLBACK_PROMOTED_PRIOR`.
     """
     obs = first_season_offsets(matches) if not matches.empty else pd.DataFrame()
+    if not obs.empty:
+        obs = obs[obs["matches"] >= int(min_matches)].reset_index(drop=True)
     if len(obs) < min_clubs:
         if allow_fallback:
             return FALLBACK_PROMOTED_PRIOR
         raise InsufficientHistoryError(
-            f"only {len(obs)} observable promotion events in the training window, "
-            f"need {min_clubs}. Refusing to fall back to a league-average prior "
-            f"for promoted clubs; pass allow_fallback=True to accept the "
-            f"documented assumed prior instead."
+            f"only {len(obs)} promotion events with at least {min_matches} "
+            f"matches played in the training window, need {min_clubs}. "
+            f"Refusing to fall back to a league-average prior for promoted "
+            f"clubs; pass allow_fallback=True to accept the documented assumed "
+            f"prior instead."
         )
 
     atk = obs["attack_offset"].to_numpy(dtype=float)

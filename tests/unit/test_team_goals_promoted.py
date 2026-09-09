@@ -115,6 +115,72 @@ def test_first_season_offsets_are_measured_per_season(history) -> None:
     assert obs["defence_offset"].mean() > 0.0
 
 
+# -- a partial season is not an observation ----------------------------------
+
+
+def test_a_clubs_own_first_weeks_cannot_widen_the_prior_that_protects_it(
+        history) -> None:
+    """REGRESSION. The failure this guards was live and self-inflicted.
+
+    In 2026-27 Hull conceded 0 goals in its first 3 matches. With the half-goal
+    smoothing that is a defence offset of -2.14, and because the SPREAD of the
+    observations is the prior SD, that one value pushed the defence SD from
+    0.22 to 0.93. A wide prior is a weak prior, so the fit was then free to
+    hand Hull the best defence in the league -- ahead of Arsenal -- on three
+    games, and Chelsea at home to Hull came out at 0.63 expected goals and a
+    25% win probability against a market price of 77%.
+
+    The club's own small-sample noise destroyed the prior that existed to
+    shrink it. A club partway through its first season has not yet produced a
+    first-season offset, so it must not vote on what one looks like.
+    """
+    import pandas as pd
+
+    full = fit_promoted_prior(history)
+
+    # One newly promoted club, 3 matches, a freak clean-sheet run.
+    season = sorted(history["season"].unique())[-1]
+    rate = float(history["home_score"].mean() + history["away_score"].mean()) / 2
+    newbie = 999
+    rows = [{
+        "season": season, "fixture_id": 90_000 + i, "gw": i + 1,
+        "home_team_code": newbie, "away_team_code": 1 + i,
+        "home_score": 1, "away_score": 0,
+    } for i in range(3)]
+    polluted = pd.concat([history, pd.DataFrame(rows)], ignore_index=True)
+
+    raw = first_season_offsets(polluted)
+    tiny = raw[raw["matches"] < 19]
+    assert not tiny.empty, "the fixture must actually create a partial-season club"
+
+    # With the gate: the 3-match club does not vote. The SD moves only by the
+    # hair that three extra matches shift the season's own league average,
+    # which every offset is measured against.
+    after = fit_promoted_prior(polluted)
+    assert after.n_clubs == full.n_clubs, "the partial-season club still voted"
+    assert after.defence_sd == pytest.approx(full.defence_sd, rel=0.05)
+
+    # Without the gate: the same single club inflates the prior sharply. This
+    # half of the test is the bug itself, kept executable so the fix cannot be
+    # quietly removed and called a refactor.
+    ungated = fit_promoted_prior(polluted, min_matches=1)
+    assert ungated.n_clubs == full.n_clubs + 1
+    assert ungated.defence_sd > after.defence_sd * 1.5, (
+        "the unguarded prior must visibly widen, or this test proves nothing"
+    )
+    assert rate > 0
+
+
+def test_the_gate_is_stated_in_matches_and_is_tunable(history) -> None:
+    """The threshold is a parameter, not a magic number buried in a filter."""
+    from fpl_edge.models.team_goals.promoted import MIN_PRIOR_MATCHES
+
+    assert MIN_PRIOR_MATCHES >= 19, "half a season is the documented floor"
+    obs = first_season_offsets(history)
+    kept = obs[obs["matches"] >= MIN_PRIOR_MATCHES]
+    assert len(kept) >= 3, "the synthetic history must survive its own gate"
+
+
 # -- the refusal to guess ----------------------------------------------------
 
 
