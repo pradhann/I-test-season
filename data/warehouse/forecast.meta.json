@@ -1,34 +1,36 @@
 {
   "forecast_source": "consensus",
-  "generated_at": "2026-09-08T11:41:04.889097+00:00",
+  "generated_at": "2026-09-12T18:53:26.444605+00:00",
   "gws": [
-    4,
     5,
     6,
     7,
-    8
+    8,
+    9
   ],
-  "rows": 2490,
+  "rows": 2430,
   "rows_by_source": {
-    "consensus": 2490
+    "consensus": 2389,
+    "engine_fill": 41
   },
-  "engine_fill_share": 0.0,
-  "p_play_from_consensus_rows": 2490,
+  "engine_fill_share": 0.016872427983539096,
+  "p_play_from_consensus_rows": 1944,
   "coverage_by_gw": {
-    "4": {
-      "consensus": 498
-    },
     "5": {
-      "consensus": 498
+      "consensus": 486
     },
     "6": {
-      "consensus": 498
+      "consensus": 486
     },
     "7": {
-      "consensus": 498
+      "consensus": 486
     },
     "8": {
-      "consensus": 498
+      "consensus": 486
+    },
+    "9": {
+      "consensus": 445,
+      "engine_fill": 41
     }
   }
 }
