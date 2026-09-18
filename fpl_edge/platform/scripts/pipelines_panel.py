@@ -24,12 +24,13 @@ gate):
 from __future__ import annotations
 
 import datetime as dt
+import json
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
-from fpl_edge.pipelines import health
+from fpl_edge.pipelines import health, registry
 from fpl_edge.pipelines.runner import LOG_DIR
 from fpl_edge.platform.registry import register_script
 from fpl_edge.platform.scripts.common import UTC, empty, q, source_dir
@@ -85,7 +86,20 @@ _LAST_RUN_SCHEMA: dict[str, Any] = {
         "rows_written": {"type": ["integer", "null"]},
         "rows_unchanged": {"type": ["integer", "null"]},
         "credits": {"type": ["number", "null"]},
-        "note": {"type": ["string", "null"]},
+        "note": {"type": ["string", "null"],
+                 "description": "The ledger note, verbatim. Whatever the "
+                                "runner wrote, including a JSON note, is "
+                                "served here unparsed."},
+        "note_is_json": {"type": "boolean",
+                         "description": "Computed: the note parsed as a JSON "
+                                        "object. False means the fields below "
+                                        "are absent and the note is prose."},
+        "model": {"type": ["string", "null"],
+                  "description": "From the note's JSON, when it carries a "
+                                 "model name. Never inferred."},
+        "tokens": {"type": ["number", "null"],
+                   "description": "From the note's JSON: tokens, or input "
+                                  "plus output where the note splits them."},
         "trigger": {"type": ["string", "null"]},
         "log_path": {"type": ["string", "null"]},
     },
@@ -94,8 +108,10 @@ _LAST_RUN_SCHEMA: dict[str, Any] = {
 _ROW_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["id", "description", "family", "schedule", "enabled",
-                 "health", "last_run", "avg_duration_ms", "next_due",
+    "required": ["id", "description", "family", "schedule", "due_kind",
+                 "enabled", "health", "last_run", "last_run_age_days",
+                 "last_success", "stale_window", "stale_window_hours",
+                 "stale_by_window", "avg_duration_ms", "next_due",
                  "metered", "runs"],
     "properties": {
         "id": {"type": "string"},
@@ -103,6 +119,37 @@ _ROW_SCHEMA: dict[str, Any] = {
         "family": {"type": "string"},
         "schedule": {"type": "string",
                      "description": "Human words from health.describe_due; never a cron string."},
+        "due_kind": {"enum": ["daily", "deadline", "interval", "on demand"],
+                     "description": "Which of the registry's four Due shapes "
+                                    "this row carries, in words."},
+        "last_run_age_days": {
+            "type": ["number", "null"],
+            "description": "Computed: days between the last run's start and "
+                           "generated_at. Fractional; the view rounds.",
+        },
+        "last_success": {
+            "type": ["string", "null"],
+            "description": "max(finished_utc) over ledger rows with status ok "
+                           "or skipped_fresh. Null means no run has ever "
+                           "succeeded.",
+        },
+        "stale_window": {
+            "type": "string",
+            "description": "The registry's stale_window in words (hours and "
+                           "days, never seconds): how late a firing may be "
+                           "before the scheduler drops it.",
+        },
+        "stale_window_hours": {
+            "type": "number",
+            "description": "The same window as a number, for sorting.",
+        },
+        "stale_by_window": {
+            "type": "boolean",
+            "description": "Computed: last_success is older than "
+                           "stale_window_hours, or nothing has succeeded yet. "
+                           "This is the TASK'S OWN window, not health.state's "
+                           "cadence budget; the two disagree by design.",
+        },
         "enabled": {"type": "boolean"},
         "health": {
             "type": "object",
@@ -226,9 +273,87 @@ def _recent_runs(wh) -> dict[str, list[dict[str, Any]]]:
     return out
 
 
+#: The registry's four Due shapes, in the words the panel serves. A reader of
+#: the board never meets the class name.
+_DUE_KINDS: dict[type, str] = {
+    registry.Calendar: "daily",
+    registry.DeadlineRelative: "deadline",
+    registry.Interval: "interval",
+    registry.OnDemand: "on demand",
+}
+
+#: Keys a JSON ledger note may carry the token count under. The runner's note
+#: format belongs to whoever writes the note, so this reads several spellings
+#: and serves nothing when it recognises none of them.
+_TOKEN_KEYS = ("tokens", "tokens_total", "total_tokens")
+_TOKEN_PAIRS = (("tokens_in", "tokens_out"), ("input_tokens", "output_tokens"))
+
+
+def _note_fields(note: Any) -> dict[str, Any]:
+    """The model and token count a JSON note carries, read defensively.
+
+    The note column is a free-text field that different writers fill
+    differently, so this never assumes a shape. Anything that is not a JSON
+    object, or is one without these keys, comes back as absent and the raw
+    note is served beside it untouched.
+    """
+    blank = {"note_is_json": False, "model": None, "tokens": None}
+    if not note:
+        return blank
+    try:
+        obj = json.loads(str(note))
+    except (TypeError, ValueError):
+        return blank
+    if not isinstance(obj, dict):
+        return blank
+
+    model = obj.get("model")
+    model = str(model) if isinstance(model, str) else None
+
+    tokens: float | None = None
+    for key in _TOKEN_KEYS:
+        value = obj.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            tokens = float(value)
+            break
+    if tokens is None:
+        for a, b in _TOKEN_PAIRS:
+            va, vb = obj.get(a), obj.get(b)
+            if isinstance(va, (int, float)) and isinstance(vb, (int, float)):
+                tokens = float(va) + float(vb)
+                break
+    return {"note_is_json": True, "model": model, "tokens": tokens}
+
+
+def _last_success(wh) -> dict[str, dt.datetime]:
+    """pipeline -> the last instant it finished successfully, in one query."""
+    df = q(
+        wh,
+        "SELECT pipeline, max(finished_utc) AS f FROM fetch_run "
+        "WHERE status IN ('ok', 'skipped_fresh') GROUP BY pipeline",
+    )
+    out: dict[str, dt.datetime] = {}
+    for r in df.to_dict("records"):
+        stamp = pd.to_datetime(r["f"], utc=True, errors="coerce")
+        if not pd.isna(stamp):
+            out[str(r["pipeline"])] = stamp.to_pydatetime()
+    return out
+
+
+def _age_days(started: Any, now: dt.datetime) -> float | None:
+    stamp = pd.to_datetime(started, utc=True, errors="coerce")
+    if pd.isna(stamp):
+        return None
+    return max(0.0, (now - stamp.to_pydatetime()).total_seconds() / 86400.0)
+
+
 def pipeline_board(wh) -> dict[str, Any]:
     """Every registered pipeline: health with its reason, last run, average
-    time, next due, spend -- plus the recent-run history per row."""
+    time, next due, spend, the recent-run history, and the registry facts the
+    health payload does not carry (the due kind, the stale window in words,
+    whether the row is stale by that window, and the age of the last run in
+    days). Every field is a stored column or a computation named in the
+    result schema."""
     if not _ledger_exists(wh):
         return empty(
             "No fetch_run ledger in this warehouse yet -- no pipeline has ever "
@@ -239,8 +364,35 @@ def pipeline_board(wh) -> dict[str, Any]:
     now = dt.datetime.now(UTC)
     rows = health.pipeline_status(wh, now=now)
     runs = _recent_runs(wh)
+    succeeded = _last_success(wh)
     for row in rows:
         row["runs"] = runs.get(row["id"], [])
+        task = registry.by_id(row["id"])
+        if task is None:
+            # health.pipeline_status was handed tasks the registry does not
+            # hold. Serve the row rather than raising, with the registry
+            # facts absent and saying so.
+            row.update(due_kind="on demand", stale_window="unknown",
+                       stale_window_hours=0.0, last_success=None,
+                       stale_by_window=False, last_run_age_days=None)
+            continue
+        window_h = task.stale_window.total_seconds() / 3600.0
+        ok_at = succeeded.get(row["id"])
+        row["due_kind"] = _DUE_KINDS.get(type(task.due), "on demand")
+        row["stale_window"] = health.span_words(window_h)
+        row["stale_window_hours"] = round(window_h, 3)
+        row["last_success"] = ok_at.isoformat() if ok_at else None
+        # Stale by the task's OWN window: never having succeeded counts,
+        # because a task with no success is not fresh, it is unproven.
+        row["stale_by_window"] = (
+            True if ok_at is None
+            else (now - ok_at).total_seconds() / 3600.0 > window_h
+        )
+        last = row.get("last_run")
+        row["last_run_age_days"] = (
+            None if not last else _age_days(last.get("started"), now))
+        if last:
+            last.update(_note_fields(last.get("note")))
 
     counts = {"ok": 0, "failing": 0, "refused": 0, "stale": 0,
               "never_ran": 0, "running": 0, "disabled": 0}
@@ -279,8 +431,9 @@ register_script(
     title="Pipelines",
     description=(
         "Every registered pipeline: health with its reason, schedule in human "
-        "words, last run, average duration, next due, month credits, and the "
-        "last ten runs for the sparkline. Reads only; triggering is a route."
+        "words, the stale window and whether the row is past it, last run "
+        "with its trigger and its note, next due, month credits, and the last "
+        "ten runs. Reads only; triggering is a route."
     ),
 )
 

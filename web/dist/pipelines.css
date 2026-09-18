@@ -1,14 +1,19 @@
-/* Pipelines — control-room styling. Everything is a token from app.css; no
-   colour is defined here, only applied, so both themes hold by construction.
+/* Pipelines: control-room styling over the house table.
+
+   Every colour is a token from app.css; none is defined here, only applied,
+   so both themes hold by construction. The table is `table.data` with the
+   pipe- prefix adding only what a control board needs: chips, a caret, and
+   the row that expands under the one you opened.
+
    The one animation (the running badge's pulse) is defined ONLY under
-   prefers-reduced-motion: no-preference — reduced motion gets a static badge
+   prefers-reduced-motion: no-preference. Reduced motion gets a static badge
    rather than a stilled animation. */
 
 .pipe-head { display: flex; align-items: center; gap: 10px; }
 .pipe-head h2 { flex: 1; }
 .pipe-refresh { font-size: 12px; }
 
-/* ---- summary strip: the four states + the credit meter ---- */
+/* ---- summary strip: the states + the credit meter ---- */
 .pipe-summary { display: flex; gap: 10px; flex-wrap: wrap; margin: 10px 0 14px; }
 .pipe-stat { background: var(--raised); border-radius: 9px; padding: 8px 14px;
            min-width: 84px; border: 1px solid transparent; }
@@ -27,41 +32,38 @@
 .pipe-stat.credits .v { font-size: 15px; }
 .pipe-stat.credits.warn { border-color: color-mix(in oklab, var(--warn) 45%, var(--line)); }
 
-/* ---- family sections ---- */
-.pipe-famname { margin: 14px 0 4px; font-size: 11px; letter-spacing: .09em;
-              text-transform: uppercase; color: var(--faint); font-weight: 650; }
-.pipe-family:first-child .pipe-famname { margin-top: 2px; }
+/* ---- the table ---- */
+.pipe-table { table-layout: auto; }
+.pipe-table th { padding: 0; }
+.pipe-th { background: none; border: 0; padding: 5px 10px; width: 100%;
+         text-align: inherit; cursor: pointer; color: var(--muted);
+         font: inherit; letter-spacing: .06em; text-transform: uppercase;
+         display: flex; align-items: center; gap: 4px; }
+.pipe-table th.num .pipe-th { justify-content: flex-end; }
+.pipe-th:hover { color: var(--ink); }
+.pipe-th.on { color: var(--ink); }
+.pipe-th .arr { font-size: 9px; color: var(--s1); }
+.pipe-th:focus-visible { outline: 2px solid var(--s1); outline-offset: -2px; }
 
-/* ---- one pipeline, one row ---- */
-.pipe-row {
-  display: grid;
-  grid-template-columns: minmax(170px, 1.3fr) minmax(180px, 1.6fr)
-                         110px minmax(130px, 1fr) 150px 64px 74px 76px;
-  gap: 4px 14px; align-items: center;
-  padding: 9px 12px; border: 1px solid var(--line); border-radius: 9px;
-  background: var(--surface); margin-bottom: 6px; cursor: pointer;
-}
-.pipe-row:hover { background: var(--raised); }
-.pipe-row:focus-visible { outline: 2px solid var(--s1); outline-offset: 1px; }
-.pipe-row.failing { border-color: color-mix(in oklab, var(--bad) 40%, var(--line));
-                  background: color-mix(in oklab, var(--bad) 5%, var(--surface)); }
+.pipe-row { cursor: pointer; }
+.pipe-row:focus-visible { outline: 2px solid var(--s1); outline-offset: -2px; }
+.pipe-row.failing td { background: color-mix(in oklab, var(--bad) 6%, var(--surface)); }
+.pipe-row.open td { background: var(--raised); }
 .pipe-row.disabled { opacity: .55; }
-
-/* the column header: the same grid, so a label sits over its own cell */
-.pipe-hrow { border-color: transparent; background: none; cursor: default;
-           padding: 0 12px; margin-bottom: 2px; }
-.pipe-hrow:hover { background: none; }
-.pipe-hcell { font-size: 9.5px; letter-spacing: .07em; text-transform: uppercase;
-            color: var(--faint); font-weight: 650; }
-
+.pipe-fam { color: var(--faint); font-size: 11px; letter-spacing: .05em;
+          text-transform: uppercase; }
 .pipe-name b { font-size: 12.5px; }
-.pipe-desc { color: var(--faint); font-size: 11px; white-space: nowrap;
-           overflow: hidden; text-overflow: ellipsis; max-width: 30ch; }
+.pipe-caret { color: var(--faint); margin-right: 6px; font-size: 10px; }
+.pipe-age, .pipe-due { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pipe-mut { color: var(--faint); }
 
-/* health: the dot NEVER travels without its words */
-.pipe-hline { display: flex; align-items: center; gap: 6px; }
+/* ---- chips: one dot, one word, the same vocabulary everywhere ---- */
+.pipe-chip { display: inline-flex; align-items: center; gap: 5px;
+           white-space: nowrap; font-size: 11.5px; }
+.pipe-chip b { font-weight: 600; text-transform: uppercase;
+             letter-spacing: .04em; }
 .pipe-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
-          flex: none; vertical-align: 1px; }
+          flex: none; }
 .pipe-dot.good { background: var(--good); }
 .pipe-dot.bad  { background: var(--bad); }
 .pipe-dot.warn { background: var(--warn); }
@@ -74,55 +76,73 @@
                box-shadow: inset 0 0 0 2px var(--warn); }
 .pipe-dot.skip { background: transparent;
                box-shadow: inset 0 0 0 2px var(--good); }
-.pipe-word { font-size: 11.5px; text-transform: uppercase; letter-spacing: .04em; }
-.pipe-word.good { color: var(--good); }
-.pipe-word.bad  { color: var(--bad); }
-.pipe-word.warn { color: var(--warn); }
-.pipe-word.run  { color: var(--s1); }
-.pipe-word.idle { color: var(--muted); }
-.pipe-word.hold { color: color-mix(in oklab, var(--warn) 70%, var(--muted)); }
-.pipe-reason { color: var(--muted); font-size: 11px; line-height: 1.35;
-             margin-top: 1px; }
-.pipe-row.failing .pipe-reason { color: var(--ink); }
-/* the reason is one line of the detail; this is the way to the rest of it */
-.pipe-loglink { background: none; border: 0; padding: 0; margin-top: 2px;
-              font-size: 10.5px; color: var(--s1); cursor: pointer;
-              text-decoration: underline; }
-.pipe-loglink:focus-visible { outline: 2px solid var(--s1); outline-offset: 2px; }
+.pipe-chip.good b { color: var(--good); }
+.pipe-chip.bad b  { color: var(--bad); }
+.pipe-chip.warn b { color: var(--warn); }
+.pipe-chip.run b  { color: var(--s1); }
+.pipe-chip.idle b { color: var(--muted); }
+.pipe-chip.hold b { color: color-mix(in oklab, var(--warn) 70%, var(--muted)); }
+.pipe-chip.skip b { color: var(--muted); }
+.pipe-chip.gap b  { color: var(--warn); }
 
-.pipe-sched { color: var(--muted); font-size: 11.5px; }
-.pipe-last { display: flex; flex-direction: column; font-size: 11.5px; }
+/* ---- the expandable, under the row it belongs to ---- */
+.pipe-exprow td { padding: 0 0 10px; background: var(--raised); }
+.pipe-exp { padding: 10px 14px 12px; display: flex; flex-direction: column;
+          gap: 10px; }
+.pipe-exp h3 { font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+             color: var(--faint); margin: 0; font-weight: 650; }
+.pipe-health { display: flex; flex-direction: column; gap: 2px; }
+.pipe-reason { color: var(--muted); font-size: 12px; line-height: 1.4; }
+.pipe-row.failing + .pipe-exprow .pipe-reason { color: var(--ink); }
+
+.pipe-facts { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px;
+            margin: 0; font-size: 12px; }
+.pipe-facts dt { color: var(--faint); text-transform: uppercase;
+               font-size: 10px; letter-spacing: .06em; align-self: center; }
+.pipe-facts dd { margin: 0; }
+
+.pipe-lastrun { display: flex; flex-direction: column; gap: 6px; }
+.pipe-runline { display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+              font-size: 12px; }
 .pipe-when { font-variant-numeric: tabular-nums; }
-.pipe-rows { color: var(--faint); font-size: 10.5px; font-family: var(--mono); }
-.pipe-never { color: var(--faint); font-style: italic; }
-.pipe-mut { color: var(--faint); }
+.pipe-note { font-family: var(--mono); font-size: 11px; line-height: 1.5;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 7px;
+  padding: 8px 10px; margin: 0; max-height: 160px; overflow: auto;
+  white-space: pre-wrap; overflow-wrap: anywhere; }
+.pipe-path { display: flex; gap: 8px; align-items: baseline; font-size: 11px; }
+.pipe-path code { font-family: var(--mono); overflow-wrap: anywhere; }
 
-/* duration: two thin segments, last above average */
-.pipe-dur { display: flex; flex-direction: column; gap: 2px; }
-.pipe-durbars { display: flex; flex-direction: column; gap: 2px; }
-.pipe-durbar { height: 4px; border-radius: 2px; background: var(--s1); }
-.pipe-durbar.avg { background: color-mix(in oklab, var(--s1) 35%, var(--line)); }
-.pipe-durbar.last.over { background: var(--warn); }
-.pipe-durtext { color: var(--faint); font-size: 10px; font-family: var(--mono);
-              font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* ---- recent runs, and one run's log tail ---- */
+.pipe-runs { display: flex; flex-direction: column; gap: 6px; }
+.pipe-runlist { display: flex; flex-direction: column; gap: 2px; }
+.pipe-runitem { display: flex; gap: 12px; align-items: center; width: 100%;
+  background: none; border: 0; border-radius: 6px; padding: 4px 8px;
+  cursor: pointer; font: inherit; font-size: 11.5px; color: var(--ink);
+  text-align: left; }
+.pipe-runitem:hover { background: var(--surface); }
+.pipe-runitem:focus-visible { outline: 2px solid var(--s1); outline-offset: -2px; }
+.pipe-runitem.bad .pipe-when { color: var(--bad); }
+.pipe-logbox { padding: 0 8px 6px; }
+.pipe-log { font-family: var(--mono); font-size: 11px; line-height: 1.5;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 7px;
+  padding: 10px 12px; max-height: 320px; overflow: auto; white-space: pre-wrap;
+  overflow-wrap: anywhere; margin: 6px 0 0; }
 
-/* the sparkline: recessive micro-bars, error runs go --bad */
-.pipe-spark { display: flex; align-items: flex-end; gap: 2px; height: 18px; }
-.pipe-sbar { width: 3px; border-radius: 1px;
-           background: color-mix(in oklab, var(--s1) 55%, var(--surface)); }
-.pipe-sbar.bad { background: var(--bad); }
-/* a single run has nothing to be scaled against, so it is drawn short */
-.pipe-sbar.lone { background: color-mix(in oklab, var(--s1) 30%, var(--surface)); }
-
-.pipe-due { font-size: 11.5px; color: var(--muted);
-          font-variant-numeric: tabular-nums; }
-
-.pipe-act { text-align: right; }
-.pipe-run { font-size: 12px; padding: 4px 12px; }
+/* ---- the trigger, its confirm strip, and errors from the route ---- */
+.pipe-act { display: flex; align-items: center; gap: 10px; }
+.pipe-run { font-size: 12px; padding: 5px 12px; }
 .pipe-run.metered { border-color: color-mix(in oklab, var(--warn) 45%, var(--line)); }
 .pipe-run.confirm { background: var(--accent); border-color: var(--accent);
                   color: #fff; }
-.pipe-cancel { font-size: 12px; padding: 4px 10px; margin-left: 6px; }
+.pipe-cancel { font-size: 12px; padding: 5px 10px; margin-left: 6px; }
+.pipe-confirm { display: flex; gap: 10px; align-items: center; font-size: 12px;
+  padding: 7px 10px; border-radius: 7px;
+  background: color-mix(in oklab, var(--warn) 10%, var(--surface));
+  border: 1px solid color-mix(in oklab, var(--warn) 40%, var(--line)); }
+.pipe-confirm b { color: var(--warn); }
+.pipe-err { font-size: 12px; padding: 7px 10px; border-radius: 7px;
+  color: var(--bad);
+  background: color-mix(in oklab, var(--bad) 8%, var(--surface)); }
 
 .pipe-running { display: inline-block; font: 650 10.5px/1 var(--mono);
               letter-spacing: .06em; text-transform: uppercase;
@@ -134,50 +154,29 @@
   @keyframes pipe-pulse { 50% { opacity: .55; } }
 }
 
-/* inline confirm strip + row notes: full-width tails of the grid row */
-.pipe-confirm, .pipe-note { grid-column: 1 / -1; display: flex; gap: 10px;
-  align-items: center; padding: 7px 10px; border-radius: 7px; font-size: 12px; }
-.pipe-confirm { background: color-mix(in oklab, var(--warn) 10%, var(--surface));
-  border: 1px solid color-mix(in oklab, var(--warn) 40%, var(--line)); }
-.pipe-confirm b { color: var(--warn); }
-.pipe-note { background: var(--raised); color: var(--muted); }
-.pipe-note.bad { color: var(--bad);
-  background: color-mix(in oklab, var(--bad) 8%, var(--surface)); }
-
-/* ---- the drawer ---- */
-.pipe-drawer h2 { font-size: 12px; letter-spacing: .06em;
-  text-transform: uppercase; color: var(--muted); margin: 16px 0 6px; }
-.pipe-dhead { display: flex; align-items: flex-start; gap: 12px;
-            margin-bottom: 8px; }
-.pipe-dname { font-size: 16px; font-weight: 700; font-family: var(--mono); }
-.pipe-dhead button { margin-left: auto; }
-.pipe-runrow { cursor: pointer; }
-.pipe-runrow.bad td:first-child { color: var(--bad); }
-.pipe-logrow td { padding: 0 0 8px; }
-.pipe-log { font-family: var(--mono); font-size: 11px; line-height: 1.5;
-  background: var(--raised); border: 1px solid var(--line); border-radius: 7px;
-  padding: 10px 12px; max-height: 320px; overflow: auto; white-space: pre-wrap;
-  overflow-wrap: anywhere; margin: 6px 0 0; }
-
 /* a named gap: same anatomy as the fixtures view's */
-.pipe-gap { color: var(--muted); background: var(--raised);
+.pipe-gap { color: var(--muted); background: var(--surface);
   border: 1px dashed var(--line); border-radius: 8px; padding: 10px 12px;
   font-size: 12px; }
 .pipe-gap b { color: var(--ink); display: block; margin-bottom: 2px; }
 
-/* ---- narrow screens: the grid folds into a card ----
-   Two columns in a zigzag, so the header row no longer sits over anything.
-   Each cell names its own column instead; "in 3d" alone means nothing. */
-@media (max-width: 1080px) {
-  .pipe-row { grid-template-columns: 1fr 1fr; }
-  .pipe-hrow { display: none; }
-  .pipe-row > [data-label]::before {
-    content: attr(data-label); display: block; font-size: 9.5px;
-    letter-spacing: .07em; text-transform: uppercase; color: var(--faint);
-    font-weight: 650; margin-bottom: 1px;
+/* ---- narrow screens: the table folds into cards ----
+   Each cell names its own column instead of relying on a header row that is
+   no longer above it. "in 3d" alone means nothing. */
+@media (max-width: 820px) {
+  .pipe-table thead { display: none; }
+  .pipe-table, .pipe-table tbody, .pipe-table tr, .pipe-table td {
+    display: block; width: 100%;
   }
-  .pipe-act { text-align: left; }
-  .pipe-spark { height: auto; flex-wrap: wrap; }
-  .pipe-spark::before { flex: 0 0 100%; }
-  .pipe-sbar { height: 14px; }
+  .pipe-row { border: 1px solid var(--line); border-radius: 9px;
+            margin-bottom: 6px; padding: 4px 0; }
+  .pipe-table td { border: 0; display: flex; gap: 10px;
+                 align-items: baseline; justify-content: space-between; }
+  .pipe-table td.num { text-align: left; }
+  .pipe-row > [data-label]::before {
+    content: attr(data-label); font-size: 9.5px; letter-spacing: .07em;
+    text-transform: uppercase; color: var(--faint); font-weight: 650;
+    flex: 0 0 auto;
+  }
+  .pipe-exprow td { display: block; }
 }
