@@ -196,7 +196,8 @@ def seeded_db(tmp_path):
     for seq, (start_s, text) in enumerate(SEGMENTS):
         wh.sql("INSERT INTO transcript_segment VALUES (?, ?, ?, ?)",
                ["ep_live", seq, start_s, text])
-    wh.sql("INSERT INTO content_analysis VALUES (?, ?, ?, ?)",
+    wh.sql("INSERT INTO content_analysis (item_id, model, created_utc, "
+           "analysis_json) VALUES (?, ?, ?, ?)",
            ["ep_live", "claude-opus-5", PAST, json.dumps(ANALYSIS)])
     _claim(wh, "c_live_cap", "ep_live", TALKER, "yt_talker", HAALAND,
            "Erling Haaland", "captain", PAST, LIVE_URL,
@@ -222,7 +223,8 @@ def seeded_db(tmp_path):
           GONE_URL, OLDEST, "transcript")
     wh.sql("INSERT INTO transcript_segment VALUES (?, ?, ?, ?)",
            ["ep_gone", 0, 0.0, "nobody should ever read this"])
-    wh.sql("INSERT INTO content_analysis VALUES (?, ?, ?, ?)",
+    wh.sql("INSERT INTO content_analysis (item_id, model, created_utc, "
+           "analysis_json) VALUES (?, ?, ?, ?)",
            ["ep_gone", "claude-opus-5", OLDEST, json.dumps(GONE_ANALYSIS)])
     _claim(wh, "c_gone", "ep_gone", TALKER, "yt_talker", HAALAND,
            "Erling Haaland", "buy", OLDEST, GONE_URL)

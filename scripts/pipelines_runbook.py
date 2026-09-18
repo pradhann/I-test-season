@@ -364,7 +364,7 @@ ALLOWED: tuple[Overlap, ...] = (
             Citation("fpl_edge/pipelines/tasks.py", 82,
                      "Refresh the cached fixture artefacts so the ticker's "
                      "colours reflect"),
-            Citation("fpl_edge/pipelines/registry.py", 592,
+            Citation("fpl_edge/pipelines/registry.py", 686,
                      "Refit the Dixon-Coles club split the Fixtures board "
                      "colours from."),
         ),
@@ -391,7 +391,7 @@ ALLOWED: tuple[Overlap, ...] = (
             "captions only and never downloads audio; the nightly task runs "
             "the GPU under a wall-clock budget.",
         citations=(
-            Citation("fpl_edge/pipelines/registry.py", 667,
+            Citation("fpl_edge/pipelines/registry.py", 761,
                      "Podcast ASR stays on the nightly task"),
         ),
     ),
@@ -402,7 +402,7 @@ ALLOWED: tuple[Overlap, ...] = (
             "daily one covers the last 21 days, the overnight one drops the "
             "window and eats the never-analysed backlog.",
         citations=(
-            Citation("fpl_edge/pipelines/registry.py", 552,
+            Citation("fpl_edge/pipelines/registry.py", 645,
                      "The second pass, overnight: no window at all, so it eats "
                      "the backlog."),
         ),

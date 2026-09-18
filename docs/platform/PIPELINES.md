@@ -170,18 +170,19 @@ uv run python -m fpl_edge.ingest.rivals.panel_picks --db <db_path>
 
 ```
 uv run python -m fpl_edge.ingest.content.pipeline transcribe --budget-s <budget>
+# in process: fpl_edge.ingest.content.asr.backend_status
 ```
 
 **`content_analyse`**
 
 ```
-uv run python -m fpl_edge.ingest.content.pipeline analyze --since <since_days> --budget-s <budget>
+uv run python -m fpl_edge.ingest.content.pipeline analyze --since <since_days> --budget-s <budget> --token-budget <tokens> --summary-json <summary_path>
 ```
 
 **`content_analyse_backlog`**
 
 ```
-uv run python -m fpl_edge.ingest.content.pipeline analyze --since <since_days> --budget-s <budget>
+uv run python -m fpl_edge.ingest.content.pipeline analyze --since <since_days> --budget-s <budget> --token-budget <tokens> --summary-json <summary_path>
 ```
 
 **`content_fast_rss`**
@@ -223,10 +224,10 @@ One module on two scheduled paths is double work until the code says why. `tests
 | Target | Runs on | Why | Documented at |
 |---|---|---|---|
 | `fpl_edge.ingest.projections.cli ingest` | `post_gw_settlement`, `presser_projection_refresh` | Providers publish on their own clocks, so the nightly pull bounds every feed at a day old and the T-30h pull catches what moved before the deadline. Section 6 of ARCHITECTURE_REVIEW.md keeps the nightly one: it is a documented fix, not double work. | `fpl_edge/jobs/post_gw.py:209`, `fpl_edge/pipelines/tasks.py:74` |
-| `fpl_edge.platform.scripts.fixtures --build` | `fixture_ratings_refit`, `post_gw_settlement`, `presser_projection_refresh` | One writer, three callers. Refactor group 6 merged models/team_goals/ratings_cache.py into fixtures/build.py, so the two fits of one model became one fit writing all three artefacts. The 11:00 UTC refit is the daily one, settlement rebuilds after results land, and T-30h rebuilds after midweek rescheduling. | `fpl_edge/jobs/post_gw.py:227`, `fpl_edge/pipelines/tasks.py:82`, `fpl_edge/pipelines/registry.py:592` |
+| `fpl_edge.platform.scripts.fixtures --build` | `fixture_ratings_refit`, `post_gw_settlement`, `presser_projection_refresh` | One writer, three callers. Refactor group 6 merged models/team_goals/ratings_cache.py into fixtures/build.py, so the two fits of one model became one fit writing all three artefacts. The 11:00 UTC refit is the daily one, settlement rebuilds after results land, and T-30h rebuilds after midweek rescheduling. | `fpl_edge/jobs/post_gw.py:227`, `fpl_edge/pipelines/tasks.py:82`, `fpl_edge/pipelines/registry.py:686` |
 | `fpl_edge.ingest.content.pipeline ingest` | `content_fast_rss`, `post_gw_settlement`, `presser_projection_refresh` | The content tiers are a decision: 13 creator feeds every four hours, the other 27 sources once a night over a wider window, and a two-day catch-up before each deadline. | `fpl_edge/ingest/content/sources.py:267`, `fpl_edge/pipelines/tasks.py:74` |
-| `fpl_edge.ingest.content.pipeline transcribe` | `content_fast_rss`, `content_transcribe` | Captions and audio are different costs. The 4-hourly rung takes captions only and never downloads audio; the nightly task runs the GPU under a wall-clock budget. | `fpl_edge/pipelines/registry.py:667` |
-| `fpl_edge.ingest.content.pipeline analyze` | `content_analyse`, `content_analyse_backlog` | Same budgeted, resumable pass over two different queues: the daily one covers the last 21 days, the overnight one drops the window and eats the never-analysed backlog. | `fpl_edge/pipelines/registry.py:552` |
+| `fpl_edge.ingest.content.pipeline transcribe` | `content_fast_rss`, `content_transcribe` | Captions and audio are different costs. The 4-hourly rung takes captions only and never downloads audio; the nightly task runs the GPU under a wall-clock budget. | `fpl_edge/pipelines/registry.py:761` |
+| `fpl_edge.ingest.content.pipeline analyze` | `content_analyse`, `content_analyse_backlog` | Same budgeted, resumable pass over two different queues: the daily one covers the last 21 days, the overnight one drops the window and eats the never-analysed backlog. | `fpl_edge/pipelines/registry.py:645` |
 | `scripts/ingest_odds.py --odds-api` | `odds_refresh`, `post_gw_settlement` | The nightly top-up is a no-op whenever the deadline ladder has already priced the week. --max-age-hours 48 is what makes it one, and it reports the skip rather than a fake ok. | `fpl_edge/jobs/post_gw.py:247` |
 | `scripts/ingest_live.py` | `post_gw_settlement`, `presser_projection_refresh` | The bootstrap snapshot before a deadline is the point of the T-30h task: prices, injuries and news move after the nightly run. | `fpl_edge/pipelines/tasks.py:74` |
 | `scripts/ingest_odds.py --fixtures` | `post_gw_settlement`, `presser_projection_refresh` | Forward fixtures are free and reschedules land midweek, so the T-30h task refetches them alongside the rest of the chain's head. | `fpl_edge/pipelines/tasks.py:74` |
