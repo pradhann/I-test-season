@@ -468,8 +468,11 @@ PROVIDERS: tuple[Provider, ...] = (
             "case measured so far (NOT vs NFO); rotowire.ABBR_TO_FPL holds the "
             "aliases and an unknown abbreviation refuses rather than fuzzy-matches.",
             "The page shows the next MATCHDAY, not necessarily the next FPL "
-            "gameweek; validate_fixture_pairs() checks every pair on the page "
-            "against fact_fixture for the target gw before anything is written.",
+            "gameweek; resolve_gameweek() names the gameweek whose fact_fixture "
+            "rows contain every fixture on the page, and validate_fixture_pairs() "
+            "rechecks every pair against it before anything is written. A page "
+            "whose fixtures are in no single gameweek records no_source with the "
+            "reason and writes nothing.",
         ),
     ),
     Provider(

@@ -200,10 +200,18 @@ def resolve_teams(entries: list[LineupEntry], short_to_code: dict[str, int]) -> 
     An abbreviation neither in that map nor in :data:`ABBR_TO_FPL` stops the
     ingest: a lineup attributed to the wrong club poisons twenty players at
     once, so there is no fuzzy fallback.
+
+    This resolves the clubs whose sheets are being read, which is ``team_abbr``.
+    :func:`page_fixture_pairs` needs the opponent as well and asks for both.
     """
+    return _team_codes({e.team_abbr for e in entries}, short_to_code)
+
+
+def _team_codes(abbrs: set[str], short_to_code: dict[str, int]) -> dict[str, int]:
+    """``{abbr: team_code}`` for every abbreviation given, or raise on any miss."""
     out: dict[str, int] = {}
     unknown: set[str] = set()
-    for abbr in {e.team_abbr for e in entries}:
+    for abbr in abbrs:
         fpl_short = ABBR_TO_FPL.get(abbr, abbr)
         code = short_to_code.get(fpl_short)
         if code is None:
@@ -419,6 +427,93 @@ def _collapse_duplicates(frame: pd.DataFrame) -> tuple[pd.DataFrame, list[dict]]
     return out, dropped
 
 
+class UnmappableRoundError(RotowireError):
+    """The fixtures on the page are not any one gameweek the warehouse holds.
+
+    Separate from :class:`RotowireError` because the caller treats it
+    differently. A page carrying a round we cannot name is a reason to record
+    "no_source" and move on, where a changed layout or an unknown club is a
+    reason to stop and be looked at.
+    """
+
+
+def page_fixture_pairs(
+    entries: list[LineupEntry], short_to_code: dict[str, int]
+) -> set[tuple[int, int]]:
+    """``{(home_team_code, away_team_code), ...}`` for the fixtures on the page.
+
+    Both sides of every fixture are resolved together, so an abbreviation the
+    season does not know raises the named "not in dim_team" error rather than a
+    bare ``KeyError`` from a lookup buried in a set comprehension.
+    """
+    codes = _team_codes(
+        {e.team_abbr for e in entries} | {e.opponent_abbr for e in entries},
+        short_to_code,
+    )
+    return {(codes[e.team_abbr], codes[e.opponent_abbr])
+            for e in entries if e.is_home}
+
+
+def resolve_gameweek(
+    entries: list[LineupEntry],
+    fixtures_by_gw: dict[int, set[tuple[int, int]]],
+    short_to_code: dict[str, int],
+) -> int:
+    """Which gameweek the fixtures on the page belong to.
+
+    ``fixtures_by_gw`` maps every gameweek of the season to its
+    ``{(home_team_code, away_team_code), ...}`` from ``fact_fixture``. The
+    answer is the gameweek whose fixtures contain every fixture on the page.
+
+    The question is asked of the page rather than of the clock. The caller used
+    to target "the first gameweek whose deadline is still ahead", which rolls
+    forward the second a deadline passes while Rotowire keeps showing the round
+    about to be played until its last match is done. Inside that window the
+    whole page is refused. Five of the twelve ingest errors since 2026-09-04
+    were this, including the run at 2026-09-18 17:31 UTC, one minute after the
+    GW5 deadline, which compared a page holding all ten GW5 fixtures against
+    GW6. (The other seven were a team sheet parsing to zero starters, which is
+    a different refusal and is unchanged.)
+
+    Containment rather than equality, because Rotowire drops a fixture from the
+    page once it has kicked off, so a page read on a Sunday carries a subset of
+    that round. An ordered (home, away) pair occurs once in a 38-gameweek
+    season, so a non-empty subset still names one gameweek; the ambiguity check
+    below covers a rescheduling that duplicates one.
+
+    Nothing about the deadline is consulted, so a round already under way maps
+    to its own gameweek and lands with ``as_of`` at the fetch instant. The
+    point-in-time read is what keeps a lineup seen after kickoff out of a
+    pre-deadline decision, and it does that whatever the gameweek label says.
+    """
+    pairs = page_fixture_pairs(entries, short_to_code)
+    if not pairs:
+        raise UnmappableRoundError(
+            "no home team sheet on the lineups page, so there is no fixture to "
+            "match against a gameweek."
+        )
+    hits = sorted(gw for gw, fixtures in fixtures_by_gw.items()
+                  if pairs <= fixtures)
+    if len(hits) == 1:
+        return hits[0]
+    best = sorted(
+        ((len(pairs - fixtures), gw) for gw, fixtures in fixtures_by_gw.items()),
+        key=lambda item: (item[0], item[1]),
+    )[:3]
+    nearest = ", ".join(f"gw{gw} misses {n}" for n, gw in best)
+    if not hits:
+        raise UnmappableRoundError(
+            f"the {len(pairs)} fixture(s) on the lineups page are not all in "
+            f"any one gameweek of this season ({nearest}). The page is showing "
+            f"a round we cannot name, so there is no gameweek to write under."
+        )
+    raise UnmappableRoundError(
+        f"the {len(pairs)} fixture(s) on the lineups page are all in more than "
+        f"one gameweek {hits}. A page that could be either round identifies "
+        f"neither."
+    )
+
+
 def validate_fixture_pairs(
     entries: list[LineupEntry],
     fixture_pairs: set[tuple[int, int]],
@@ -431,12 +526,13 @@ def validate_fixture_pairs(
     matchday", which is usually but not necessarily the next FPL gameweek --
     a midweek cup slate or a blank GW would desynchronise the two, and this
     check is what turns that from silent corruption into a refusal.
+
+    Kept as the last thing that runs before the write even though
+    :func:`resolve_gameweek` now picks the gameweek by this same containment.
+    It is the assertion that the gameweek being written under is the one the
+    page was read against, and it costs one set difference.
     """
-    page_pairs = {
-        (short_to_code[ABBR_TO_FPL.get(e.team_abbr, e.team_abbr)],
-         short_to_code[ABBR_TO_FPL.get(e.opponent_abbr, e.opponent_abbr)])
-        for e in entries if e.is_home
-    }
+    page_pairs = page_fixture_pairs(entries, short_to_code)
     rogue = page_pairs - fixture_pairs
     if rogue:
         raise RotowireError(

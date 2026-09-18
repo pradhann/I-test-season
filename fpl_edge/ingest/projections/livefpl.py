@@ -46,6 +46,7 @@ import datetime as dt
 import hashlib
 import json
 import time
+from dataclasses import dataclass
 from typing import Any
 
 import pandas as pd
@@ -157,8 +158,8 @@ class AmbiguousSeasonError(LiveFplError):
     """The element_ids in a LiveFPL file do not identify one season."""
 
 
-#: Largest share of a file's ids that may disagree with a season's id set
-#: before we refuse to call it that season.
+#: Largest share of the ids IN PLAY -- the file's and the season's together --
+#: that may disagree before we refuse to call a file that season.
 MAX_SEASON_MISMATCH = 0.10
 
 #: How many times worse the runner-up season must fit. Measured in mismatched
@@ -167,12 +168,36 @@ MAX_SEASON_MISMATCH = 0.10
 MIN_SEASON_MISMATCH_RATIO = 3.0
 
 
-def infer_season(element_ids: set[int], catalogs: dict[str, set[int]]) -> str:
-    """Which season's element_id table this file's ids belong to.
+@dataclass(frozen=True, slots=True)
+class SeasonFit:
+    """Which season a keyless file belongs to, and how well it fits.
+
+    The two mismatch counts are kept apart because they mean different things.
+    ``unknown_to_season`` ids are the dangerous ones: each is an id the file
+    published that this season's ``dim_player`` cannot name, so mapping it
+    would either drop it or land it on the wrong player. ``absent_from_file``
+    ids are the season's own players that the file left out, which costs
+    coverage and nothing else.
+    """
+
+    season: str
+    file_ids: int
+    unknown_to_season: int
+    absent_from_file: int
+
+    def line(self) -> str:
+        """One line for a fetch_run note."""
+        return (f"{self.file_ids} ids -> {self.season}, "
+                f"{self.unknown_to_season} unknown to the season, "
+                f"{self.absent_from_file} of the season's ids not in the file")
+
+
+def fit_season(element_ids: set[int], catalogs: dict[str, set[int]]) -> SeasonFit:
+    """Which season's element_id table this file's ids belong to, with the counts.
 
     ``catalogs`` maps season -> the set of element_ids ``dim_player`` holds for
-    it. Scored by MISMATCHED IDS -- the size of the symmetric difference -- not
-    by containment and not by a similarity ratio.
+    it. Ranked by MISMATCHED IDS, the size of the symmetric difference, rather
+    than by containment and rather than by a similarity ratio.
 
     Containment was the first implementation and it is wrong in the one way
     that matters. On 2026-08-20 ``predictedEOs/1.json`` carried 595 element_ids
@@ -186,38 +211,74 @@ def infer_season(element_ids: set[int], catalogs: dict[str, set[int]]) -> str:
 
     Symmetric difference is immune to that, because being three hundred ids too
     BIG counts against a season exactly as much as being three ids too small.
-    2026-27 mismatches by 3; 2022-23 mismatches by 183.
+    2026-27 mismatches by 3; 2022-23 mismatches by 183. That ranking is kept.
 
-    Counting rather than ratio-ing matters for the second test too. Against
+    Counting rather than ratio-ing matters for the margin too. Against
     ``top10k.json`` (840 ids) the two best seasons score Jaccard 0.999 and
     0.969, which reads like a photo finish and would fail any sane margin on a
     ratio. In mismatched ids it is 1 against 27, which is not close at all.
+
+    Two things changed on 2026-09-18, and both are about WHICH IDS THE SHARE IS
+    TAKEN OF rather than about how seasons are ranked.
+
+    The acceptance threshold counts the mismatch against every id in play, the
+    file's and the season's together, instead of against the file alone.
+    ``predictedEOs/1.json`` had shrunk to element_ids 1 to 599 exactly, a
+    contiguous prefix, while FPL's element space had grown to 659: LiveFPL
+    builds that file from a squad snapshot it has not refreshed since the
+    season's new signings were added. All 599 ids it publishes are 2026-27 ids
+    and no other season's; the 60 mismatches are 600 to 659, players the file
+    omits. Measured against the file, 60 of 599 is 10.02% and the ingest
+    refused a file it had identified correctly. Measured against the 659 ids in
+    play it is 9.1%, and the rival seasons are still 23% to 31% away.
+
+    A season that fails that threshold is no longer counted as a rival in the
+    margin test. "A file that could be either season identifies neither" is
+    about seasons the file could actually be, and 2022-23 at 179 mismatched ids
+    was never one of them; leaving it in the margin test refused the file a
+    second time, on a 179-to-60 gap that the 3x rule missed by one id.
+
+    Both failure modes the guard exists for are unchanged. A file keyed on
+    another season still carries hundreds of ids this season cannot name and
+    still fails the threshold, and two seasons that both fit still refuse.
     """
     if not element_ids:
         raise AmbiguousSeasonError("empty id set identifies no season")
     scored = sorted(
-        (len(element_ids ^ ids), season)
+        (len(element_ids ^ ids), len(element_ids | ids), season)
         for season, ids in catalogs.items() if ids
     )
     if not scored:
         raise AmbiguousSeasonError("no season catalogues to compare against")
-    best_diff, best = scored[0]
-    runner_diff = scored[1][0] if len(scored) > 1 else float("inf")
-    detail = ", ".join(f"{s}:{d} wrong" for d, s in scored[:4])
-    if best_diff > MAX_SEASON_MISMATCH * len(element_ids):
+    detail = ", ".join(f"{s}:{d} of {u} wrong" for d, u, s in scored[:4])
+    candidates = [(d, u, s) for d, u, s in scored
+                  if d <= MAX_SEASON_MISMATCH * u]
+    if not candidates:
         raise AmbiguousSeasonError(
             f"no season's element_id set is within {MAX_SEASON_MISMATCH:.0%} of "
             f"these {len(element_ids)} ids ({detail}). Refusing to map ids onto "
             f"players they do not identify."
         )
+    best_diff, _, best = candidates[0]
+    runner_diff = candidates[1][0] if len(candidates) > 1 else float("inf")
     # `max(best_diff, 1)` keeps a perfect match from being blocked by a
     # runner-up that is merely also good: 0 * anything is 0.
     if runner_diff < MIN_SEASON_MISMATCH_RATIO * max(best_diff, 1):
         raise AmbiguousSeasonError(
-            f"{best} and {scored[1][1]} fit these ids comparably well "
+            f"{best} and {candidates[1][2]} fit these ids comparably well "
             f"({detail}). A file that could be either season identifies neither."
         )
-    return best
+    return SeasonFit(
+        season=best,
+        file_ids=len(element_ids),
+        unknown_to_season=len(element_ids - catalogs[best]),
+        absent_from_file=len(catalogs[best] - element_ids),
+    )
+
+
+def infer_season(element_ids: set[int], catalogs: dict[str, set[int]]) -> str:
+    """The season name alone, for callers that do not need the counts."""
+    return fit_season(element_ids, catalogs).season
 
 
 def parse_code_map(body: Any) -> dict[int, int]:

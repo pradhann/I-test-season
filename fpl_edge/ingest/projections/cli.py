@@ -261,6 +261,10 @@ def _ingest_livefpl(warehouse: Warehouse, store: ProjectionStore, season: str,
     catalogs = element_catalogs(warehouse, info.fetched_at)
     total = parsed_total = unresolved_total = 0
     notes: list[str] = []
+    #: Per-file season fit, for the ledger note. A file that covers fewer
+    #: element_ids than the season holds is a coverage fact worth keeping: it
+    #: is what the 2026-09-18 refusal turned out to be about.
+    fits: list[str] = []
     for kind in ("predicted_eo", "top10k", "elite"):
         got_own = livefpl.fetch(kind, gw=first_gw)
         warehouse.record_fetch(
@@ -269,12 +273,14 @@ def _ingest_livefpl(warehouse: Warehouse, store: ProjectionStore, season: str,
             body_path=str(got_own.body_path), http_status=got_own.http_status,
         )
         parsed_own = livefpl.parse_ownership(got_own.body, kind)
-        # Which season's element_ids is this file keyed on? Asked of the data,
+        # Which season's element_ids is this file keyed on. Asked of the data,
         # never assumed: top10k.json and elite.json still described 2025-26
         # when predictedEOs/1.json had already rolled over to 2026-27.
-        file_season = livefpl.infer_season(
+        fit = livefpl.fit_season(
             set(parsed_own["element_id"].astype(int)), catalogs
         )
+        fits.append(f"{kind} {fit.line()}")
+        file_season = fit.season
         file_gw = first_gw if file_season == season else _last_finished_gw(
             warehouse, file_season, got_own.fetched_at
         )
@@ -290,7 +296,8 @@ def _ingest_livefpl(warehouse: Warehouse, store: ProjectionStore, season: str,
         unresolved_total += len(own_unres)
         notes.append(f"{kind}@{file_season}/gw{file_gw}:{n}")
     return StepResult(provider="livefpl", ok=True, rows=total, parsed=parsed_total,
-                      unresolved=unresolved_total, detail=" ".join(notes))
+                      unresolved=unresolved_total, detail=" ".join(notes),
+                      note="; ".join(fits)[:400])
 
 
 def _ingest_fpl_ep(warehouse: Warehouse, store: ProjectionStore, season: str,
@@ -322,19 +329,28 @@ def _ingest_rotowire(warehouse: Warehouse, store: ProjectionStore, season: str,
         body_path=str(got.body_path), http_status=got.http_status,
     )
     entries = rotowire.parse_lineups(got.body)
-    gw = _next_gw(warehouse, season, got.fetched_at)
     snap = warehouse.snapshot_at(got.fetched_at)
     teams = snap.table("dim_team", where="season = ?", params=[season])
     short_to_code = dict(zip(teams["short_name"], teams["team_code"].astype(int)))
-    fixtures = snap.table(
-        "fact_fixture", where="season = ? AND gw = ?", params=[season, gw]
-    )
-    rotowire.validate_fixture_pairs(
-        entries,
-        set(zip(fixtures["home_team_code"].astype(int),
-                fixtures["away_team_code"].astype(int))),
-        short_to_code,
-    )
+    fixtures = snap.table("fact_fixture", where="season = ?", params=[season])
+    fixtures_by_gw = {
+        int(gw_value): set(zip(group["home_team_code"].astype(int),
+                               group["away_team_code"].astype(int)))
+        for gw_value, group in fixtures.groupby("gw", sort=True)
+    }
+    # The gameweek comes from the fixtures on the page, not from the clock.
+    # See rotowire.resolve_gameweek for the window this closes.
+    try:
+        gw = rotowire.resolve_gameweek(entries, fixtures_by_gw, short_to_code)
+    except rotowire.UnmappableRoundError as exc:
+        return StepResult(
+            provider="rotowire", ok=True, rows=0, parsed=len(entries),
+            status="no_source", note=str(exc).replace("\n", " ")[:400],
+            detail=(f"HTTP {got.http_status}, "
+                    f"{len({e.team_abbr for e in entries})} team sheets, "
+                    f"round not mapped to a gameweek"),
+        )
+    rotowire.validate_fixture_pairs(entries, fixtures_by_gw[gw], short_to_code)
     rosters = snap.table("dim_player", where="season = ?", params=[season])
     rows, unresolved = rotowire.to_lineup_rows(
         entries, season=season, gw=gw, as_of=got.fetched_at,
