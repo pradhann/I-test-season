@@ -31,6 +31,21 @@ from fpl_edge.platform.scripts.brief.tiles import (
 from fpl_edge.platform.scripts.common import UTC, empty
 from fpl_edge.platform.users import UserContext, owner_context
 
+#: The fields ``_SQUAD_MEMBER`` carries, in the order the schema lists them.
+#: Everything here is a ``squad_overview`` row's own value: this function
+#: selects, it does not compute.
+_SQUAD_FIELDS = ("pos", "team", "team_code", "price", "own_pct", "xpts",
+                 "p_haul", "status", "news", "is_captain", "is_starter")
+
+
+def _squad_member(p: dict[str, Any]) -> dict[str, Any]:
+    """One of the fifteen, serialised for the dashboard's primary object."""
+    out: dict[str, Any] = {"code": int(p["code"]),
+                           "name": str(p.get("name") or p["code"])}
+    for field in _SQUAD_FIELDS:
+        out[field] = p.get(field)
+    return out
+
 
 def dashboard_brief(wh, *, season: str,
                     ctx: UserContext | None = None) -> dict[str, Any]:
@@ -141,6 +156,7 @@ def dashboard_brief(wh, *, season: str,
         "squad_source": squad_source,
         "team_fixtures": team_fixtures,
         "squad_projection": squad_projection,
+        "squad": [_squad_member(p) for p in squad15],
         "projection_gw": g_next,
         "moves": moves,
         "moves_suppressed": moves_suppressed,

@@ -471,6 +471,35 @@ _SQPROJ = {
     },
 }
 
+#: THE fifteen the brief computed over, serialised from the same
+#: ``squad_overview`` rows every other block in this payload already reads.
+#: The dashboard's primary object used to be assembled in the browser by
+#: joining ``best_xi.xi_codes`` against a second panel's response, because
+#: the brief named only five of the fifteen anywhere else in this payload.
+#: Additive, no new query, no second implementation of any metric: every
+#: value here is ``squad_overview``'s own, through the same ``_ref`` fields
+#: plus the six the player reference does not carry.
+_SQUAD_MEMBER = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["code", "name"],
+    "properties": {
+        "code": {"type": "integer"},
+        "name": {"type": "string"},
+        "pos": {"type": ["string", "null"]},
+        "team": {"type": ["string", "null"]},
+        "team_code": {"type": ["integer", "null"]},
+        "price": {"type": ["number", "null"]},
+        "own_pct": {"type": ["number", "null"]},
+        "xpts": {"type": ["number", "null"]},
+        "p_haul": {"type": ["number", "null"]},
+        "status": {"type": ["string", "null"]},
+        "news": {"type": ["string", "null"]},
+        "is_captain": {"type": ["boolean", "null"]},
+        "is_starter": {"type": ["boolean", "null"]},
+    },
+}
+
 _SOURCE_CHIP = {
     "type": "object",
     "additionalProperties": False,
@@ -674,6 +703,9 @@ RESULT: dict[str, Any] = {
         "squad_source": _SQUAD_SOURCE,
         "team_fixtures": {"type": "array", "items": _TEAMFIX},
         "squad_projection": {"type": "array", "items": _SQPROJ},
+        # The fifteen themselves. Deliberately NOT in ``required``: a reader
+        # written before this key existed keeps passing against it.
+        "squad": {"type": "array", "items": _SQUAD_MEMBER},
         "projection_gw": {"type": ["integer", "null"]},
         "moves": {"type": "array", "items": _MOVE},
         "moves_suppressed": {"type": "integer"},

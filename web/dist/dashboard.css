@@ -1,207 +1,250 @@
-/* Dashboard rebuild (views/home.js) + the drawer pizza (components/radar.js).
+/* Dashboard (views/home.js) + the drawer pizza (components/radar.js).
    Every colour is a token or a color-mix of tokens from app.css, so both
    themes come free. Status hues (--good/--warn/--bad) are RESERVED for the
-   risk/availability channel; the projection ramp lives on the series pair.
+   risk/availability channel.
 
-   THE pj- RAMP (documented here the way fixtures.css documents fx-):
-     statistic  consensus next-GW xPts per player (squad_overview)
-     anchor     median of the STARTING XI (printed in the pitch footer)
-     bins       delta vs anchor: ≤ −1.5 | −1.5..−0.5 | ±0.5 | +0.5..+1.5 | ≥ +1.5
-                -> pj-m2  pj-m1  pj-n0  pj-p1  pj-p2
-     hues       --s1 (blue) above, --s2 (orange) below, --raised at neutral —
-                neutral IS neutral. Absolute bins so a tier means the same in
-                GW3 and GW33. The number always prints on the chip. */
+   TYPE AND SPACING. DESIGN_PRINCIPLES.md R1 names six type sizes app-wide
+   and R8 names five spacing steps. app.css does not declare them yet, so
+   they are declared here as tokens with those exact names and values, and
+   every rule in this sheet uses one of them. When app.css grows the tokens,
+   this block is deleted and nothing else in the file changes. */
 
-/* ---- topbar + provenance banner ---- */
-/* chip ledger: BB/TC/WC/FH per half, from squad_overview's chips block —
-   a used chip mutes, it never disappears (used ≠ unavailable-forever) */
-.db-chipledger { display: flex; gap: 8px; align-items: center;
-                 margin: -4px 0 10px; flex-wrap: wrap; }
-.db-chiplbl { font: 10.5px var(--mono); color: var(--faint);
-              text-transform: uppercase; letter-spacing: .08em; }
-.db-chipitem { font: 600 11px var(--mono); background: var(--raised);
-               border-radius: 999px; padding: 3px 10px; color: var(--ink); }
-.db-chipitem.used { color: var(--muted); background: transparent;
-                    box-shadow: inset 0 0 0 1px var(--line); }
-.db-prov { color: var(--muted); font-size: 12px; margin: -6px 0 14px;
-           font-family: var(--mono); }
-.db-prov.warn { color: var(--ink); }
-.db-quiet { color: var(--muted); font-size: 12.5px; margin: 4px 0; }
-.db-emptykind { font-family: var(--mono); font-size: 11px; }
-.db-foot { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
-
-.cite { border: 0; cursor: pointer; font: 10.5px var(--mono); color: var(--faint);
-        background: var(--raised); border-radius: 999px; padding: 2px 8px; }
-.cite:hover { color: var(--ink); }
-
-/* ---- skeleton shells: grey blocks while the four calls are in flight ----
-   replaced by each section's first render; shimmer gated on motion pref */
-.sk { display: flex; flex-direction: column; gap: 8px; padding: 4px 0; }
-.sk-line, .sk-tile, .sk-block { background: var(--raised); border-radius: 8px; }
-.sk-line { height: 14px; }
-.sk-line:nth-child(2) { width: 72%; }
-.sk-line:nth-child(3) { width: 48%; }
-.sk-tile { display: inline-block; width: 108px; height: 46px;
-           border-radius: 9px; }
-.sk-block { height: 180px; border-radius: 12px; }
-.stats .sk { flex-direction: row; gap: 10px; }
-@media (prefers-reduced-motion: no-preference) {
-  .sk-line, .sk-tile, .sk-block { animation: sk-pulse 1.2s ease-in-out infinite; }
-  @keyframes sk-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
+:root {
+  --t-title: 19px;      /* the page title, owned by the topbar */
+  --t-figure: 17px;     /* the one number a card exists to show */
+  --t-body: 13px;       /* body text */
+  --t-cell: 12.5px;     /* every table and grid cell */
+  --t-label: 11px;      /* column headers, chips, provenance, eyebrows */
+  --t-micro: 10.5px;    /* stat keys and row labels */
+  --sp1: 4px; --sp2: 8px; --sp3: 12px; --sp4: 16px; --sp5: 24px;
+  /* the ledger's three fixed columns: the alignment argument is geometry,
+     so the widths are named rather than guessed per row */
+  --ledger-q: 104px;    /* TRANSFER at --t-micro with .09em tracking, + --sp4 */
+  --ledger-num: 250px;  /* "lead 0.9 (close-call gate 0.5)" without wrapping */
+  --ledger-conf: 168px; /* "squad_overview 10 days" at --t-label mono, + --sp2 */
+  --ledger-rule: 3px;   /* the state rail, matching .db-gaps and .al.p0 */
 }
+
+/* ---- shared small parts ---- */
+.db-quiet { color: var(--muted); font-size: var(--t-cell); margin: var(--sp1) 0; }
+.db-foot { display: flex; flex-direction: column; gap: 2px; margin-top: var(--sp1); }
+.cite { border: 0; cursor: pointer; font: var(--t-micro) var(--mono);
+        color: var(--faint); background: var(--raised);
+        border-radius: 999px; padding: 2px var(--sp2); }
+.cite:hover { color: var(--ink); }
+.db-chiplbl { font: var(--t-micro) var(--mono); color: var(--faint);
+              text-transform: uppercase; letter-spacing: .08em; }
+/* an omitted measure keeps a hover target so the reason is one hover away */
+.chip.db-omit { color: var(--faint); border-style: dashed; }
+
+/* the one line that stands in while the two panels are in flight. It
+   reserves the ledger's own height, so the arrival of data moves nothing. */
+.db-loading { color: var(--muted); font-size: var(--t-cell);
+              padding-top: var(--sp3); }
+.db-ledger.db-pending { min-height: 660px; }
+/* the same rows stack at narrow widths, so the reserve grows with them */
+@media (max-width: 900px) { .db-ledger.db-pending { min-height: 1200px; } }
+
+/* ---- THE DECISION LEDGER: one card, above the fold ----------------------
+   header line, the fifteen this page computed on, the gaps that block the
+   answers, then four rows in the owner's order. Nothing else lives here. */
+.db-ledger { padding: var(--sp3) var(--sp4) var(--sp2); }
+
+.dl-head { display: flex; align-items: baseline; justify-content: space-between;
+           gap: var(--sp3); flex-wrap: wrap;
+           padding-bottom: var(--sp2); border-bottom: 1px solid var(--line); }
+.dl-headleft, .dl-headright { display: flex; align-items: baseline;
+                              gap: var(--sp3); flex-wrap: wrap; }
+.dl-gw { font: 700 var(--t-figure) var(--mono); letter-spacing: .01em; }
+.dl-deadline { color: var(--muted); font-size: var(--t-cell); }
+.dl-read { color: var(--faint); font: var(--t-label) var(--mono); }
+.dl-note { color: var(--muted); font: var(--t-label) var(--mono); }
+.dl-refresh { cursor: pointer; }
+.dl-refresh[disabled] { opacity: .55; cursor: progress; }
+
+/* the fifteen every answer below is computed on. ALWAYS rendered, and above
+   the answers it governs: a reader must learn the squad is a public read
+   before acting on the captain pick, not after. */
+.db-source { display: flex; flex-direction: column; gap: var(--sp1);
+             padding: var(--sp2) 0; border-bottom: 1px solid var(--line); }
+.src-line { display: grid; grid-template-columns: var(--ledger-q) minmax(0, 1fr) auto;
+            column-gap: var(--sp3); row-gap: var(--sp1); align-items: baseline; }
+.src-kind { color: var(--faint); font-size: var(--t-micro); letter-spacing: .08em;
+            text-transform: uppercase; font-weight: 650; }
+.src-text { min-width: 0; font-size: var(--t-cell); color: var(--ink); }
+.db-source.warn { border-left: var(--ledger-rule) solid var(--warn);
+                  padding-left: var(--sp3); margin-left: calc(var(--sp3) * -1);
+                  background: color-mix(in oklab, var(--warn) 5%, transparent); }
 
 /* ---- BEFORE YOU READ THIS: the live gaps and their fixes ----
    The --warn rail is the risk channel: these rows say which data behind the
    page is not what it looks like. The strip is absent when there is no gap. */
-.db-gaps { border-left: 3px solid var(--warn);
-           background: color-mix(in oklab, var(--warn) 6%, var(--surface)); }
+.db-gaps { border-left: var(--ledger-rule) solid var(--warn);
+           background: color-mix(in oklab, var(--warn) 6%, transparent);
+           padding: var(--sp2) var(--sp3); border-radius: 0 var(--sp2) var(--sp2) 0;
+           margin: var(--sp2) 0 0; }
 .db-gaps[hidden] { display: none; }
-.gap-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
-            margin-bottom: 6px; }
-.gap-head h2 { margin: 0; }
-.gap-row { display: grid; grid-template-columns: 84px minmax(0, 1fr) auto;
-           column-gap: 12px; row-gap: 4px; align-items: start;
-           padding: 8px 4px; border-top: 1px solid var(--line);
-           font-size: 13px; }
-.gap-kind { color: var(--faint); font-size: 10.5px; letter-spacing: .08em;
-            text-transform: uppercase; font-weight: 650; padding-top: 3px; }
+.gap-head { display: flex; align-items: baseline; gap: var(--sp2) var(--sp3);
+            flex-wrap: wrap; margin-bottom: var(--sp1); cursor: pointer;
+            list-style: none; }
+.gap-head::-webkit-details-marker { display: none; }
+.db-gaps:not([open]) .gap-head { margin-bottom: 0; }
+.gap-h { font-size: var(--t-body); }
+.gap-row { display: grid;
+           grid-template-columns: var(--ledger-q) minmax(0, 1fr) auto;
+           column-gap: var(--sp3); row-gap: var(--sp1); align-items: start;
+           padding: var(--sp2) 0; border-top: 1px solid var(--line);
+           font-size: var(--t-cell); }
+.gap-kind { color: var(--faint); font-size: var(--t-micro); letter-spacing: .08em;
+            text-transform: uppercase; font-weight: 650; padding-top: 2px; }
 .gap-text { min-width: 0; color: var(--ink); }
-.gap-fix { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+.gap-fix { display: flex; align-items: center; gap: var(--sp2); flex-wrap: wrap;
            justify-self: end; }
 .gap-fix:empty { display: none; }
-.gap-cmd { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.gap-cmd code { font: 600 12px var(--mono); color: var(--ink);
-                background: var(--raised); border-radius: 6px; padding: 3px 8px;
-                user-select: all; }
+.gap-cmd { display: inline-flex; align-items: center; gap: var(--sp2);
+           flex-wrap: wrap; }
+.gap-cmd code { font: 600 var(--t-cell) var(--mono); color: var(--ink);
+                background: var(--raised); border-radius: var(--sp1);
+                padding: 2px var(--sp2); user-select: all; }
 .gap-fix .chip { cursor: pointer; text-decoration: none; }
-@media (max-width: 640px) {
-  .gap-row { grid-template-columns: 64px minmax(0, 1fr); }
-  .gap-fix { grid-column: 2; justify-self: start; }
-}
 
-/* ---- THE VERDICT ("This week"): one pick per question, dissent beside ----
-   The card PICKS by the printed precedence; dissent chips carry the other
-   voices in their own currencies and drill to their evidence. */
-.db-verdict { border-left: 3px solid var(--s1); }
-.vd-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
-.vd-head h2 { margin: 0; }
-/* Two-column grid: question label | content. Picks flow on the first
-   content line, the numbers line always gets the full width beneath them,
-   and the state/dissent chips wrap on their own line below — nothing is
-   squeezed into a tall one-word column by a right-anchored chip rail. */
-.vd-row { display: grid; grid-template-columns: 84px minmax(0, 1fr);
-          column-gap: 12px; row-gap: 7px; align-items: start;
-          padding: 10px; border-top: 1px solid var(--line); cursor: pointer; }
-.vd-row:hover { background: var(--raised); border-radius: 8px; }
-.vd-q { grid-column: 1; padding-top: 3px; color: var(--faint);
-        font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase;
-        font-weight: 650; }
-.vd-main { grid-column: 2; min-width: 0; display: flex; align-items: center;
-           gap: 8px 16px; flex-wrap: wrap; font-size: 13px; }
-.vd-movestrip { display: inline-flex; align-items: center; gap: 6px;
+/* ---- the four rows ------------------------------------------------------
+   Five columns, one grid, every row identical, so the eye reads down a
+   column: the question, the answer, the numbers on a shared decimal edge,
+   the confidence word with the field that decided it, the caret. */
+.db-verdict { margin-top: var(--sp1); }
+.dl-row { border-top: 1px solid var(--line); }
+.dl-row:first-child { border-top: 0; }
+.dl-sum { display: grid; cursor: pointer; list-style: none;
+          grid-template-columns: var(--ledger-q) minmax(0, 1fr)
+                                 var(--ledger-num) var(--ledger-conf) var(--sp5);
+          column-gap: var(--sp3); align-items: start;
+          padding: var(--sp3) var(--sp2) var(--sp3) 0; }
+.dl-sum::-webkit-details-marker { display: none; }
+.dl-sum:hover { background: var(--raised); border-radius: var(--sp2); }
+.dl-sum:focus-visible { outline: 2px solid var(--s1); outline-offset: 1px; }
+.dl-q { color: var(--faint); font-size: var(--t-micro); letter-spacing: .09em;
+        text-transform: uppercase; font-weight: 650; padding-top: 3px;
+        padding-left: var(--sp2); }
+.dl-answer { min-width: 0; display: flex; align-items: center;
+             gap: var(--sp1) var(--sp3); flex-wrap: wrap;
+             font-size: var(--t-figure); font-weight: 600; line-height: 1.25; }
+.dl-answer b { font-weight: 700; }
+.dl-clash { flex-basis: 100%; font-size: var(--t-cell); font-weight: 400;
+            color: var(--warn); }
+/* the numeric column: right aligned, tabular, one number per line, so 5.8,
+   0.91 and +1.8 sit on one decimal edge down the page */
+.dl-nums { display: flex; flex-direction: column; align-items: flex-end;
+           gap: 2px; text-align: right; font: var(--t-cell) var(--mono);
+           font-variant-numeric: tabular-nums; color: var(--muted); }
+/* a number line wraps rather than truncating: an ellipsis on "close-call
+   gate 0.5" hides the gate, which is the one thing that makes the number
+   checkable */
+.dl-num { max-width: 100%; }
+/* the meta column: left aligned mono, so the deciding fields start on one
+   left edge down the page */
+.dl-meta { display: flex; flex-direction: column; align-items: flex-start;
+           gap: 2px; font: var(--t-label) var(--mono); color: var(--faint);
+           min-width: 0; }
+.dl-conf { font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+           font-size: var(--t-micro); }
+.dl-field { white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+            max-width: 100%; }
+.dl-caret { justify-self: end; align-self: center; width: var(--sp3);
+            height: var(--sp3); color: var(--faint); }
+.dl-caret::before { content: ""; display: block; width: 6px; height: 6px;
+  margin-top: 2px; border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); }
+.dl-row[open] .dl-caret::before { transform: rotate(45deg); }
+/* the state rail: absence in --bad, age in --warn, and nothing on a firm row */
+.dl-none .dl-sum { border-left: var(--ledger-rule) solid var(--bad); }
+.dl-stale .dl-sum { border-left: var(--ledger-rule) solid var(--warn); }
+.dl-contested .dl-sum { border-left: var(--ledger-rule) solid var(--s1); }
+.dl-firm .dl-sum { border-left: var(--ledger-rule) solid transparent; }
+.dl-none .dl-conf { color: var(--bad); }
+.dl-stale .dl-conf { color: var(--warn); }
+.dl-contested .dl-conf { color: var(--s1); }
+.dl-firm .dl-conf { color: var(--good); }
+
+/* the working: the same column grid, so a term lines up under the question
+   it belongs to rather than starting a second layout */
+.dl-work { padding: 0 var(--sp2) var(--sp4) var(--ledger-q);
+           border-top: 1px dashed var(--line); }
+.dl-worklist { display: grid;
+               grid-template-columns: max-content minmax(0, 1fr);
+               gap: var(--sp1) var(--sp3); margin: var(--sp3) 0 0; }
+.dl-worklist dt { color: var(--faint); font: var(--t-micro) var(--mono);
+                  text-transform: uppercase; letter-spacing: .06em;
+                  padding-top: 2px; }
+.dl-worklist dd { margin: 0; font-size: var(--t-cell); min-width: 0; }
+.vd-how { margin-top: var(--sp2); }
+.vd-how summary { cursor: pointer; color: var(--faint);
+                  font-size: var(--t-label); }
+.vd-prec { margin: var(--sp2) 0 0; color: var(--muted);
+           font-size: var(--t-cell); }
+.vd-movestrip { display: inline-flex; align-items: center; gap: var(--sp1);
                 white-space: nowrap; }
 .vd-movestrip .avatar { margin-right: 0; }
 .vd-out { color: var(--muted);
           text-decoration-color: color-mix(in oklab, var(--bad) 60%, transparent); }
 .vd-face { display: inline-flex; }
-.vd-nums { flex-basis: 100%; font: 600 11.5px var(--mono);
-           color: var(--muted); font-variant-numeric: tabular-nums; }
-.vd-side { grid-column: 2; display: flex; align-items: center; gap: 6px;
-           flex-wrap: wrap; justify-content: flex-start; }
-.vd-side:empty { display: none; }
 .vd-dissent { border: 1px solid var(--line); background: var(--surface);
-              color: var(--muted); font: 600 10.5px var(--mono);
-              border-radius: 999px; padding: 2px 9px; cursor: pointer; }
+              color: var(--muted); font: 600 var(--t-micro) var(--mono);
+              border-radius: 999px; padding: 2px var(--sp2); cursor: pointer; }
 .vd-dissent:hover { color: var(--ink); border-color: var(--muted); }
-.vd-how { margin-top: 6px; }
-.vd-how summary { cursor: pointer; color: var(--faint); font-size: 11px; }
-.vd-prec { margin: 6px 0 0; color: var(--muted); font-size: 12px; }
-@media (max-width: 640px) {
-  .vd-row { grid-template-columns: minmax(0, 1fr); }
-  .vd-q, .vd-main, .vd-side { grid-column: 1; }
+/* A plan that overspends is a blocker, not a footnote: FPL rejects it. */
+.vd-unaffordable { color: var(--bad); display: block; margin-top: 2px;
+                   font-size: var(--t-cell); }
+
+@media (max-width: 900px) {
+  .dl-sum { grid-template-columns: var(--ledger-q) minmax(0, 1fr) var(--sp5); }
+  .dl-nums, .dl-meta { grid-column: 2; align-items: flex-start;
+                       text-align: left; }
+  .dl-nums { flex-direction: row; flex-wrap: wrap; gap: var(--sp1) var(--sp3);
+             margin-top: var(--sp1); }
+  .dl-meta { flex-direction: row; flex-wrap: wrap; gap: var(--sp1) var(--sp2); }
+  .dl-caret { grid-column: 3; grid-row: 1; }
+  .dl-work { padding-left: var(--sp2); }
+  .src-line, .gap-row { grid-template-columns: minmax(0, 1fr); }
+  .gap-fix { justify-self: start; }
+}
+@media (max-width: 560px) {
+  /* the answers are what the page is for: on a phone the squad-source line
+     keeps its sentence and its Connect control, and sheds the terminal
+     equivalent of that control, which the Account tab carries anyway */
+  .src-text { font-size: var(--t-label); }
+  .src-line .gap-cmd .gap-cmd { display: none; }
+  .dl-sum { grid-template-columns: minmax(0, 1fr) var(--sp5); }
+  .dl-q { grid-column: 1; padding-left: 0; }
+  .dl-answer, .dl-nums, .dl-meta { grid-column: 1; }
+  .dl-caret { grid-column: 2; grid-row: 1; }
+  .dl-answer { font-size: var(--t-body); }
 }
 
-/* the briefing item's cross-reference chip: the same decision seen by the
-   rule voice folds into ONE card instead of three sections */
-.ib-xref { border: 1px dashed var(--line); background: transparent;
-           color: var(--muted); font: 600 10.5px var(--mono);
-           border-radius: 999px; padding: 2px 9px; cursor: pointer; }
-.ib-xref:hover { color: var(--ink); border-color: var(--muted); }
-
-/* solver honesty line: gap + age printed beside the headline gain */
-.sv-gapline { color: var(--muted); font: 600 11.5px var(--mono); }
-.sv-cost { font-size: 11px; }
-
-/* the armband 2×2 micro-table (mean vs haul, never blended) */
-/* the captain block under the pitch: top three of the best XI, each with
-   its consensus number and its opponent; the haul column exists only when
-   the simulation is newer than the last deadline */
-.db-capblock { margin-top: 10px; border-top: 1px solid var(--line);
-               padding-top: 8px; }
-.db-armband { font: 12.5px var(--mono); margin: 0 0 6px; color: var(--muted); }
-.db-armband b { color: var(--ink); }
-.db-captbl { width: auto; min-width: 300px; }
-.db-captbl th { position: static; }
-.db-captbl td .avatar { margin-right: 6px; vertical-align: middle; }
-.db-capsrc { font-size: 11px; }
-.db-xiline { font-family: var(--mono); font-size: 11.5px; }
-/* an omitted measure keeps a hover target so the reason is one hover away */
-.chip.db-omit { color: var(--faint); border-style: dashed; }
-
-/* ---- the agent briefing (model voice, clearly labelled) ---- */
-.ib-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-           margin-bottom: 4px; }
-.ib-head h2 { margin: 0; }
-.db-agentchip { font: 600 10.5px var(--mono); color: var(--muted);
-                background: var(--raised); border-radius: 999px;
-                padding: 3px 10px; letter-spacing: .04em; }
-.ib-item { display: flex; gap: 12px; align-items: flex-start;
-           padding: 9px 12px; margin-top: 8px; cursor: pointer;
-           background: var(--surface); border: 1px solid var(--line);
-           border-left-width: 3px; border-radius: 9px; }
-.ib-item:hover { border-color: var(--muted); }
-/* severity = the risk channel, quieter as it drops; 1 = act now */
-.ib-item.sev1 { border-left-color: var(--bad); }
-.ib-item.sev1:hover { border-left-color: var(--bad); }
-.ib-item.sev2 { border-left-color: var(--warn); }
-.ib-item.sev2:hover { border-left-color: var(--warn); }
-.ib-item.sev3 { border-left-color: var(--line); }
-.ib-main { min-width: 0; flex: 1; }
-.ib-headline { display: block; font-weight: 650; font-size: 13.5px; }
-.ib-why { margin: 2px 0 6px; color: var(--muted); font-size: 12.5px; }
-.ib-faces { display: flex; gap: 4px; flex: none; align-self: center; }
-.ib-detail { margin-top: 6px; border-top: 1px solid var(--line);
-             padding-top: 6px; }
-.ib-detailrow { margin: 2px 0; font: 11px var(--mono); color: var(--muted); }
-.ib-empty { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-/* an outdated briefing folds under one dated line; its items are history */
-.ib-outdated { border: 1px dashed var(--line); border-radius: 9px;
-               padding: 8px 12px; }
-.ib-outdated summary { cursor: pointer; font: 600 12.5px var(--mono);
-                       color: var(--warn); }
-.ib-outdated[open] summary { margin-bottom: 6px; }
-.ib-outdated .ib-item { opacity: .75; }
-
-/* ---- alert rows (P0 = bad rail, P1 = warn rail — the risk channel) ---- */
-.db-alerts { display: flex; flex-direction: column; gap: 8px; }
-.al { display: flex; align-items: baseline; gap: 10px; padding: 8px 12px;
-      background: var(--surface); border: 1px solid var(--line);
-      border-radius: 9px; font-size: 13px; }
+/* ---- alert rows (P0 = bad rail, P1 = warn rail, the risk channel) ---- */
+.al { display: flex; align-items: baseline; gap: var(--sp2);
+      padding: var(--sp2) var(--sp3); background: var(--surface);
+      border: 1px solid var(--line); border-radius: var(--sp2);
+      font-size: var(--t-cell); }
 .al.drillable { cursor: pointer; }
 .al.drillable:hover { border-color: var(--muted); }
-.al.p0 { border-left: 3px solid var(--bad); }
-.al.p1 { border-left: 3px solid var(--warn); }
-.al-kind { flex: none; width: 84px; color: var(--faint); font-size: 10.5px;
-           letter-spacing: .08em; text-transform: uppercase; font-weight: 650; }
+.al.p0 { border-left: var(--ledger-rule) solid var(--bad); }
+.al.p1 { border-left: var(--ledger-rule) solid var(--warn); }
+.al-kind { flex: none; width: 72px; color: var(--faint);
+           font-size: var(--t-micro); letter-spacing: .08em;
+           text-transform: uppercase; font-weight: 650; }
 .al .avatar { align-self: center; flex: none; }
 .al-claim { min-width: 0; }
-.al-claim code { font: 600 12.5px var(--mono); color: var(--ink); }
+.al-claim code { font: 600 var(--t-cell) var(--mono); color: var(--ink); }
 .al-claim q { font-style: italic; }
 .al .cite { margin-left: auto; flex: none; }
+.al.wl { padding: var(--sp1) var(--sp2); }
+.db-watchlist { display: flex; flex-direction: column; gap: var(--sp1);
+                margin-top: var(--sp3); }
 
-/* ---- pitch v2: 86px photo-first cards, clubmark-discipline fallback ---- */
-.pp { width: 86px; padding: 0 0 5px; position: relative;
-      background: var(--surface); border: 0; border-radius: 9px;
+/* ---- the lineup: 86px photo-first cards, clubmark-discipline fallback --- */
+.pp { width: 86px; padding: 0 0 var(--sp1); position: relative;
+      background: var(--surface); border: 0; border-radius: var(--sp2);
       box-shadow: var(--shadow); cursor: pointer; overflow: hidden;
       text-align: center; font: inherit; color: var(--ink); }
 .pp:focus-visible { outline: 2px solid var(--s1); outline-offset: 1px; }
@@ -212,76 +255,65 @@
 .pp.fall .pp-face { visibility: hidden; }
 .pp-mg { display: none; }
 .pp.fall .pp-mg { display: grid; place-items: center; position: absolute;
-  inset: 0 0 auto; height: 64px; font: 800 18px/1 var(--mono);
+  inset: 0 0 auto; height: 64px; font: 800 var(--t-figure)/1 var(--mono);
   color: var(--club-ink, var(--ink));
   background: var(--club, var(--raised)); }  /* clubmark.css colour map */
-.pp-nm { display: block; font-weight: 650; font-size: 11.5px;
-         padding: 3px 4px 0; white-space: nowrap; overflow: hidden;
+.pp-nm { display: block; font-weight: 650; font-size: var(--t-label);
+         padding: 3px var(--sp1) 0; white-space: nowrap; overflow: hidden;
          text-overflow: ellipsis; }
-.pp-sub { display: block; color: var(--muted); font-size: 10.5px;
-          font-family: var(--mono); font-variant-numeric: tabular-nums; }
-.pp-chip { display: block; margin: 3px 4px 0; padding: 2px 0;
-           border-radius: 5px; font: 700 11px var(--mono);
+.pp-chip { display: block; margin: 3px var(--sp1) 0; padding: 2px 0;
+           border-radius: var(--sp1); font: 700 var(--t-label) var(--mono);
            font-variant-numeric: tabular-nums;
            background: var(--raised); color: var(--ink); }
-.pp-chip i { font-style: normal; font-weight: 400; font-size: 9px;
+.pp-chip i { font-style: normal; font-weight: 400; font-size: var(--t-micro);
              color: var(--faint); margin-left: 2px; }
-.pj-p2 { background: color-mix(in oklab, var(--s1) 55%, var(--surface)); color: #fff; }
-.pj-p2 i { color: rgb(255 255 255 / .75); }
-.pj-p1 { background: color-mix(in oklab, var(--s1) 24%, var(--surface)); }
-.pj-n0 { background: var(--raised); color: var(--muted); } /* neutral IS neutral */
-.pj-m1 { background: color-mix(in oklab, var(--s2) 24%, var(--surface)); }
-.pj-m2 { background: color-mix(in oklab, var(--s2) 55%, var(--surface)); color: #fff; }
-.pj-m2 i { color: rgb(255 255 255 / .75); }
-/* risk badge — the SEPARATE channel on the reserved status hues.
-   i/s filled red; d filled amber; c (creator-only, FPL clean) amber OUTLINE
-   — two sources, two looks. One badge, worst severity wins. */
-.pp-risk { position: absolute; top: 3px; left: 3px; z-index: 2; width: 16px;
-           height: 16px; border-radius: 50%; font: 700 10px/16px var(--mono);
+/* risk badge: the SEPARATE channel on the reserved status hues.
+   i/s filled red; d filled amber. One badge, worst severity wins. */
+.pp-risk { position: absolute; top: 3px; left: 3px; z-index: 2; width: var(--sp4);
+           height: var(--sp4); border-radius: 50%;
+           font: 700 var(--t-micro)/16px var(--mono);
            color: #fff; text-align: center; }
 .pp-risk.d { background: var(--warn); }
 .pp-risk.i, .pp-risk.s { background: var(--bad); }
-.pp-risk.c { background: var(--surface); color: var(--warn);
-             box-shadow: inset 0 0 0 1.5px var(--warn); }
 .pp .ribbon { position: absolute; top: 3px; right: 3px; width: 17px;
-              height: 17px; border-radius: 50%; font: 700 10px/17px var(--mono);
+              height: 17px; border-radius: 50%;
+              font: 700 var(--t-micro)/17px var(--mono);
               color: #fff; background: var(--warn); }
 .pp .ribbon.v { background: var(--faint); }
 .pp.cap { box-shadow: 0 0 0 2px var(--warn), var(--shadow); }
-/* the bench-inversion drill ring + pulse (motion gated) */
-.pp.flag-swap { box-shadow: inset 0 0 0 1.5px var(--s1), 0 0 0 2px var(--s1),
-                var(--shadow); }
-@media (prefers-reduced-motion: no-preference) {
-  .pp.flag-pulse { animation: db-pulse .6s ease-out 1; }
-  @keyframes db-pulse {
-    0% { transform: translateY(0); }
-    35% { transform: translateY(-4px); }
-    100% { transform: translateY(0); }
-  }
-}
-.bench .bn-slot { display: inline-flex; flex-direction: column;
-                  align-items: center; gap: 2px; }
-.bench .bn-i { font: 600 10px var(--mono); color: var(--faint);
-               font-style: normal; }
-.bench .pp { opacity: .92; }
-.db-legendnote { font-style: italic; }
+/* own-player price-fall risk rides ON the card */
+.pp-drop { position: absolute; top: 3px; left: 3px; z-index: 2; width: var(--sp4);
+           height: var(--sp4); border-radius: 50%;
+           font: 700 var(--t-label)/15px var(--mono);
+           color: #fff; background: var(--bad); text-align: center; }
+.pp-drop.shift { left: 22px; }
+/* the decision tag: the word of the ledger row that named this player, and a
+   count of the rows that named them and lost the precedence */
+.pp-tag { position: absolute; top: 46px; left: 0; right: 0; z-index: 2;
+          font: 700 var(--t-micro)/1.5 var(--mono); letter-spacing: .06em;
+          text-transform: uppercase; color: #fff;
+          background: color-mix(in oklab, var(--accent) 88%, #000); }
+.pp.tagged { box-shadow: inset 0 0 0 1.5px var(--accent), var(--shadow); }
+.pp-more { position: absolute; top: 46px; right: 2px; z-index: 3;
+           font: 700 var(--t-micro)/1.5 var(--mono); color: var(--accent-ink); }
 
-/* ---- pitch v3: fplreview grammar ----
-   card = photo → name plate → ONE info row of three chips
-   [xPts on the pj- ramp] [OPPONENT on the fixtures tab's fx- ramp, CAPS
-   home / lower away] [MINUTES: xmins if served, else p_appear, labelled] */
+/* card = photo, name plate, ONE info row of three chips
+   [xPts] [OPPONENT on the fixtures tab's fx- ramp, CAPS home, lower away]
+   [MINUTES: xmins when served, else the appearance probability, labelled] */
 .pp-row { display: flex; gap: 2px; margin: 3px 3px 0; }
 .pp-row .pp-chip { flex: 1 1 0; min-width: 0; margin: 0; padding: 2px 0 1px;
-                   font: 700 10px var(--mono); border-radius: 5px;
-                   overflow: hidden; }
+                   font: 700 var(--t-micro) var(--mono);
+                   border-radius: var(--sp1); overflow: hidden; }
 .pp-row .pp-chip i { display: block; font-style: normal; font-weight: 400;
-                     font-size: 7.5px; line-height: 1.2; margin: 0;
-                     color: var(--faint); }
+                     font-size: var(--t-micro); line-height: 1.1; margin: 0;
+                     color: var(--faint); transform: scale(.78);
+                     transform-origin: center top; }
+.pp-x { background: var(--raised); color: var(--ink); }
 .pp-opp { background: var(--raised); color: var(--fx-cell-ink, var(--ink));
           letter-spacing: .02em; }
 /* this sheet loads after fixtures.css, so the ease classes need the extra
-   specificity here or the neutral background above would always win */
-/* FPL's five, with FPL's own ink per step: one opponent per pill here, so
+   specificity here or the neutral background above would always win.
+   FPL's five, with FPL's own ink per step: one opponent per pill here, so
    unlike the two-band fixture cell each pill can wear its step's text colour. */
 .pp-opp.fx-d1 { background: var(--fx-d1); color: var(--fx-d1-ink); }
 .pp-opp.fx-d2 { background: var(--fx-d2); color: var(--fx-d2-ink); }
@@ -291,11 +323,12 @@
 .pp-opp i, .pp-min i { color: inherit; opacity: .6; }
 .pp-min { background: var(--raised); color: var(--muted); }
 
-/* pitch markings: boundary, halfway line, centre circle — a decoration
-   layer that never intercepts a click */
-.pitch.db-pitch2 { position: relative; padding: 30px 14px 24px; gap: 28px; }
-.pitch.db-pitch2::before { content: ""; position: absolute; inset: 12px;
-  border: 1.5px solid rgb(255 255 255 / .18); border-radius: 8px;
+/* pitch markings: boundary, halfway line, centre circle. A decoration layer
+   that never intercepts a click. */
+.pitch.db-pitch2 { position: relative; padding: var(--sp5) var(--sp3) var(--sp5);
+                   gap: var(--sp5); }
+.pitch.db-pitch2::before { content: ""; position: absolute; inset: var(--sp3);
+  border: 1.5px solid rgb(255 255 255 / .18); border-radius: var(--sp2);
   background: linear-gradient(180deg,
     transparent calc(50% - 1px), rgb(255 255 255 / .16) calc(50% - 1px),
     rgb(255 255 255 / .16) calc(50% + .5px), transparent calc(50% + .5px));
@@ -306,180 +339,203 @@
   pointer-events: none; }
 .pitch.db-pitch2 .row { position: relative; z-index: 1; }
 
-/* the header strip above the pitch: changes headline + the mode toggle */
-.db-pitchhead { display: flex; align-items: center; gap: 10px;
-                justify-content: space-between; flex-wrap: wrap;
-                margin: 0 0 10px; }
-.db-pitchhead { justify-content: flex-start; }
-.db-pitchdelta { font-weight: 650; font-size: 13px; }
+.db-pitchhead { display: flex; align-items: center; gap: var(--sp2);
+                flex-wrap: wrap; margin: 0 0 var(--sp2); }
+.db-pitchdelta { font-weight: 650; font-size: var(--t-body); }
 
 /* the bench: a visually distinct dark tray below the pitch */
-.bench.db-benchtray { margin-top: 14px; padding: 12px 12px 10px;
-  border-radius: 10px; position: relative;
+.bench.db-benchtray { margin-top: var(--sp3);
+  padding: var(--sp3) var(--sp3) var(--sp2); border-radius: var(--sp2);
+  position: relative;
   background: color-mix(in oklab, var(--pitch) 26%, #12161c);
   box-shadow: inset 0 0 0 1px rgb(255 255 255 / .07); }
-.db-benchlbl { position: absolute; top: 4px; left: 12px;
-  font: 650 9.5px var(--mono); letter-spacing: .14em;
+.db-benchlbl { position: absolute; top: var(--sp1); left: var(--sp3);
+  font: 650 var(--t-micro) var(--mono); letter-spacing: .14em;
   text-transform: uppercase; color: rgb(255 255 255 / .45); }
+.bench .bn-slot { display: inline-flex; flex-direction: column;
+                  align-items: center; gap: 2px; }
+.bench .bn-i { font: 600 var(--t-micro) var(--mono); color: var(--faint);
+               font-style: normal; }
 .bench.db-benchtray .bn-i { color: rgb(255 255 255 / .55); }
+.bench .pp { opacity: .92; }
 
-/* ---- the watch strip below the pitch (the dissolved FLAGS strip) ---- */
-.db-watchstrip { margin: -8px 0 18px; }
-.db-utilrow { display: flex; gap: 14px; flex-wrap: wrap; align-items: center;
-              padding: 5px 12px; margin-bottom: 6px; border-radius: 8px;
-              background: color-mix(in oklab, var(--warn) 7%, var(--surface));
-              border: 1px solid var(--line);
-              font: 11.5px var(--mono); color: var(--muted); }
-.db-utilitem { cursor: pointer; }
-.db-utilitem:hover { color: var(--ink); }
-.db-utilitem code { font: 600 11.5px var(--mono); color: var(--ink); }
-.db-watchlist { display: flex; flex-direction: column; gap: 6px; }
-.db-watchlist .db-chiplbl { margin-top: 2px; }
-.al.wl { padding: 5px 10px; font-size: 12.5px; border-left-width: 3px; }
-.al.wl .avatar { width: 20px; height: 20px; }
-.al.wl .al-kind { width: 72px; font-size: 9.5px; }
+/* the captain block, inside the captain row's working: the top three of the
+   best XI, each with its consensus number and its opponent */
+.db-capblock { margin-top: var(--sp3); }
+.db-armband { font: var(--t-cell) var(--mono); margin: 0 0 var(--sp2);
+              color: var(--muted); }
+.db-armband b { color: var(--ink); }
+.db-captbl { width: auto; min-width: 300px; }
+.db-captbl th { position: static; }
+.db-captbl td .avatar { margin-right: var(--sp1); vertical-align: middle; }
 
-/* own-player price-fall risk rides ON the pitch card */
-.pp-drop { position: absolute; top: 3px; left: 3px; z-index: 2; width: 16px;
-           height: 16px; border-radius: 50%; font: 700 11px/15px var(--mono);
-           color: #fff; background: var(--bad); text-align: center; }
-.pp-drop.shift { left: 22px; }
-
-/* ---- moves to consider (rule cards, never the solver) ---- */
-.db-move { display: flex; flex-direction: column; gap: 6px;
-           padding: 10px 12px; background: var(--surface);
-           border: 1px solid var(--line); border-radius: 10px;
-           margin-top: 8px; cursor: pointer; }
+/* ---- the rule move cards, inside the transfer row's working ---- */
+.db-move { display: flex; flex-direction: column; gap: var(--sp1);
+           padding: var(--sp2) var(--sp3); background: var(--surface);
+           border: 1px solid var(--line); border-radius: var(--sp2);
+           margin-top: var(--sp2); cursor: pointer; }
 .db-move:hover { border-color: var(--muted); }
-.db-movewhy { margin: 0; font-size: 13px; }
-.db-movemath { margin: 0; font: 11.5px var(--mono); color: var(--muted); }
+.db-movewhy { margin: 0; font-size: var(--t-cell); }
+.db-movemath { margin: 0; font: var(--t-label) var(--mono); color: var(--muted); }
 
-/* ---- solver card ---- */
-.solver .sub .chip { margin-left: 6px; }
-.sv-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-           margin-bottom: 4px; }
-.sv-head h2 { margin: 0; }
-.sv-planmoves { flex-direction: column; align-items: stretch; gap: 8px; }
-.sv-moverow { display: flex; flex-direction: column; gap: 3px; }
-.sv-flowline { margin: 0; font: 11px var(--mono); color: var(--faint); }
-.sv-roll { margin-top: 8px; padding: 10px 12px; background: var(--raised);
-           border-radius: 9px; }
-.sv-rollhead { display: block; font-size: 15px; }
-.sv-capline { display: flex; align-items: center; gap: 8px; margin: 8px 0 0;
-              font-size: 12.5px; }
-.sv-alts { margin-top: 8px; }
-.sv-alts summary { cursor: pointer; color: var(--muted); font-size: 12px;
-                   white-space: nowrap; overflow: hidden;
-                   text-overflow: ellipsis; }
-.sv-altrow { margin: 4px 0 0; font: 11.5px var(--mono); color: var(--muted); }
-.sv-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-               margin-top: 10px; }
-.sv-controls .chip { text-decoration: none; }
+/* ---- the solver's working, inside the transfer row ---- */
+.sv-box { margin-top: var(--sp3); padding-top: var(--sp3);
+          border-top: 1px dashed var(--line); }
+.sv-head { display: flex; align-items: center; gap: var(--sp2);
+           flex-wrap: wrap; margin-bottom: var(--sp1); }
+.sv-lbl { color: var(--faint); font-size: var(--t-micro); letter-spacing: .08em;
+          text-transform: uppercase; }
+.sv-planmoves { flex-direction: column; align-items: stretch; gap: var(--sp2); }
+.sv-moverow { display: flex; flex-direction: column; gap: 2px; }
+.sv-flowline { margin: 0; font: var(--t-label) var(--mono); color: var(--faint); }
+.sv-roll { margin-top: var(--sp2); padding: var(--sp2) var(--sp3);
+           background: var(--raised); border-radius: var(--sp2); }
+.sv-rollhead { display: block; font-size: var(--t-figure); }
+.sv-capline { display: flex; align-items: center; gap: var(--sp2);
+              margin: var(--sp2) 0 0; font-size: var(--t-cell); }
+.sv-alts { margin-top: var(--sp2); }
+.sv-alts summary { cursor: pointer; color: var(--muted);
+                   font-size: var(--t-cell); white-space: nowrap;
+                   overflow: hidden; text-overflow: ellipsis; }
+.sv-altrow { margin: var(--sp1) 0 0; font: var(--t-label) var(--mono);
+             color: var(--muted); }
+.sv-controls { display: flex; align-items: center; gap: var(--sp2);
+               flex-wrap: wrap; margin-top: var(--sp2); }
+.sv-controls .chip { text-decoration: none; cursor: pointer; }
 .sv-rerun { font-weight: 700;
             background: color-mix(in oklab, var(--s1) 16%, var(--surface));
             color: var(--s1); }
+.sv-cost { font-size: var(--t-label); }
 .sv-running { min-width: 0; flex: 1; }
-.sv-runline { margin: 0; font-size: 12.5px; }
-.sv-spin { display: inline-block; width: 11px; height: 11px;
+.sv-runline { margin: 0; font-size: var(--t-cell); }
+.sv-spin { display: inline-block; width: var(--t-label); height: var(--t-label);
            border: 2px solid var(--line); border-top-color: var(--s1);
-           border-radius: 50%; margin-right: 8px; vertical-align: -1px; }
+           border-radius: 50%; margin-right: var(--sp2); vertical-align: -1px; }
 @media (prefers-reduced-motion: no-preference) {
   .sv-spin { animation: sv-rot .9s linear infinite; }
   @keyframes sv-rot { to { transform: rotate(360deg); } }
 }
-.sv-ticker { margin: 3px 0 0; font: 11px var(--mono); color: var(--faint);
-             white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-             max-width: 100%; }
+.sv-ticker { margin: 3px 0 0; font: var(--t-label) var(--mono);
+             color: var(--faint); white-space: nowrap; overflow: hidden;
+             text-overflow: ellipsis; max-width: 100%; }
 .sv-fail { color: var(--bad); white-space: normal; }
-.sv-move { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
-           padding: 10px 12px; background: var(--raised); border-radius: 9px;
-           margin-top: 8px; }
-.sv-strip { display: flex; align-items: center; gap: 8px; }
-.sv-side { display: flex; align-items: center; gap: 8px; position: relative; }
+.sv-move { display: flex; align-items: center; gap: var(--sp3);
+           flex-wrap: wrap; padding: var(--sp2) var(--sp3);
+           background: var(--raised); border-radius: var(--sp2);
+           margin-top: var(--sp2); }
+.sv-strip { display: flex; align-items: center; gap: var(--sp2); }
+.sv-side { display: flex; align-items: center; gap: var(--sp2);
+           position: relative; }
 .sv-face { width: 40px; height: 50px; object-fit: cover;
-           object-position: top center; border-radius: 7px;
+           object-position: top center; border-radius: var(--sp1);
            background: var(--surface); }
 .sv-side .sv-mg { display: none; }
 .sv-side.fall .sv-face { visibility: hidden; }
 .sv-side.fall .sv-mg { display: grid; place-items: center; position: absolute;
-  left: 0; top: 0; width: 40px; height: 50px; border-radius: 7px;
-  font: 800 13px/1 var(--mono); color: var(--club-ink, var(--ink));
+  left: 0; top: 0; width: 40px; height: 50px; border-radius: var(--sp1);
+  font: 800 var(--t-body)/1 var(--mono); color: var(--club-ink, var(--ink));
   background: var(--club, var(--surface)); }
 .sv-side.out { opacity: .78; }
 .sv-side.out b { text-decoration: line-through
                  color-mix(in oklab, var(--bad) 60%, transparent) 1.5px; }
-.sv-side i { font: 10.5px var(--mono); color: var(--muted); font-style: normal; }
-.sv-pd { font: 10.5px var(--mono); color: var(--faint); font-style: normal; }
-.sv-arrow { color: var(--faint); font-size: 17px; }
-.sv-gain { margin-left: auto; font: 700 15px var(--mono); color: var(--s1); }
+.sv-side i { font: var(--t-micro) var(--mono); color: var(--muted);
+             font-style: normal; }
+.sv-arrow { color: var(--faint); font-size: var(--t-figure); }
+.sv-lines { font-size: var(--t-cell); color: var(--muted);
+            margin: var(--sp2) 0 0; }
+.sv-lines code { font: 600 var(--t-cell) var(--mono); color: var(--ink); }
+.sv-gainline { margin: var(--sp2) 0 0; font-size: var(--t-cell);
+               color: var(--muted); }
 /* --s1, never --good: a model quantity on the model's own scale, not a verdict */
-.sv-gain.gap { color: var(--muted); font-weight: 600; font-size: 12.5px; }
-.sv-gain i { display: block; font: 400 10px/1.4 inherit; color: var(--faint);
-             font-style: normal; max-width: 300px; }
-.sv-lines { font-size: 12px; color: var(--muted); margin: 8px 0 0; }
-.sv-lines code { font: 600 12px var(--mono); color: var(--ink); }
-/* the minimal card's three lines: gain, why, stale */
-.sv-gainline { margin: 8px 0 0; font-size: 12.5px; color: var(--muted); }
-.sv-gainline b { font: 700 15px var(--mono); color: var(--s1); }
-/* --s1, never --good: a model quantity on the model's own scale, not a verdict */
-.sv-why { margin: 6px 0 0; color: var(--muted); font-size: 12px; }
-.sv-stale { font-size: 13px; margin: 8px 0 0; }
-.sv-stale .chip { margin-left: 6px; }
-.sv-room { display: grid; grid-template-columns: 52px 1fr; gap: 6px 10px;
-           margin: 10px 0 0; border-top: 1px solid var(--line);
-           padding-top: 10px; }
-.sv-room dt { color: var(--faint); font-size: 10.5px; font-weight: 650;
-              letter-spacing: .08em; text-transform: uppercase;
-              padding-top: 2px; }
-.sv-room dd { margin: 0; font-size: 12.5px; }
-.sv-diff { border-top: 1px solid var(--line); padding-top: 8px;
-           margin: 10px 0 0; color: var(--muted); font-size: 12px; }
-.sv-notes { margin-top: 8px; }
-.sv-notes summary { cursor: pointer; color: var(--muted); font-size: 12px; }
-.sv-notes p.mono { font: 11px var(--mono); color: var(--faint);
-                   white-space: pre-wrap; margin: 6px 0 0; }
-.sv-links { display: flex; gap: 8px; margin: 10px 0 0; }
-.sv-links .chip { text-decoration: none; }
+.sv-gainline b { font: 700 var(--t-figure) var(--mono); color: var(--s1); }
+.sv-gapline { color: var(--muted); font: 600 var(--t-label) var(--mono); }
+.sv-why { margin: var(--sp2) 0 0; color: var(--muted); font-size: var(--t-cell); }
+.sv-stale { font-size: var(--t-cell); margin: var(--sp2) 0 0; }
+.sv-notes { margin-top: var(--sp2); }
+.sv-notes summary { cursor: pointer; color: var(--muted);
+                    font-size: var(--t-cell); }
+.sv-notes p.mono { font: var(--t-label) var(--mono); color: var(--faint);
+                   white-space: pre-wrap; margin: var(--sp2) 0 0; }
 
-/* ---- briefing tiles ---- */
-.tiles { display: grid; gap: 10px;
+/* ---- signal tiles ---- */
+.tiles { display: grid; gap: var(--sp2);
          grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
-.tile { display: flex; flex-direction: column; gap: 5px; padding: 12px 14px;
-        background: var(--surface); border: 1px solid var(--line);
-        border-radius: 10px; text-decoration: none; color: var(--ink);
-        box-shadow: var(--shadow); }
+.tile { display: flex; flex-direction: column; gap: var(--sp1);
+        padding: var(--sp3) var(--sp3); background: var(--surface);
+        border: 1px solid var(--line); border-radius: var(--sp2);
+        text-decoration: none; color: var(--ink); box-shadow: var(--shadow); }
 .tile:hover { border-color: var(--muted); }
-.t-claim { font-weight: 600; font-size: 13px; }
-.t-num { font: 700 17px var(--mono); font-variant-numeric: tabular-nums; }
-.t-num i { font: 400 10.5px/1 inherit; color: var(--faint); font-style: normal; }
-.t-imp { color: var(--muted); font-size: 12px; }
-.t-meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.t-gate { color: var(--faint); font-size: 10.5px; }
+.t-claim { font-weight: 600; font-size: var(--t-cell); }
+.t-num { font: 700 var(--t-figure) var(--mono);
+         font-variant-numeric: tabular-nums; }
+.t-num i { font: 400 var(--t-micro)/1 inherit; color: var(--faint);
+           font-style: normal; }
+.t-imp { color: var(--muted); font-size: var(--t-cell); }
+.t-meta { display: flex; gap: var(--sp2); align-items: center; flex-wrap: wrap; }
+.t-gate { color: var(--faint); font-size: var(--t-micro); }
 
 /* ---- watch log: one collapsed line, the table behind the click ---- */
-.db-watchfold summary { cursor: pointer; font: 12px var(--mono);
+.db-watchfold summary { cursor: pointer; font: var(--t-cell) var(--mono);
                         color: var(--muted); }
 .db-watchfold summary:hover { color: var(--ink); }
-.db-watchfold[open] summary { margin-bottom: 8px; }
+.db-watchfold[open] summary { margin-bottom: var(--sp2); }
 table.db-watch td { border-bottom: 1px solid var(--line); }
 .db-watch .w-check { font-weight: 600; white-space: nowrap; }
 .db-watch .w-detail { color: var(--muted); }
-.db-watch .w-src { font-family: var(--mono); font-size: 11px;
+.db-watch .w-src { font-family: var(--mono); font-size: var(--t-label);
                    color: var(--faint); white-space: nowrap; }
-.db-watch .w-asof { font-family: var(--mono); font-size: 11px;
+.db-watch .w-asof { font-family: var(--mono); font-size: var(--t-label);
                     color: var(--faint); }
 .db-watch tr.w-gap td { background:
   color-mix(in oklab, var(--warn) 6%, var(--surface)); }
 
+/* ---- where the season stands -------------------------------------------
+   The manager's own gameweeks against FPL's published average for the same
+   gameweek. Measured fact on both sides, so the delta carries good/bad
+   status colour rather than the model scale --s1 the projections use. */
+.db-standing[hidden] { display: none; }
+.db-sthead { display: flex; align-items: baseline;
+             justify-content: space-between; gap: var(--sp3);
+             flex-wrap: wrap; margin-bottom: var(--sp2); }
+.db-sthead h2 { margin: 0; }
+.db-strank { text-align: right; }
+.db-strank b { font: 700 var(--t-figure) var(--mono);
+               font-variant-numeric: tabular-nums; display: block; }
+.db-strank .sub { font-size: var(--t-label); color: var(--muted); }
+.db-stgws { display: grid; gap: var(--sp2);
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.db-stgw { border: 1px solid var(--line); border-radius: var(--sp2);
+           padding: var(--sp2) var(--sp3); background: var(--surface);
+           display: grid; gap: 2px; }
+.db-stlab { font: 650 var(--t-micro) var(--mono); letter-spacing: .08em;
+            color: var(--faint); font-style: normal; text-transform: uppercase; }
+.db-stgw b { font: 700 var(--t-figure) var(--mono);
+             font-variant-numeric: tabular-nums; }
+.db-stdelta { font: 600 var(--t-label) var(--mono);
+              font-variant-numeric: tabular-nums; }
+.db-stdelta.up { color: var(--good); }
+.db-stdelta.down { color: var(--bad); }
+.db-stdelta.flat { color: var(--muted); font-weight: 400; font-family: inherit; }
+.db-stsub { font-size: var(--t-label); color: var(--muted); }
+.db-stfoot { margin: var(--sp2) 0 0; font-size: var(--t-cell);
+             color: var(--muted); }
+
+/* mobile: 4 x 86px cards + gaps = 374px, an exact fit on a 375px pane */
+@media (max-width: 480px) {
+  .pitch .row, .bench { gap: var(--sp2); }
+  .al-kind { width: 64px; }
+}
+
 /* ---- the pizza (drawer) ----
    Colour = metric family only: --s1 threat / --s3 creation / --s2 defending
-   at 78% mix. Never a value ramp — the radius already encodes the value. */
-.pz-box { margin-top: 14px; border-top: 1px solid var(--line);
-          padding-top: 10px; }
-.pz-hd { display: flex; align-items: center; gap: 10px; }
+   at 78% mix. Never a value ramp, because the radius already encodes the
+   value. This block is components/radar.js's, not the dashboard's. */
+.pz-box { margin-top: var(--sp3); border-top: 1px solid var(--line);
+          padding-top: var(--sp2); }
+.pz-hd { display: flex; align-items: center; gap: var(--sp2); }
 .pz-hd h2 { flex: 1; }
 .pz-compare[disabled] { opacity: .5; cursor: not-allowed; }
-.pz-wrap { margin: 4px 0; }
+.pz-wrap { margin: var(--sp1) 0; }
 .pz-svg { display: block; width: 100%; max-width: 320px; margin: 0 auto; }
 .pz-wrap.pz-belowfloor .pz-svg { opacity: .45; }
 .pz-ring { fill: none; stroke: var(--line); stroke-width: 1; }
@@ -489,10 +545,10 @@ table.db-watch td { border-bottom: 1px solid var(--line); }
 .pz-threat   { fill: color-mix(in oklab, var(--s1) 78%, var(--surface)); }
 .pz-creation { fill: color-mix(in oklab, var(--s3) 78%, var(--surface)); }
 .pz-defending{ fill: color-mix(in oklab, var(--s2) 78%, var(--surface)); }
-.pz-tied { stroke: var(--muted); stroke-width: 1; }      /* hatched ≠ short */
+.pz-tied { stroke: var(--muted); stroke-width: 1; }      /* hatched, not short */
 .pz-hatchline { stroke: var(--muted); stroke-width: 1.6; }
-.pz-num { font: 700 10px var(--mono); fill: var(--ink); }
-.pz-lab { font: 9.5px -apple-system, sans-serif; fill: var(--muted); }
+.pz-num { font: 700 var(--t-micro) var(--mono); fill: var(--ink); }
+.pz-lab { font: var(--t-micro) -apple-system, sans-serif; fill: var(--muted); }
 .pz-span { fill: none; stroke-width: 2.5; opacity: .8; }
 .pz-span-threat    { stroke: var(--s1); }
 .pz-span-creation  { stroke: var(--s3); }
@@ -501,58 +557,18 @@ table.db-watch td { border-bottom: 1px solid var(--line); }
 .pz-cmp path, .pz-cmp polygon { fill: none; stroke: var(--s4);
                                 stroke-width: 2; }
 .pz-cmp circle { fill: var(--s4); }
-.pz-legend { display: flex; gap: 10px; justify-content: center;
-             margin: 2px 0 6px; }
-.pz-key { display: inline-flex; align-items: center; gap: 5px;
-          font-size: 11px; color: var(--muted); }
+.pz-legend { display: flex; gap: var(--sp2); justify-content: center;
+             margin: 2px 0 var(--sp1); }
+.pz-key { display: inline-flex; align-items: center; gap: var(--sp1);
+          font-size: var(--t-label); color: var(--muted); }
 .pz-key i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
 .pz-key-threat i    { background: color-mix(in oklab, var(--s1) 78%, var(--surface)); }
 .pz-key-creation i  { background: color-mix(in oklab, var(--s3) 78%, var(--surface)); }
 .pz-key-defending i { background: color-mix(in oklab, var(--s2) 78%, var(--surface)); }
 .pz-floorbanner { background: color-mix(in oklab, var(--warn) 14%, var(--surface));
                   border: 1px solid color-mix(in oklab, var(--warn) 40%, var(--line));
-                  color: var(--ink); border-radius: 8px; padding: 8px 10px;
-                  font-size: 12px; margin: 6px 0; }
-.pz-how summary { cursor: pointer; color: var(--muted); font-size: 12px; }
-
-/* mobile: 4 × 86px cards + gaps = 374px — exact fit on a 375px pane */
-@media (max-width: 480px) {
-  .pitch .row, .bench { gap: 8px; }
-  .al-kind { width: 64px; }
-}
-
-/* ---- where the season stands -------------------------------------------
-   The manager's own gameweeks against FPL's published average for the same
-   gameweek. Measured fact on both sides, so the delta carries good/bad
-   status colour rather than the model scale --s1 the projection numbers use. */
-.db-standing[hidden] { display: none; }
-.db-sthead { display: flex; align-items: baseline; justify-content: space-between;
-             gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
-.db-sthead h2 { margin: 0; }
-.db-strank { text-align: right; }
-.db-strank b { font: 700 20px var(--mono); font-variant-numeric: tabular-nums;
-               display: block; }
-.db-strank .sub { font-size: 11.5px; color: var(--muted); }
-.db-stgws { display: grid; gap: 8px;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
-.db-stgw { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
-           background: var(--surface); display: grid; gap: 2px; }
-.db-stlab { font: 650 10.5px var(--mono); letter-spacing: .08em;
-            color: var(--faint); font-style: normal; text-transform: uppercase; }
-.db-stgw b { font: 700 22px var(--mono); font-variant-numeric: tabular-nums; }
-.db-stdelta { font: 600 12px var(--mono); font-variant-numeric: tabular-nums; }
-.db-stdelta.up { color: var(--good); }
-.db-stdelta.down { color: var(--bad); }
-.db-stdelta.flat { color: var(--muted); font-weight: 400; font-family: inherit; }
-.db-stsub { font-size: 11px; color: var(--muted); }
-.db-stfoot { margin: 10px 0 0; font-size: 12.5px; color: var(--muted); }
-
-/* Validator output belongs on the page but behind a fold: it addresses
-   whoever maintains the prompt, not the manager reading the briefing. */
-.ib-rejects { margin-top: 8px; }
-.ib-rejects > summary { font-size: 11.5px; color: var(--muted); cursor: pointer; }
-.ib-rejects > p { margin: 6px 0 0; font-size: 11.5px; }
-
-/* A plan that overspends is a blocker, not a footnote: FPL rejects it. */
-.vd-unaffordable { color: var(--bad); display: block; margin-top: 2px;
-                   font-size: 12.5px; }
+                  color: var(--ink); border-radius: var(--sp2);
+                  padding: var(--sp2) var(--sp2); font-size: var(--t-cell);
+                  margin: var(--sp2) 0; }
+.pz-how summary { cursor: pointer; color: var(--muted);
+                  font-size: var(--t-cell); }
