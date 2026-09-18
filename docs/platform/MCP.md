@@ -92,7 +92,7 @@ Of the 23 keeps, 5 are write tools (7, 11, 22, 25, 27) and 18 are reads. Of the
 and the transcript half of 35), 2 are duplicated by a pipeline or a panel
 (9, 36), and 2 are covered by `query` or `pipeline_board` (3, 19).
 
-The resulting server registers 35 tools: 18 read adapters, 5 writes, plus
+The resulting server registers 35 tools: 28 read adapters, 7 writes, plus
 `query`, `run_analysis` and `python_viz` carried over unchanged. Section 3 names
 each one.
 

@@ -9,7 +9,7 @@ Registration is by explicit import, never filesystem discovery: adding a tool
 should be a visible one-line diff a reviewer can see, which is the rule the
 panel registry already applies to panel scripts.
 
-Twelve modules, 35 tools. Eighteen are read adapters over a registered panel,
+Twelve modules, 35 tools. Twenty-eight are read adapters over a registered panel or the guarded query,
 five are writes through a named store module, and three (``query``,
 ``run_analysis``, ``python_viz``) carry over the paths they already had.
 """
