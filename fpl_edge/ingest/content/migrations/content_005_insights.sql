@@ -94,7 +94,7 @@
 -- corpus does not store those. `claim_text` is the model's one-line rendering
 -- for display; `quote` is the receipt. `start_s` is the deep-link offset when
 -- the quote can be located in transcript_segment, and NULL when it cannot --
--- never a guessed offset, following platform/scripts/creators.deep_link.
+-- never a guessed offset, following ingest/content/urls.deep_link.
 --
 -- WHAT IS ALLOWED TO PRODUCE A ROW
 --

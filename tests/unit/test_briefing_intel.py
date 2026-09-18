@@ -496,15 +496,25 @@ def test_run_briefing_intel_honours_the_kill_switch(tmp_path, monkeypatch):
 
 
 def test_run_briefing_intel_reports_kept_items_to_the_ledger(tmp_path, monkeypatch):
+    """The task shells out, then counts the artefact the subprocess wrote.
+
+    The seam moved with ARCHITECTURE_REVIEW.md check 6 loop B: the task used to
+    call ``bi.generate`` in process, which was the only ``pipelines ->
+    platform`` import. It now runs ``python -m fpl_edge.platform.briefing_intel``
+    like its eight sibling tasks, so the test patches ``run_step`` and writes
+    the artefact the subprocess would have written.
+    """
     monkeypatch.setenv("FPL_EDGE_DISABLE_NETWORK_INGEST", "0")
-    calls = {}
+    (tmp_path / "briefing_intel.json").write_text(json.dumps(
+        {"items": [1, 2, 3], "rejected_n": 2,
+         "meta_prompt_hash": "abc", "duration_s": 4.2}))
+    seen = {}
 
-    def fake_generate(db_path, *, season, now=None):
-        calls["args"] = (db_path, season)
-        return {"items": [1, 2, 3], "rejected_n": 2,
-                "meta_prompt_hash": "abc", "duration_s": 4.2}
+    def fake_run_step(name, argv, *, timeout=None):
+        seen["name"], seen["argv"] = name, argv
+        return registry.Step(name=name, ok=True, seconds=4.2, detail="")
 
-    monkeypatch.setattr(bi, "generate", fake_generate)
+    monkeypatch.setattr(registry, "run_step", fake_run_step)
     now = dt.datetime(2026, 8, 31, 7, 40, tzinfo=UTC)
     ctx = registry.TaskContext(season="2026-27", gw=registry.NO_GW,
                                due_utc=now, deadline_utc=None, now=now,
@@ -513,22 +523,70 @@ def test_run_briefing_intel_reports_kept_items_to_the_ledger(tmp_path, monkeypat
     assert res.outcome == "quiet"
     assert res.ledger_written == 3           # rows_written = kept items
     assert "3 item(s) kept" in res.detail and "2 rejected" in res.detail
-    assert calls["args"] == (tmp_path / "fpl.duckdb", "2026-27")
+    assert seen["name"] == "briefing_intel"
+    assert "-m" in seen["argv"]
+    assert "fpl_edge.platform.briefing_intel" in seen["argv"]
+    assert "2026-27" in seen["argv"]
+    assert str(tmp_path / "fpl.duckdb") in seen["argv"]
 
 
-def test_a_generate_failure_propagates_for_the_error_ledger_row(tmp_path, monkeypatch):
+def test_a_failed_subprocess_becomes_an_error_result_for_the_ledger(
+        tmp_path, monkeypatch):
+    """A non-zero exit is an error outcome, not a raised exception.
+
+    ``runner.py:70`` maps ``outcome="error"`` to the ``error`` fetch_run
+    status, which is the same ledger row the raised BriefingIntelError used to
+    produce through ``runner.py:162``. The reason still reaches the row, and an
+    alert still goes out because ``kind`` is ``alert``.
+    """
     monkeypatch.setenv("FPL_EDGE_DISABLE_NETWORK_INGEST", "0")
 
-    def fail(db_path, *, season, now=None):
-        raise bi.BriefingIntelError("zero valid items survived validation")
+    def fake_run_step(name, argv, *, timeout=None):
+        return registry.Step(
+            name=name, ok=False, seconds=1.0,
+            detail="briefing_intel failed: zero valid items survived validation")
 
-    monkeypatch.setattr(bi, "generate", fail)
+    monkeypatch.setattr(registry, "run_step", fake_run_step)
     now = dt.datetime(2026, 8, 31, 7, 40, tzinfo=UTC)
     ctx = registry.TaskContext(season="2026-27", gw=registry.NO_GW,
                                due_utc=now, deadline_utc=None, now=now,
                                db_path=tmp_path / "fpl.duckdb")
-    with pytest.raises(bi.BriefingIntelError):
-        registry.run_briefing_intel(ctx)
+    res = registry.run_briefing_intel(ctx)
+    assert res.outcome == "error"
+    assert res.kind == "alert"
+    assert "zero valid items survived validation" in res.detail
+    assert res.ledger_written == 0
+
+
+def test_a_missing_artefact_counts_zero_rather_than_guessing(tmp_path,
+                                                             monkeypatch):
+    """The artefact is the interface. No file means nothing was written."""
+    monkeypatch.setenv("FPL_EDGE_DISABLE_NETWORK_INGEST", "0")
+    monkeypatch.setattr(registry, "run_step", lambda name, argv, *, timeout=None:
+                        registry.Step(name=name, ok=True, seconds=1.0, detail=""))
+    now = dt.datetime(2026, 8, 31, 7, 40, tzinfo=UTC)
+    ctx = registry.TaskContext(season="2026-27", gw=registry.NO_GW,
+                               due_utc=now, deadline_utc=None, now=now,
+                               db_path=tmp_path / "fpl.duckdb")
+    res = registry.run_briefing_intel(ctx)
+    assert res.outcome == "quiet"
+    assert res.ledger_written == 0
+
+
+def test_the_module_runs_as_a_m_target(tmp_path):
+    """The `-m` entry point the task now invokes has to exist and parse args.
+
+    T7's lesson in miniature: a task that shells out to a module which is not
+    executable fails at run time and nothing in the suite would notice.
+    """
+    import subprocess
+    import sys
+
+    proc = subprocess.run(
+        [sys.executable, "-m", "fpl_edge.platform.briefing_intel", "--help"],
+        capture_output=True, text=True, check=False)
+    assert proc.returncode == 0, proc.stderr
+    assert "--season" in proc.stdout and "--db" in proc.stdout
 
 
 def test_the_ui_trigger_route_knows_the_task(db):

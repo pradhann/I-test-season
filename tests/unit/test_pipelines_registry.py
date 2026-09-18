@@ -23,7 +23,8 @@ import pytest
 
 from fpl_edge.jobs import deadline_dag as dag
 from fpl_edge.jobs import post_gw
-from fpl_edge.pipelines import health, registry, runner
+from fpl_edge.pipelines import contracts, health, registry, runner
+from fpl_edge.pipelines import tasks as dagtasks
 from fpl_edge.store import Warehouse, fetch_ledger
 
 UTC = dt.UTC
@@ -62,7 +63,7 @@ def quiet_run(detail="stub ran", **result_kw):
     def run(ctx):
         calls.append(ctx)
         print("hello from the stub")
-        return dag.TaskResult(outcome="quiet", detail=detail, **result_kw)
+        return contracts.TaskResult(outcome="quiet", detail=detail, **result_kw)
 
     return run, calls
 
@@ -98,7 +99,7 @@ def test_the_legacy_five_are_present_and_dag_scheduled():
     # and their stale windows are THE dag windows, not copies that can drift
     for t in registry.TASKS:
         if t.scheduled_by_dag:
-            assert t.stale_window == dag.STALE_WINDOWS[t.id]
+            assert t.stale_window == contracts.STALE_WINDOWS[t.id]
 
 
 def test_the_folded_in_pipelines_are_registered():
@@ -209,8 +210,8 @@ def test_on_demand_is_never_owed():
 
 def test_stale_window_for_consults_the_registry():
     assert dag.stale_window_for("content_fast_rss") == dt.timedelta(hours=3)
-    assert dag.stale_window_for("price_radar") == dag.STALE_WINDOWS["price_radar"]
-    assert dag.stale_window_for("no_such_task") == dag.STALE_WINDOW
+    assert dag.stale_window_for("price_radar") == contracts.STALE_WINDOWS["price_radar"]
+    assert dag.stale_window_for("no_such_task") == contracts.STALE_WINDOW
 
 
 # -- the tick runs registry tasks with its existing machinery ----------------
@@ -223,7 +224,7 @@ def test_the_tick_fires_a_registry_calendar_task_once(db, monkeypatch, tmp_path)
     stub = stub_task(run, window=dt.timedelta(hours=20))
     monkeypatch.setattr(registry, "TASKS", (stub,))
     monkeypatch.setattr(runner, "LOG_DIR", tmp_path / "logs")
-    monkeypatch.setattr(dag, "PLAN_DIR", tmp_path)
+    monkeypatch.setattr(dagtasks, "PLAN_DIR", tmp_path)
     now = dt.datetime(2026, 8, 20, 1, 5, tzinfo=UTC)
 
     dag.tick(now=now, season=SEASON, db_path=db, send=False, polish=False)
@@ -265,7 +266,7 @@ def test_a_raising_registry_task_is_an_error_row_with_a_log_tail(
 
     monkeypatch.setattr(registry, "TASKS", (stub_task(boom),))
     monkeypatch.setattr(runner, "LOG_DIR", tmp_path / "logs")
-    monkeypatch.setattr(dag, "PLAN_DIR", tmp_path)
+    monkeypatch.setattr(dagtasks, "PLAN_DIR", tmp_path)
     now = dt.datetime(2026, 8, 20, 1, 5, tzinfo=UTC)
 
     dag.tick(now=now, season=SEASON, db_path=db, send=False, polish=False)
@@ -285,7 +286,7 @@ def test_a_stale_registry_firing_is_recorded_never_run(db, monkeypatch, tmp_path
     stub = stub_task(run, window=dt.timedelta(minutes=30))
     monkeypatch.setattr(registry, "TASKS", (stub,))
     monkeypatch.setattr(runner, "LOG_DIR", tmp_path / "logs")
-    monkeypatch.setattr(dag, "PLAN_DIR", tmp_path)
+    monkeypatch.setattr(dagtasks, "PLAN_DIR", tmp_path)
     now = dt.datetime(2026, 8, 20, 1, 5, tzinfo=UTC)  # 00:00 firing is 65m old
 
     dag.tick(now=now, season=SEASON, db_path=db, send=False, polish=False)
@@ -304,7 +305,7 @@ def test_a_stale_registry_firing_is_recorded_never_run(db, monkeypatch, tmp_path
 
 def _ctx(tmp_path, now=None):
     now = now or dt.datetime(2026, 8, 20, 1, 5, tzinfo=UTC)
-    return dag.TaskContext(season=SEASON, gw=0, due_utc=now, deadline_utc=None,
+    return contracts.TaskContext(season=SEASON, gw=0, due_utc=now, deadline_utc=None,
                            now=now, db_path=tmp_path / "gate.duckdb")
 
 
@@ -321,7 +322,7 @@ def test_fetching_tasks_honour_the_network_kill_switch(fn, tmp_path, monkeypatch
     def forbidden(*a, **k):  # no step may even be constructed
         raise AssertionError("a gated task tried to run a step")
 
-    monkeypatch.setattr(dag, "run_step", forbidden)
+    monkeypatch.setattr(contracts, "run_step", forbidden)
     monkeypatch.setattr(registry, "run_step", forbidden)
     monkeypatch.setattr(post_gw, "_run", forbidden)
     res = fn(_ctx(tmp_path))
@@ -400,7 +401,7 @@ def test_a_failing_step_never_lands_as_an_ok_ledger_row(
     monkeypatch.setattr(runner, "LOG_DIR", tmp_path / "logs")
 
     def failing_step(name, argv, *, timeout=None):
-        return dag.Step(name=name, ok=False, seconds=1.0,
+        return contracts.Step(name=name, ok=False, seconds=1.0,
                         detail="boom: the step exited non-zero")
 
     monkeypatch.setattr(registry, "run_step", failing_step)
@@ -434,7 +435,7 @@ def test_a_clean_step_still_lands_as_ok(task_id, tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "LOG_DIR", tmp_path / "logs")
     monkeypatch.setattr(
         registry, "run_step",
-        lambda name, argv, *, timeout=None: dag.Step(
+        lambda name, argv, *, timeout=None: contracts.Step(
             name=name, ok=True, seconds=1.0, detail="fine"))
     monkeypatch.setattr(
         post_gw, "_run",
@@ -450,10 +451,10 @@ def test_a_clean_step_still_lands_as_ok(task_id, tmp_path, monkeypatch):
 
 def test_an_error_result_still_delivers_its_alert():
     """Honesty in the ledger must not cost the notification."""
-    res = dag.TaskResult(outcome="error", kind="alert", title="X FAILED",
+    res = contracts.TaskResult(outcome="error", kind="alert", title="X FAILED",
                          body="why")
     assert res.delivers is True
-    assert dag.TaskResult(outcome="error", detail="no title").delivers is False
+    assert contracts.TaskResult(outcome="error", detail="no title").delivers is False
 
 
 # -- the analyse rung --------------------------------------------------------
@@ -488,7 +489,7 @@ def test_the_analyse_step_is_budgeted_and_resumable(tmp_path, monkeypatch):
 
     def capture(name, argv, *, timeout=None):
         seen.append(argv)
-        return dag.Step(name=name, ok=True, seconds=1.0, detail="done")
+        return contracts.Step(name=name, ok=True, seconds=1.0, detail="done")
 
     monkeypatch.setattr(registry, "run_step", capture)
     registry.run_content_analyse(_ctx(tmp_path))
@@ -789,7 +790,7 @@ def test_forecast_refresh_commits_the_consensus_currency(tmp_path, monkeypatch):
 
     def capture(name, argv, *, timeout=None):
         seen.append(argv)
-        return dag.Step(name=name, ok=True, seconds=1.0, detail="done")
+        return contracts.Step(name=name, ok=True, seconds=1.0, detail="done")
 
     monkeypatch.setattr(registry, "run_step", capture)
     result = registry.run_forecast_refresh(_ctx(tmp_path))

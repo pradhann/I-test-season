@@ -49,8 +49,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from fpl_edge.jobs import deadline_dag as dag
-from fpl_edge.jobs.deadline_dag import Step, TaskContext, TaskResult, run_step
+from fpl_edge.pipelines import tasks
+from fpl_edge.pipelines import contracts
+from fpl_edge.pipelines.contracts import (
+    LOOKBACK,
+    NIGHTLY_LOCAL_HOUR,
+    SEASON,
+    STALE_WINDOWS,
+    Step,
+    TaskContext,
+    TaskResult,
+    run_step,
+)
 
 UTC = dt.UTC
 
@@ -65,6 +75,11 @@ _EPOCH = dt.datetime(1970, 1, 1, tzinfo=UTC)
 #: Default nightly wall-clock budget for the transcription task, seconds.
 #: Overridable per-deploy with FPL_EDGE_TRANSCRIBE_BUDGET_S.
 TRANSCRIBE_BUDGET_S = 3600.0
+
+#: How long the briefing-intel subprocess may live. The model call inside it is
+#: capped at MODEL_TIMEOUT_S = 240s (platform/briefing_intel.py:100); the rest
+#: of the budget is panel assembly on the local warehouse either side of it.
+BRIEFING_INTEL_TIMEOUT_S = 420.0
 
 #: How much longer than its budget the transcription PROCESS is allowed to
 #: live before ``run_step`` kills it.
@@ -144,6 +159,10 @@ class OnDemand:
     """Never due on a tick. The row exists for identity and metadata."""
 
 
+#: The schedule KINDS a Task row may carry. Not to be confused with
+#: :class:`fpl_edge.pipelines.contracts.Due`, which is one firing that the
+#: schedule says should already have happened; that one is referred to
+#: module-qualified below so the two names cannot merge.
 Due = Calendar | DeadlineRelative | Interval | OnDemand
 
 
@@ -164,9 +183,9 @@ class Task:
     #: with the deadline gets a tight window, an idempotent refresh a
     #: generous one.
     stale_window: dt.timedelta
-    #: Takes a :class:`~fpl_edge.jobs.deadline_dag.TaskContext`, returns a
-    #: :class:`~fpl_edge.jobs.deadline_dag.TaskResult`. Subprocess-shaped
-    #: work goes through ``deadline_dag.run_step`` exactly as the original
+    #: Takes a :class:`~fpl_edge.pipelines.contracts.TaskContext`, returns a
+    #: :class:`~fpl_edge.pipelines.contracts.TaskResult`. Subprocess-shaped
+    #: work goes through ``contracts.run_step`` exactly as the original
     #: tasks do.
     run: Callable[[TaskContext], TaskResult]
     #: Metered-API credits one execution is expected to spend. 0 for free
@@ -242,7 +261,7 @@ def due_instants(
     deadlines: Sequence[tuple[int, dt.datetime]],
     now: dt.datetime,
     *,
-    lookback: dt.timedelta = dag.LOOKBACK,
+    lookback: dt.timedelta = LOOKBACK,
 ) -> list[tuple[int, dt.datetime, dt.datetime | None]]:
     """(gw, due_utc, deadline_utc) for every firing owed in the window.
 
@@ -276,19 +295,19 @@ def registry_due(
     deadlines: Sequence[tuple[int, dt.datetime]],
     now: dt.datetime,
     *,
-    season: str = dag.SEASON,
-    lookback: dt.timedelta = dag.LOOKBACK,
-) -> list[dag.Due]:
+    season: str = SEASON,
+    lookback: dt.timedelta = LOOKBACK,
+) -> list[contracts.Due]:
     """Owed firings for every enabled registry task the DAG does not already
     schedule itself. Staleness is decided here with the task's own window, so
     the same rule applies to a launchd tick and a manual one."""
     now = now.astimezone(UTC)
-    out: list[dag.Due] = []
+    out: list[contracts.Due] = []
     for task in TASKS:
         if not task.enabled or task.scheduled_by_dag:
             continue
         for gw, inst, deadline in due_instants(task, deadlines, now, lookback=lookback):
-            out.append(dag.Due(
+            out.append(contracts.Due(
                 task=task.id, season=season, gw=gw, due_utc=inst,
                 deadline_utc=deadline, stale=(now - inst) > task.stale_window,
             ))
@@ -335,7 +354,7 @@ def validate(tasks: Sequence[Task]) -> None:
 def _network_disabled() -> bool:
     """One switch, honoured everywhere PIPELINES.md schedules a fetch.
 
-    Same rule and same reporting as ``deadline_dag.odds_refresh``: a gated
+    Same rule and same reporting as ``deadline_tasks.odds_refresh``: a gated
     run is ``no_source`` -- an honest gap -- never a fake success.
     """
     return os.environ.get("FPL_EDGE_DISABLE_NETWORK_INGEST", "") not in ("", "0")
@@ -687,31 +706,67 @@ def run_fast_rss(ctx: TaskContext) -> TaskResult:
 def run_briefing_intel(ctx: TaskContext) -> TaskResult:
     """The model-authored salience pass over the panels (briefing_intel.py).
 
-    One in-process call: assemble the panel context, ask the Max-plan CLI
-    once through claude-agent-sdk, validate every item against the inputs,
-    write the sibling artefact atomically. The panels only read the local
-    warehouse, but the model call itself leaves the machine, so the
-    kill-switch gates this task exactly like the fetching ones — a gated
-    unit-test tick must never spawn the CLI. A failure raises out of
-    ``generate`` and the runner records the ledger row as ``error`` with the
-    reason — the failure-honesty contract. Kept items ride to the ledger as
-    ``rows_written``.
+    One subprocess: assemble the panel context, ask the Max-plan CLI once
+    through claude-agent-sdk, validate every item against the inputs, write the
+    sibling artefact atomically. The panels only read the local warehouse, but
+    the model call itself leaves the machine, so the kill-switch gates this
+    task exactly like the fetching ones, and a gated unit-test tick must never
+    spawn the CLI. A non-zero exit records the ledger row as ``error`` with the
+    reason, which is the failure-honesty contract. Kept items ride to the
+    ledger as ``rows_written``.
+
+    It shells out rather than importing ``platform.briefing_intel``, like the
+    eight sibling tasks in this file. The in-process import here was the only
+    ``pipelines -> platform`` edge in the package and the whole of cycle C1
+    loop B (ARCHITECTURE_REVIEW.md check 6). The numbers come back off the
+    written artefact rather than out of stdout, so the ledger count is the
+    file that was actually written.
     """
     if _network_disabled():
         return _GATED
-    from fpl_edge.platform import briefing_intel
-
-    artefact = briefing_intel.generate(ctx.db_path, season=ctx.season,
-                                       now=ctx.now)
-    kept = len(artefact.get("items") or [])
-    rejected = int(artefact.get("rejected_n") or 0)
+    step = run_step(
+        "briefing_intel",
+        [ctx.python, "-m", "fpl_edge.platform.briefing_intel",
+         "--db", str(ctx.db_path), "--season", ctx.season,
+         "--now", ctx.now.isoformat()],
+        timeout=BRIEFING_INTEL_TIMEOUT_S,
+    )
+    if not step.ok:
+        return TaskResult(outcome="error", kind="alert", steps=[step],
+                          detail=f"briefing_intel failed: {step.detail[-200:]}",
+                          title="Briefing intel FAILED",
+                          body=f"briefing_intel exited non-zero after "
+                               f"{step.seconds}s.\n\n{step.detail}")
+    kept, rejected, meta_hash, duration = _briefing_artefact_counts(ctx.db_path)
     return TaskResult(
         outcome="quiet",
+        steps=[step],
         detail=(f"{kept} item(s) kept, {rejected} rejected, "
-                f"meta_prompt {artefact.get('meta_prompt_hash')}, "
-                f"{artefact.get('duration_s')}s"),
+                f"meta_prompt {meta_hash}, {duration}s"),
         ledger_written=kept,
     )
+
+
+def _briefing_artefact_counts(db_path) -> tuple[int, int, str | None, float | None]:
+    """Read back what the subprocess wrote. Absent reads as zero kept.
+
+    The artefact is the interface between the task and the pass, so this does
+    not parse stdout. ``briefing_intel.artefact_path`` is a pure path helper
+    over ``db_path``, so naming it here costs no import of the module that
+    would put the cycle back.
+    """
+    import json
+    from pathlib import Path
+
+    path = Path(db_path).parent / "briefing_intel.json"
+    try:
+        artefact = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return 0, 0, None, None
+    return (len(artefact.get("items") or []),
+            int(artefact.get("rejected_n") or 0),
+            artefact.get("meta_prompt_hash"),
+            artefact.get("duration_s"))
 
 
 def run_audio_retention(ctx: TaskContext) -> TaskResult:
@@ -766,40 +821,40 @@ TASKS: tuple[Task, ...] = (
         id="presser_projection_refresh",
         description="T-30h: ingest live/odds-fixtures/content/projections + injury digest",
         due=DeadlineRelative(hours_before=30),
-        stale_window=dag.STALE_WINDOWS["presser_projection_refresh"],
-        run=dag.presser_projection_refresh,
+        stale_window=STALE_WINDOWS["presser_projection_refresh"],
+        run=tasks.presser_projection_refresh,
         scheduled_by_dag=True,
     ),
     Task(
         id="price_radar",
         description="02:00 Europe/London: net-transfer velocity radar, deterministic",
-        due=Calendar(hour_local=dag.NIGHTLY_LOCAL_HOUR, tz="Europe/London"),
-        stale_window=dag.STALE_WINDOWS["price_radar"],
-        run=dag.price_radar,
+        due=Calendar(hour_local=NIGHTLY_LOCAL_HOUR, tz="Europe/London"),
+        stale_window=STALE_WINDOWS["price_radar"],
+        run=tasks.price_radar,
         scheduled_by_dag=True,
     ),
     Task(
         id="final_solve_delivery",
         description="T-4h: deliver the freshest stored plan (never solves)",
         due=DeadlineRelative(hours_before=4),
-        stale_window=dag.STALE_WINDOWS["final_solve_delivery"],
-        run=dag.final_solve_delivery,
+        stale_window=STALE_WINDOWS["final_solve_delivery"],
+        run=tasks.final_solve_delivery,
         scheduled_by_dag=True,
     ),
     Task(
         id="lineup_captain_check",
         description="T-90m: confirmed XI vs picked captain (Pulselive teamsheets)",
         due=DeadlineRelative(hours_before=1.5),
-        stale_window=dag.STALE_WINDOWS["lineup_captain_check"],
-        run=dag.lineup_captain_check,
+        stale_window=STALE_WINDOWS["lineup_captain_check"],
+        run=tasks.lineup_captain_check,
         scheduled_by_dag=True,
     ),
     Task(
         id="odds_refresh",
         description="Odds ladder T-36h/T-12h/T-5h; extras once per GW at T-36h",
         due=DeadlineRelative(hours_before=(36.0, 12.0, 5.0)),
-        stale_window=dag.STALE_WINDOWS["odds_refresh"],
-        run=dag.odds_refresh,
+        stale_window=STALE_WINDOWS["odds_refresh"],
+        run=tasks.odds_refresh,
         credits_estimate=12.0,
         confirm_required=True,
         scheduled_by_dag=True,

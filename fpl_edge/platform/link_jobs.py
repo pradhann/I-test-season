@@ -32,7 +32,7 @@ measured count rather than stored as a take about nothing.
 and ``/embed/`` are one video. One Andy (LTFPL) video is stored under two urls
 -- one row carrying the analysis, the other its 1,199 transcript segments --
 which is what a URL-keyed identity buys you. The preflight uses
-:func:`fpl_edge.platform.scripts.creators.youtube_id`, the existing authority,
+:func:`fpl_edge.ingest.content.urls.youtube_id`, the one authority,
 returns the EXISTING item instead of ingesting again, and reads segments across
 the whole sibling set so the take still has timestamps when the analysis and
 the transcript live on different rows.
@@ -441,7 +441,7 @@ def preflight(url: str, db: Path | str = DEFAULT_DB, *,
     Read-only from end to end: the warehouse is consulted through a read copy
     and nothing is written whatever the outcome.
     """
-    from fpl_edge.platform.scripts.creators import youtube_id
+    from fpl_edge.ingest.content.urls import youtube_id
 
     url = (url or "").strip()
     for pattern, why in _NON_EPISODE:
@@ -699,7 +699,7 @@ def _existing_item(db: Path | str, *, vid: str | None,
     assembled across all of them or it loses its timestamps.
     """
     from fpl_edge.platform.query import read_copy
-    from fpl_edge.platform.scripts.creators import youtube_id
+    from fpl_edge.ingest.content.urls import youtube_id
 
     db_path = Path(db)
     if not db_path.exists():
@@ -883,12 +883,15 @@ def build_take(db: Path | str, item_ids: tuple[str, ...] | list[str],
 def _ledger(wh, item_ids: list[str]) -> dict[str, Any] | None:
     """The pasted-link annotation for these ids: creator basis, gameweek, discard.
 
-    Written by :func:`fpl_edge.interfaces.creators.record_link_item`. Absent is
+    Written by :func:`fpl_edge.ingest.content.link_ledger.record_link_item`. Absent is
     a legitimate state (an item ingested before the ledger existed, or by the
     bulk pipeline), and absent means "no annotation", never "not discarded and
     definitely tracked" -- the caller renders None rather than defaults.
     """
-    from fpl_edge.interfaces.creators import USER_LINK_TABLE, _public_ledger_row
+    from fpl_edge.ingest.content.link_ledger import (
+        USER_LINK_TABLE,
+        _public_ledger_row,
+    )
 
     if not _table_exists(wh, USER_LINK_TABLE):
         return None
@@ -977,20 +980,20 @@ def _annotate(db: Path | str, action, *args, **kwargs) -> dict[str, Any]:
 
 def discard_item(db: Path | str, item_id: str, *, reason: str = "") -> dict[str, Any]:
     """Hide an ingested item. Nothing is deleted; see interfaces.creators."""
-    from fpl_edge.interfaces.creators import discard_item as _discard
+    from fpl_edge.ingest.content.link_ledger import discard_item as _discard
 
     return _annotate(db, _discard, item_id, reason=reason)
 
 
 def restore_item(db: Path | str, item_id: str, *, reason: str = "") -> dict[str, Any]:
-    from fpl_edge.interfaces.creators import restore_item as _restore
+    from fpl_edge.ingest.content.link_ledger import restore_item as _restore
 
     return _annotate(db, _restore, item_id, reason=reason)
 
 
 def correct_gameweek(db: Path | str, item_id: str, gameweek: int, *,
                      note: str = "") -> dict[str, Any]:
-    from fpl_edge.interfaces.creators import correct_gameweek as _correct
+    from fpl_edge.ingest.content.link_ledger import correct_gameweek as _correct
 
     return _annotate(db, _correct, item_id, int(gameweek), note=note)
 
@@ -1423,7 +1426,7 @@ class LinkJobs:
         archive. The discard removes it from every read path, so from the
         reader's side the cancel left nothing behind.
         """
-        from fpl_edge.platform.scripts.creators import youtube_id
+        from fpl_edge.ingest.content.urls import youtube_id
 
         item_id, siblings = _item_for_url(self.db, vid=youtube_id(pre.ingest_url),
                                           url=pre.ingest_url)
@@ -1614,7 +1617,7 @@ class LinkJobs:
             job.gameweek = resolution.public()
 
         # -- attribute -------------------------------------------------------
-        from fpl_edge.platform.scripts.creators import youtube_id
+        from fpl_edge.ingest.content.urls import youtube_id
 
         vid = youtube_id(pre.ingest_url)
         item_id, siblings = _item_for_url(self.db, vid=vid, url=pre.ingest_url)

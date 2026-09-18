@@ -96,3 +96,116 @@ def next_gw(wh, season: str, now: dt.datetime | None = None) -> int | None:
     if df.empty:
         return None
     return int(df.iloc[0]["gw"])
+
+
+# --------------------------------------------------------------------------
+# The user's own squad, read once for every panel that needs it.
+#
+# Moved here from platform/scripts/ownership.py (ARCHITECTURE_REVIEW.md check
+# 6, move M4). It was the only panel-to-panel import in the package:
+# platform/scripts/creators.py reached into a sibling panel for a private name.
+# A helper two panels share is shared code, and shared panel code lives here.
+# --------------------------------------------------------------------------
+
+
+def _squad_state(wh, season: str) -> tuple[dict[int, dict] | None, dict[str, Any]]:
+    """The user's 15 with their FPL multipliers, or (None, why-not).
+
+    Same read path as squad_overview (QuestionRouter._team_state): private API,
+    then public picks, then the manually entered squad. Any failure — network
+    down, nothing published yet — degrades to unreadable, never to a crash.
+
+    The multiplier is the *my multiplier* term of the rank identity, so it is
+    read rather than inferred, and it is reported ONLY when the read path
+    actually carried one. A manually entered 15 has no armband and no bench
+    order: those rows come back with ``mult: None``, which the UI renders as
+    "owned, role unknown" — never as a silent 1×.
+    """
+    from fpl_edge.config import USER
+
+    try:
+        from fpl_edge.interfaces.qa import QuestionRouter
+
+        router = QuestionRouter(wh, season=season, entry_id=int(USER.entry_id))
+        state = router._team_state()
+    except Exception as exc:  # noqa: BLE001 — a panel reports, it does not crash
+        return None, {
+            "readable": False, "has_multipliers": False,
+            "note": f"squad unreadable ({type(exc).__name__}); coverage column blank",
+        }
+    if state is None or state.picks is None:
+        return None, {
+            "readable": False, "has_multipliers": False,
+            "note": "no squad visible for your entry yet; coverage column blank",
+        }
+
+    # A pre-deadline squad read carries NO multiplier at all -- the public
+    # picks payload publishes multipliers only once the gameweek locks. That
+    # used to null `mult` for all fifteen, which nulled the EO side of the rank
+    # identity for every row on the page: the tab's headline measure went blank
+    # on exactly the day it is most wanted.
+    #
+    # The multiplier is not guessed here, it is DERIVED from facts the read did
+    # carry, using the scoring rule itself: a benched player scores 0x, a
+    # starter 1x, the captain 2x -- or 3x when the triple-captain chip is
+    # active, which `chips_used` reports for this gameweek. Only the captain
+    # row is ever ambiguous, and only when the chip cannot be read; that one
+    # row is marked rather than the other fourteen being thrown away.
+    #
+    # `mult_source` travels with every row so the UI can say which it is, and
+    # a squad with no roles at all (a manually entered 15 has no armband and no
+    # bench order) still yields mult=None -- derived from nothing is nothing.
+    tc_active = False
+    chip_read = False
+    try:
+        used = getattr(state, "chips_used", None) or ()
+        this_gw = getattr(state, "gw", None)
+        chip_read = True
+        for chip, cgw in used:
+            name = getattr(chip, "value", chip)
+            if str(name) == "3xc" and cgw == this_gw:
+                tc_active = True
+    except Exception:  # noqa: BLE001 -- an unreadable chip is not a crash
+        chip_read = False
+
+    cap_mult = 3 if tc_active else 2
+    roles: dict[int, dict] = {}
+    for p in state.picks:
+        raw = getattr(p, "multiplier", None)
+        mult = None
+        if isinstance(raw, (int, float)) and raw == raw:
+            mult = int(raw)
+        cap = bool(getattr(p, "is_captain", False) or False)
+        starter = getattr(p, "is_starter", None)
+        role = None
+        if cap:
+            role = "captain"
+        elif isinstance(starter, bool):
+            role = "start" if starter else "bench"
+        elif mult is not None:
+            role = "start" if mult >= 1 else "bench"
+
+        src = "read" if mult is not None else None
+        if mult is None and role is not None:
+            mult = {"captain": cap_mult, "start": 1, "bench": 0}[role]
+            src = "derived"
+        roles[int(p.code)] = {"mult": mult, "role": role, "mult_source": src}
+
+    source = getattr(state.provenance, "name", str(state.provenance))
+    gw = getattr(state, "gw", None)
+    cap_code = next((c for c, r in roles.items() if r["role"] == "captain"), None)
+    meta = {
+        "readable": True,
+        "source": str(source),
+        "gw": int(gw) if isinstance(gw, (int, float)) and gw == gw else None,
+        "n": len(roles),
+        "has_multipliers": any(r["mult"] is not None for r in roles.values()),
+        "multipliers_read": any(r["mult_source"] == "read" for r in roles.values()),
+        "multipliers_derived": any(
+            r["mult_source"] == "derived" for r in roles.values()),
+        "captain_multiplier_certain": chip_read,
+        "captain": None,          # filled in by the caller, which knows names
+        "note": f"your squad read via {source}",
+    }
+    meta["_captain_code"] = cap_code
+    return roles, meta

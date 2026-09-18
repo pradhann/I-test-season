@@ -502,7 +502,7 @@ class ContentStore:
         if frame is None or frame.empty or "item_id" not in frame.columns:
             return frame
         try:
-            from fpl_edge.interfaces.creators import (  # noqa: PLC0415
+            from fpl_edge.ingest.content.link_ledger import (  # noqa: PLC0415
                 discarded_item_ids,
             )
             hidden = discarded_item_ids(self.wh)

@@ -263,7 +263,7 @@ def _plant_intel(db, rows):
 def _no_network_squad(monkeypatch):
     """Every test in this module is hermetic, INCLUDING the owner's squad read.
 
-    ``creator_board`` now populates ``mine`` through ``ownership._squad_state``,
+    ``creator_board`` now populates ``mine`` through ``common._squad_state``,
     which is the one read on this page that leaves the warehouse: private API,
     then public picks, then the manually entered 15. Left alone it would reach
     the network from a unit test -- slow, flaky, and dependent on whose machine
@@ -582,14 +582,14 @@ def test_chip_advice_carries_its_own_deep_link(seeded_db):
     f"https://m.youtube.com/shorts/{VIDEO_ID}",
 ])
 def test_every_youtube_url_form_reduces_to_the_same_video_id(url):
-    from fpl_edge.platform.scripts.creators import canonical_key, youtube_id
+    from fpl_edge.ingest.content.urls import canonical_key, youtube_id
 
     assert youtube_id(url) == VIDEO_ID
     assert canonical_key(url, "whatever") == f"yt:{VIDEO_ID}"
 
 
 def test_a_non_youtube_url_keeps_its_identity_and_gets_no_fragment():
-    from fpl_edge.platform.scripts.creators import canonical_key, deep_link
+    from fpl_edge.ingest.content.urls import canonical_key, deep_link
 
     url = "https://example.com/ep/12"
     assert canonical_key(url, "i1") == f"url:{url}"

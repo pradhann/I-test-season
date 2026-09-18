@@ -1151,7 +1151,7 @@ class TestAPreDeadlineSquadStillHasAMultiplier:
 
     @staticmethod
     def _roles(picks, chips=(), gw=2):
-        from fpl_edge.platform.scripts import ownership as own
+        from fpl_edge.platform.scripts import common
 
         class _P:
             def __init__(self, code, cap, starter):
@@ -1176,7 +1176,7 @@ class TestAPreDeadlineSquadStillHasAMultiplier:
         old = qa.QuestionRouter
         qa.QuestionRouter = _R
         try:
-            return own._squad_state(None, "2026-27")
+            return common._squad_state(None, "2026-27")
         finally:
             qa.QuestionRouter = old
 

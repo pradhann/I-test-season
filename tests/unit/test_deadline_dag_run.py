@@ -15,6 +15,7 @@ import pytest
 
 from fpl_edge.interfaces.telegram import FakeTransport, TelegramConfig
 from fpl_edge.jobs import deadline_dag as dag
+from fpl_edge.pipelines import contracts, tasks as dagtasks
 from fpl_edge.jobs import outbox
 from fpl_edge.store import Warehouse
 
@@ -107,7 +108,7 @@ def radar_states(*, fast_delta: int, hours: float = 2.0):
 
 
 def radar_ctx(db_path, now):
-    return dag.TaskContext(
+    return contracts.TaskContext(
         season=SEASON, gw=1, due_utc=now, deadline_utc=GW1, now=now, db_path=db_path
     )
 
@@ -116,7 +117,7 @@ def test_velocity_is_net_transfers_per_hour_and_fires_above_the_threshold(db):
     seed(db, players=[(1, "MOVER"), (2, "STILL")],
          states=radar_states(fast_delta=30_000, hours=2.0))
     now = dt.datetime(2026, 8, 20, 1, 0, tzinfo=UTC)
-    res = dag.price_radar(radar_ctx(db, now))
+    res = dagtasks.price_radar(radar_ctx(db, now))
 
     assert res.outcome == "delivered"
     assert "MOVER" in res.body and "+15,000/h" in res.body
@@ -129,7 +130,7 @@ def test_below_the_threshold_is_quiet_but_still_observed(db):
     seed(db, players=[(1, "MOVER"), (2, "STILL")],
          states=radar_states(fast_delta=1_000, hours=2.0))
     now = dt.datetime(2026, 8, 20, 1, 0, tzinfo=UTC)
-    res = dag.price_radar(radar_ctx(db, now))
+    res = dagtasks.price_radar(radar_ctx(db, now))
 
     assert res.outcome == "quiet"
     assert res.title == ""
@@ -143,11 +144,11 @@ def test_below_the_threshold_is_quiet_but_still_observed(db):
 
 def test_threshold_boundary_is_inclusive(db):
     hours = 2.0
-    exactly = int(dag.VELOCITY_THRESHOLD * hours)
+    exactly = int(dagtasks.VELOCITY_THRESHOLD * hours)
     seed(db, players=[(1, "MOVER"), (2, "STILL")],
          states=radar_states(fast_delta=exactly, hours=hours))
     now = dt.datetime(2026, 8, 20, 1, 0, tzinfo=UTC)
-    assert dag.price_radar(radar_ctx(db, now)).outcome == "delivered"
+    assert dagtasks.price_radar(radar_ctx(db, now)).outcome == "delivered"
 
 
 def test_a_gameweek_counter_reset_is_not_a_price_signal(db):
@@ -164,7 +165,7 @@ def test_a_gameweek_counter_reset_is_not_a_price_signal(db):
         ],
     )
     now = dt.datetime(2026, 8, 20, 1, 0, tzinfo=UTC)
-    res = dag.price_radar(radar_ctx(db, now))
+    res = dagtasks.price_radar(radar_ctx(db, now))
     assert res.outcome == "quiet"
     assert "reset" in res.detail
 
@@ -173,7 +174,7 @@ def test_one_snapshot_is_not_a_velocity(db):
     t0 = dt.datetime(2026, 8, 19, 22, 0, tzinfo=UTC)
     seed(db, players=[(1, "A")], states=[{"code": 1, "ti": 1, "to": 0, "as_of": t0}])
     now = dt.datetime(2026, 8, 20, 1, 0, tzinfo=UTC)
-    res = dag.price_radar(radar_ctx(db, now))
+    res = dagtasks.price_radar(radar_ctx(db, now))
     assert res.outcome == "no_source"
     assert "two player-state snapshots" in res.detail
 
@@ -187,7 +188,7 @@ def test_the_radar_trigger_never_calls_an_llm(db, monkeypatch):
     seed(db, players=[(1, "MOVER"), (2, "STILL")],
          states=radar_states(fast_delta=30_000))
     now = dt.datetime(2026, 8, 20, 1, 0, tzinfo=UTC)
-    assert dag.price_radar(radar_ctx(db, now)).outcome == "delivered"
+    assert dagtasks.price_radar(radar_ctx(db, now)).outcome == "delivered"
 
 
 # -- lineup check: the Pulselive feed ---------------------------------------
@@ -196,8 +197,8 @@ def test_the_radar_trigger_never_calls_an_llm(db, monkeypatch):
 def _stub_ingest(monkeypatch):
     """Keep the T-90m task off the network: the refresh subprocess is stubbed
     and the check reads whatever the warehouse already holds."""
-    step = dag.Step(name="ingest_lineups", ok=True, seconds=0.0, detail="stubbed")
-    monkeypatch.setattr(dag, "_ingest_lineups_step", lambda ctx: step)
+    step = contracts.Step(name="ingest_lineups", ok=True, seconds=0.0, detail="stubbed")
+    monkeypatch.setattr(dagtasks, "_ingest_lineups_step", lambda ctx: step)
 
 
 def _fixture(db, *, fixture_id=1, home=1, away=2):
@@ -228,14 +229,14 @@ def _plan(monkeypatch, tmp_path, *, captain=7, xi=(7,)):
         "gw1": {"captain": captain, "vice_captain": captain,
                 "squad": list(xi), "starting_xi": list(xi)},
     }))
-    monkeypatch.setattr(dag, "PLAN_DIR", tmp_path)
+    monkeypatch.setattr(dagtasks, "PLAN_DIR", tmp_path)
 
 
 def test_lineup_check_without_a_plan_is_an_honest_no_source(db, monkeypatch, tmp_path):
     seed(db, players=[(7, "SKIPPER")])
     _stub_ingest(monkeypatch)
-    monkeypatch.setattr(dag, "PLAN_DIR", tmp_path)  # empty: no plan artefact
-    res = dag.lineup_captain_check(radar_ctx(db, GW1 - dt.timedelta(minutes=90)))
+    monkeypatch.setattr(dagtasks, "PLAN_DIR", tmp_path)  # empty: no plan artefact
+    res = dagtasks.lineup_captain_check(radar_ctx(db, GW1 - dt.timedelta(minutes=90)))
     assert res.outcome == "no_source"
     assert res.delivers is False and "no plan" in res.detail
 
@@ -245,7 +246,7 @@ def test_lineup_check_is_quiet_while_no_teamsheet_is_published(db, monkeypatch, 
     _fixture(db)
     _plan(monkeypatch, tmp_path)
     _stub_ingest(monkeypatch)
-    res = dag.lineup_captain_check(radar_ctx(db, GW1 - dt.timedelta(minutes=90)))
+    res = dagtasks.lineup_captain_check(radar_ctx(db, GW1 - dt.timedelta(minutes=90)))
     assert res.outcome == "quiet"
     assert res.delivers is False
     assert "no teamsheet published yet" in res.detail
@@ -255,7 +256,7 @@ def test_lineup_check_is_quiet_on_a_blank_gameweek(db, monkeypatch, tmp_path):
     seed(db, players=[(7, "SKIPPER")])  # no fixtures at all for this GW
     _plan(monkeypatch, tmp_path)
     _stub_ingest(monkeypatch)
-    res = dag.lineup_captain_check(radar_ctx(db, GW1 - dt.timedelta(minutes=90)))
+    res = dagtasks.lineup_captain_check(radar_ctx(db, GW1 - dt.timedelta(minutes=90)))
     assert res.outcome == "quiet"
     assert "blank" in res.detail
 
@@ -270,7 +271,7 @@ def test_lineup_check_wakes_up_when_the_feed_lands(db, monkeypatch, tmp_path):
     _stub_ingest(monkeypatch)
 
     now = GW1 - dt.timedelta(minutes=90)
-    res = dag.lineup_captain_check(radar_ctx(db, now))
+    res = dagtasks.lineup_captain_check(radar_ctx(db, now))
     assert res.outcome == "delivered" and res.kind == "alert"
     assert "SKIPPER" in res.title and "not starting" in res.title
     assert "BENCH: SKIPPER" in res.body
@@ -289,7 +290,7 @@ def test_lineup_check_reports_the_xi_when_the_captain_is_fine(db, monkeypatch, t
     _fixture(db, fixture_id=2, home=3, away=4)
     _stub_ingest(monkeypatch)
 
-    res = dag.lineup_captain_check(radar_ctx(db, GW1 - dt.timedelta(minutes=90)))
+    res = dagtasks.lineup_captain_check(radar_ctx(db, GW1 - dt.timedelta(minutes=90)))
     assert res.outcome == "delivered" and res.kind == "report"
     assert "SKIPPER starting" in res.title
     assert "ABSENT from the squad: WINGER" in res.body
@@ -306,10 +307,10 @@ def test_a_stale_plan_is_delivered_as_a_stale_plan(db, monkeypatch, tmp_path):
         "gw1": {"captain": 226597, "vice_captain": 226597, "squad": [226597],
                 "starting_xi": [226597], "bench": []},
     }))
-    monkeypatch.setattr(dag, "PLAN_DIR", tmp_path)
+    monkeypatch.setattr(dagtasks, "PLAN_DIR", tmp_path)
 
     now = GW1 - dt.timedelta(hours=4)
-    res = dag.final_solve_delivery(radar_ctx(db, now))
+    res = dagtasks.final_solve_delivery(radar_ctx(db, now))
     assert res.outcome == "delivered"
     assert "no fresh solve" in res.title
     assert "NOT being presented" in res.body
@@ -326,10 +327,10 @@ def test_a_fresh_plan_is_delivered_with_names_not_codes(db, monkeypatch, tmp_pat
                 "squad": [226597, 141746], "starting_xi": [226597, 141746],
                 "bench": [], "chip": "bboost"},
     }))
-    monkeypatch.setattr(dag, "PLAN_DIR", tmp_path)
+    monkeypatch.setattr(dagtasks, "PLAN_DIR", tmp_path)
 
     now = GW1 - dt.timedelta(hours=4)
-    res = dag.final_solve_delivery(radar_ctx(db, now))
+    res = dagtasks.final_solve_delivery(radar_ctx(db, now))
     assert res.outcome == "delivered"
     assert "HAALAND" in res.title
     assert "SALAH" in res.body and "226597" not in res.body
@@ -338,8 +339,8 @@ def test_a_fresh_plan_is_delivered_with_names_not_codes(db, monkeypatch, tmp_pat
 
 def test_no_plan_at_all_says_so_rather_than_inventing_one(db, monkeypatch, tmp_path):
     seed(db, players=[(1, "A")])
-    monkeypatch.setattr(dag, "PLAN_DIR", tmp_path)
-    res = dag.final_solve_delivery(radar_ctx(db, GW1 - dt.timedelta(hours=4)))
+    monkeypatch.setattr(dagtasks, "PLAN_DIR", tmp_path)
+    res = dagtasks.final_solve_delivery(radar_ctx(db, GW1 - dt.timedelta(hours=4)))
     assert res.outcome == "delivered"
     assert "no solve to deliver" in res.title
     assert "Nothing is being guessed" in res.body
@@ -351,7 +352,7 @@ def test_no_plan_at_all_says_so_rather_than_inventing_one(db, monkeypatch, tmp_p
 def test_the_tick_claims_runs_and_records(db, monkeypatch, tmp_path):
     seed(db, players=[(1, "MOVER"), (2, "STILL")],
          states=radar_states(fast_delta=30_000))
-    monkeypatch.setattr(dag, "PLAN_DIR", tmp_path)
+    monkeypatch.setattr(dagtasks, "PLAN_DIR", tmp_path)
     now = dt.datetime(2026, 8, 20, 1, 5, tzinfo=UTC)
 
     report = run_tick(db, now)
@@ -367,7 +368,7 @@ def test_re_running_the_same_tick_delivers_nothing_further(db, monkeypatch, tmp_
     """The idempotency guarantee: identical input, no second message."""
     seed(db, players=[(1, "MOVER"), (2, "STILL")],
          states=radar_states(fast_delta=30_000))
-    monkeypatch.setattr(dag, "PLAN_DIR", tmp_path)
+    monkeypatch.setattr(dagtasks, "PLAN_DIR", tmp_path)
     now = dt.datetime(2026, 8, 20, 1, 5, tzinfo=UTC)
 
     run_tick(db, now)
@@ -386,7 +387,7 @@ def test_re_running_the_same_tick_delivers_nothing_further(db, monkeypatch, tmp_
 def test_a_row_left_running_by_a_crash_is_skipped_not_retried(db, monkeypatch, tmp_path):
     seed(db, players=[(1, "MOVER"), (2, "STILL")],
          states=radar_states(fast_delta=30_000))
-    monkeypatch.setattr(dag, "PLAN_DIR", tmp_path)
+    monkeypatch.setattr(dagtasks, "PLAN_DIR", tmp_path)
     now = dt.datetime(2026, 8, 20, 1, 5, tzinfo=UTC)
     due = dt.datetime(2026, 8, 20, 1, 0, tzinfo=UTC)
 
@@ -407,7 +408,7 @@ def test_a_row_left_running_by_a_crash_is_skipped_not_retried(db, monkeypatch, t
 def test_a_firing_the_machine_slept_through_is_recorded_not_fired(db, monkeypatch, tmp_path):
     seed(db, players=[(1, "MOVER"), (2, "STILL")],
          states=radar_states(fast_delta=30_000))
-    monkeypatch.setattr(dag, "PLAN_DIR", tmp_path)
+    monkeypatch.setattr(dagtasks, "PLAN_DIR", tmp_path)
     # Ten hours after the 01:00Z radar -- past even its own 8h stale window.
     # (Six hours would now DELIVER: per-task windows deliberately give the
     # radar 8h so a sleeping laptop does not discard an idempotent refresh;
@@ -434,7 +435,7 @@ def test_a_firing_the_machine_slept_through_is_recorded_not_fired(db, monkeypatc
 def test_a_stale_skip_is_itself_recorded_only_once(db, monkeypatch, tmp_path):
     seed(db, players=[(1, "MOVER"), (2, "STILL")],
          states=radar_states(fast_delta=30_000))
-    monkeypatch.setattr(dag, "PLAN_DIR", tmp_path)
+    monkeypatch.setattr(dagtasks, "PLAN_DIR", tmp_path)
     now = dt.datetime(2026, 8, 20, 7, 0, tzinfo=UTC)
     run_tick(db, now)
     first = firings(db)
@@ -445,12 +446,12 @@ def test_a_stale_skip_is_itself_recorded_only_once(db, monkeypatch, tmp_path):
 def test_a_task_that_raises_becomes_an_error_row_not_a_dead_process(db, monkeypatch, tmp_path):
     seed(db, players=[(1, "MOVER"), (2, "STILL")],
          states=radar_states(fast_delta=30_000))
-    monkeypatch.setattr(dag, "PLAN_DIR", tmp_path)
+    monkeypatch.setattr(dagtasks, "PLAN_DIR", tmp_path)
 
     def boom(ctx):
         raise RuntimeError("provider exploded")
 
-    monkeypatch.setitem(dag.TASKS, "price_radar", boom)
+    monkeypatch.setitem(dagtasks.TASKS, "price_radar", boom)
     now = dt.datetime(2026, 8, 20, 1, 5, tzinfo=UTC)
 
     report = run_tick(db, now)
@@ -466,7 +467,7 @@ def test_a_task_that_raises_becomes_an_error_row_not_a_dead_process(db, monkeypa
 def test_observations_are_written_by_the_tick_on_a_quiet_run(db, monkeypatch, tmp_path):
     seed(db, players=[(1, "MOVER"), (2, "STILL")],
          states=radar_states(fast_delta=1_000))
-    monkeypatch.setattr(dag, "PLAN_DIR", tmp_path)
+    monkeypatch.setattr(dagtasks, "PLAN_DIR", tmp_path)
     now = dt.datetime(2026, 8, 20, 1, 5, tzinfo=UTC)
 
     run_tick(db, now)
@@ -485,7 +486,7 @@ def test_observations_are_written_by_the_tick_on_a_quiet_run(db, monkeypatch, tm
 
 def test_next_due_is_reported_from_real_deadlines(db, monkeypatch, tmp_path):
     seed(db, players=[(1, "A")], deadlines=[(1, GW1)])
-    monkeypatch.setattr(dag, "PLAN_DIR", tmp_path)
+    monkeypatch.setattr(dagtasks, "PLAN_DIR", tmp_path)
     now = dt.datetime(2026, 8, 20, 6, 15, tzinfo=UTC)
     report = run_tick(db, now)
     got = dict(report.next_due)
@@ -507,7 +508,7 @@ def test_deliver_commits_the_message_and_the_outcome_together(db):
             [SEASON, due, now],
         )
         stmt, params = dag._finish_sql(
-            dag.Due("price_radar", SEASON, 1, due, GW1, False), "delivered", "2 movers"
+            contracts.Due("price_radar", SEASON, 1, due, GW1, False), "delivered", "2 movers"
         )
         outbox.deliver(wh, monitor="price_radar", kind="alert", title="t", body="b",
                        now=now, extra_sql=[(stmt, params)])
@@ -631,6 +632,6 @@ def test_polish_rejects_an_empty_rewrite(monkeypatch, tmp_path):
 
 
 def test_a_missing_projections_cli_is_a_skipped_step_not_a_failed_task():
-    assert dag._module_exists("fpl_edge.jobs.deadline_dag") is True
-    assert dag._module_exists("fpl_edge.ingest.projections.no_such_cli") is False
-    assert dag._module_exists("not_a_package_at_all.cli") is False
+    assert contracts._module_exists("fpl_edge.jobs.deadline_dag") is True
+    assert contracts._module_exists("fpl_edge.ingest.projections.no_such_cli") is False
+    assert contracts._module_exists("not_a_package_at_all.cli") is False

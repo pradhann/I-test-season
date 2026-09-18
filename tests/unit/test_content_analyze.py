@@ -444,7 +444,7 @@ class _IdentityWh:
 
 
 def test_an_exact_api_reported_name_links() -> None:
-    from fpl_edge.interfaces.creators import link_creator_entries
+    from fpl_edge.ingest.content.identity import link_creator_entries
 
     wh = _IdentityWh(
         [{"entry_id": 53517, "player_name": "Ben Crellin",
@@ -459,7 +459,7 @@ def test_an_exact_api_reported_name_links() -> None:
 def test_a_channel_name_that_merely_resembles_a_person_never_links() -> None:
     """"Let's Talk FPL" is Andy's channel. That is a fact about the world,
     not evidence in this warehouse, and the matcher must not supply it."""
-    from fpl_edge.interfaces.creators import link_creator_entries
+    from fpl_edge.ingest.content.identity import link_creator_entries
 
     wh = _IdentityWh(
         [{"entry_id": 41, "player_name": "Andy LTFPL",
@@ -478,7 +478,7 @@ def test_a_curated_but_unverified_name_is_not_evidence() -> None:
     FPL reassigns entry IDs every August, so a pinned third-party name is a
     claim about last season, not an identity.
     """
-    from fpl_edge.interfaces.creators import link_creator_entries
+    from fpl_edge.ingest.content.identity import link_creator_entries
 
     wh = _IdentityWh(
         [{"entry_id": 999, "player_name": "Gianni Buttice",
@@ -491,7 +491,7 @@ def test_a_curated_but_unverified_name_is_not_evidence() -> None:
 
 
 def test_a_name_two_entries_share_is_ambiguous_not_a_coin_flip() -> None:
-    from fpl_edge.interfaces.creators import link_creator_entries
+    from fpl_edge.ingest.content.identity import link_creator_entries
 
     wh = _IdentityWh(
         [{"entry_id": 1, "player_name": "James Smith", "entry_name": "A",

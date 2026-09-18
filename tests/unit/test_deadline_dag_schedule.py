@@ -14,14 +14,12 @@ import pytest
 
 from fpl_edge.jobs.deadline_dag import (
     DEADLINE_OFFSETS,
-    LOOKBACK,
-    NIGHTLY_TASK,
-    STALE_WINDOW,
-    stale_window_for,
     due_tasks,
     next_due,
     nightly_instants,
+    stale_window_for,
 )
+from fpl_edge.pipelines.contracts import LOOKBACK, NIGHTLY_TASK
 
 UTC = dt.timezone.utc
 

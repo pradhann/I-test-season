@@ -134,13 +134,12 @@ def test_a_provenance_row_whose_file_is_gone_is_counted(tmp_path):
 
 
 def test_the_registry_task_reports_deletions_to_the_ledger(tmp_path, monkeypatch):
-    from fpl_edge.jobs import deadline_dag as dag
-    from fpl_edge.pipelines import registry
+    from fpl_edge.pipelines import contracts, registry
 
     db = _db(tmp_path)
     cache = _cache(tmp_path)
     monkeypatch.setattr(asr, "AUDIO_CACHE", cache)
-    ctx = dag.TaskContext(season="2026-27", gw=0, due_utc=NOW,
+    ctx = contracts.TaskContext(season="2026-27", gw=0, due_utc=NOW,
                           deadline_utc=None, now=NOW, db_path=db)
     res = registry.run_audio_retention(ctx)
     assert res.outcome == "quiet"

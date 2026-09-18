@@ -24,7 +24,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import fpl_edge.platform.scripts  # noqa: F401 - registration is the import
-from fpl_edge.jobs import deadline_dag as dag
+from fpl_edge.pipelines import contracts
 from fpl_edge.pipelines import registry, runner
 from fpl_edge.platform.app import create_app
 from fpl_edge.platform.registry import ParamsInvalid, run_script
@@ -192,7 +192,7 @@ def stub_task(run, *, task_id="stub_calendar", **kw):
 def quiet_run(**result_kw):
     def run(ctx):
         print("hello from the trigger")
-        return dag.TaskResult(outcome="quiet", detail="stub ran", **result_kw)
+        return contracts.TaskResult(outcome="quiet", detail="stub ran", **result_kw)
     return run
 
 

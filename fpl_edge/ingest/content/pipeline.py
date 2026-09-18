@@ -1169,7 +1169,7 @@ def cmd_transcribe(args: argparse.Namespace) -> int:
             try:
                 if row.kind == "youtube":
                     from fpl_edge.ingest.content.youtube import is_panel_creator
-                    from fpl_edge.platform.scripts.creators import youtube_id
+                    from fpl_edge.ingest.content.urls import youtube_id
 
                     if not is_panel_creator(str(row.creator)):
                         # --any-creator widens podcast ASR, which is local work
@@ -1526,7 +1526,7 @@ def cmd_link_identities(args: argparse.Namespace) -> int:
     entry. No nickname matching, no channel-name resemblance, no guessed IDs.
     Everything else is written down as unresolved WITH its reason.
     """
-    from fpl_edge.interfaces.creators import link_creator_entries
+    from fpl_edge.ingest.content.identity import link_creator_entries
 
     ddl = """
     CREATE TABLE IF NOT EXISTS creator_entry (

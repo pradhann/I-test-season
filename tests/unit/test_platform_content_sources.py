@@ -5,7 +5,7 @@
     GET  /api/content/sources/{key}/fetch_state   what that fetch got
 
 Nothing here reaches the network: the per-source fetch shells out through
-``deadline_dag.run_step``, which is exactly the seam that gets stubbed.
+``pipelines.contracts.run_step``, which is exactly the seam that gets stubbed.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 
 from fpl_edge.ingest.content import source_state as ss
 from fpl_edge.ingest.content.sources import BY_KEY
-from fpl_edge.jobs import deadline_dag as dag
+from fpl_edge.pipelines import contracts
 from fpl_edge.platform.app import create_app
 from fpl_edge.store.warehouse import Warehouse
 
@@ -131,9 +131,9 @@ def test_a_fetch_runs_the_ingester_for_exactly_one_source(client, monkeypatch):
 
     def fake_step(name, argv, *, timeout=None):
         seen.append(argv)
-        return dag.Step(name=name, ok=True, seconds=2.0, detail="1 item")
+        return contracts.Step(name=name, ok=True, seconds=2.0, detail="1 item")
 
-    monkeypatch.setattr(dag, "run_step", fake_step)
+    monkeypatch.setattr(contracts, "run_step", fake_step)
 
     res = client.post("/api/content/sources/pod_fplwire/fetch",
                       json={"backfill_days": 3})
@@ -153,8 +153,8 @@ def test_a_fetch_runs_the_ingester_for_exactly_one_source(client, monkeypatch):
 
 def test_the_fetch_state_reports_what_the_run_actually_got(client, monkeypatch):
     monkeypatch.setattr(
-        dag, "run_step",
-        lambda name, argv, *, timeout=None: dag.Step(
+        contracts, "run_step",
+        lambda name, argv, *, timeout=None: contracts.Step(
             name=name, ok=True, seconds=4.0, detail="fetched"))
     client.post("/api/content/sources/pod_fplwire/fetch")
     state = _settled(client, "pod_fplwire")
@@ -171,8 +171,8 @@ def test_the_fetch_state_reports_what_the_run_actually_got(client, monkeypatch):
 
 def test_a_failed_fetch_is_reported_as_an_error_not_a_success(client, monkeypatch):
     monkeypatch.setattr(
-        dag, "run_step",
-        lambda name, argv, *, timeout=None: dag.Step(
+        contracts, "run_step",
+        lambda name, argv, *, timeout=None: contracts.Step(
             name=name, ok=False, seconds=1.0, detail="HTTP 503 from the feed"))
     client.post("/api/content/sources/pod_fplwire/fetch")
     state = _settled(client, "pod_fplwire")
@@ -187,10 +187,10 @@ def test_a_failed_fetch_is_reported_as_an_error_not_a_success(client, monkeypatc
 def test_the_backfill_window_is_clamped(client, monkeypatch):
     seen: list[list[str]] = []
     monkeypatch.setattr(
-        dag, "run_step",
+        contracts, "run_step",
         lambda name, argv, *, timeout=None: (
             seen.append(argv),
-            dag.Step(name=name, ok=True, seconds=1.0, detail=""))[1])
+            contracts.Step(name=name, ok=True, seconds=1.0, detail=""))[1])
     client.post("/api/content/sources/pod_fplwire/fetch",
                 json={"backfill_days": 9999})
     _settled(client, "pod_fplwire")

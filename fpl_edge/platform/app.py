@@ -719,7 +719,7 @@ def create_app(db: Path | str = DEFAULT_DB,
         import uuid
 
         from fpl_edge.ingest.content.sources import BY_KEY
-        from fpl_edge.jobs.deadline_dag import run_step
+        from fpl_edge.pipelines.contracts import run_step
 
         source = BY_KEY.get(source_key)
         if source is None:

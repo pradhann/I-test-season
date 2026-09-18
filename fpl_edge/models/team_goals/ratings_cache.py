@@ -68,7 +68,7 @@ UTC = dt.UTC
 #: Written next to the database file, like gw1_projection.parquet.
 ARTEFACT_NAME = "fixture_difficulty.parquet"
 
-#: Matches deadline_dag.SEASON. Only the CLI default; callers pass their own.
+#: Matches pipelines.contracts.SEASON. Only the CLI default; callers pass their own.
 SEASON = "2026-27"
 
 COLUMNS = (

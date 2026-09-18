@@ -35,7 +35,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
 from pathlib import Path
 
-from fpl_edge.jobs.deadline_dag import SEASON, TaskContext, TaskResult
+from fpl_edge.pipelines.contracts import SEASON, TaskContext, TaskResult
 from fpl_edge.pipelines import registry
 from fpl_edge.store import DEFAULT_DB, Warehouse, fetch_ledger
 

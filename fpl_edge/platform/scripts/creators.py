@@ -85,7 +85,6 @@ import json
 import re
 import unicodedata
 from typing import Any
-from urllib.parse import parse_qs, urlparse
 
 from fpl_edge.eval.creator_report_card import (
     BASELINE_KINDS,
@@ -96,6 +95,8 @@ from fpl_edge.eval.creator_report_card import (
     provider_key,
     team_channel,
 )
+from fpl_edge.ingest.content.claims import GameweekCalendar
+from fpl_edge.ingest.content.urls import canonical_key, deep_link
 from fpl_edge.platform.prose_style import normalize_prose
 from fpl_edge.platform.registry import register_script
 from fpl_edge.platform.scripts.common import (
@@ -130,77 +131,6 @@ _CONTENT_TABLES = ("content_source", "content_item", "content_claim")
 # rendered as "not published" while sixteen verified ids sat in the warehouse.
 _PANEL_TABLE = "panel_person"
 _PANEL_SHOW_TABLE = "panel_person_show"
-
-
-# ---------------------------------------------------------------------------
-# URL grammar: canonical identity and deep links.
-
-_YT_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com",
-             "music.youtube.com", "youtu.be", "www.youtu.be"}
-_YT_PATH_PREFIXES = ("/embed/", "/shorts/", "/live/", "/v/")
-_YT_ID = re.compile(r"^[A-Za-z0-9_-]{6,20}$")
-
-
-def youtube_id(url: str | None) -> str | None:
-    """The video id behind any YouTube URL form, or None.
-
-    ``watch?v=X``, ``watch?reload=9&v=X``, ``youtu.be/X?si=...``,
-    ``youtube.com/live/X``, ``/embed/X`` and ``/shorts/X`` are all one video.
-    Both of the real duplicate pairs in the warehouse differ only in query
-    junk, which is exactly the shape a naive URL key fails on.
-    """
-    if not url:
-        return None
-    try:
-        parsed = urlparse(str(url))
-    except ValueError:
-        return None
-    host = (parsed.netloc or "").lower()
-    if host not in _YT_HOSTS:
-        return None
-    if host.endswith("youtu.be"):
-        candidate = parsed.path.lstrip("/").split("/")[0]
-    elif parsed.path == "/watch":
-        candidate = (parse_qs(parsed.query).get("v") or [""])[0]
-    else:
-        candidate = ""
-        for prefix in _YT_PATH_PREFIXES:
-            if parsed.path.startswith(prefix):
-                candidate = parsed.path[len(prefix):].split("/")[0]
-                break
-    return candidate if candidate and _YT_ID.match(candidate) else None
-
-
-def canonical_key(url: str | None, item_id: str) -> str:
-    """One key per underlying publication, not per stored row.
-
-    Falls back to the URL, then to the item id: a source with no URL grammar we
-    understand is still one item, and two of them must not collapse together.
-    """
-    vid = youtube_id(url)
-    if vid:
-        return f"yt:{vid}"
-    return f"url:{url}" if url else f"item:{item_id}"
-
-
-def deep_link(url: str | None, start_s: float | None) -> str | None:
-    """A link that lands on the moment, when the platform has a grammar for it.
-
-    YouTube gets ``&t=NNNs`` against the canonical watch URL. Everything else
-    gets the item URL untouched: podcast ``url`` values here are episode pages,
-    not media files, and inventing a ``#t=`` fragment for a page that ignores it
-    would produce a link that silently lands at the top. ``start_s`` is still
-    reported so the UI can print the offset beside a plain link.
-    """
-    if not url:
-        return None
-    vid = youtube_id(url)
-    if vid is None or start_s is None:
-        return str(url)
-    # Floor, never round. Landing a fraction of a second early replays the
-    # start of the sentence; rounding up can start the viewer after the words
-    # they clicked to hear, which reads as a broken link.
-    return f"https://www.youtube.com/watch?v={vid}&t={max(int(float(start_s)), 0)}s"
 
 
 # ---------------------------------------------------------------------------
@@ -899,44 +829,51 @@ def _deadlines(wh, moment: dt.datetime) -> dict[int, str | None]:
             if _i(r["gw"]) is not None}
 
 
-def _gw_calendar(wh, moment: dt.datetime) -> list[tuple[Any, int]]:
-    """``[(deadline, gw), ...]`` ascending -- the rule the INGESTER already uses.
+def _gw_calendar(wh, moment: dt.datetime) -> GameweekCalendar:
+    """The ingester's own calendar, built from this module's point-in-time read.
 
-    ``ingest/content/claims.py::GwCalendar.next_after`` answers "which gameweek
-    was this published before the deadline of", and it is what stamps
+    ``ingest/content/claims.py::GameweekCalendar.next_after`` answers "which
+    gameweek was this published before the deadline of", and it is what stamps
     ``content_claim.gameweek`` for every call the model did not date itself
     (``gw_inferred = true``, 122 rows in the live warehouse). A ``watch`` call
-    never becomes a claim, so nothing stamps it -- and reading one back needs
-    the SAME rule, or a panel filtered to GW2 would show a dated buy beside an
+    never becomes a claim, so nothing stamps it, and reading one back needs the
+    SAME rule, or a panel filtered to GW2 would show a dated buy beside an
     undated watch from the same video and disagree with itself about which
     gameweek that video was about.
+
+    This module used to carry its own copy of that rule. The copy is gone
+    (ARCHITECTURE_REVIEW.md check 1 and move M4); what is left here is the
+    adapter from ``_events`` to the ingester's class, because the panel's read
+    is bounded by ``as_of <= moment`` and the ingester's is not.
     """
     import pandas as pd
 
-    out: list[tuple[Any, int]] = []
+    rows: list[tuple[str, int, dt.datetime]] = []
     for r in _events(wh, moment).to_dict("records"):
         gw = _i(r["gw"])
         when = pd.to_datetime(r["deadline_utc"], utc=True, errors="coerce")
         if gw is None or pd.isna(when):
             continue
-        out.append((when, gw))
-    out.sort(key=lambda p: p[0])
-    return out
+        rows.append((SEASON_DEFAULT, gw, when.to_pydatetime()))
+    return GameweekCalendar(rows)
 
 
-def _gw_after(calendar: list[tuple[Any, int]], when) -> int | None:
-    """The first gameweek whose deadline is strictly after ``when``. None if none."""
+def _gw_after(calendar: GameweekCalendar, when) -> int | None:
+    """``next_after`` over a value that may be a pandas timestamp or NaT.
+
+    The rule lives in :class:`GameweekCalendar`. This is the coercion its
+    caller owes it: ``published_at`` arrives off a dataframe, so it can be NaT
+    or a naive timestamp, and ``next_after`` compares datetimes.
+    """
     import pandas as pd
 
-    if not calendar or when is None:
+    if when is None:
         return None
     stamp = pd.to_datetime(when, utc=True, errors="coerce")
     if pd.isna(stamp):
         return None
-    for deadline, gw in calendar:
-        if deadline > stamp:
-            return gw
-    return None
+    found = calendar.next_after(stamp.to_pydatetime())
+    return int(found[1]) if found is not None else None
 
 
 def _resolve_gw(wh, gw: int | None, moment: dt.datetime,
@@ -1633,7 +1570,7 @@ def _panel_shows(wh, present) -> tuple[set[str], str | None]:
 def _my_roles(wh, enabled: bool) -> tuple[dict[int, dict] | None, str | None]:
     """The owner's 15 with their multipliers, or (None, why-not).
 
-    Shared with the ownership panel on purpose -- ``_squad_state`` is the one
+    Shared with the ownership panel through ``common`` -- ``_squad_state`` is the one
     place that knows the private-API -> public-picks -> manual ladder and the
     rule for deriving a multiplier from a role when a pre-deadline payload
     carries none. A second implementation here would drift from it, and the
@@ -1642,7 +1579,7 @@ def _my_roles(wh, enabled: bool) -> tuple[dict[int, dict] | None, str | None]:
     if not enabled:
         return None, ("the squad read was disabled by the caller "
                       "(`mine: false`), so no ownership is claimed either way")
-    from fpl_edge.platform.scripts.ownership import _squad_state
+    from fpl_edge.platform.scripts.common import _squad_state
 
     roles, meta = _squad_state(wh, SEASON_DEFAULT)
     if roles is None:

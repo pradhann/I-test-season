@@ -895,3 +895,52 @@ def generate(
         artefact["dropped_panels"] = dropped
     write_artefact(artefact_path(db_path), artefact)
     return artefact
+
+
+# --------------------------------------------------------------------------
+# 7. the `-m` entry point
+#
+# The scheduled task shells out to this rather than calling generate() in
+# process. Eight sibling tasks in pipelines/registry.py already shell out, and
+# this one was the odd one; its in-process import was the single
+# `pipelines -> platform` edge and the whole of cycle C1 loop B
+# (ARCHITECTURE_REVIEW.md check 6). The artefact is the interface: this writes
+# it and prints a one-line summary, and the task reads the numbers back off
+# the file rather than parsing stdout.
+# --------------------------------------------------------------------------
+
+
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+
+    from fpl_edge.store.warehouse import DEFAULT_DB
+
+    parser = argparse.ArgumentParser(
+        description="Run the model-authored salience pass and write "
+                    f"{ARTEFACT_NAME} beside the warehouse.")
+    parser.add_argument("--db", default=str(DEFAULT_DB))
+    parser.add_argument("--season", required=True)
+    parser.add_argument("--now", default=None,
+                        help="ISO instant to run as of; defaults to now")
+    args = parser.parse_args(argv)
+
+    now = None
+    if args.now:
+        now = dt.datetime.fromisoformat(args.now)
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=UTC)
+
+    try:
+        artefact = generate(args.db, season=args.season, now=now)
+    except BriefingIntelError as exc:
+        print(f"briefing_intel failed: {exc}")
+        return 1
+    print(f"kept={len(artefact.get('items') or [])} "
+          f"rejected={int(artefact.get('rejected_n') or 0)} "
+          f"meta_prompt={artefact.get('meta_prompt_hash')} "
+          f"duration_s={artefact.get('duration_s')}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -35,6 +35,7 @@ from fpl_edge.ingest.content.youtube import (
     channel_from_watch,
     creator_for_channel,
 )
+from fpl_edge.ingest.content import link_ledger as ledger
 from fpl_edge.interfaces import creators as ic
 from fpl_edge.platform import link_jobs
 from fpl_edge.platform.app import create_app
@@ -429,9 +430,9 @@ def test_a_discarded_item_is_invisible_to_the_shared_filter(db, hermetic,
 
     wh = Warehouse(db, read_only=True)
     try:
-        assert findings.item_id in ic.discarded_item_ids(wh)
+        assert findings.item_id in ledger.discarded_item_ids(wh)
         items = wh.sql("SELECT item_id FROM content_item")
-        assert ic.drop_discarded(items, wh).empty
+        assert ledger.drop_discarded(items, wh).empty
     finally:
         wh.close()
 

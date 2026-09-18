@@ -232,18 +232,18 @@ def test_the_fast_rss_task_scopes_to_fast_tier_keys_only(tmp_path, monkeypatch):
     import datetime as _dt
 
     from fpl_edge.ingest.content.sources import fast_tier
-    from fpl_edge.jobs import deadline_dag as dag
-    from fpl_edge.pipelines import registry
+    from fpl_edge.jobs import deadline_dag as dag  # noqa: F401
+    from fpl_edge.pipelines import contracts, registry
 
     monkeypatch.setenv("FPL_EDGE_DISABLE_NETWORK_INGEST", "0")
     seen: list[list[str]] = []
 
     def fake_step(name, argv, **kw):
         seen.append(argv)
-        return dag.Step(name=name, ok=True, seconds=0.0)
+        return contracts.Step(name=name, ok=True, seconds=0.0)
 
     monkeypatch.setattr(registry, "run_step", fake_step)
-    ctx = dag.TaskContext(season="2026-27", gw=0, due_utc=NOW,
+    ctx = contracts.TaskContext(season="2026-27", gw=0, due_utc=NOW,
                           deadline_utc=None, now=_dt.datetime.now(_dt.UTC),
                           db_path=tmp_path / "x.duckdb")
     res = registry.run_fast_rss(ctx)
