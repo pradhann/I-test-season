@@ -1,4 +1,4 @@
-"""Settle a finished gameweek's results into ``fact_player_fixture`` — live.
+"""Settle a finished gameweek's results into ``fact_player_fixture`` -- live.
 
 The audit's highest-leverage finding (docs/platform/data_audit.md): the only
 writer of ``fact_player_fixture`` was the vaastav HISTORICAL ingest, so the
@@ -9,17 +9,17 @@ each gameweek first-hand from FPL's own API the morning after it completes.
 
 Sources, both official and free:
 
-* ``event/{gw}/live/`` — per-element stats for the gameweek, including the
+* ``event/{gw}/live/`` -- per-element stats for the gameweek, including the
   official xG/xA/xGC, plus ``explain`` blocks naming the fixture(s) behind
   the points.
-* ``fixtures/?event={gw}`` — kickoff times and the ``finished`` flags.
-* ``event-status/`` — FPL's own word on whether bonus has been added.
+* ``fixtures/?event={gw}`` -- kickoff times and the ``finished`` flags.
+* ``event-status/`` -- FPL's own word on whether bonus has been added.
 
 Honesty rules:
 
 * **The gate is FPL's, not ours.** A gameweek settles only when every fixture
   is ``finished`` AND either every day's ``bonus_added`` is true or the
-  points-finalisation instant (09:00 UK the day after the last kickoff — the
+  points-finalisation instant (09:00 UK the day after the last kickoff -- the
   same verified rule the historical ingest stamps with) has passed. Until
   then the function refuses with the reason; provisional numbers are never
   written as facts.
@@ -31,8 +31,8 @@ Honesty rules:
   The stats FPL publishes only as gameweek totals (bps, xG, xA, xGC, ICT)
   cannot be attributed to a single fixture of a DGW without inventing a
   split, so on multi-fixture gameweeks those columns are NULL and the totals
-  live on whichever analysis sums the gameweek. Single-fixture gameweeks —
-  the overwhelmingly common case — carry every column.
+  live on whichever analysis sums the gameweek. Single-fixture gameweeks --
+  the overwhelmingly common case -- carry every column.
 """
 
 from __future__ import annotations
@@ -235,17 +235,33 @@ def settle_gameweek(
     }
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     """Settle every completed-but-unsettled gameweek of the current season.
 
     Runs from the post-GW job. A gameweek FPL still calls provisional is
     refused (NotFinalError) and reported as pending, not failed -- the next
     run picks it up.
+
+    argv is parsed before anything opens a database. Without a parser this
+    entry point ignored its arguments, so ``python -m fpl_edge.ingest.results
+    --help`` settled the real season against the default warehouse, which is
+    how the suite's entry-point check came to write to the owner's live file.
+    ``--db`` is here for the same reason every other scheduled step has one:
+    the caller says which warehouse the run belongs to.
     """
+    import argparse
     import json as _json
 
+    from fpl_edge.store.warehouse import DEFAULT_DB
+
+    parser = argparse.ArgumentParser(
+        description="Settle finished gameweeks into fact_player_fixture.")
+    parser.add_argument("--db", default=str(DEFAULT_DB),
+                        help="Path to the DuckDB warehouse.")
+    args = parser.parse_args(argv)
+
     season = "2026-27"
-    with Warehouse() as wh:
+    with Warehouse(args.db) as wh:
         now = dt.datetime.now(UTC)
         snap = wh.snapshot_at(now)
         have = set(
