@@ -23,6 +23,8 @@ Scope of the package being replaced: `fpl_mcp/` is 5,835 lines of Python across
 
 ---
 
+> Count note (2026-09-18): the prose in this document said 26 tools; section 3.2's own table names 35 distinct tools (three rows carry several names), and the build followed the table. The server registers 35 and `tests/unit/test_mcp_tool_contract.py` pins the set by name.
+
 ## 1. Inventory
 
 ### 1.1 What the 37 tools do today
@@ -90,7 +92,7 @@ Of the 23 keeps, 5 are write tools (7, 11, 22, 25, 27) and 18 are reads. Of the
 and the transcript half of 35), 2 are duplicated by a pipeline or a panel
 (9, 36), and 2 are covered by `query` or `pipeline_board` (3, 19).
 
-The resulting server registers 26 tools: 18 read adapters, 5 writes, plus
+The resulting server registers 35 tools: 18 read adapters, 5 writes, plus
 `query`, `run_analysis` and `python_viz` carried over unchanged. Section 3 names
 each one.
 
@@ -210,7 +212,7 @@ test imports them without constructing a server.
 
 ### 3.2 Every tool, and what it adapts
 
-26 tools. `panel` names the registered script it runs through `run_script`.
+35 tools. `panel` names the registered script it runs through `run_script`.
 
 | Module | Tool | Panel or store | Replaces |
 |---|---|---|---|
