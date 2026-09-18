@@ -45,8 +45,8 @@ dev = ["pytest>=8.3", "pytest-cov>=5.0", "hypothesis>=6.108", "ruff>=0.6", "mypy
 [project.scripts]
 fpl = "fpl_edge.cli.main:app"
 # The MCP toolbelt. `packages = ["fpl_edge"]` below already covers it, which
-# the old top-level fpl_mcp/ package was not: a non-editable build of this
-# repo shipped the engine with no toolbelt at all.
+# the old top-level package was not: a non-editable build of this repo shipped
+# the engine with no toolbelt at all.
 fpl-mcp = "fpl_edge.mcp.__main__:main"
 
 [tool.pytest.ini_options]

@@ -1,6 +1,6 @@
 """fpl_theme.py must stay importable outside the package.
 
-``fpl_mcp/tools/viz_tools.py:159`` copies this one file into a ``python -I``
+``fpl_edge/mcp/tools/analysis.py`` copies this one file into a ``python -I``
 sandbox and the sandboxed script imports it as a top-level module. Nothing else
 from ``fpl_edge`` is copied, so an ``fpl_edge`` import added to it raises
 ModuleNotFoundError inside the sandbox and every chart stops rendering. The
@@ -39,20 +39,13 @@ def _imported_roots(tree: ast.Module) -> set[str]:
 
 
 def test_the_theme_file_is_where_the_sandbox_copier_looks_for_it():
-    assert THEME.exists(), THEME
-    from fpl_mcp.tools import viz_tools
+    """The one copier, reached by an assembled path rather than an import.
 
-    assert viz_tools._THEME_SRC.resolve() == THEME
-
-
-def test_the_second_copier_looks_in_the_same_place():
-    """The rewritten server copies it too, from its own assembled path.
-
-    ``fpl_edge/mcp/tools/analysis.py`` is the second importer, and it is
-    reached the same way: components joined into a path, so no import graph,
-    grep for the dotted name or coverage report names this file at all. The
-    two must agree, or one surface renders charts and the other does not.
+    There were two while the server was being rewritten. The old toolbelt's
+    copy went with its package, so this assertion now stands alone and is the
+    only thing that would notice the file moving.
     """
+    assert THEME.exists(), THEME
     from fpl_edge.mcp.tools import analysis
 
     assert analysis._THEME_SRC.resolve() == THEME
@@ -67,9 +60,8 @@ def test_the_theme_file_imports_nothing_from_fpl_edge():
     roots = _imported_roots(tree)
     assert "fpl_edge" not in roots, (
         "fpl_theme.py is copied alone into a python -I sandbox by "
-        "fpl_mcp/tools/viz_tools.py:159 and by "
         "fpl_edge/mcp/tools/analysis.py; an fpl_edge import here breaks every "
-        f"chart on both. Imported roots: {sorted(roots)}"
+        f"chart the chat draws. Imported roots: {sorted(roots)}"
     )
 
 

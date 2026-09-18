@@ -27,7 +27,7 @@ Storage layout (append-only, no warehouse writes)::
 
     <root>/<conv_id>/events.jsonl   {seq, ts, type, payload} per line
     <root>/<conv_id>/meta.json      {conv_id, claude_session_id, title, ...}
-    <root>/assets/<id>.png          charts written by the MCP make_chart tool
+    <root>/assets/<id>.png          charts written by the MCP python_viz tool
 """
 
 from __future__ import annotations
@@ -75,60 +75,74 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 #: file and nothing here takes the write lock.
 CHAT_ROOT = _REPO_ROOT / "data" / "warehouse" / "chat"
 
-#: Where the MCP toolbelt lives and the interpreter that runs it. Both are now
-#: in THIS repo: fpl_mcp/ is a sibling of fpl_edge/ and shares its environment,
-#: so the toolbelt cannot drift from the engine it serves. It is spawned as
-#: ``python -m fpl_mcp`` from the repo root -- running the module file by path
-#: would put fpl_mcp/ on sys.path instead of the root, and `import fpl_mcp`
-#: would fail.
+#: Where the MCP toolbelt lives and the interpreter that runs it. The toolbelt
+#: is a subpackage of the engine now, fpl_edge/mcp/, so it shares the engine's
+#: environment, cannot drift from the engine it serves, and ships with any
+#: build of it. It is spawned as ``python -m fpl_edge.mcp`` from the repo root.
 _VENV_PYTHON = _REPO_ROOT / ".venv" / "bin" / "python"
 MCP_PYTHON = str(_VENV_PYTHON if _VENV_PYTHON.exists() else Path(sys.executable))
-MCP_MAIN = _REPO_ROOT / "fpl_mcp" / "__main__.py"
+
+#: The module the toolbelt is started as. Written out rather than derived from
+#: the directory name: that directory is ``mcp``, and ``python -m mcp`` starts
+#: the third-party MCP SDK.
+MCP_MODULE = "fpl_edge.mcp"
+MCP_MAIN = _REPO_ROOT / "fpl_edge" / "mcp" / "__main__.py"
 
 
 def mcp_command(python: str, main: Path) -> list[str]:
     """The argv that starts the toolbelt.
 
     ``main`` names the module file so callers can probe that it exists; what is
-    actually executed is the package, from the repo root.
+    actually executed is :data:`MCP_MODULE`, from the repo root.
     """
-    return [python, "-m", main.parent.name]
+    return [python, "-m", MCP_MODULE]
 
 #: The tools the agent is ALLOWED to want. What it actually gets is this list
 #: intersected with what the MCP server registers at runtime -- a tool the
 #: toolbelt has not shipped yet simply is not offered, and nothing outside
 #: this list (no Bash, no file tools) is ever offered regardless.
+#:
+#: These are the names fpl_edge/mcp/server.py registers. The old toolbelt's
+#: names are gone: nine were renamed or merged when the tools became adapters
+#: over the panels, and ``get_player_history`` sat in this list without ever
+#: having been registered anywhere, advertising a capability in the system
+#: prompt that no tool could serve.
 INTENT_TOOLS: tuple[str, ...] = (
-    "query",
-    "python_viz",
-    "suggest_transfers",
-    "save_analysis",
-    "run_analysis",
+    "brief",
+    "club_form",
+    "creator_consensus",
+    "creator_record",
+    "episode",
+    "episodes",
+    "fixture",
+    "fixtures",
+    "idea_review",
+    "ideas",
     "list_analyses",
+    "manager",
+    "mark_idea_acted",
+    "my_squad",
+    "ownership",
+    "pipeline_log",
+    "pipelines",
+    "player",
+    "player_claims",
+    "player_form",
+    "player_intel",
+    "player_profile",
+    "player_radar",
+    "projections",
+    "python_viz",
+    "query",
+    "run_analysis",
+    "save_analysis",
+    "solve_start",
+    "solve_status",
+    "submit_idea",
+    "transfer_plan",
     "watchlist_add",
     "watchlist_list",
     "watchlist_remove",
-    "get_manager_by_name",
-    "player_projections",
-    "projection_disagreement",
-    "xpts_aggregate",
-    "player_form",
-    "fixture_difficulty",
-    "ownership_eo",
-    "summarise_fpl_youtube",
-    "fetch_youtube_transcript",
-    "submit_idea",
-    "fpl_player_claims",
-    "fpl_creator_consensus",
-    "fpl_creator_track_record",
-    "get_team_picks",
-    "get_manager_history",
-    "get_player_history",
-    "get_team_summary",
-    "get_expert_teams_summary",
-    "get_expert_transfers",
-    "player_dossier",
-    "player_intel",
 )
 
 #: Built-in CLI tools the agent must never use: answers come from the
@@ -162,30 +176,34 @@ CHARTER = (
 #: none of whose tools shipped simply does not appear in the prompt. Argus's
 #: rule: guidance only for capabilities that exist.
 TOOL_FAMILIES: dict[str, tuple[str, tuple[str, ...]]] = {
-    "squad": ("the owner's team, history and league context",
-              ("get_team_picks", "get_team_summary", "get_manager_history",
-               "get_manager_by_name")),
-    "market": ("prices, effective ownership, and what the field is doing",
-               ("ownership_eo", "get_expert_transfers")),
-    "players": ("one player deeply: form, projections, history, intel",
-                ("player_dossier", "player_form", "player_projections",
-                 "projection_disagreement", "xpts_aggregate",
-                 "get_player_history", "player_intel")),
-    "fixtures": ("who plays whom and how hard, split attack/defence",
-                 ("fixture_difficulty",)),
-    "creators": ("what tracked creators said, and their track records",
-                 ("fpl_creator_consensus", "fpl_player_claims",
-                  "fpl_creator_track_record", "summarise_fpl_youtube",
-                  "fetch_youtube_transcript")),
-    "elite": ("what the crawled elite cohort holds and moved",
-              ("get_expert_teams_summary",)),
-    "analysis": ("raw SQL over the point-in-time warehouse, charts, and the "
-                 "transfer solver",
-                 ("query", "python_viz", "suggest_transfers")),
-    "memory": ("watchlist, saved analyses, and the idea inbox",
-               ("watchlist_add", "watchlist_list", "watchlist_remove",
-                "save_analysis", "run_analysis", "list_analyses",
-                "submit_idea")),
+    "squad": (("the owner's own team, the dashboard brief, and any tracked "
+               "manager's standing and record"),
+              ("brief", "manager", "my_squad")),
+    "market": (("effective ownership, the template and the differentials "
+                "across the crawled field"),
+               ("ownership",)),
+    "players": (("one player deeply: form, projections, underlying numbers, "
+                 "percentiles and intel"),
+                ("player", "player_form", "player_intel", "player_profile",
+                 "player_radar", "projections")),
+    "fixtures": (("who plays whom and how hard, split attack/defence, and "
+                  "recent club form"),
+                 ("club_form", "fixture", "fixtures")),
+    "creators": (("what tracked creators said, their measured records, and "
+                  "the stored episodes"),
+                 ("creator_consensus", "creator_record", "episode",
+                  "episodes", "player_claims")),
+    "analysis": (("raw SQL over the point-in-time warehouse, charts, and the "
+                  "transfer solver"),
+                 ("python_viz", "query", "solve_start", "solve_status",
+                  "transfer_plan")),
+    "memory": ("watchlist, saved analyses, and the idea log with its review",
+               ("idea_review", "ideas", "list_analyses", "mark_idea_acted",
+                "run_analysis", "save_analysis", "submit_idea",
+                "watchlist_add", "watchlist_list", "watchlist_remove")),
+    "pipelines": (("whether the data behind an answer is fresh, and what one "
+                   "run actually did"),
+                  ("pipeline_log", "pipelines")),
 }
 
 
@@ -201,7 +219,7 @@ def families_prompt(registered: set[str]) -> str:
 #: Wall-clock budget for one turn. A stuck CLI is killed, the transcript gets
 #: an honest error, and the conversation continues.
 #: A turn dies only when it goes QUIET, not merely long. A real analytical
-#: turn is many minutes of steady tool calls (one suggest_transfers solve is
+#: turn is many minutes of steady tool calls (one solve_start run is
 #: ~200s of silence while the MILP runs, hence the generous idle window); the
 #: wall cap is the backstop against a truly runaway session. The 300s
 #: wall-clock kill this replaces cut down a healthy 20-tool-call analysis
@@ -342,7 +360,7 @@ def list_mcp_tools(python: str = "", main: Path | None = None,
     full intent list -- allowing a tool that does not exist allows nothing.
     """
     try:
-        from fpl_mcp.server import mcp as toolbelt
+        from fpl_edge.mcp.server import mcp as toolbelt
         return [t.name for t in toolbelt._tool_manager.list_tools()]  # noqa: SLF001
     except Exception:  # noqa: BLE001 - enumeration is an optimisation, never a dependency
         return None
@@ -356,7 +374,7 @@ def toolbelt_instance():
     platform startup honest about where the ~1s toolbelt import is spent and
     lets tests build a ChatAgent without the toolbelt present.
     """
-    from fpl_mcp.server import mcp as toolbelt
+    from fpl_edge.mcp.server import mcp as toolbelt
     return toolbelt._mcp_server  # noqa: SLF001 - the documented seam
 
 

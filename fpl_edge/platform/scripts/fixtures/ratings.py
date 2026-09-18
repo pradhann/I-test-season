@@ -307,9 +307,10 @@ class _Ratings:
 # The blended number is the same fit's attack and defence subtracted into one
 # scalar and min-maxed over the league. It is a strict LOSS of information
 # against the split above, which is why the board never colours by it and the
-# schema marks it deprecated. It keeps a writer because two readers still ask
-# for it by name: fixture_board's per-cell `legacy_difficulty`, and the MCP
-# tool fpl_mcp/tools/semantic_tools.py:425.
+# schema marks it deprecated. It keeps a writer because one reader still asks
+# for it by name: fixture_board's per-cell `legacy_difficulty`. The MCP tool
+# that was the second one is gone; the toolbelt reads the board, so it gets the
+# split.
 
 DIFFICULTY_COLUMNS = (
     "season", "gw", "fixture_id", "team_code", "opponent_code", "is_home",

@@ -339,13 +339,25 @@ def test_no_tool_takes_an_entry_id():
 
 
 def test_the_context_is_the_only_place_the_user_singleton_is_read():
-    """One line to change when D2's UserContext lands, not a search."""
-    readers = [
-        path.relative_to(PACKAGE).as_posix()
-        for path in MCP_DIR.rglob("*.py")
-        if "fpl_edge.config" in _all_imports(_tree(path))
-    ]
-    assert readers == ["mcp/context.py"], readers
+    """One seam, and it is the platform's own ``owner_context``.
+
+    The package no longer reads ``fpl_edge.config`` anywhere: who the server
+    answers for comes from ``fpl_edge.platform.users``, which is the one
+    function in the repo that resolves the operator's entry id. Two answers to
+    that question is how an MCP session and an HTTP request end up reading
+    different squads.
+    """
+    seam: list[str] = []
+    config_readers: list[str] = []
+    for path in MCP_DIR.rglob("*.py"):
+        rel = path.relative_to(PACKAGE).as_posix()
+        imports = _all_imports(_tree(path))
+        if "fpl_edge.platform.users" in imports:
+            seam.append(rel)
+        if "fpl_edge.config" in imports:
+            config_readers.append(rel)
+    assert seam == ["mcp/context.py"], seam
+    assert config_readers == [], config_readers
 
 
 # ---------------------------------------------------------------------------

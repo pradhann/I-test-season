@@ -8,6 +8,11 @@ WHOLE toolbelt down, every tool at once. These tests are that outage, pinned:
 the full server module must import, list its tools, and list this one among
 them, with a schema whose params are the plain runtime types the module
 promises.
+
+The tool now returns the provenance envelope rather than a markdown string, so
+the end-to-end pair below reads the gap object and the payload's own fields
+instead of matching prose. The wording of a reason is the panel's to change;
+whether a gap is reported at all is not.
 """
 
 from __future__ import annotations
@@ -16,7 +21,7 @@ import asyncio
 
 
 def test_the_server_imports_and_lists_tools_with_player_profile_present():
-    from fpl_mcp.server import mcp  # the import IS the registration
+    from fpl_edge.mcp.server import mcp  # the import IS the registration
 
     tools = asyncio.run(mcp.list_tools())
     names = {t.name for t in tools}
@@ -25,11 +30,11 @@ def test_the_server_imports_and_lists_tools_with_player_profile_present():
         "InvalidSignature instead, an annotation broke the ENTIRE toolbelt"
     )
     # sanity: registration of this tool must not have eaten anyone else
-    assert {"query", "player_dossier"} <= names
+    assert {"query", "player"} <= names
 
 
 def test_the_tool_schema_carries_plain_runtime_params():
-    from fpl_mcp.server import mcp
+    from fpl_edge.mcp.server import mcp
 
     tool = next(t for t in asyncio.run(mcp.list_tools())
                 if t.name == "player_profile")
@@ -92,21 +97,36 @@ def _seed(tmp_path, *, with_profile):
 
 
 def test_an_absent_profile_reports_the_gap_when_told_not_to_fetch(tmp_path, monkeypatch):
+    """A gap object, not an empty payload, and no fetch behind the caller's back."""
     monkeypatch.setenv("FPL_EDGE_DB", str(_seed(tmp_path, with_profile=False)))
-    from fpl_mcp.tools.profile_tools import player_profile
+    from fpl_edge.mcp.tools.dossier import player_profile
 
     out = player_profile("Haaland", fetch_if_missing=False)
-    assert "No Understat data" in out
-    assert "fetch" in out.lower()
-    assert "/api/players/223094/fetch_profile" in out
+    assert out["ok"] is True
+    gap = out["gap"]
+    assert gap is not None, "an absent profile must be a gap, never a blank card"
+    assert "No Understat data" in gap["reason"]
+    assert "/api/players/223094/fetch_profile" in gap["reason"]
+    assert "Do not substitute" in gap["say"]
+    assert out["result"]["empty"] is True
 
 
 def test_a_cached_profile_renders_with_asof_and_the_model_disclaimer(tmp_path, monkeypatch):
+    """The stored season comes back with its instant and its own label.
+
+    ``note`` is the disclaimer the payload carries so the surface repeats it
+    verbatim: Understat's shot model is not FPL points, and the finishing gap
+    is variance until it is not.
+    """
     monkeypatch.setenv("FPL_EDGE_DB", str(_seed(tmp_path, with_profile=True)))
-    from fpl_mcp.tools.profile_tools import player_profile
+    from fpl_edge.mcp.tools.dossier import player_profile
 
     out = player_profile("Haaland", fetch_if_missing=False)
-    assert "as-of 2026-08-31" in out
-    assert "not FPL points" in out
-    assert "Finishing" in out and "luck" in out
-    assert "Crystal Palace" in out
+    assert out["gap"] is None
+    result = out["result"]
+    assert result["as_of"].startswith("2026-08-31")
+    assert "not FPL points" in result["note"]
+    assert "luck" in result["finishing"]["label"]
+    assert result["finishing"]["goals_minus_xg"] == 1.31
+    assert result["matches"][0]["opponent"] == "Crystal Palace"
+    assert "fetched" not in out, "fetch_if_missing=False must not reach the network"
