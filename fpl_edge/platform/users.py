@@ -21,11 +21,10 @@ Three rules hold the split together.
    :data:`PRIVATE_GAP` from the panels that need it, which is a named gap, not
    an error and never the owner's data.
 
-Identity arrives through one seam. :func:`resolve_identity` returns ``None``
-today, so every request is the owner and the server behaves as it does now.
-Agent E2 fills that function in from the session cookie and returns an
-:class:`Identity`; nothing else in this module moves, and no other module
-builds a user path or decides who a request is.
+Identity arrives through one seam. :func:`resolve_identity` reads the session
+cookie through ``fpl_edge.platform.auth`` and returns an :class:`Identity`, or
+``None`` when the deployment answers an unauthenticated request as the
+operator. No other module builds a user path or decides who a request is.
 """
 
 from __future__ import annotations
@@ -130,8 +129,9 @@ class UserContext:
     hand in a directory without reaching for the environment.
 
     The context holds no secret. ``token_env_path`` names a file the owner's
-    token manager reads, and ``anthropic_key`` is declared for workstream E
-    and returns ``None`` here, so nothing a repr could print is a credential.
+    token manager reads, and ``anthropic_key`` is a method that decrypts on
+    demand and returns an object whose repr is four characters, so nothing a
+    repr of this dataclass could print is a credential.
     """
 
     user_id: str
@@ -205,14 +205,33 @@ class UserContext:
             )
         return ENV_PATH
 
-    def anthropic_key(self) -> str | None:
-        """The per-user model key. Declared here, written by workstream E.
+    def anthropic_key(self):
+        """This manager's own model key, decrypted now, or None.
 
-        Returns None today, which is what the chat and the briefing already
-        assume: they run through the operator's Claude CLI login with
-        ``ANTHROPIC_*`` scrubbed from the subprocess environment.
+        Called at the point of use, inside the turn that is about to spend
+        tokens, never when the context is built. A request that calls no model
+        never decrypts a key, so the value spends less time in process memory
+        and fewer code paths can log it.
+
+        None has two meanings and both are correct. For the owner it means
+        run on the operator's own Claude CLI login, which is what the engine
+        does today and what the briefing task and the content pipeline keep
+        doing. For anybody else it means no key is stored, and the route that
+        needed one has already refused the request with
+        ``fpl_edge.platform.auth.keys.NO_KEY_DETAIL``.
+
+        The return is a ``keys.UserKey``, whose ``repr`` prints the last four
+        characters only, so an f-string of it in a log line is safe by
+        construction rather than by review.
         """
-        return None
+        from fpl_edge.platform.auth import keys as auth_keys
+
+        try:
+            return auth_keys.load(self.user_id)
+        except auth_keys.KeyUnreadable:
+            raise
+        except Exception:  # noqa: BLE001 - no store yet is "no key", not a 500
+            return None
 
     def to_dict(self) -> dict[str, Any]:
         """The context as a log line. No path, no secret, no display name."""
@@ -349,14 +368,34 @@ def write_profile(ctx: UserContext, *, entry_id: int,
     return profile
 
 
-def resolve_identity(request: Request) -> Identity | None:
-    """Who this request is, or None for no session. Workstream E fills this in.
+#: The user id an unauthenticated visitor is given when the deployment does
+#: not answer anonymous requests as the operator. Its directory holds nothing
+#: private: the public panels read league-wide data and one published entry.
+PUBLIC_USER_ID = "public"
 
-    Returning None here is the whole of D2's identity story: every request is
-    the owner, exactly as the server behaves today, and the private FPL path
-    stays reachable only from the CLI and the loopback-guarded account routes.
-    E2 replaces the body with the session-cookie read and returns an
-    :class:`Identity` whose ``user_id`` is the mapped Google subject.
+
+def resolve_identity(request: Request) -> Identity | None:
+    """Who this request is, or None when it is the owner.
+
+    Three answers, and the order is the whole of the rule.
+
+    1. **A valid session cookie.** The signed cookie names a row in the auth
+       database, and that row's ``is_operator`` column decides between the
+       reserved owner id and the manager's own directory. The operator's
+       Google account and the owner's files are the same person by
+       construction, so there is one definition of what the operator can do.
+    2. **No session, and the deployment answers anonymous requests as the
+       operator.** That is ``FPL_EDGE_ANON_IS_OWNER=1``, and it is the default
+       while no Google client is configured, because a deployment nobody can
+       sign in to has no other workable answer. This returns None, which is
+       what makes the owner's Mac, the CLI, every job and the whole test suite
+       behave exactly as they do today.
+    3. **No session, and sign-in exists.** A public visitor: their own
+       directory, no private FPL read, and the published entry from
+       ``PUBLIC_ENTRY_ID`` so the shared panels have a team to describe. The
+       entry id comes from the deployment and never from the request, which is
+       what keeps the public view one published team rather than a facility
+       for reading any team.
 
     A header that selects a user was considered and rejected. A request header
     that picks an identity is an authentication bypass whether or not a flag
@@ -364,7 +403,27 @@ def resolve_identity(request: Request) -> Identity | None:
     user through ``app.dependency_overrides[current_user]``, which is
     FastAPI's own mechanism and ships no back door.
     """
-    return None
+    from fpl_edge.platform.auth import settings as auth_settings
+    from fpl_edge.platform.auth import sessions as auth_sessions
+
+    session = getattr(getattr(request, "state", None), "auth_session", None)
+    if session is None and request is not None:
+        # A route reached without the application dependency, or a caller
+        # that built a request by hand. Reading the cookie here costs one
+        # SQLite open and keeps this function's answer independent of wiring.
+        session = auth_sessions.session_for_request(request)
+    if session is not None:
+        user = session.user
+        return Identity(
+            user_id=auth_sessions.user_id_for(user.sub,
+                                              is_operator=user.is_operator),
+            entry_id=user.entry_id,
+            display_name=user.email,
+        )
+    if auth_settings.anon_is_owner():
+        return None
+    return Identity(user_id=PUBLIC_USER_ID,
+                    entry_id=auth_settings.public_entry_id() or owner_entry_id())
 
 
 def current_user(request: Request = None) -> UserContext:

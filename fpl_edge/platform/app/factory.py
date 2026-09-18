@@ -93,9 +93,15 @@ def create_app(db: Path | str = DEFAULT_DB,
     app = FastAPI(
         title="i-test platform",
         version="1.0",
-        description="Single-operator FPL decision platform. Panels, one guarded "
+        description="Multi-user FPL decision platform. Panels, one guarded "
                     "query path, inbox, chat.",
         lifespan=_lifespan_for(db_path),
+        # The three generated schema routes name every operator route, so
+        # they are re-added by install_auth behind the operator tier rather
+        # than served here where no dependency reaches them.
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
     )
     # Exposed for tests, which point the agent at a fake CLI script; the
     # chat router closes over the same object.
@@ -103,6 +109,15 @@ def create_app(db: Path | str = DEFAULT_DB,
     # Set at build time, not in the lifespan: /api/health and the tests read it
     # on apps that were never entered as a context manager.
     app.state.scheduler = None
+
+    # Sign-in, sessions, the per-user key routes, and the one dependency that
+    # applies docs/platform/AUTH.md's access matrix to every route below.
+    # Installed first so the dependency is on app.router before any router is
+    # included: FastAPI copies the parent's dependency list into each include,
+    # and a dependency appended afterwards would not reach them.
+    from fpl_edge.platform.auth.routes import install_auth
+
+    install_auth(app)
 
     deps = Deps(app=app, db_path=db_path, chat_agent=chat_agent)
     app.include_router(_core_router(deps))

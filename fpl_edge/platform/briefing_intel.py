@@ -461,10 +461,27 @@ def _run_model(prompt: str, *, timeout_s: float = MODEL_TIMEOUT_S) -> ModelAnswe
     """One query() against the Max-plan CLI via claude-agent-sdk.
 
     Same auth posture as chat_agent.py: no API key here, environment
-    scrubbed, ``tools=[]`` (every built-in disabled), no MCP servers — this
+    scrubbed, ``tools=[]`` (every built-in disabled), no MCP servers, so this
     is pure synthesis over the provided JSON. Returns the final assistant
     text with the reported spend beside it; raises
     :class:`BriefingIntelError` on anything else.
+
+    THE OWNER'S CREDENTIAL, AND ONLY THE OWNER'S. This function is not a
+    request path. It runs from the ``briefing_intel`` task in
+    ``fpl_edge/pipelines/registry.py``, which shells out to
+    ``python -m fpl_edge.platform.briefing_intel`` on a schedule with no user
+    and no session, and from the operator-tier ``POST /api/pipelines/
+    {task_id}/run``. There is nobody to read a key from, so it stays on the
+    operator's own Claude CLI login with ``ANTHROPIC_*`` scrubbed, exactly as
+    it runs today.
+
+    Two consequences, both enforced by the per-user key suite. This
+    module imports nothing from the per-user key store in
+    fpl_edge/platform/auth/, so a future
+    edit that reaches for a manager's key fails the suite rather than the
+    review. And the artefact it writes is per-user through
+    :func:`artefact_path`, so a second manager reads their own file or an
+    empty state, never the owner's.
     """
     try:
         from claude_agent_sdk import (

@@ -14,15 +14,32 @@ same bug is visible as a 2.3 MB schema-only file appearing in the repo root. The
 guard stats the path, never opens it, so it cannot become the thing it is
 watching for, and it is satisfied by a read-only audit read, which changes
 neither size nor mtime.
+
+The third and fourth guards are about identity. ``fpl_edge.config.secret``
+reads the environment first and the repo's ``.env`` second, and the owner sets
+Google sign-in up in that file for local development (DEPLOYMENT.md 13.7).
+Without ``FPL_EDGE_ANON_IS_OWNER`` pinned here, the suite's answer to "who is
+this request" would depend on whether the developer had configured sign-in,
+and every test that builds an app would start answering 401 on the machine
+where they had. ``AUTH_DB`` is pinned to a temp path for the same reason the
+warehouse is watched: a test that stored a session or a key would otherwise
+leave a SQLite file in the repo tree. Tests that exercise sign-in set both
+themselves with ``monkeypatch.setenv``.
 """
 
 import os
+import tempfile
 import warnings
 from pathlib import Path
 
 import pytest
 
 os.environ.setdefault("FPL_EDGE_DISABLE_PRIVATE", "1")
+os.environ.setdefault("FPL_EDGE_ANON_IS_OWNER", "1")
+os.environ.setdefault(
+    "AUTH_DB",
+    str(Path(tempfile.mkdtemp(prefix="fpl-edge-auth-test-")) / "auth.sqlite3"),
+)
 
 #: The default warehouse path, relative exactly as the production code resolves
 #: it (``fpl_edge.store.warehouse.DEFAULT_DB``). Named literally rather than

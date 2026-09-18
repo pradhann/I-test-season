@@ -7,15 +7,29 @@
    browser session can mint one. This view cannot remove that step. It makes
    everything after it one paste.
 
-   DATA PATH. Five routes, all loopback-only, none of which ever returns a
-   token value:
-     GET  /api/account/status
-     POST /api/account/connect   {cookie}
-     POST /api/account/verify
-     GET  /api/account/entry
-     POST /api/account/entry     {entry_id}
+   DATA PATH. Nine routes, none of which ever returns a credential value:
+     GET    /api/me
+     GET    /api/account/status
+     POST   /api/account/connect   {cookie}
+     POST   /api/account/verify
+     GET    /api/account/entry
+     POST   /api/account/entry     {entry_id}
+     GET    /api/account/key
+     PUT    /api/account/key       {key}
+     DELETE /api/account/key
    The connect route runs the exact code `fpl myteam auth --paste-cookie`
    runs, so success and failure read the same here and in the terminal.
+
+   THREE CREDENTIALS, THREE DIFFERENT THINGS, and the card keeps them apart
+   because conflating them is how somebody ends up pasting the wrong one.
+   Google sign-in says who you are. The FPL paste lets the server read your
+   squad before the deadline. The Anthropic key pays for your own chat turns
+   and is billed on your own account at console.anthropic.com.
+
+   CSRF. Every state changing request carries the `itest_csrf` cookie back in
+   an X-CSRF-Token header, which the server compares against the digest on
+   the session row. `sendJSON` below is this view's one sender. The rest of
+   the app sends through app.js, which needs the same header.
 
    The team id comes first on the card because it is what every panel reads,
    and because the server checks it against the public entry endpoint before
@@ -28,7 +42,7 @@
    credential and the page has no business holding it once the server has
    answered. */
 
-import { getJSON, postJSON, el, errBox, provenance, agePhrase,
+import { getJSON, el, errBox, provenance, agePhrase,
          absInstant } from "/js/app.js";
 
 const STEPS = [
@@ -129,6 +143,161 @@ export function renderEntryResult(host, out) {
   const bad = el("div", "acct-result bad");
   bad.setAttribute("role", "alert");
   bad.appendChild(el("b", null, "Team id not saved"));
+  bad.appendChild(el("p", "acct-msg", out.detail || "The save did not complete."));
+  host.appendChild(bad);
+}
+
+/* ------------------------------------------------------------ csrf sender */
+
+/* The double-submit token. The cookie is readable by the page on purpose:
+   the server holds its digest and compares what the header echoes back, so a
+   cross-site POST, which cannot read this origin's cookies, has nothing to
+   send. An anonymous caller has no session to ride on and needs no token. */
+export function csrfToken(cookieText) {
+  const raw = cookieText === undefined ? document.cookie : cookieText;
+  for (const part of String(raw || "").split(";")) {
+    const [k, ...rest] = part.trim().split("=");
+    if (k === "itest_csrf") return decodeURIComponent(rest.join("="));
+  }
+  return "";
+}
+
+/* One sender for this view's writes. PUT and DELETE have no helper in app.js
+   and every method here needs the header, so the fetch is local. */
+async function sendJSON(path, { method = "POST", body } = {}) {
+  const headers = { "Content-Type": "application/json" };
+  const token = csrfToken();
+  if (token) headers["X-CSRF-Token"] = token;
+  const init = { method, headers };
+  if (body !== undefined) init.body = JSON.stringify(body);
+  const r = await fetch(path, init);
+  if (!r.ok) throw new Error(`${path}: HTTP ${r.status} ${await r.text()}`);
+  if (r.status === 204) return {};
+  return r.json();
+}
+
+/* ------------------------------------------------------------- who you are */
+
+/* What the server says went wrong on the way back from Google. The classes
+   come from fpl_edge/platform/auth/oauth.py and the sentences are the ones
+   that module defines, so the page invents no wording of its own. */
+const AUTH_ERROR = {
+  handshake_expired: "The sign-in took longer than ten minutes, so it was "
+    + "started over. Press Sign in with Google again.",
+  consent_declined: "Google sign-in was cancelled, so nothing was signed in.",
+  provider_error: "Google returned an error instead of a sign-in. Try again, "
+    + "and if it repeats, check that the redirect URI in the Google Console "
+    + "matches this address exactly.",
+  state_mismatch: "The sign-in did not come back to the tab that started it. "
+    + "Press Sign in with Google again in this tab.",
+  token_invalid: "Google's answer did not verify, so no account was signed "
+    + "in. Try again.",
+  not_configured: "Google sign-in is not configured on this deployment. "
+    + "DEPLOYMENT.md section 13.7 lists the owner's steps.",
+};
+
+export function authErrorFrom(search) {
+  const value = new URLSearchParams(String(search || "")).get("auth_error");
+  if (!value) return "";
+  return AUTH_ERROR[value] || "The sign-in did not complete.";
+}
+
+/* GET /api/me, rendered. Signed out with no client configured says so rather
+   than drawing a button that cannot work. */
+export function renderIdentity(host, me, onSignOut) {
+  host.textContent = "";
+  const box = el("div", "acct-status");
+  const head = el("div", "acct-status-head");
+  const dot = el("span", "acct-dot " + (me.signed_in ? "on" : "off"));
+  dot.setAttribute("aria-hidden", "true");
+  head.appendChild(dot);
+
+  if (me.signed_in) {
+    head.appendChild(el("b", null, `Signed in as ${me.email}`));
+    box.appendChild(head);
+    box.appendChild(el("div", "acct-line",
+      me.is_operator
+        ? "This account is the operator, so the pipelines, the query path "
+          + "and the inbox are reachable from here."
+        : "Your plan, your chat and your team id are your own. The shared "
+          + "panels read league-wide data."));
+    const out = el("button", null, "Sign out");
+    out.type = "button";
+    out.onclick = onSignOut;
+    const row = el("div", "acct-actions");
+    row.appendChild(out);
+    box.appendChild(row);
+    host.appendChild(box);
+    return;
+  }
+
+  if (me.anon_is_owner) {
+    head.appendChild(el("b", null, "Running as the owner"));
+    box.appendChild(head);
+    box.appendChild(el("div", "acct-line",
+      "This deployment answers unauthenticated requests as the operator, "
+      + "which is how the server runs on the owner's own machine. Sign-in is "
+      + "not needed here."));
+    host.appendChild(box);
+    return;
+  }
+
+  head.appendChild(el("b", null, "Not signed in"));
+  box.appendChild(head);
+  if (!me.sign_in_available) {
+    box.appendChild(el("div", "acct-line", AUTH_ERROR.not_configured));
+    host.appendChild(box);
+    return;
+  }
+  box.appendChild(el("div", "acct-line",
+    "Sign in to keep your own team id, your own plan and your own chat. "
+    + "Google gives this server your address and a stable id, and nothing "
+    + "else."));
+  const link = el("a", "primary acct-signin", "Sign in with Google");
+  link.href = "/auth/google/start?next=" + encodeURIComponent("/#account");
+  const row = el("div", "acct-actions");
+  row.appendChild(link);
+  box.appendChild(row);
+  host.appendChild(box);
+}
+
+/* ----------------------------------------------------------- anthropic key */
+
+/* GET /api/account/key, rendered. The server returns `set` and the last four
+   characters and never the key, so this is everything there is to show. */
+export function renderKeyState(host, info) {
+  host.textContent = "";
+  const box = el("div", "acct-entry-state");
+  const line = el("div", "acct-line");
+  if (info.set) {
+    line.append(el("span", "acct-k", "key stored, ending "),
+                el("b", null, String(info.last4 || "")));
+    box.appendChild(line);
+    box.appendChild(el("div", "sub",
+      "Saving again replaces it. Removing it here stops this server using "
+      + "it and does not revoke it at Anthropic, which is a separate step on "
+      + "console.anthropic.com."));
+  } else {
+    line.append("No key stored. Chat answers 403 until one is saved.");
+    box.appendChild(line);
+  }
+  host.appendChild(box);
+}
+
+export function renderKeyResult(host, out) {
+  host.textContent = "";
+  if (!out) return;
+  if (out.ok) {
+    const ok = el("div", "acct-result ok");
+    ok.setAttribute("role", "status");
+    ok.appendChild(el("b", null, out.title || "Saved"));
+    if (out.note) ok.appendChild(el("div", "sub", out.note));
+    host.appendChild(ok);
+    return;
+  }
+  const bad = el("div", "acct-result bad");
+  bad.setAttribute("role", "alert");
+  bad.appendChild(el("b", null, "Key not saved"));
   bad.appendChild(el("p", "acct-msg", out.detail || "The save did not complete."));
   host.appendChild(bad);
 }
@@ -290,6 +459,13 @@ export default async function account(host) {
     "One paste, then the panels read your real squad, bank and chips before "
     + "the deadline instead of last week's public picks."));
 
+  /* Who you are comes first: every other control on this card acts on the
+     account named here, and a manager who reads the FPL paste box without
+     knowing which account it lands in has been told the wrong thing. */
+  const idHost = el("div", "acct-id-host");
+  idHost.setAttribute("aria-live", "polite");
+  card.appendChild(idHost);
+
   const statusHost = el("div", "acct-status-host");
   statusHost.setAttribute("aria-live", "polite");
   card.appendChild(statusHost);
@@ -320,6 +496,44 @@ export default async function account(host) {
   const entryResultHost = el("div", "acct-entry-result");
   entryBlock.appendChild(entryResultHost);
   card.appendChild(entryBlock);
+
+  /* The Anthropic key. Its own block, above the FPL paste, because the two
+     credentials are unrelated and the FPL one is the longer job. */
+  const keyBlock = el("div", "acct-entry");
+  keyBlock.appendChild(el("h3", null, "Your Anthropic API key"));
+  keyBlock.appendChild(el("div", "sub",
+    "Chat and any model call you trigger run on your own key and are billed "
+    + "to your own Anthropic account. Create one at console.anthropic.com, "
+    + "paste it here, and revoke it there whenever you want."));
+  const keyHost = el("div", "acct-key-host");
+  keyHost.setAttribute("aria-live", "polite");
+  keyBlock.appendChild(keyHost);
+  const keyForm = el("form", "acct-form");
+  keyForm.setAttribute("autocomplete", "off");
+  const keyLabel = el("label", "acct-label", "API key");
+  keyLabel.htmlFor = "acct-key";
+  const keyInput = el("input", "acct-entry-input");
+  keyInput.id = "acct-key";
+  keyInput.type = "password";
+  keyInput.autocomplete = "off";
+  keyInput.spellcheck = false;
+  keyInput.placeholder = "sk-ant-...";
+  keyInput.setAttribute("aria-describedby", "acct-key-help");
+  const keyHelp = el("div", "sub",
+    "Stored encrypted on the server and never shown again. The page clears "
+    + "the box as soon as it is sent.");
+  keyHelp.id = "acct-key-help";
+  const keySave = el("button", "primary", "Save key");
+  keySave.type = "submit";
+  const keyRemove = el("button", null, "Remove key");
+  keyRemove.type = "button";
+  const keyRow = el("div", "acct-actions");
+  keyRow.append(keySave, keyRemove);
+  keyForm.append(keyLabel, keyInput, keyHelp, keyRow);
+  keyBlock.appendChild(keyForm);
+  const keyResultHost = el("div", "acct-key-result");
+  keyBlock.appendChild(keyResultHost);
+  card.appendChild(keyBlock);
 
   const why = el("p", "acct-why");
   card.appendChild(why);
@@ -390,6 +604,100 @@ export default async function account(host) {
     }));
   }
 
+  async function refreshIdentity() {
+    try {
+      const me = await getJSON("/api/me");
+      renderIdentity(idHost, me, signOut);
+      const failed = authErrorFrom(location.search);
+      if (failed) {
+        const bad = el("div", "acct-result bad");
+        bad.setAttribute("role", "alert");
+        bad.appendChild(el("b", null, "Sign-in did not complete"));
+        bad.appendChild(el("p", "acct-msg", failed));
+        idHost.appendChild(bad);
+      }
+      /* The key block is only actionable for a caller the server will store a
+         key for, which is anyone it answers as a person. */
+      keyBlock.hidden = !(me.signed_in || me.anon_is_owner);
+      return me;
+    } catch (e) {
+      idHost.textContent = "";
+      idHost.appendChild(errBox(e));
+      return null;
+    }
+  }
+
+  async function signOut() {
+    try {
+      await sendJSON("/auth/logout");
+    } catch (e) {
+      idHost.appendChild(errBox(e));
+      return;
+    }
+    location.reload();
+  }
+
+  async function refreshKey() {
+    if (keyBlock.hidden) return null;
+    try {
+      const info = await getJSON("/api/account/key");
+      renderKeyState(keyHost, info);
+      return info;
+    } catch (e) {
+      keyHost.textContent = "";
+      keyHost.appendChild(errBox(e));
+      return null;
+    }
+  }
+
+  keyForm.onsubmit = async (ev) => {
+    ev.preventDefault();
+    const typed = keyInput.value.trim();
+    keyInput.value = "";              // cleared whether or not it succeeds
+    keySave.disabled = true;
+    keySave.textContent = "Saving...";
+    try {
+      const out = await sendJSON("/api/account/key",
+                                 { method: "PUT", body: { key: typed } });
+      renderKeyResult(keyResultHost, {
+        ok: true,
+        title: `Key saved, ending ${out.last4}`,
+        note: "Chat uses it from your next message.",
+      });
+      await refreshKey();
+    } catch (e) {
+      const detail = serverDetail(e);
+      renderKeyResult(keyResultHost, { ok: false, detail });
+      if (!detail) {
+        keyResultHost.textContent = "";
+        keyResultHost.appendChild(errBox(e));
+      }
+    } finally {
+      keySave.disabled = false;
+      keySave.textContent = "Save key";
+      keyInput.value = "";
+    }
+  };
+
+  keyRemove.onclick = async () => {
+    keyRemove.disabled = true;
+    try {
+      await sendJSON("/api/account/key", { method: "DELETE" });
+      renderKeyResult(keyResultHost, {
+        ok: true,
+        title: "Key removed",
+        note: "Revoke it at console.anthropic.com as well if it has been "
+          + "copied anywhere else.",
+      });
+      await refreshKey();
+    } catch (e) {
+      keyResultHost.textContent = "";
+      keyResultHost.appendChild(errBox(e));
+    } finally {
+      keyRemove.disabled = false;
+    }
+  };
+
   async function refreshEntry() {
     try {
       const info = await getJSON("/api/account/entry");
@@ -410,7 +718,8 @@ export default async function account(host) {
     entrySave.disabled = true;
     entrySave.textContent = "Checking...";
     try {
-      const out = await postJSON("/api/account/entry", { entry_id: typed });
+      const out = await sendJSON("/api/account/entry",
+                                 { body: { entry_id: typed } });
       renderEntryResult(entryResultHost, out);
       await refreshEntry();
       await refresh();
@@ -467,7 +776,7 @@ export default async function account(host) {
     }
     busy(true);
     try {
-      const out = await postJSON("/api/account/connect", { cookie });
+      const out = await sendJSON("/api/account/connect", { body: { cookie } });
       renderOutcome(resultHost, out);
       if (out.status) paint(out.status);
     } catch (e) {
@@ -482,7 +791,7 @@ export default async function account(host) {
   again.onclick = async () => {
     busy(true);
     try {
-      const out = await postJSON("/api/account/verify", {});
+      const out = await sendJSON("/api/account/verify", { body: {} });
       renderOutcome(resultHost, out);
       if (out.status) paint(out.status);
     } catch (e) {
@@ -502,6 +811,8 @@ export default async function account(host) {
     setTimeout(() => { copy.textContent = prev; }, 1800);
   };
 
+  await refreshIdentity();
+  await refreshKey();
   await refreshEntry();
   await refresh();
 }

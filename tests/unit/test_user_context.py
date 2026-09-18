@@ -63,10 +63,23 @@ def test_an_unusable_fpl_entry_id_is_loud(monkeypatch) -> None:
         owner_entry_id()
 
 
-def test_resolve_identity_returns_none_until_workstream_e_lands() -> None:
-    """The seam E2 fills. Shipping it as None is what makes every request the
-    owner and keeps the server behaving as it does today."""
+def test_resolve_identity_answers_none_for_a_request_with_no_session() -> None:
+    """The seam workstream E filled, and the answer it still gives here.
+
+    None means the owner, and it is what an unauthenticated request gets
+    while the deployment says so (``FPL_EDGE_ANON_IS_OWNER``, which the suite
+    pins in ``tests/conftest.py`` and the owner's Mac gets by default because
+    no Google client is configured there). A caller that is not a request at
+    all, which is every job, CLI command and MCP session, takes the same
+    branch rather than raising one layer down.
+
+    The rest of the behaviour, a signed-in manager and a public visitor, is
+    pinned in ``tests/unit/test_owner_resolution.py`` beside the flag that
+    decides between them.
+    """
     assert U.resolve_identity(object()) is None
+    assert U.resolve_identity(None) is None
+    assert U.current_user(object()).is_owner is True
 
 
 # -- paths ------------------------------------------------------------------

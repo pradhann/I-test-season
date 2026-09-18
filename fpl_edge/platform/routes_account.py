@@ -12,21 +12,28 @@ terminal works here and fails with the same words.
 
 The team-id routes are the only two that answer a caller who has connected
 nothing: ``entry/{id}/`` is public, so a manager can save and confirm their own
-id before pasting any credential. They are still behind the loopback guard,
-because they write to the same per-user directory the credential routes do.
+id before pasting any credential. They write to the caller's own per-user
+directory, so the matrix puts them at the signed-in tier rather than the
+operator tier the three credential routes carry.
 
-Two rules the routes enforce themselves rather than trusting the server's
-bind address:
+Two rules, one of them now enforced above this module:
 
-* **Loopback only.** A request whose client host is not 127.0.0.1 or ::1 is
-  refused with 403 before any body is read. The server already binds loopback;
-  a second check costs nothing and survives someone changing ``--host``.
+* **A session, checked once, in one place.** The access matrix in
+  ``fpl_edge/platform/auth/policy.py`` holds the tier for all five routes, and
+  the dependency ``install_auth`` adds to the app applies it before any
+  handler here runs. It replaces the loopback guard that used to sit at the
+  top of every handler. Behind a platform proxy ``request.client.host`` is the
+  proxy's address rather than the visitor's, and under some proxy
+  configurations that address is loopback, so a guard that read as protection
+  in this source would have authorised the whole internet in production. A
+  session check has no such failure mode, and it is the same check on the
+  owner's Mac and on the deployment.
 * **No token leaves.** Responses carry expiry instants, an entry name and the
   failure class, never a token value. The pasted body is read once, handed to
   the token manager, and never logged or echoed: the body is taken as a plain
   dict so a malformed request cannot be reflected back by the validator.
 
-Wiring (app.py): ``app.include_router(routes_account.router)``.
+Wiring (app/factory.py): ``app.include_router(routes_account.router)``.
 """
 
 from __future__ import annotations
@@ -41,17 +48,6 @@ from fpl_edge.myteam import account
 from fpl_edge.myteam.private import PrivateTeamClient
 from fpl_edge.myteam.tokens import TokenManager
 from fpl_edge.platform.users import UserContext, current_user, stored_entry_id, write_profile
-
-LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
-
-
-def _require_loopback(request: Request) -> None:
-    host = request.client.host if request.client else None
-    if host not in LOOPBACK_HOSTS:
-        raise HTTPException(
-            status_code=403,
-            detail="account routes answer loopback clients only",
-        )
 
 
 def build_router(
@@ -81,12 +77,12 @@ def build_router(
 
     @router.get("/status")
     def status(request: Request) -> dict[str, Any]:
-        _require_loopback(request)
+        del request
         return status_payload()
 
     @router.post("/connect")
     def connect(request: Request, payload: Annotated[dict[str, Any], Body()]) -> dict[str, Any]:
-        _require_loopback(request)
+        del request
         cookie = payload.get("cookie") if isinstance(payload, dict) else None
         if not isinstance(cookie, str) or not cookie.strip():
             # Deliberately not a 422: the validator would echo the body back.
@@ -114,7 +110,7 @@ def build_router(
     def get_entry(request: Request,
                   user: UserContext = Depends(current_user)) -> dict[str, Any]:
         """The team id this user's panels read, and whether they chose it."""
-        _require_loopback(request)
+        del request
         saved = stored_entry_id(user.data_root)
         return {
             "entry_id": int(user.entry_id),
@@ -135,7 +131,7 @@ def build_router(
         check could not be completed and offers a retry, because a timeout is
         not evidence that an id is wrong.
         """
-        _require_loopback(request)
+        del request
         raw = payload.get("entry_id") if isinstance(payload, dict) else None
         try:
             entry_id = int(str(raw).strip())
@@ -183,7 +179,7 @@ def build_router(
 
     @router.post("/verify")
     def verify(request: Request) -> dict[str, Any]:
-        _require_loopback(request)
+        del request
         m = manager()
         outcome = account.verify(
             manager=m, client=make_client(m), entry_id=entry_id,
