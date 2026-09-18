@@ -14,6 +14,6 @@ from fpl_edge.platform.scripts import (
     planner, player_profile, prices, projections, radar, squad,
 )
 
-__all__ = ["brief", "creators", "fixtures", "ideas", "market",
-           "pipelines_panel", "player_profile", "prices", "projections",
-           "radar", "squad"]
+__all__ = ["brief", "creators", "fixtures", "ideas", "market", "ownership",
+           "pipelines_panel", "planner", "player_profile", "prices",
+           "projections", "radar", "squad"]

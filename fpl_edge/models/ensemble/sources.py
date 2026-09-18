@@ -1,5 +1,8 @@
 """Adapters that turn each estimate -- ours, the market's, a stranger's -- into
-one :mod:`.frame`-shaped projection.
+one long projection frame: one row per ``(provider, season, gw, code)`` with an
+``xp`` column. The ``.frame`` module that used to declare that shape was
+deleted with the rest of the ensemble research (ARCHITECTURE_REVIEW.md Section
+4 row 29); ``_to_frame`` below is what builds it now.
 
 Four sources, and what makes each of them independent of the others:
 
