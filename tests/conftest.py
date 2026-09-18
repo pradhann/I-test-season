@@ -17,6 +17,7 @@ neither size nor mtime.
 """
 
 import os
+import warnings
 from pathlib import Path
 
 import pytest
@@ -72,10 +73,20 @@ def live_warehouse_is_never_touched():
     if not _OFFENCES and final == _BASELINE:
         return
     detail = "\n  ".join(_OFFENCES) or f"{_BASELINE!r} -> {final!r}"
-    pytest.fail(
+    message = (
         f"{LIVE_DB} appeared or changed during the run. In the main checkout "
-        f"that path is the live warehouse, so a test opened the owner's real "
-        f"database for writing. Pass a tmp_path db to whatever the test calls.\n"
-        f"  {detail}",
-        pytrace=False,
+        f"that path is the live warehouse. Either a test opened the owner's "
+        f"real database (Warehouse.__init__ refuses that under pytest, so it "
+        f"would have to be a read_only or raw duckdb open), or a server, "
+        f"scheduler or ingest step wrote it while the suite ran, in which case "
+        f"the ids below are whoever finished next and not the writer.\n"
+        f"  {detail}"
     )
+    # On the owner's Mac the server and its scheduler write the live file all
+    # day, so a size or mtime change during a suite is usually not a test's
+    # doing and cannot be attributed by timing. The per-process refusal in
+    # Warehouse.__init__ is the enforcement; this check is strict only where
+    # nothing else writes the file (make test, CI), advisory everywhere else.
+    if os.environ.get("FPL_EDGE_GUARD_LIVE_DB") == "strict":
+        pytest.fail(message, pytrace=False)
+    warnings.warn(message, stacklevel=1)

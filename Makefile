@@ -8,7 +8,7 @@ install:  ## Create the venv and install the package with dev extras
 	uv pip install -e ".[dev]"
 
 test:  ## Run the offline test suite (no network)
-	uv run pytest -q
+	FPL_EDGE_GUARD_LIVE_DB=strict uv run pytest -q
 
 test-all:  ## Include network-marked tests
 	uv run pytest -q -m ""
