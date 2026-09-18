@@ -891,3 +891,121 @@ changes a recommendation.
 | Whether all 18 panel scripts return a structured empty state against a schema-only warehouse | Not verified; verifying it requires running them, which this spec did not do. `make deploy-check` step 5 is the verification. |
 | Whether `faster-whisper` on Railway CPU runs near 1x realtime | Estimated. The 11.7x to 12.3x MLX figure is measured and recorded in `registry.py`; the CPU figure is not. It does not change the recommendation, since (a) is free. |
 | The unattributed projections ingest of 2026-09-09 16:26 UTC with `trigger=scheduler` while launchd was unloaded | Open in the brief and untouched here. **It matters for this workstream**: if a second scheduler exists on the Mac and survives the move, it would be a second writer against a database that has moved to Railway, or it would keep writing to a stale local copy. B2 should not start the in-process scheduler on Railway until that item is closed. |
+
+## 13. Runbook: the first deploy
+
+Written by agent B2 after the image passed `make deploy-check` on the owner's
+Mac (build, boot on an empty volume, health 200, all 18 panels answering 200
+as a payload or a named gap, one scheduler tick writing ledger rows). Section
+12's open item about a second Mac scheduler is closed: BRIEF_SHARED 1b
+established there is none, so the in-process scheduler is the only one.
+
+### 13.1 Before you start
+
+Generate the bearer secret and put it in the Mac keychain. The value never
+goes into .env, which sits in the repo tree.
+
+    python -c "import secrets,base64; print(base64.urlsafe_b64encode(secrets.token_bytes(32)).decode())"
+    security add-generic-password -s fpl-edge-transcript-push -a "$USER" -w
+
+Prove the image works locally first:
+
+    make deploy-check
+
+Note the boot time it prints and set `healthcheckTimeout` in railway.toml to
+a comfortable multiple of it.
+
+### 13.2 Create the service
+
+1. Install the CLI and sign in yourself (`brew install railway`, then
+   `railway login`). The token stays with you.
+2. New Railway project, deploy from this repo. The builder is the Dockerfile;
+   railway.toml already says so.
+3. Attach a 10 GB volume mounted at `/app/data`. This is the only mount.
+4. Confirm Replicas = 1. DuckDB permits one writer per file; a second replica
+   fails to open the database at boot and restart-loops.
+5. Set the deploy overlap to zero so the old container stops before the new
+   one starts. Two containers on one volume is the same failure.
+
+### 13.3 Variables
+
+Every name the image reads. The Dockerfile bakes `FPL_EDGE_BOOT=1`,
+`TMPDIR=/app/data/tmp`, `FPL_EDGE_DISABLE_PRIVATE=1` and `FPL_EDGE_REPO_SHA`.
+
+| Name | What it does | Secret | First deploy |
+|---|---|---|---|
+| `PORT` | the port uvicorn binds | no | Railway sets it |
+| `TRANSCRIPT_PUSH_TOKEN` | the bearer the Mac ASR worker presents | yes | set it |
+| `TRANSCRIPT_PUSH_TOKEN_NEXT` | the second accepted value during a rotation | yes | leave unset |
+| `FPL_EDGE_SCHEDULER` | `1` starts the in-process tick; unset means no scheduler | no | set to `1` |
+| `FPL_EDGE_SCHEDULER_INTERVAL_S` | seconds between ticks; default 600 | no | leave unset |
+| `FPL_EDGE_DISABLE_NETWORK_INGEST` | `1` makes every scheduled fetch record `no_source` with a named reason | no | set to `1`, clear after the seed |
+| `FPL_EDGE_DATA_DIR` | which directory boot checks and seeds into; default `data` | no | leave unset |
+| `FPL_ENTRY_ID` | the default FPL entry when no user is signed in | no | set to your entry id |
+| `ODDS_API_KEY` | the credit-metered Odds API key | yes | set it |
+| `TELEGRAM_BOT_TOKEN` | outbox delivery | yes | set it |
+| `TELEGRAM_ALLOWED_CHAT_ID` | which chat the outbox may send to | no | optional |
+| `FPL_EDGE_ANALYSE_TOKEN_BUDGET` | reported tokens per analyse run before the batch stops; default 1500000 | no | optional |
+| `FPL_EDGE_ANALYSIS_MODEL`, `FPL_EDGE_BRIEFING_MODEL`, `FPL_EDGE_CHAT_MODEL` | model overrides; defaults in config.py | no | leave unset |
+| `FPL_EDGE_ANALYSE_BUDGET_S` | per-run wall budget for claim extraction; default 1800 | no | optional |
+| `FPL_EDGE_TRANSCRIBE_BUDGET_S` | wall budget for the transcription task; default 3600 | no | optional |
+| `FPL_EDGE_RAW` | relocate the raw archive root | no | leave unset |
+| `FPL_EDGE_DAG_POLISH` | model-polish of delivered copy; spends tokens | no | leave unset |
+| `FPL_THEME_MODE` | chart theme, `dark` by default | no | optional |
+
+No `ANTHROPIC_*` variable is ever set on this service: not the key, not the
+auth token, not the base URL. The server holds no model key; chat_agent.py
+and briefing_intel.py scrub those names from every child environment. No
+`FPL_*` credential either (`FPL_SESSION_COOKIE`, `FPL_ACCESS_TOKEN`,
+`FPL_REFRESH_TOKEN`, `FPL_USERNAME`, `FPL_PASSWORD`): routes_account.py is
+loopback-only and answers 403 behind the proxy until workstream E lands.
+
+### 13.4 First boot, then the seed
+
+Deploy and watch `/api/health`. It returns 503 until the volume is mounted
+and writable, the warehouse file exists and every migration set has run,
+then 200 with the boot report (`volume`, `migrations`, `artefacts`,
+`scheduler`).
+
+At that point the warehouse is schema-only. Every panel answers 200 with a
+named gap; `fixture_ratings_refit` and `forecast_refresh` record honest
+error rows until there is history; everything else records `no_source`.
+
+Upload the database once, from the Mac:
+
+    uv run python -c "from fpl_edge.store import Warehouse; Warehouse().sql('CHECKPOINT')"
+    ls -l data/warehouse/fpl.duckdb
+
+The file is about 160 MiB and there must be no `.wal` beside it. Copy it onto
+the volume with the Railway CLI while the service is stopped, or through the
+seed route, which refuses when a database already exists. Then clear
+`FPL_EDGE_DISABLE_NETWORK_INGEST` and redeploy. The next tick reads 36 hours
+of owed firings, runs what is inside each task's stale window and records the
+rest as `skipped_stale`.
+
+### 13.5 The Mac
+
+Retire the two scheduling agents (both already unloaded; this removes them):
+
+    make undeploy-dag
+    make undeploy
+
+Install the ASR worker, now the only scheduled job on this machine:
+
+    make transcribe-once FPL_EDGE_BASE_URL=https://<your-service>.up.railway.app
+    make deploy-transcribe FPL_EDGE_BASE_URL=https://<your-service>.up.railway.app
+
+`transcribe-once` prints the queue, the engine line and a per-item result. A
+401 stops the run with exit 3; check the token on both sides.
+`deploy-transcribe` writes a launchd agent that reads the token from the
+keychain and runs one pass nightly at 12:00.
+
+### 13.6 Rotating the bearer token
+
+1. Set `TRANSCRIPT_PUSH_TOKEN_NEXT` on Railway to the new value.
+2. Update the Mac keychain to the new value.
+3. `make transcribe-once ...` and confirm a 200.
+4. Move the new value into `TRANSCRIPT_PUSH_TOKEN` and clear `_NEXT`.
+
+Two accepted values during the window mean the two sides never restart
+together. Rotate quarterly, and at once on any suspicion.
