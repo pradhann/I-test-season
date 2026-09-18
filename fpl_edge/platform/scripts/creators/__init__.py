@@ -86,6 +86,10 @@ from fpl_edge.platform.scripts.creators.chatter import (
     player_chatter,
 )
 from fpl_edge.platform.scripts.creators.detail import creator_detail
+from fpl_edge.platform.scripts.creators.episodes import (
+    creator_episodes,
+    episode_summary,
+)
 from fpl_edge.platform.scripts.creators.identity import (  # noqa: F401
     UTC,
     TranscriptIndex,
@@ -136,6 +140,8 @@ __all__ = [
     "TranscriptIndex",
     "creator_board",
     "creator_detail",
+    "creator_episodes",
     "creator_report_card",
+    "episode_summary",
     "player_chatter",
 ]
