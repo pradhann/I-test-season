@@ -25,6 +25,12 @@ import pytest
 from fpl_edge.platform import scripts  # noqa: F401 - registers the scripts
 from fpl_edge.platform.registry import registered, run_script, script
 from fpl_edge.platform.scripts import fixtures as fxmod
+# The private helpers are reached through the module that owns them.
+# fixtures/__init__.py re-exports the public surface only: a monkeypatch
+# of a re-exported private name would patch a copy that the owning module
+# never reads, and would go silently inert.
+from fpl_edge.platform.scripts.fixtures import board as fxboard
+from fpl_edge.platform.scripts.fixtures import detail as fxdetail
 from fpl_edge.store.warehouse import Warehouse
 
 UTC = dt.UTC
@@ -316,7 +322,7 @@ def test_every_input_reports_its_own_age_and_what_staleness_costs(tmp_path):
     (None, "unpriced"),
 ])
 def test_market_state_is_a_function_of_age_not_of_hope(age, expected):
-    assert fxmod._market_state(age) == expected
+    assert fxboard._market_state(age) == expected
 
 
 def test_an_unpriced_fixture_says_so_rather_than_looking_priced(tmp_path):
@@ -348,7 +354,7 @@ def test_the_odds_path_lowercases_selections_or_devig_finds_nothing(tmp_path):
     path = _seed(tmp_path, odds=raw)
     with __import__("fpl_edge.platform.query", fromlist=["read_copy"]).read_copy(path) as wh:
         wh.source_path = path
-        odds, reason = fxmod._resolved_odds(wh, SEASON, dt.datetime.now(UTC))
+        odds, reason = fxboard._resolved_odds(wh, SEASON, dt.datetime.now(UTC))
     assert reason is None and not odds.empty
     assert set(odds["selection"]) == {"home", "draw", "away"}
     assert devig_frame(odds), "the panel's normalised frame must de-vig"
@@ -520,7 +526,7 @@ def test_model_and_market_are_flagged_when_they_disagree_never_averaged():
               "p_home_win": 0.40, "p_draw": 0.26, "p_away_win": 0.34,
               "p_over_2_5": 0.61,
               "implied": {"p_home_clean_sheet": 0.29, "p_away_clean_sheet": 0.21}}
-    rows = {r["metric"]: r for r in fxmod._disagreement(model, market)}
+    rows = {r["metric"]: r for r in fxdetail._disagreement(model, market)}
     assert rows["P(home win)"]["flagged"] is True   # 10pp apart
     assert rows["P(draw)"]["flagged"] is False      # 1pp apart
     assert rows["P(over 2.5)"]["flagged"] is False
@@ -725,7 +731,7 @@ def test_a_crashing_optional_section_degrades_to_a_named_gap(tmp_path, monkeypat
     def _boom(*args, **kwargs):
         raise ValueError("a data edge this section cannot survive")
 
-    monkeypatch.setattr(fxmod, "_intel_block", _boom)
+    monkeypatch.setattr(fxdetail, "_intel_block", _boom)
     run = run_script("fixture_detail", {"fixture_id": 1}, db=path)
     assert run.result.get("empty") is not True, "the panel must still serve"
     intel = run.result["intel"]
