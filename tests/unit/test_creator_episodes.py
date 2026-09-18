@@ -392,9 +392,15 @@ def test_the_claim_count_collapses_the_rows_of_one_publication(seeded_db):
 
 EPISODES_KEYS = {"creator", "as_of", "entry", "entry_reason", "record",
                  "include_untranscribed", "limit", "counts", "episodes"}
+# `siblings` and `siblings_basis` are the two keys the creators rebuild added:
+# one recording published to a podcast feed and to YouTube is two stored rows,
+# and the panel names the other row rather than leaving the page to match on
+# titles. Both are outside `required`, so a warehouse that cannot compute them
+# still validates; every row this module writes carries them.
 EPISODE_KEYS = {"item_id", "title", "published_at", "source_url", "source_kind",
                 "transcription_state", "transcript_chars", "analysis_present",
-                "analysis_model", "claim_count", "gameweek", "gw_reason"}
+                "analysis_model", "claim_count", "gameweek", "gw_reason",
+                "siblings", "siblings_basis"}
 SUMMARY_KEYS = {"creator", "as_of", "episode", "summary", "summary_bullets",
                 "summary_reason", "players", "transfers_suggested",
                 "captain_view", "gameweek", "gw_reason", "analysis_model",
@@ -532,3 +538,77 @@ def test_episode_summary_refuses_an_item_this_warehouse_does_not_hold(seeded_db)
     res = summary(seeded_db, "no_such_item")
     assert res["empty"] is True
     assert "no_such_item" in res["reason"]
+
+
+# ---------------------------------------------------------------------------
+# The sibling rule: one recording, two stored URLs, two rows, never merged.
+
+@pytest.fixture()
+def paired_db(tmp_path):
+    """One creator, four publications: a real cross-kind pair, a same-kind
+    title collision that must NOT pair, and two lone rows."""
+    path = tmp_path / "fpl.duckdb"
+    wh = Warehouse(path)
+    wh.append("dim_event", pd.DataFrame([
+        {"season": SEASON, "gw": 1, "is_finished": True,
+         "deadline_utc": NOW - dt.timedelta(days=6), "as_of": SEEDED},
+        {"season": SEASON, "gw": 2, "is_finished": False,
+         "deadline_utc": NOW + dt.timedelta(days=1), "as_of": SEEDED},
+    ]))
+    from fpl_edge.ingest.content.store import ContentStore
+
+    ContentStore(wh)
+    _source(wh, "pod_pair", TALKER, "podcast", "https://example.invalid/pair.xml")
+    _source(wh, "yt_pair", TALKER, "youtube", "https://www.youtube.com/@pair")
+    # The pair. The podcast feed runs a day behind the upload, which is the
+    # live shape: 13 of the 112 corpus pairs are more than 24 hours apart.
+    _item(wh, "pair_pod", "pod_pair", TALKER, "podcast", "My FPL Team for GW2",
+          "https://example.invalid/pair/gw2.mp3", PAST, "description")
+    _item(wh, "pair_yt", "yt_pair", TALKER, "youtube", "My FPL Team for GW2",
+          "https://www.youtube.com/watch?v=PAIRvid0001", OLDER, "transcript")
+    # Same title, same kind: two different publications, never a pair.
+    _item(wh, "twin_a", "pod_pair", TALKER, "podcast", "Mailbag",
+          "https://example.invalid/pair/mailbag-1.mp3", OLDER, "description")
+    _item(wh, "twin_b", "pod_pair", TALKER, "podcast", "Mailbag",
+          "https://example.invalid/pair/mailbag-2.mp3", OLDEST, "description")
+    wh.close()
+    return path
+
+
+def test_the_cross_kind_pair_is_named_as_one_recording(paired_db):
+    """One recording on a podcast feed and on YouTube is two stored URLs and
+    two rows. The panel says which other row is the same recording; it does
+    not merge them, and the reader still sees both."""
+    res = episodes(paired_db, creator=TALKER, limit=200,
+                   include_untranscribed=True)
+    rows = _by_id(res)
+    assert len(res["episodes"]) == 4, "no row was collapsed away"
+    assert rows["pair_pod"]["siblings"] == ["pair_yt"]
+    assert rows["pair_yt"]["siblings"] == ["pair_pod"]
+
+
+def test_a_same_kind_title_collision_is_not_a_pair(paired_db):
+    """A time window would group these and a kind test does not. Two podcast
+    episodes that share a title are two publications."""
+    rows = _by_id(episodes(paired_db, creator=TALKER, limit=200,
+                           include_untranscribed=True))
+    assert rows["twin_a"]["siblings"] == []
+    assert rows["twin_b"]["siblings"] == []
+
+
+def test_every_row_carries_the_basis_for_the_rule(paired_db):
+    """Rule 9: the page prints a fact only where the payload serves it, and a
+    computed grouping owes the rule it was computed with."""
+    res = episodes(paired_db, creator=TALKER, limit=200,
+                   include_untranscribed=True)
+    for row in res["episodes"]:
+        assert "source_kind" in row["siblings_basis"]
+    assert jsonschema.Draft202012Validator(
+        script("creator_episodes").result_schema).is_valid(res)
+
+
+def test_episode_summary_carries_the_same_sibling_ids(paired_db):
+    """Either stored id opens the same episode, and level 3 can say the other
+    copy exists without a second call."""
+    res = summary(paired_db, "pair_yt")
+    assert res["episode"]["siblings"] == ["pair_pod"]

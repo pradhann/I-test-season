@@ -1086,7 +1086,10 @@ def test_plural_returns_null_on_a_null_count() -> None:
     sites interpolated it and the tab printed the literal string "null" nine
     times. Null in, null out, so no caller can stringify it by accident."""
     src = _strip_comments(CREATORS)
-    assert "n == null ? null :" in src, "plural() must refuse a null count"
+    # The guard moved from a ternary to an if/return in the rebuild: the house
+    # prose gate reads "? " as a rhetorical question, so this file has no
+    # ternaries at all. The rule it encodes is unchanged.
+    assert "if (n == null) return null;" in src, "plural() must refuse a null count"
     # ...and nothing interpolates n_total into a template without a guard.
     assert not re.search(r"\$\{plural\([^)]*n_total", src), (
         "a null count reached a template again")
@@ -1098,8 +1101,11 @@ def test_an_unscored_record_falls_back_to_the_payloads_reason() -> None:
     """The count is not always available; the reason always is."""
     src = _strip_comments(CREATORS)
     assert "function unscored(cl, tail, short)" in src
-    # every one of the four sites goes through it
-    assert src.count("unscored(") >= 5, "a site still formats its own count"
+    # Five sites before the rebuild, at 183, 2396, 2628, 2685 and 3448. Two of
+    # them were inside the report-card wall and the report-card tile, both
+    # deleted. The rule, that every site goes through the helper rather than
+    # formatting its own count, is unchanged.
+    assert src.count("unscored(") >= 3, "a site still formats its own count"
 
 
 def test_the_team_verdict_is_gated_on_quotable_not_on_a_null_boolean() -> None:
@@ -1108,10 +1114,13 @@ def test_the_team_verdict_is_gated_on_quotable_not_on_a_null_boolean() -> None:
     reason saying three gameweeks is below the floor."""
     src = _strip_comments(CREATORS)
     assert "p.beats_baseline == null ? `under the" not in src
-    assert 'fact("beats the baseline", p.quotable' in src, (
-        "the floor decides this, not the boolean")
-    # the compact card qualifies it too, rather than printing a bare delta
-    assert "const one = p => p.quotable" in src
+    # The branch is a named helper now, because the file carries no ternaries,
+    # and `quotable` is still the first thing it reads.
+    assert "function baselineFact(p, tm)" in src
+    assert "if (!p.quotable)" in src, "the floor decides this, not the boolean"
+    assert 'fact("beats the baseline", baselineFact(p, tm))' in src
+    # `teamLine`, which carried the second copy of the same gate, is deleted:
+    # `reportBody` draws every person and is the only surface left.
 
 
 def test_the_under_floor_class_is_actually_styled() -> None:
@@ -1119,19 +1128,26 @@ def test_the_under_floor_class_is_actually_styled() -> None:
     it, so a verdict from 12 claims was painted the same full red as one from
     274 and only an 11.5px word differed."""
     assert ".few" in CREATORS_CSS, "the class the JS emits has no rule"
-    for sel in (".cx-rc.few", ".cx-rctag.few", ".cx-rcard.few"):
+    # `.cx-rcard.few` left with the report-card tile and the wall of 31 of
+    # them. The two surviving emitters are the chip and the gutter tag.
+    for sel in (".cx-rc.few", ".cx-rctag.few"):
         assert sel in CREATORS_CSS, f"{sel} carries colour that the count denies"
-    # the report card must actually receive the class
     src = _strip_comments(CREATORS)
-    assert 'el("button", "cx-rcard " + v.cls' in src
+    assert 'el("button", "cx-rc " + v.cls' in src, (
+        "the chip must receive the verdict class, floor included")
     assert 'el("button", "cx-rcard " + coin(' not in src
 
 
 def test_one_creator_count_is_drawn_and_it_says_what_the_others_are() -> None:
-    """20, 31 and 28 for one population, twelve pixels apart and unlabelled."""
+    """20, 31 and 28 for one population, twelve pixels apart and unlabelled.
+
+    `cardCensus` and `censusLine` counted the report-card wall, which is gone.
+    Level 1 counts one population, the board's own `creators[]`, and names the
+    subset it does not draw in the same sentence."""
     src = _strip_comments(CREATORS)
-    assert "function cardCensus()" in src and "function censusLine()" in src
-    assert "censusLine()} · floor" in src
+    assert 'plural(all.length, "show")' in src, "the population is not counted"
+    assert "const all = or(res.creators, []);" in src, (
+        "the count must come from the payload's own list")
     assert 'plural((rc.cards || []).length, "creator")' not in src, (
         "the raw card count is back in the heading")
 
@@ -1145,31 +1161,37 @@ def test_the_board_scope_and_its_own_note_are_rendered() -> None:
     assert "function scopeLine()" in src
 
 
-def test_the_source_button_does_not_call_a_filtered_list_all_of_them() -> None:
-    """HIDDEN_STATES drops 3 of 43 sources and the button said "all 40"."""
+def test_the_filtered_count_rule_left_with_the_source_console() -> None:
+    """The defect was a count that named a filtered set as the whole set.
+
+    The 43-feed fetch console left the reading view in the creators rebuild:
+    `GET /api/content/sources`, `sourceStrip`, `sourceTable` and the segmented
+    state counts are all deleted, and fetch state is the Pipelines tab's
+    question. The rule is recorded here rather than silently dropped, and the
+    assertions are the negative half: this view no longer draws a source count
+    of any kind, so it cannot draw a filtered one."""
     src = _strip_comments(CREATORS)
     assert "`all ${shown.length} sources`" not in src
-    assert "fetchable sources" in src
-    assert "const dropped = total - shown.length" in src
+    assert "fetchable sources" not in src, "the console is back in the view"
+    assert "/api/content/sources" not in src, (
+        "the source list is fetched again; it has no reader here")
+    # what a count IS drawn over on every level: the list actually in hand
+    assert "counts.episodes_total" in src, (
+        "level 2 must count publications from the payload's own total")
 
 
-def test_the_record_strip_draws_no_permanently_empty_group() -> None:
+def test_the_record_column_is_not_a_leaderboard_of_creators() -> None:
     """"Record leaders" whose only possible content was "nobody above chance",
-    beside "Laggards", which is a judgment this surface otherwise avoids."""
+    beside "Laggards", which is a judgment this surface otherwise avoids.
+
+    `recordStrip` is deleted with the takes it sat under, so the three
+    positive clauses have nothing left to pin. The two negative ones are the
+    whole rule and they now guard the level-1 RECORD column, which is the
+    surface that could become the same leaderboard."""
     src = _strip_comments(CREATORS)
     assert "Laggards" not in src and "Record leaders" not in src
-    assert "Interval below a coin flip" in src
-    assert "if (!list.length) return null;" in src, "an empty group is still drawn"
-    # and the strip reconciles its two chips with the honesty line's three
-    assert "of them over the floor" in src
-
-
-def test_the_compact_team_line_is_capped_at_two_people() -> None:
-    """Fantasy Football Hub has seven; they rendered on one 400-character
-    line that never wrapped."""
-    src = _strip_comments(CREATORS)
-    assert "const SHOWN = 2;" in src
-    assert "more, in the card" in src
+    # the column is sortable, so the floor has to be stated where it is read
+    assert "The floor for reading it as a rank is the report card's" in src
 
 
 def test_a_repeated_fpl_entry_is_named_as_a_repeat() -> None:
@@ -1191,6 +1213,14 @@ def test_the_age_helper_is_the_shared_one() -> None:
     assert "yesterday" not in src
     assert "mo ago" not in src
     assert "export function fmtAge" in APP, "the shared helper must still exist"
+    # THE BOUNDARY, in one sentence: a date on a thing the creator published is
+    # whole days, a stamp on a thing this app did is the shared span. The page
+    # rendered five ages carrying an hour unit against four carrying a day
+    # unit, for publication dates that nobody reads by the hour.
+    assert "function ageDays(iso)" in src, "publication dates need their own unit"
+    assert src.count("ageDays(") >= 6, "a publication date is still formatted by hand"
+    assert src.count("relAge(") <= 2, (
+        "relAge is for as_of only; a publication date reached it")
 
 
 def test_a_failed_panel_body_is_folded_not_interpolated() -> None:
@@ -1209,7 +1239,9 @@ def test_the_loading_affordance_has_one_glyph_and_one_capitalisation() -> None:
     src = _strip_comments(CREATORS)
     assert "Measuring the record…" not in src, (
         "the same fact was capitalised two ways twelve pixels apart")
-    assert src.count("measuring the record…") >= 3
+    # Three sites before the rebuild, at 774, 2430 and 3441. `recordStrip`
+    # took the middle one with it.
+    assert src.count("measuring the record…") >= 2
     # one glyph: the single character "…", never a trailing "..."
     dotted = [(line, text) for line, text in _js_string_literals(CREATORS)
               if re.search(r"[A-Za-z]\.\.\.(?!\.)\s*$", text)]
