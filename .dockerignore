@@ -1,0 +1,46 @@
+# The build context. DEPLOYMENT.md §10.
+#
+# data/ is excluded wholesale and the git-tracked files under it are named
+# back in one at a time below, so the seed is a deliberate list rather than
+# whatever happened to be on the build machine. data/raw/ is 15 GB on the
+# owner's Mac and never enters the context at all.
+
+data/
+!data/panels/creator_panel_2026_27.yaml
+!data/reference/elite_1000.json
+!data/warehouse/backtests/*.json
+!data/warehouse/*.parquet
+!data/warehouse/*.json
+!data/warehouse/*.html
+
+# Named after the re-inclusions so it wins: 930 KB of the 1.2 MB of tracked
+# data is this one log, which should not be tracked and must not ship.
+data/warehouse/jobs/
+
+# The database belongs to the volume. A copy in the image would also be stale
+# the moment it landed.
+*.duckdb
+*.duckdb.wal
+
+.env
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+code_bases/
+web/chat-app/node_modules/
+
+.git/
+.github/
+.claude/
+analyses/
+strategies/
+theses/
+tests/
+htmlcov/
+.coverage
+*.egg-info/
+dist/
+build/

@@ -180,7 +180,17 @@ def repo_sha() -> str:
     Cached: this is called on every script run and shelling out per panel
     refresh is pure waste. The process is restarted on deploy, which is exactly
     when the value can change.
+
+    ``FPL_EDGE_REPO_SHA`` wins when it is set. The container image carries no
+    ``.git`` directory, so without it every panel in the deployed UI would be
+    stamped "unknown" and a screenshot could not be traced to the code that
+    produced it. The Dockerfile passes the sha as a build argument.
     """
+    import os
+
+    override = os.environ.get("FPL_EDGE_REPO_SHA", "").strip()
+    if override:
+        return override
     try:
         out = subprocess.run(
             ["git", "rev-parse", "HEAD"],
@@ -244,6 +254,45 @@ class ScriptRun:
         }
 
 
+#: The tables a warehouse with any data at all has at least one row in. A
+#: single row in any of them means the file holds data, so a panel that then
+#: raises has a bug and must stay a 500.
+_SPINE_TABLES: tuple[str, ...] = ("dim_player", "dim_team", "dim_event",
+                                  "fact_fixture")
+
+#: How much of a raising script's exception text rides into the gap reason.
+_GAP_REASON_CHARS = 200
+
+
+def warehouse_is_unseeded(wh) -> bool:
+    """True when the warehouse holds schema and no rows at all.
+
+    A first boot on a fresh Railway volume creates the file, applies
+    ``schema.sql`` and the package migrations, and stops. Every table is
+    present and every one is empty. A script written against real rows can
+    raise anywhere in that state, and the honest answer there is that the data
+    is absent rather than that the script is broken.
+
+    Deliberately narrow. One row in any spine table means the file holds data
+    and a raising panel is a defect, which keeps the error shape the UI draws
+    as "could not load" distinct from the honest empty it draws as "no data".
+    A warehouse that cannot be questioned at all counts as unseeded, because
+    nothing it could be in that state would make an exception a panel's fault.
+    """
+    try:
+        for table in _SPINE_TABLES:
+            present = int(wh.sql(
+                "SELECT count(*) c FROM information_schema.tables "
+                "WHERE table_name = ?", [table]).iloc[0]["c"])
+            if not present:
+                continue
+            if int(wh.sql(f"SELECT count(*) c FROM {table}").iloc[0]["c"]):
+                return False
+        return True
+    except Exception:  # noqa: BLE001 - see the docstring
+        return True
+
+
 def run_script(
     name: str,
     params: dict[str, Any] | None = None,
@@ -277,7 +326,30 @@ def run_script(
             # projection parquet, solved plans) live next to the ORIGINAL file.
             # Without this the handle knows only about the scratch directory.
             wh.source_path = Path(path)
-            result = script_obj.fn(wh, **clean)
+            try:
+                result = script_obj.fn(wh, **clean)
+            except Exception as exc:  # noqa: BLE001 - re-raised unless unseeded
+                # The one central place a fresh deployment's empty warehouse
+                # becomes a structured gap instead of a 500 (DEPLOYMENT.md
+                # §11.2 step 5). The distinction the UI depends on survives:
+                # a warehouse WITH data whose panel raised is still an error,
+                # re-raised here and served as {error, panel, reason}. Fixing
+                # this per script would mean eighteen copies of the same
+                # try/except and a nineteenth panel that forgot it.
+                if not warehouse_is_unseeded(wh):
+                    raise
+                detail = f"{type(exc).__name__}: {exc}"
+                if len(detail) > _GAP_REASON_CHARS:
+                    detail = detail[: _GAP_REASON_CHARS - 1] + "..."
+                result = {
+                    "empty": True,
+                    "reason": (
+                        f"the warehouse at {path} has schema and no rows in "
+                        f"any of {', '.join(_SPINE_TABLES)}, so {name} has "
+                        f"nothing to read. Seed it or wait for the first "
+                        f"ingest. The script stopped at: {detail}"
+                    ),
+                }
     duration_ms = int((time.monotonic() - started) * 1000)
 
     result = validate_result(script_obj, result)

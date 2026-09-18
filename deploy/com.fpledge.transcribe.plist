@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The Mac ASR worker. DEPLOYMENT.md §1.8.
+
+  This is the ONLY scheduled job left on this machine. The deadline DAG and
+  the settlement chain moved into the deployed service as one in-process
+  asyncio task, because DuckDB permits one writer per file and a Railway
+  volume attaches to one service. com.fpledge.dag.plist and
+  com.fpledge.postgw.plist are retired; `make undeploy-dag` and `make undeploy`
+  remove whatever is still loaded here.
+
+  What stays is the GPU work, and only the GPU work. mlx-whisper runs on this
+  machine's Metal GPU at 11.7x to 12.3x realtime and costs nothing per minute,
+  which a Linux container cannot do and a hosted ASR API would bill for. The
+  worker holds no warehouse: it reads the queue over HTTP, transcribes, and
+  pushes the result back to the single writer.
+
+  __BASE_URL__ is substituted by `make deploy-transcribe`. The bearer token is
+  read from the keychain by the wrapper below rather than from .env, which
+  sits in the repo tree and is readable by anything with access to the working
+  directory. Add it once with:
+
+      security add-generic-password -s fpl-edge-transcript-push -a "$USER" -w
+
+  A run that finds no token exits 2 and a run that is refused exits 3, and
+  launchd records either in the log below.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.fpledge.transcribe</string>
+  <key>WorkingDirectory</key><string>/Users/nripeshpradhan/Documents/Github/i-test-season</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>cd "/Users/nripeshpradhan/Documents/Github/i-test-season" &amp;&amp; TRANSCRIPT_PUSH_TOKEN="$(security find-generic-password -s fpl-edge-transcript-push -w)" exec .venv/bin/python scripts/mac_transcribe_worker.py --base-url "__BASE_URL__" --once</string>
+  </array>
+
+  <!-- 12:00 UTC, the slot the content_transcribe registry task holds today,
+       so the corpus keeps the cadence its stale windows were tuned for.
+       StartCalendarInterval is local-time only, so this is 12:00 LOCAL and
+       lands in the same part of the day the task did. A run missed while the
+       machine was asleep is not replayed: the queue is the server's, so the
+       items are simply still owed on the next run. -->
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>12</integer><key>Minute</key><integer>0</integer></dict>
+
+  <!-- False: loading the agent should not start an hour of GPU work. Run one
+       pass by hand with `make transcribe-once` to check the install. -->
+  <key>RunAtLoad</key><false/>
+
+  <key>StandardOutPath</key><string>/Users/nripeshpradhan/Library/Logs/fpledge/transcribe.log</string>
+  <key>StandardErrorPath</key><string>/Users/nripeshpradhan/Library/Logs/fpledge/transcribe.log</string>
+</dict>
+</plist>

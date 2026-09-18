@@ -55,36 +55,62 @@ platform-test:  ## Offline tests for the platform spine
 clean:
 	rm -f data/warehouse/*.duckdb data/warehouse/*.wal
 
-.PHONY: deploy undeploy
-deploy:  ## Install the nightly settlement as a launchd service
-	mkdir -p data/warehouse/jobs ~/Library/LaunchAgents
-	cp deploy/com.fpledge.postgw.plist ~/Library/LaunchAgents/
-	launchctl unload ~/Library/LaunchAgents/com.fpledge.postgw.plist 2>/dev/null || true
-	launchctl load ~/Library/LaunchAgents/com.fpledge.postgw.plist
-	@echo "settlement: daily 03:00 local."
-	@echo "remove with: make undeploy"
+# --------------------------------------------------------------------------
+# Scheduling moved to the server. DEPLOYMENT.md §2.1 and §2.4: the deadline
+# DAG and the settlement chain now run as one in-process asyncio task inside
+# the deployed service, because DuckDB permits one writer per file and Railway
+# attaches a volume to one service. The two scheduling plists are retired and
+# `undeploy` / `undeploy-dag` are kept so the owner can unload whatever is
+# still installed on this Mac. The Mac's one remaining scheduled job is the
+# ASR worker, which owns no warehouse and writes over HTTP.
+# --------------------------------------------------------------------------
 
-undeploy:  ## Remove the launchd service
+.PHONY: undeploy undeploy-dag
+undeploy:  ## Remove the retired settlement launchd service from this Mac
 	launchctl unload ~/Library/LaunchAgents/com.fpledge.postgw.plist 2>/dev/null || true
 	rm -f ~/Library/LaunchAgents/com.fpledge.postgw.plist
+	@echo "settlement runs on the server now, as the post_gw_settlement registry task."
 
-.PHONY: deploy-dag undeploy-dag dag-tick dag-status
-deploy-dag:  ## Install the deadline DAG as a launchd service (10-minute tick)
-	mkdir -p data/warehouse/jobs ~/Library/LaunchAgents
-	cp deploy/com.fpledge.dag.plist ~/Library/LaunchAgents/
-	launchctl unload ~/Library/LaunchAgents/com.fpledge.dag.plist 2>/dev/null || true
-	launchctl load ~/Library/LaunchAgents/com.fpledge.dag.plist
-	@echo "dag: every 600s. T-30h / 02:00 UK / T-4h / T-90m off dim_event deadlines."
-	@echo "next due times: make dag-tick"
-
-undeploy-dag:  ## Remove the deadline DAG service
+undeploy-dag:  ## Remove the retired deadline-DAG launchd service from this Mac
 	launchctl unload ~/Library/LaunchAgents/com.fpledge.dag.plist 2>/dev/null || true
 	rm -f ~/Library/LaunchAgents/com.fpledge.dag.plist
+	@echo "the tick runs on the server now, in fpl_edge/platform/scheduler.py."
 
+.PHONY: deploy-transcribe undeploy-transcribe transcribe-once
+deploy-transcribe:  ## Install the Mac ASR worker as a launchd service (nightly 12:00 UTC)
+	@test -n "$(FPL_EDGE_BASE_URL)" || \
+	  (echo "set FPL_EDGE_BASE_URL to the deployed service, e.g."; \
+	   echo "  make deploy-transcribe FPL_EDGE_BASE_URL=https://fpl-edge.up.railway.app"; \
+	   exit 1)
+	@security find-generic-password -s fpl-edge-transcript-push -w >/dev/null 2>&1 || \
+	  (echo "no keychain item fpl-edge-transcript-push. Add the bearer token with:"; \
+	   echo "  security add-generic-password -s fpl-edge-transcript-push -a \"$$USER\" -w"; \
+	   exit 1)
+	mkdir -p ~/Library/LaunchAgents ~/Library/Logs/fpledge
+	sed "s|__BASE_URL__|$(FPL_EDGE_BASE_URL)|g" deploy/com.fpledge.transcribe.plist \
+	  > ~/Library/LaunchAgents/com.fpledge.transcribe.plist
+	launchctl unload ~/Library/LaunchAgents/com.fpledge.transcribe.plist 2>/dev/null || true
+	launchctl load ~/Library/LaunchAgents/com.fpledge.transcribe.plist
+	@echo "ASR worker: nightly 12:00 UTC against $(FPL_EDGE_BASE_URL)."
+
+undeploy-transcribe:  ## Remove the Mac ASR worker service
+	launchctl unload ~/Library/LaunchAgents/com.fpledge.transcribe.plist 2>/dev/null || true
+	rm -f ~/Library/LaunchAgents/com.fpledge.transcribe.plist
+
+transcribe-once:  ## Run one ASR worker pass by hand against the deployed service
+	@test -n "$(FPL_EDGE_BASE_URL)" || \
+	  (echo "set FPL_EDGE_BASE_URL to the deployed service"; exit 1)
+	uv run python scripts/mac_transcribe_worker.py \
+	  --base-url "$(FPL_EDGE_BASE_URL)" --once
+
+.PHONY: deploy-check
+deploy-check:  ## Build the image and prove it boots and serves on an empty volume
+	uv run python scripts/deploy_check.py
+
+.PHONY: dag-tick dag-status
 dag-tick:  ## Run one DAG tick by hand (idempotent; will not double-send)
 	uv run python -m fpl_edge.jobs.deadline_dag --once
 
-dag-status:  ## What the DAG has fired, newest first
-	@launchctl list | grep com.fpledge.dag || echo "com.fpledge.dag not loaded"
+dag-status:  ## What the DAG has fired, newest first (reads the LOCAL warehouse)
 	uv run python -c "from fpl_edge.store import Warehouse; \
 	  print(Warehouse.read_copy().sql('SELECT task, gw, due_utc, outcome, detail FROM dag_firing ORDER BY due_utc DESC LIMIT 20').to_string())"

@@ -424,17 +424,35 @@ def run_transcribe_nightly(ctx: TaskContext) -> TaskResult:
     ``fetch_run`` as successful runs whose note begins "delivered: transcribe
     failed:". The alert still goes out: ``TaskResult.delivers`` admits
     ``error`` precisely so honesty in the ledger does not cost a
-    notification."""
+    notification.
+
+    On a host with no local ASR engine the outcome is ``no_source``, not
+    ``error`` (DEPLOYMENT.md §1.3 item 2). A Linux container has no Metal GPU
+    and never will, so treating that as a failure fired "Nightly
+    transcription FAILED" every night forever for a condition that is
+    correct. The caption half of the queue still runs there, because captions
+    need no engine; the audio half stays queued for the Mac worker."""
     if _network_disabled():
         return _GATED
+    from fpl_edge.ingest.content import asr
+    from fpl_edge.ingest.content.transcribe_cmd import ASR_DEFERRED_NOTE
+
+    engine = asr.backend_status()
     budget = float(os.environ.get("FPL_EDGE_TRANSCRIBE_BUDGET_S",
                                   TRANSCRIBE_BUDGET_S))
-    step = run_step(
-        "content_transcribe",
-        [ctx.python, "-m", "fpl_edge.ingest.content.pipeline", "transcribe",
-         "--budget-s", str(budget)],
-        timeout=budget + TRANSCRIBE_GRACE_S,
-    )
+    argv = [ctx.python, "-m", "fpl_edge.ingest.content.pipeline", "transcribe",
+            "--budget-s", str(budget)]
+    if not engine.ready:
+        # Narrow the run to the route that works here rather than starting a
+        # queue it cannot finish. The audio items are not skipped, recorded or
+        # counted against anything; they are simply left for the Mac.
+        argv += ["--kinds", "youtube"]
+    step = run_step("content_transcribe", argv,
+                    timeout=budget + TRANSCRIBE_GRACE_S)
+    if step.ok and not engine.ready:
+        return TaskResult(
+            outcome="no_source", steps=[step],
+            detail=f"{ASR_DEFERRED_NOTE} {step.detail[-200:]}")
     if step.ok:
         return TaskResult(outcome="quiet", detail=step.detail[-300:], steps=[step])
     return TaskResult(
