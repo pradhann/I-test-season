@@ -14,8 +14,10 @@ import pandas as pd
 # artefacts and thresholds
 # ---------------------------------------------------------------------------
 
-#: Written by fpl_edge.models.team_goals.ratings_cache. The legacy blended
-#: number; kept for back-compatibility and always labelled deprecated.
+#: Written by build.py from the same fit as the split below. The legacy blended
+#: number; kept for back-compatibility and always labelled deprecated. Its two
+#: readers are fixture_board's per-cell ``legacy_difficulty`` and the MCP tool
+#: at fpl_mcp/tools/semantic_tools.py:425.
 DIFFICULTY_NAME = "fixture_difficulty.parquet"
 
 #: Written by ``--build`` below: the fitted split, one row per club.

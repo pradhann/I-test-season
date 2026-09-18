@@ -1,9 +1,15 @@
 """The cached fixture-difficulty artefact: formula sanity and the writer.
 
+Was ``test_ratings_cache.py``. ``models/team_goals/ratings_cache.py`` is merged
+into ``platform/scripts/fixtures/build.py``, so these tests moved with the code
+they pin: the pure formula tests import ``opponent_difficulty`` from its new
+home, and the two writer tests go through ``write_artefacts``, which is now the
+one writer of all three artefacts.
+
 The pure tests pin the formula's promises on a hand-built fit where the truth
 is known by construction: values live in [0, 1], the strongest club is the
 hardest fixture, the away trip beats the home game against the same opponent.
-The end-to-end test runs the real writer against the committed synthetic
+The end-to-end tests run the real writer against the committed synthetic
 league, because a parquet with the right shape and wrong provenance is the
 kind of bug only an integration test sees.
 """
@@ -19,11 +25,12 @@ import pytest
 from fpl_edge.models.team_goals.dixon_coles import DixonColesFit
 from fpl_edge.models.team_goals.evaluate import FIXTURES_DIR
 from fpl_edge.models.team_goals.promoted import PromotedPrior
-from fpl_edge.models.team_goals.ratings_cache import (
-    COLUMNS,
+from fpl_edge.platform.scripts.fixtures import (
+    DIFFICULTY_COLUMNS,
+    DIFFICULTY_NAME,
     build_fixture_difficulty,
     opponent_difficulty,
-    write_fixture_difficulty,
+    write_artefacts,
 )
 from fpl_edge.models.team_goals.synthetic import build_warehouse, load_league
 
@@ -108,16 +115,23 @@ def test_a_league_of_clones_is_flat_at_one_half() -> None:
 
 @pytest.fixture(scope="module")
 def synthetic_db(tmp_path_factory):
-    path = tmp_path_factory.mktemp("ratings_cache") / "fpl.duckdb"
+    path = tmp_path_factory.mktemp("fixture_difficulty") / "fpl.duckdb"
     wh = build_warehouse(load_league(FIXTURES_DIR), path)
     wh.close()
     return path
 
 
-def test_writer_produces_a_sane_artefact(synthetic_db) -> None:
-    out, df = write_fixture_difficulty(synthetic_db, season=SEASON, now=AS_OF)
+def test_writer_produces_a_sane_artefact(synthetic_db, tmp_path) -> None:
+    # write_artefacts replaces write_fixture_difficulty: one fit, three files.
+    # The frame is read back off disk rather than returned, which is the
+    # stronger check anyway since the parquet is what every reader sees.
+    report = write_artefacts(synthetic_db, season=SEASON, now=AS_OF,
+                             out_dir=tmp_path, calibration=False)
+    out = tmp_path / DIFFICULTY_NAME
+    df = pd.read_parquet(out)
     assert out.exists() and out.name == "fixture_difficulty.parquet"
-    assert tuple(df.columns) == COLUMNS
+    assert report["difficulty_rows"] == len(df)
+    assert tuple(df.columns) == DIFFICULTY_COLUMNS
     assert len(df) > 0 and len(df) % 2 == 0  # two rows per fixture
 
     # Exactly one home and one away row per fixture, mirrored codes.
@@ -141,12 +155,14 @@ def test_writer_produces_a_sane_artefact(synthetic_db) -> None:
     assert set(one["team_code"]) == set(one["opponent_code"])
 
 
-def test_writer_overwrites_rather_than_appends(synthetic_db) -> None:
-    out1, df1 = write_fixture_difficulty(synthetic_db, season=SEASON, now=AS_OF)
-    out2, df2 = write_fixture_difficulty(synthetic_db, season=SEASON, now=AS_OF)
-    assert out1 == out2
-    stored = pd.read_parquet(out2)
-    assert len(stored) == len(df2) == len(df1)  # a cache, not an append log
+def test_writer_overwrites_rather_than_appends(synthetic_db, tmp_path) -> None:
+    kw = dict(season=SEASON, now=AS_OF, out_dir=tmp_path, calibration=False)
+    r1 = write_artefacts(synthetic_db, **kw)
+    r2 = write_artefacts(synthetic_db, **kw)
+    assert r1["difficulty_path"] == r2["difficulty_path"]
+    stored = pd.read_parquet(tmp_path / DIFFICULTY_NAME)
+    # a cache, not an append log
+    assert len(stored) == r2["difficulty_rows"] == r1["difficulty_rows"]
 
 
 def test_build_reads_point_in_time(synthetic_db) -> None:

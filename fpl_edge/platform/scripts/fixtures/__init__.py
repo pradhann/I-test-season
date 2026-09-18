@@ -43,8 +43,8 @@ than two scales the reader has to hold in their head.
 Why a cached artefact, and what is in it
 ----------------------------------------
 A Dixon-Coles fit is a model run with its own refresh cycle, so it belongs in a
-nightly job, not in a panel with a 10s budget. ``ratings_cache.py`` already
-writes ``fixture_difficulty.parquet``, but that file stores only the *blended*
+nightly job, not in a panel with a 10s budget. The build job also writes
+``fixture_difficulty.parquet``, but that file stores only the *blended*
 number -- ``lam_O - mu_O``, min-max normalised -- and the subtraction is
 irreversible: 740 rows carry exactly 40 distinct values, and no arithmetic
 recovers the two halves from the one scalar. (I checked whether the split can be
@@ -62,8 +62,9 @@ is pure arithmetic in the panel, microseconds not minutes. Build it with::
 
     python -m fpl_edge.platform.scripts.fixtures --build
 
-which is what the post-gameweek job should call, alongside ``ratings_cache``.
-The panel NEVER builds it: when the artefact is missing the board serves the
+which is what the post-gameweek job and the T-30h presser refresh both call.
+One run of it fits once and writes all three artefacts. The panel NEVER builds
+them: when the artefact is missing the board serves the
 schedule and every difficulty field is null with a reason naming this command.
 
 Freshness is a first-class field, not a log line
@@ -123,12 +124,16 @@ from fpl_edge.platform.scripts.fixtures.detail import (
 from fpl_edge.platform.scripts.fixtures.ratings import (
     BUILD_HINT,
     CALIBRATION_COLUMNS,
+    DIFFICULTY_COLUMNS,
     RATINGS_COLUMNS,
     build_board_ratings,
     build_calibration,
+    build_fixture_difficulty,
+    fit_once,
     load_legacy_difficulty,
     load_ratings,
     model_calibration,
+    opponent_difficulty,
 )
 
 #: Every public name fixtures.py exported. Private helpers are deliberately
@@ -143,6 +148,7 @@ __all__ = [
     "CALIBRATION_NAME",
     "DETAIL_PARAMS",
     "DETAIL_RESULT",
+    "DIFFICULTY_COLUMNS",
     "DIFFICULTY_NAME",
     "DISAGREE_PP",
     "DIVERGENCE_RANKS",
@@ -162,11 +168,14 @@ __all__ = [
     "SEASON_DEFAULT",
     "build_board_ratings",
     "build_calibration",
+    "build_fixture_difficulty",
+    "fit_once",
     "fixture_board",
     "fixture_detail",
     "load_legacy_difficulty",
     "load_ratings",
     "main",
     "model_calibration",
+    "opponent_difficulty",
     "write_artefacts",
 ]

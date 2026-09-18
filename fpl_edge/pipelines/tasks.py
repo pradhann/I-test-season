@@ -79,13 +79,15 @@ def presser_projection_refresh(ctx: TaskContext) -> TaskResult:
         run_step("ingest_content",
                  [py, "-m", "fpl_edge.ingest.content.pipeline", "ingest",
                   "--backfill-days", "2"]),
-        # Refresh the cached fixture-difficulty parquet so the ticker's
-        # colours reflect any midweek results and rescheduled fixtures the
-        # ingest above just landed. Fits from a read copy, writes only the
-        # parquet -- it cannot contend with the other steps for the DB lock.
-        run_step("fixture_difficulty",
-                 [py, "-m", "fpl_edge.models.team_goals.ratings_cache",
-                  "--season", ctx.season]),
+        # Refresh the cached fixture artefacts so the ticker's colours reflect
+        # any midweek results and rescheduled fixtures the ingest above just
+        # landed. Fits from a read copy, writes only parquets -- it cannot
+        # contend with the other steps for the DB lock. This ran
+        # `models.team_goals.ratings_cache` until that module was merged into
+        # platform/scripts/fixtures/build.py; one fit now writes all three.
+        run_step("fixture_ratings_build",
+                 [py, "-m", "fpl_edge.platform.scripts.fixtures", "--build",
+                  "--season", ctx.season, "--db", str(ctx.db_path)]),
     ]
 
     projections_cli = "fpl_edge.ingest.projections.cli"

@@ -35,7 +35,7 @@ from fpl_edge.store.warehouse import Warehouse
 
 UTC = dt.UTC
 
-#: The synthetic league's current season, matching test_ratings_cache.py.
+#: The synthetic league's current season, matching test_fixture_difficulty.py.
 SEASON = "2025-26"
 
 #: Mid-season: completed matches behind the snapshot, fixtures ahead of it.

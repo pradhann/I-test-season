@@ -6,12 +6,12 @@
 ``fpl_edge/platform/scripts/fixtures.py`` into ``fixtures/`` could change the
 artefact names or the column tuples and no test would fail.
 
-These tests pin current behaviour at 2026-09-17, not desired behaviour. One
-current behaviour worth naming: ``write_artefacts`` writes two of the three
-declared artefacts. ``DIFFICULTY_NAME`` is written by
-``fpl_edge/models/team_goals/ratings_cache.py``, not here, and the test below
-records that so the planned merge of ``ratings_cache`` into the build module
-has a before-picture.
+These tests pinned current behaviour at 2026-09-17. One of them was written as
+a before-picture: ``write_artefacts`` then wrote two of the three declared
+artefacts, because ``DIFFICULTY_NAME`` came from
+``fpl_edge/models/team_goals/ratings_cache.py``. That module is now merged in
+here, so the test below pins the after-picture instead: all three files, from
+one fit.
 
 The warehouse is the committed synthetic league under
 ``fpl_edge/models/team_goals/``, seeded into ``tmp_path``. No network, no read
@@ -32,7 +32,7 @@ from fpl_edge.store.warehouse import Warehouse
 
 UTC = dt.UTC
 
-#: The synthetic league's current season, matching test_ratings_cache.py.
+#: The synthetic league's current season, matching test_fixture_difficulty.py.
 SEASON = "2025-26"
 
 #: Mid-season: completed matches behind the snapshot, fixtures ahead of it.
@@ -65,9 +65,9 @@ def built(synthetic_db, tmp_path_factory):
 
 
 def test_the_three_artefact_names_are_the_filenames_the_panels_read():
-    """The names are a contract with the panel read path and with
-    ``ratings_cache``. A split that renames one silently detaches the reader
-    from the writer."""
+    """The names are a contract with the panel read path and with the MCP
+    fixture_difficulty tool. A split that renames one silently detaches a
+    reader from the writer."""
     assert fxmod.DIFFICULTY_NAME == "fixture_difficulty.parquet"
     assert fxmod.RATINGS_NAME == "fixture_ratings.parquet"
     assert fxmod.CALIBRATION_NAME == "fixture_calibration.parquet"
@@ -79,13 +79,54 @@ def test_write_artefacts_writes_the_ratings_and_calibration_files(built):
     assert (out / fxmod.CALIBRATION_NAME).exists()
 
 
-def test_write_artefacts_does_not_write_the_blended_difficulty_file(built):
-    """Current behaviour at fixtures.py:2396-2428: the build writes 2 of the 3
-    names. ``fixture_difficulty.parquet`` comes from
-    ``fpl_edge/models/team_goals/ratings_cache.py:write_fixture_difficulty``,
-    which the settlement chain calls as a separate step."""
+def test_write_artefacts_writes_the_blended_difficulty_file_too(built):
+    """Was ``..._does_not_write_the_blended_difficulty_file``, the
+    before-picture for the ratings_cache merge.
+
+    All three declared names are now written by one run of one fit.
+    ``fixture_difficulty.parquet`` used to come from a second job
+    (``models/team_goals/ratings_cache.py``) fitting the same model over the
+    same warehouse about half an hour later; that module is gone.
+    """
     out, _ = built
-    assert not (out / fxmod.DIFFICULTY_NAME).exists()
+    assert (out / fxmod.DIFFICULTY_NAME).exists()
+
+
+def test_the_difficulty_artefact_has_exactly_the_declared_columns_in_order(built):
+    out, _ = built
+    df = pd.read_parquet(out / fxmod.DIFFICULTY_NAME)
+    assert tuple(df.columns) == fxmod.DIFFICULTY_COLUMNS
+    assert fxmod.DIFFICULTY_COLUMNS == (
+        "season", "gw", "fixture_id", "team_code", "opponent_code", "is_home",
+        "difficulty", "fitted_at", "snapshot_as_of",
+    )
+
+
+def test_the_difficulty_artefact_has_two_mirrored_rows_per_upcoming_fixture(built):
+    """Row count against the same synthetic league the ratings artefact uses:
+    two rows per upcoming fixture, one per side, difficulty in [0, 1]."""
+    out, _ = built
+    df = pd.read_parquet(out / fxmod.DIFFICULTY_NAME)
+    assert len(df) > 0 and len(df) % 2 == 0
+    per_fixture = df.groupby("fixture_id")
+    assert (per_fixture.size() == 2).all()
+    assert (per_fixture["is_home"].sum() == 1).all()
+    assert len(df) == 2 * df["fixture_id"].nunique()
+    assert df["difficulty"].between(0.0, 1.0).all()
+    assert df["season"].eq(SEASON).all()
+
+
+def test_the_three_artefacts_come_from_one_fit(built):
+    """The merge's whole point. Two fits half an hour apart gave the ratings
+    and the difficulty files different ``fitted_at`` stamps and, after a
+    midweek result landed between them, different underlying numbers."""
+    out, _ = built
+    ratings = pd.read_parquet(out / fxmod.RATINGS_NAME)
+    difficulty = pd.read_parquet(out / fxmod.DIFFICULTY_NAME)
+    assert ratings["fitted_at"].nunique() == 1
+    assert difficulty["fitted_at"].nunique() == 1
+    assert ratings["fitted_at"].iloc[0] == difficulty["fitted_at"].iloc[0]
+    assert ratings["snapshot_as_of"].iloc[0] == difficulty["snapshot_as_of"].iloc[0]
 
 
 # ---------------------------------------------------------------------------
@@ -134,11 +175,14 @@ def test_the_ratings_artefact_carries_one_row_per_club_with_a_split(built):
 def test_the_report_names_every_artefact_it_wrote(built):
     out, report = built
     assert set(report) == {
+        "fit_seconds",
         "ratings_rows", "ratings_seconds", "ratings_path",
+        "difficulty_rows", "difficulty_seconds", "difficulty_path",
         "calibration_rows", "calibration_seconds", "calibration_path",
     }
     assert report["ratings_rows"] == 20
     assert report["ratings_path"] == str(out / fxmod.RATINGS_NAME)
+    assert report["difficulty_path"] == str(out / fxmod.DIFFICULTY_NAME)
     assert report["calibration_path"] == str(out / fxmod.CALIBRATION_NAME)
 
 
@@ -147,8 +191,14 @@ def test_skipping_calibration_leaves_the_calibration_keys_out(synthetic_db,
     report = fxmod.write_artefacts(
         synthetic_db, season=SEASON, out_dir=tmp_path, now=AS_OF,
         calibration=False)
-    assert set(report) == {"ratings_rows", "ratings_seconds", "ratings_path"}
+    # Only the calibration is optional; the difficulty is a cheap derivation
+    # of a fit that has already been paid for, so --no-calibration keeps it.
+    assert set(report) == {
+        "fit_seconds", "ratings_rows", "ratings_seconds", "ratings_path",
+        "difficulty_rows", "difficulty_seconds", "difficulty_path",
+    }
     assert not (tmp_path / fxmod.CALIBRATION_NAME).exists()
+    assert (tmp_path / fxmod.DIFFICULTY_NAME).exists()
 
 
 def test_a_warehouse_with_no_upcoming_fixtures_yields_the_empty_column_frame(

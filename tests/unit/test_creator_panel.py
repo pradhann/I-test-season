@@ -1690,7 +1690,12 @@ def test_player_chatter_serves_the_namesake_disambiguator(seeded_db):
 import ast as _ast
 from pathlib import Path as _Path
 
-_CREATORS_PY = _Path(__file__).resolve().parents[2] / "fpl_edge" / "platform" / "scripts" / "creators.py"
+#: creators.py became a package (ARCHITECTURE_REVIEW.md Section 4 row 22), so
+#: the guard walks every module in it rather than one file. Reading one file
+#: would have kept passing while five sixths of the panel prose went unchecked.
+_CREATORS_DIR = (_Path(__file__).resolve().parents[2] / "fpl_edge" / "platform"
+                 / "scripts" / "creators")
+_CREATORS_PY = sorted(_CREATORS_DIR.glob("*.py"))
 
 #: `_plain` is the function that REMOVES the pair, so its own literals are the
 #: pattern it matches and are the one legitimate occurrence in the module.
@@ -1719,7 +1724,11 @@ def _runtime_strings(path):
 
 
 def test_no_panel_string_carries_a_dash_aside():
-    bad = [(line, text) for line, text in _runtime_strings(_CREATORS_PY)
+    assert len(_CREATORS_PY) == 7, (
+        "the package is __init__ plus the six modules of row 22; a seventh "
+        f"module would go unchecked: {[p.name for p in _CREATORS_PY]}")
+    bad = [(path.name, line, text) for path in _CREATORS_PY
+           for line, text in _runtime_strings(path)
            if " -- " in text or "—" in text]
     assert bad == [], (
         "the house rule bans em-dashes and ' -- ' pairs in rendered prose; "

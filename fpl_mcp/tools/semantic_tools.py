@@ -485,7 +485,8 @@ def fixture_difficulty(
             head += (
                 "\nNo difficulty ratings: fixture_difficulty.parquet does not exist yet. "
                 "It is written by the engine's post-gameweek job / T-30h pre-deadline "
-                "refresh (fpl_edge/models/team_goals/ratings_cache.py). Schedule only:"
+                "refresh, or by hand with "
+                "`python -m fpl_edge.platform.scripts.fixtures --build`. Schedule only:"
             )
         if df.empty:
             return f"{head}\nNo upcoming {season} fixtures after {t:%Y-%m-%d %H:%M}Z in sem_fixtures."

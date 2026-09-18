@@ -218,13 +218,17 @@ def settlement_steps(py: str) -> list[tuple[str, list[str]]]:
         # settled it reports pending and writes nothing, so the weights table
         # can never hold opinions.
         ("score_projections", [py, "-m", "fpl_edge.eval.projection_scoring"]),
-        # Refit team strength now that results have landed and cache
-        # per-fixture difficulty as a parquet next to the database. The
-        # fixtures panel reads the artefact instead of paying for a ~1 minute
-        # fit inside its 10s budget. Reads via Warehouse.read_copy, writes
-        # only the parquet: no lock contention.
-        ("fixture_difficulty",
-         [py, "-m", "fpl_edge.models.team_goals.ratings_cache"]),
+        # Refit team strength now that results have landed and cache what the
+        # fixtures panels read: the club attack/defence split, the blended
+        # per-fixture difficulty and the calibration, three parquets beside the
+        # database from ONE fit. The panels read the artefacts instead of
+        # paying for a ~1 minute fit inside their 10s budget. Reads via
+        # Warehouse.read_copy, writes only the parquets: no lock contention.
+        # This ran `models.team_goals.ratings_cache` until that module was
+        # merged into platform/scripts/fixtures/build.py, which had been
+        # fitting the same model over the same warehouse separately.
+        ("fixture_ratings_build",
+         [py, "-m", "fpl_edge.platform.scripts.fixtures", "--build"]),
         # The nightly odds top-up. Two things here were an outage until
         # 2026-08-28.
         #

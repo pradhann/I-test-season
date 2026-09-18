@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import datetime as dt
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -34,14 +35,29 @@ RATINGS_COLUMNS = (
 )
 
 
-def build_board_ratings(wh, *, season: str = SEASON_DEFAULT,
-                        now: dt.datetime | None = None) -> pd.DataFrame:
-    """Fit once and return the split, one row per club. **Job code, not panel.**
+@dataclass(frozen=True)
+class Fitted:
+    """One Dixon-Coles fit and the frames every artefact here derives from.
 
-    This is the whole difference between this module and ``ratings_cache``: it
-    stops at ``attack`` and ``defence`` instead of subtracting them into one
-    scalar. Everything the fixtures page shows is a function of these numbers
-    plus the fit's three globals.
+    Both the club split and the blended difficulty are views of the SAME fit.
+    Before the merge they were two fits of one model half an hour apart, run by
+    two jobs, writing two files. ``write_artefacts`` now builds this once and
+    hands it to all three builders.
+    """
+
+    season: str
+    snapshot: Any
+    fit: Any
+    fixtures: pd.DataFrame
+    fitted_at: dt.datetime
+
+
+def fit_once(wh, *, season: str = SEASON_DEFAULT,
+             now: dt.datetime | None = None) -> Fitted:
+    """Fit at ``now`` and return everything the three builders need.
+
+    Point-in-time: the fit reads through ``wh.snapshot_at(now)``, so it sees
+    the results that were public at that instant and nothing later.
     """
     from typing import cast
 
@@ -50,9 +66,31 @@ def build_board_ratings(wh, *, season: str = SEASON_DEFAULT,
 
     now = (now or dt.datetime.now(UTC)).astimezone(UTC)
     snapshot = wh.snapshot_at(now)
-    fit = DixonColesModel().fit(snapshot, cast(Season, season))
+    return Fitted(
+        season=season,
+        snapshot=snapshot,
+        fit=DixonColesModel().fit(snapshot, cast(Season, season)),
+        fixtures=snapshot.upcoming_fixtures(season),
+        fitted_at=dt.datetime.now(UTC),
+    )
 
-    fixtures = snapshot.upcoming_fixtures(season)
+
+def build_board_ratings(wh, *, season: str = SEASON_DEFAULT,
+                        now: dt.datetime | None = None,
+                        fitted: Fitted | None = None) -> pd.DataFrame:
+    """Fit once and return the split, one row per club. **Job code, not panel.**
+
+    The split stops at ``attack`` and ``defence`` instead of subtracting them
+    into one scalar, which is what the blended difficulty below does with the
+    same numbers. Everything the fixtures page shows is a function of these
+    plus the fit's three globals.
+
+    ``fitted`` lets a caller that already has a fit reuse it. Passing nothing
+    fits here, so a test or a one-off call still works on its own.
+    """
+    fitted = fitted or fit_once(wh, season=season, now=now)
+    fit, snapshot = fitted.fit, fitted.snapshot
+    fixtures = fitted.fixtures
     played = snapshot.table("fact_fixture")
     if fixtures.empty:
         return pd.DataFrame(columns=list(RATINGS_COLUMNS))
@@ -66,7 +104,6 @@ def build_board_ratings(wh, *, season: str = SEASON_DEFAULT,
     idx = [fit.index_of(c) for c in codes]
     atk = fit.attack[idx]
     dfn = fit.defence[idx]
-    fitted_at = dt.datetime.now(UTC)
     return pd.DataFrame(
         {
             "season": season,
@@ -78,7 +115,8 @@ def build_board_ratings(wh, *, season: str = SEASON_DEFAULT,
             "intercept": fit.intercept,
             "home_adv": fit.home_adv,
             "rho": fit.rho,
-            # Means over THIS season's clubs, matching ratings_cache: the
+            # Means over THIS season's clubs, matching opponent_difficulty
+            # below so the two artefacts share one anchor: the
             # league-average anchor must be the league we are actually in, not
             # the four-season pool the fit was estimated over.
             "mean_attack": float(atk.mean()),
@@ -87,7 +125,7 @@ def build_board_ratings(wh, *, season: str = SEASON_DEFAULT,
             "n_matches": fit.n_matches,
             "effective_n": fit.effective_n,
             "converged": fit.converged,
-            "fitted_at": fitted_at,
+            "fitted_at": fitted.fitted_at,
             "snapshot_as_of": snapshot.as_of,
         },
         columns=list(RATINGS_COLUMNS),
@@ -260,6 +298,100 @@ class _Ratings:
         # easiest sign error in this file.
         dfn = pd.Series(self.defence).rank(ascending=True, method="min")
         return {int(c): (int(atk[c]), int(dfn[c])) for c in self.attack}
+
+
+# ---------------------------------------------------------------------------
+# the blended difficulty artefact -- merged from models/team_goals/ratings_cache
+# ---------------------------------------------------------------------------
+#
+# The blended number is the same fit's attack and defence subtracted into one
+# scalar and min-maxed over the league. It is a strict LOSS of information
+# against the split above, which is why the board never colours by it and the
+# schema marks it deprecated. It keeps a writer because two readers still ask
+# for it by name: fixture_board's per-cell `legacy_difficulty`, and the MCP
+# tool fpl_mcp/tools/semantic_tools.py:425.
+
+DIFFICULTY_COLUMNS = (
+    "season", "gw", "fixture_id", "team_code", "opponent_code", "is_home",
+    "difficulty", "fitted_at", "snapshot_as_of",
+)
+
+
+def opponent_difficulty(fit, season_teams: set[int]) -> dict[tuple[int, bool], float]:
+    """``(opponent_code, opponent_is_home) -> difficulty`` for one fitted model.
+
+    For a team facing opponent *O*, with *O* at that venue::
+
+        lam_O = exp(c + g*[O at home] + attack_O + mean_defence)
+        mu_O  = exp(c + g*[O away]    + mean_attack + defence_O)
+        strength(O, venue) = lam_O - mu_O
+        difficulty(O, venue) = (strength - min) / (max - min)
+
+    The min and max run over the fixed population of all (club, venue) pairs,
+    2N values, so the scale is a property of the league rather than of whichever
+    horizon happened to be requested. Difficulty is in [0, 1] by construction,
+    higher is harder, and the away trip to a side is always harder than hosting
+    it because *O* gains the fitted home advantage. It is a function of opponent
+    and venue only, like FPL's own FDR, so a leaky defence does not paint a
+    club's whole ticker red.
+    """
+    codes = sorted(int(c) for c in season_teams)
+    idx = [fit.index_of(c) for c in codes]
+    atk = fit.attack[idx]
+    dfn = fit.defence[idx]
+    mean_atk = float(atk.mean())
+    mean_dfn = float(dfn.mean())
+    c, g = fit.intercept, fit.home_adv
+
+    strength: dict[tuple[int, bool], float] = {}
+    for code, a, d in zip(codes, atk, dfn, strict=True):
+        for opp_home in (True, False):
+            lam = np.exp(c + (g if opp_home else 0.0) + a + mean_dfn)
+            mu = np.exp(c + (0.0 if opp_home else g) + mean_atk + d)
+            strength[(code, opp_home)] = float(lam - mu)
+
+    values = np.array(list(strength.values()))
+    lo, hi = float(values.min()), float(values.max())
+    if hi <= lo:  # a degenerate fit where every club is identical
+        return {k: 0.5 for k in strength}
+    return {k: (v - lo) / (hi - lo) for k, v in strength.items()}
+
+
+def build_fixture_difficulty(wh, *, season: str = SEASON_DEFAULT,
+                             now: dt.datetime | None = None,
+                             fitted: Fitted | None = None) -> pd.DataFrame:
+    """The blended difficulty rows for every upcoming fixture.
+
+    Two rows per fixture, one per team, each carrying the difficulty its
+    *opponent* poses at that venue. ``fitted`` reuses a fit the caller already
+    has; passing nothing fits here.
+    """
+    fitted = fitted or fit_once(wh, season=season, now=now)
+    fixtures, snapshot = fitted.fixtures, fitted.snapshot
+    if fixtures.empty:
+        return pd.DataFrame(columns=list(DIFFICULTY_COLUMNS))
+
+    teams = (set(fixtures["home_team_code"].astype(int))
+             | set(fixtures["away_team_code"].astype(int)))
+    difficulty = opponent_difficulty(fitted.fit, teams)
+
+    rows: list[dict] = []
+    for fx in fixtures.itertuples(index=False):
+        home, away = int(fx.home_team_code), int(fx.away_team_code)
+        for team, opp, is_home in ((home, away, True), (away, home, False)):
+            rows.append({
+                "season": str(fx.season),
+                "gw": int(fx.gw),
+                "fixture_id": int(fx.fixture_id),
+                "team_code": team,
+                "opponent_code": opp,
+                "is_home": is_home,
+                # The opponent's venue is the inverse of ours.
+                "difficulty": difficulty[(opp, not is_home)],
+                "fitted_at": fitted.fitted_at,
+                "snapshot_as_of": snapshot.as_of,
+            })
+    return pd.DataFrame(rows, columns=list(DIFFICULTY_COLUMNS))
 
 
 def _read_parquet(path: Path) -> tuple[pd.DataFrame | None, str | None]:
