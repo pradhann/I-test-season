@@ -1383,3 +1383,81 @@ def test_a_passed_deadline_outranks_a_changed_squad(db, tmp_path):
     brief = run_script("dashboard_brief", {}, db=db).result
     assert brief["solve"]["state"] == "stale"
     assert brief["solve"]["plan"] is None
+
+
+# ------------------------------------------- the pre-split key-set pin (T2)
+
+
+#: Every top-level key ``dashboard_brief`` serves, with the python type of its
+#: value on the seeded warehouse. Pinned on 2026-09-17, before
+#: ``dashboard_brief`` is decomposed into sixteen block builders
+#: (ARCHITECTURE_REVIEW.md Section 4 row 23) and before ``brief.py`` is split
+#: into ``brief/`` (row 24). A builder that drops or renames a field changes
+#: this dict, and a subset assertion would not notice.
+BRIEF_KEYS: dict[str, type | tuple[type, ...]] = {
+    "alerts": list,
+    "as_of": str,
+    "best_xi": dict,
+    "deadline_utc": str,
+    "empty_kinds": list,
+    "entry_id": int,
+    "fixtures_scale": dict,
+    "gw": int,
+    "header": dict,
+    "moves": list,
+    "moves_suppressed": int,
+    "notes": list,
+    "p_haul_generated": str,
+    "p_haul_source": str,
+    "projection_gw": int,
+    "season": str,
+    "solve": dict,
+    "sources_as_of": dict,
+    "squad_projection": list,
+    "squad_source": dict,
+    "standing": dict,
+    "suggested_xi": dict,
+    "suppressed_counts": dict,
+    "team_fixtures": list,
+    "thresholds": dict,
+    "tiles": list,
+    "verdict": dict,
+    "watch_log": list,
+    "xi_median_xpts": float,
+    "xpts_as_of": str,
+    "xpts_source": str,
+}
+
+
+def test_the_brief_serves_exactly_this_key_set_with_these_value_types(db):
+    """The characterisation pin for the sixteen-builder decomposition.
+
+    Equality, not containment, on both sides: a dropped key and an added key
+    are both failures here, and a rename shows up as one of each.
+    """
+    from fpl_edge.platform.scripts.brief import RESULT
+
+    res = run_script("dashboard_brief", {}, db=db).result
+    assert set(res) == set(BRIEF_KEYS)
+    for key, want in BRIEF_KEYS.items():
+        assert isinstance(res[key], want), (
+            f"{key} is {type(res[key]).__name__}, pinned as {want.__name__}")
+    # The schema declares the same surface, so a builder cannot add a key to
+    # the payload without also declaring it.
+    assert set(RESULT["properties"]) == set(BRIEF_KEYS)
+    assert set(RESULT["required"]) <= set(BRIEF_KEYS)
+    assert RESULT["additionalProperties"] is False
+
+
+def test_the_seeded_brief_serves_three_alerts_and_three_tiles_and_no_moves(db):
+    """The list lengths on the seeded warehouse, pinned alongside the keys.
+
+    A key-set test alone passes when a builder returns an empty list, so the
+    counts are asserted too. ``moves`` is 0 here because the seed writes no
+    transfer plan in this test.
+    """
+    res = run_script("dashboard_brief", {}, db=db).result
+    assert len(res["alerts"]) == 3
+    assert len(res["tiles"]) == 3
+    assert len(res["moves"]) == 0
+    assert res["moves_suppressed"] == 0

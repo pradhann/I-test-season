@@ -1210,3 +1210,92 @@ class TestAPreDeadlineSquadStillHasAMultiplier:
         roles, meta = self._roles([(1, False, None), (2, False, None)])
         assert all(r["mult"] is None for r in roles.values())
         assert meta["has_multipliers"] is False
+
+
+# ------------------------------------------ the pre-decomposition pin (T4)
+#
+# ARCHITECTURE_REVIEW.md Section 4 row 25 decomposes ``ownership_eo`` (975
+# lines) into phases inside ownership.py, and row 26 then splits the module
+# into ``ownership/``. Nothing above asserts the payload's own top-level shape
+# or that all three tool blocks survive, so these four tests are the
+# characterisation pin the decomposition is read against.
+
+
+#: Every top-level key ``ownership_eo`` serves on the segmented seed, with the
+#: python type of its value. Pinned 2026-09-17.
+EO_KEYS: dict[str, type] = {
+    "as_of": str,
+    "cohort": str,
+    "cohort_gw": int,
+    "cohort_n": int,
+    "cohort_note": str,
+    "diff": list,
+    "differentials": list,
+    "eo_pred_captured": dict,
+    "field_distinction": dict,
+    "fields": list,
+    "gws_covered": list,
+    "last_season": dict,
+    "metrics_note": str,
+    "momentum": dict,
+    "rows": list,
+    "rows_ranked_by": str,
+    "season": str,
+    "segments": list,
+    "selection": dict,
+    "squad": dict,
+    "squad_note": str,
+    "whatif": dict,
+    "xpts_gw": int,
+}
+
+
+def test_the_panel_serves_exactly_this_key_set_with_these_value_types(
+        segmented_db):
+    """Equality on both sides: a dropped key and an added key are both
+    failures, and a rename shows up as one of each."""
+    from fpl_edge.platform.scripts.ownership import RESULT_SCHEMA
+
+    res = run(segmented_db)
+    assert set(res) == set(EO_KEYS)
+    for key, want in EO_KEYS.items():
+        assert isinstance(res[key], want), (
+            f"{key} is {type(res[key]).__name__}, pinned as {want.__name__}")
+    assert set(RESULT_SCHEMA["properties"]) == set(EO_KEYS)
+    assert set(RESULT_SCHEMA["required"]) <= set(EO_KEYS)
+    assert RESULT_SCHEMA["additionalProperties"] is False
+
+
+def test_tool_one_the_squad_vs_field_diff_carries_its_declared_row_keys(
+        segmented_db):
+    from fpl_edge.platform.scripts.ownership import _DIFF_ROW
+
+    res = run(segmented_db)
+    assert res["diff"], "the segmented seed owns players the field also holds"
+    declared = set(_DIFF_ROW["properties"])
+    for row in res["diff"]:
+        assert set(row) == declared
+    assert _DIFF_ROW["additionalProperties"] is False
+    assert {"your_own_pct", "field_own_pct", "edge_own_pct",
+            "your_eo_pct", "field_eo_pct", "edge_eo_pct"} <= declared
+
+
+def test_tool_two_the_whatif_block_carries_its_declared_keys(segmented_db):
+    res = run(segmented_db)
+    block = res["whatif"]
+    assert set(block) == {"players", "n", "gw", "field", "denominator",
+                          "safe_to_recompute", "not_safe_to_recompute", "note"}
+    assert isinstance(block["players"], list)
+    assert isinstance(block["safe_to_recompute"], list)
+    assert isinstance(block["not_safe_to_recompute"], list)
+
+
+def test_tool_three_the_momentum_block_carries_its_declared_keys(segmented_db):
+    res = run(segmented_db)
+    block = res["momentum"]
+    assert set(block) == {"available", "reason", "gws", "min_gws_for_a_trend",
+                          "next_gw", "next_deadline_utc", "series"}
+    assert isinstance(block["available"], bool)
+    assert block["reason"].strip(), "an unavailable trend still names why"
+    assert isinstance(block["gws"], list)
+    assert isinstance(block["series"], list)
