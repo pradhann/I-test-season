@@ -37,3 +37,5 @@ data/raw/content/
 # chat sub-app toolchain (web/chat-app builds into web/dist/chat-app)
 web/chat-app/node_modules/
 .claude/worktrees/
+# Paid provider exports dropped by hand (FPLReview, Solio); never published.
+data/projections/
