@@ -125,12 +125,16 @@ def _pipelines_router(deps: Deps) -> APIRouter:
 
         with pipeline_run_lock:
             current = _pipeline_run_state(task_id)
-            if current["state"] == "running":
+            # "waiting" counts: a trigger that is queued behind the writer
+            # lease has not started, and admitting a second one would mean two
+            # runs of the same task the moment the lease frees.
+            if current["state"] in ("running", "waiting"):
                 return JSONResponse(
                     {**current,
-                     "detail": f"pipeline {task_id!r} already has a running "
-                               f"firing (started by this server); poll "
-                               f"run_state instead of starting a second one."},
+                     "detail": f"pipeline {task_id!r} is already "
+                               f"{current['state']} (a firing this server "
+                               f"started); poll run_state instead of starting "
+                               f"a second one."},
                     status_code=409)
             if _scheduler_is_running(task_id):
                 return JSONResponse(
@@ -143,9 +147,29 @@ def _pipelines_router(deps: Deps) -> APIRouter:
             run_id = uuid.uuid4().hex
 
             def _run() -> None:
+                # The process-wide writer lease (DEPLOYMENT.md §2.4). Under
+                # launchd the tick was a separate process and the DuckDB file
+                # lock held it apart from the server. In one process on
+                # Railway they are both writers in one runtime, and DuckDB
+                # answers that with transaction conflicts rather than a
+                # deadlock. So this thread WAITS for the scheduler's lease
+                # instead of racing it, and the request that started it has
+                # already returned 202, so nobody is held on an HTTP
+                # connection while it waits. The poller sees "waiting" until
+                # the lease arrives and "running" afterwards, which is the
+                # honest distinction: a triggered run that is queued behind a
+                # 17-step settlement chain has not started.
+                from fpl_edge.platform import scheduler as sched_mod
+
                 try:
-                    outcome = pipe_runner.run_task(
-                        task_id, db_path=db_path, trigger="ui", run_id=run_id)
+                    with sched_mod.write_lease(holder=f"ui run {task_id}"):
+                        app.state.pipeline_runs[task_id] = {
+                            **_pipeline_run_state(task_id),
+                            "state": "running", "detail": None,
+                        }
+                        outcome = pipe_runner.run_task(
+                            task_id, db_path=db_path, trigger="ui",
+                            run_id=run_id)
                     app.state.pipeline_runs[task_id] = {
                         "task_id": task_id,
                         "state": "error" if outcome.record.status == "error" else "done",
@@ -161,7 +185,9 @@ def _pipelines_router(deps: Deps) -> APIRouter:
                     }
 
             app.state.pipeline_runs[task_id] = {
-                "task_id": task_id, "state": "running", "detail": None,
+                "task_id": task_id, "state": "waiting",
+                "detail": "queued for the process writer lease; the scheduler "
+                          "holds it while a tick is in flight",
                 "run_id": run_id,
                 "started_utc": dt.datetime.now(UTC).isoformat(),
             }

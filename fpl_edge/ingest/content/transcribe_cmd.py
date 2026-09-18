@@ -11,10 +11,34 @@ Section 3 and Section 4 row 16).
 from __future__ import annotations
 import argparse
 import datetime as dt
+from dataclasses import dataclass
+from typing import Any
+
 from fpl_edge.store import Warehouse
 
 from fpl_edge.ingest.content.analyse_cmd import RELEVANCE_THRESHOLD, _write_with_retry, relevance_score
 from fpl_edge.ingest.content.pipeline_common import _now, build_resolver
+
+
+#: What a host with no local engine prints, and the reason line the nightly
+#: registry task carries into its ledger row. One string so the console and
+#: the ledger cannot drift (DEPLOYMENT.md §1.3).
+ASR_DEFERRED_NOTE = (
+    "No local transcription engine on this host. Published captions still "
+    "transcribe here, since they need no GPU. Audio ASR is performed by the "
+    "Mac worker (scripts/mac_transcribe_worker.py), so items that need it are "
+    "left in the queue untouched and nothing is recorded against them."
+)
+
+
+def kind_needs_asr(kind: str) -> bool:
+    """True when this item can only be transcribed by decoding its audio.
+
+    ``youtube`` rides the published-caption route, which reads text a third
+    party already produced and runs anywhere. Every other kind is audio, so
+    it needs the engine and, on a host without one, the Mac worker.
+    """
+    return str(kind) != "youtube"
 
 
 _TRANSCRIBE_SKIP_DDL = """
@@ -25,6 +49,148 @@ CREATE TABLE IF NOT EXISTS content_transcribe_skip (
     at_utc   TIMESTAMP WITH TIME ZONE NOT NULL
 )
 """
+
+
+@dataclass(frozen=True)
+class QueueSelection:
+    """What the transcription queue holds, and what the gate turned away.
+
+    One definition, two callers: ``cmd_transcribe`` on whichever host runs the
+    command, and ``GET /api/transcripts/queue``, which serves the same list to
+    the Mac worker (DEPLOYMENT.md §1.4). A second copy of this SQL is how the
+    server and the worker would come to disagree about what is owed.
+    """
+
+    #: Rows that passed the gate, newest ``published_at`` first. Columns:
+    #: item_id, source_key, creator, kind, title, url, published_at,
+    #: text_source, text.
+    queue: Any
+    #: ``(item_id, reason, detail)`` for every item the gate turned away. The
+    #: caller writes these to ``content_transcribe_skip``; reading the queue
+    #: writes nothing.
+    gated: list[tuple[str, str, str]]
+    #: How many items were queued before the gate ran.
+    queued_before_gate: int
+    #: Items already carrying a transcript, never re-done.
+    already: int
+    #: Curated panel members with no entry in ``youtube.PANEL_CREATORS``.
+    drift: list[str]
+    #: The newest queued item's ``published_at``, as a string, or None.
+    newest_published: str | None
+
+
+def select_queue(
+    wh,
+    *,
+    kinds: tuple[str, ...],
+    creators: frozenset[str],
+    since: dt.datetime | None,
+    min_relevance: float,
+    now: dt.datetime | None = None,
+) -> QueueSelection:
+    """The transcription queue and the relevance gate's verdicts, read-only.
+
+    ``wh`` is a read handle. Items are those whose ``text_source`` is not
+    already ``transcript``, of the requested kinds, with no row in
+    ``transcript_segment`` and none in ``content_transcribe_skip``, newest
+    first. The gate then scores each one and everything below
+    ``min_relevance`` is returned in ``gated`` rather than dropped, so the
+    caller can record a named reason instead of silence.
+    """
+    ledger_exists = int(wh.sql(
+        "SELECT count(*) c FROM information_schema.tables "
+        "WHERE table_name = 'content_transcribe_skip'"
+    ).iloc[0]["c"]) > 0
+    cols = ("i.item_id, i.source_key, i.creator, i.kind, i.title, i.url, "
+            "i.published_at, i.text_source, i.text")
+    where = ["i.text_source <> 'transcript'",
+             f"i.kind IN ({', '.join('?' * len(kinds))})",
+             "t.item_id IS NULL"]
+    if ledger_exists:
+        where.append("s.item_id IS NULL")
+    params: list[object] = list(kinds)
+    if creators:
+        where.append(f"i.creator IN ({', '.join('?' * len(creators))})")
+        params.extend(sorted(creators))
+    if since is not None:
+        where.append("i.published_at >= ?")
+        params.append(since)
+    queue = wh.sql(
+        f"SELECT {cols} FROM content_item i "
+        + ("LEFT JOIN content_transcribe_skip s ON s.item_id = i.item_id "
+           if ledger_exists else "")
+        + f"LEFT JOIN (SELECT DISTINCT item_id FROM transcript_segment) t "
+        f"  ON t.item_id = i.item_id "
+        f"WHERE {' AND '.join(where)} "
+        # Newest first: a creator's take on the gameweek that has not been
+        # played is worth more than their take on one that has.
+        f"ORDER BY i.published_at DESC",
+        params,
+    )
+    queued_before_gate = len(queue)
+    newest = (str(queue.iloc[0]["published_at"]) if queued_before_gate else None)
+    already = int(wh.sql(
+        "SELECT count(*) c FROM content_item WHERE text_source = 'transcript'"
+    ).iloc[0]["c"])
+    # The curated roster (panel.py) may have moved ahead of the caption
+    # ceiling in youtube.PANEL_CREATORS. Say so; do not quietly widen.
+    from fpl_edge.ingest.content.youtube import divergence_from_roster
+
+    drift = divergence_from_roster(wh)
+    # The strict player index the relevance gate scores against. A warehouse
+    # with no dim_player yet (content-only test dbs) is not an error: the gate
+    # then scores on terms/panel/recency alone and the breakdown says
+    # "players:unavailable" rather than guessing.
+    try:
+        gate_resolver = build_resolver(wh)
+    except Exception:  # noqa: BLE001 - absence of players, not a failure
+        gate_resolver = None
+
+    # The gate runs BEFORE any limit, so the budget is spent on the items
+    # worth it.
+    gated: list[tuple[str, str, str]] = []
+    if min_relevance > 0 and queued_before_gate:
+        scoring_now = now or _now()
+        keep: list[int] = []
+        for pos, row in enumerate(queue.itertuples(index=False)):
+            score, why = relevance_score(
+                title=str(row.title or ""), text=str(row.text or ""),
+                resolver=gate_resolver, creator=str(row.creator or ""),
+                published_at=row.published_at, now=scoring_now,
+            )
+            if score >= min_relevance:
+                keep.append(pos)
+            else:
+                gated.append((str(row.item_id), f"relevance:{score:g}",
+                              f"below threshold {min_relevance:g}: {why}"))
+        queue = queue.iloc[keep].reset_index(drop=True)
+    return QueueSelection(
+        queue=queue, gated=gated, queued_before_gate=queued_before_gate,
+        already=already, drift=list(drift), newest_published=newest,
+    )
+
+
+def record_gate_skips(db, gated: list[tuple[str, str, str]],
+                      *, now: dt.datetime | None = None) -> int:
+    """Write the gate's verdicts to ``content_transcribe_skip``.
+
+    Without them every below-threshold item would be re-scored forever. One
+    short write lease, and the DDL rides with it so a warehouse that has never
+    transcribed anything is handled.
+    """
+    if not gated:
+        return 0
+    stamp = now or _now()
+    rows = [(i, r, d, stamp) for i, r, d in gated]
+
+    def _write(wh):
+        wh.sql(_TRANSCRIBE_SKIP_DDL)
+        for row in rows:
+            wh.sql("INSERT OR REPLACE INTO content_transcribe_skip "
+                   "VALUES (?, ?, ?, ?)", list(row))
+
+    _write_with_retry(db, _write)
+    return len(rows)
 
 
 def _asr_fetcher(delay: float):
@@ -54,9 +220,12 @@ def cmd_transcribe(args: argparse.Namespace) -> int:
     Three properties are worth stating because each was a decision:
 
     **Nothing here spends Anthropic tokens.** The transcription engine is
-    MLX-Whisper running locally on the Metal GPU. If it is not installed the
-    command prints the install line and exits 1; there is no remote fallback,
-    by design (see :mod:`fpl_edge.ingest.content.asr`).
+    MLX-Whisper running locally on the Metal GPU. There is no remote fallback,
+    by design (see :mod:`fpl_edge.ingest.content.asr`). On a host with no
+    engine the command prints the install line, transcribes whatever rides
+    the published-caption route, and leaves every audio item in the queue for
+    the Mac worker to claim. It exits 0: a Linux server having no Metal GPU
+    is a permanent and correct condition, not a failure to alert on.
 
     **The write lock is never held across a transcription.** A 40-minute
     episode takes minutes to decode; two other agents are writing this file.
@@ -77,7 +246,6 @@ def cmd_transcribe(args: argparse.Namespace) -> int:
     from fpl_edge.ingest.content.youtube import (
         PANEL_CREATORS,
         PANEL_WITHOUT_SOURCE,
-        divergence_from_roster,
         fetch_panel_captions,
         panel_fetcher,
     )
@@ -87,11 +255,17 @@ def cmd_transcribe(args: argparse.Namespace) -> int:
 
     status = asr.backend_status()
     print(status.render())
-    if not status.ready and not args.dry_run:
-        print("\nSTOPPED: no local transcription engine. Nothing was transcribed "
-              "and nothing was written. There is deliberately no remote "
-              "fallback -- transcription must not spend Anthropic tokens.")
-        return 1
+    if not status.ready:
+        # DEPLOYMENT.md §1.3 item 1. This used to `return 1` here, before the
+        # queue had been read, so a Linux host refused a caption-only run that
+        # needs no engine at all: on Railway that made content_fast_rss exit
+        # non-zero every four hours (its second step is
+        # `transcribe --kinds youtube`). The gate now sits at the one place an
+        # item actually needs the GPU, in the loop below. Items that need it
+        # are left UNTOUCHED and UNRECORDED so they stay in the queue that
+        # GET /api/transcripts/queue serves to the Mac worker; a skip row here
+        # would remove them from that queue permanently.
+        print(f"\n{ASR_DEFERRED_NOTE}")
 
     kinds = tuple(k.strip() for k in args.kinds.split(",") if k.strip())
     creators = (frozenset({args.creator}) if args.creator
@@ -102,94 +276,32 @@ def cmd_transcribe(args: argparse.Namespace) -> int:
     print(f"kinds:    {', '.join(kinds)}")
 
     since = _now() - dt.timedelta(days=args.since) if args.since else None
+    # getattr, because tests drive this command with hand-built Namespaces
+    # that predate the gate; absent means "the default bar", not "off".
+    min_relevance = float(getattr(args, "min_relevance", RELEVANCE_THRESHOLD))
     with Warehouse(args.db, read_only=True) as wh:
         stored_enclosures, enclosure_origin = asr.enclosure_lookup(wh)
-        # The ledger is READ here and CREATED later, after --dry-run has had
-        # its chance to return. A dry run that creates two tables in a shared
-        # warehouse is not a dry run, and "it is only DDL" is exactly the
-        # argument that makes a --dry-run flag untrustworthy.
-        ledger_exists = int(wh.sql(
-            "SELECT count(*) c FROM information_schema.tables "
-            "WHERE table_name = 'content_transcribe_skip'"
-        ).iloc[0]["c"]) > 0
-        cols = ("i.item_id, i.source_key, i.creator, i.kind, i.title, i.url, "
-                "i.published_at, i.text_source, i.text")
-        where = ["i.text_source <> 'transcript'",
-                 f"i.kind IN ({', '.join('?' * len(kinds))})",
-                 "t.item_id IS NULL"]
-        if ledger_exists:
-            where.append("s.item_id IS NULL")
-        params: list[object] = list(kinds)
-        if creators:
-            where.append(f"i.creator IN ({', '.join('?' * len(creators))})")
-            params.extend(sorted(creators))
-        if since is not None:
-            where.append("i.published_at >= ?")
-            params.append(since)
-        queue = wh.sql(
-            f"SELECT {cols} FROM content_item i "
-            + ("LEFT JOIN content_transcribe_skip s ON s.item_id = i.item_id "
-               if ledger_exists else "")
-            + f"LEFT JOIN (SELECT DISTINCT item_id FROM transcript_segment) t "
-            f"  ON t.item_id = i.item_id "
-            f"WHERE {' AND '.join(where)} "
-            # Newest first: a creator's take on the gameweek that has not been
-            # played is worth more than their take on one that has.
-            f"ORDER BY i.published_at DESC",
-            params,
-        )
-        already = int(wh.sql(
-            "SELECT count(*) c FROM content_item WHERE text_source = 'transcript'"
-        ).iloc[0]["c"])
-        # The curated roster (panel.py) may have moved ahead of the caption
-        # ceiling in youtube.PANEL_CREATORS. Say so; do not quietly widen.
-        drift = divergence_from_roster(wh)
-        # The strict player index the relevance gate scores against. A
-        # warehouse with no dim_player yet (content-only test dbs) is not an
-        # error: the gate then scores on terms/panel/recency alone and the
-        # breakdown says "players:unavailable" rather than guessing.
-        try:
-            gate_resolver = build_resolver(wh)
-        except Exception:  # noqa: BLE001 - absence of players, not a failure
-            gate_resolver = None
+        selection = select_queue(wh, kinds=kinds, creators=creators,
+                                 since=since, min_relevance=min_relevance)
+    queue = selection.queue
+    gated = list(selection.gated)
 
     col_note = (f"{enclosure_origin} ({len(stored_enclosures)} urls)"
                 if enclosure_origin != "none" else
                 "no stored column yet -- re-parsing each podcast feed's "
                 "<enclosure> instead")
     print(f"audio urls from:      {col_note}")
-    print(f"already transcribed:  {already} items (skipped, never re-done)")
-    if drift:
-        print(f"roster ahead of the caption ceiling: {', '.join(drift)} are on "
+    print(f"already transcribed:  {selection.already} items (skipped, never re-done)")
+    if selection.drift:
+        print(f"roster ahead of the caption ceiling: "
+              f"{', '.join(selection.drift)} are on "
               f"the curated panel but NOT in youtube.PANEL_CREATORS, so their "
               f"videos are refused. Raising the ceiling is an owner decision "
               f"and an edit to that constant.")
-    print(f"queued:               {len(queue)} items"
-          + (f", newest {str(queue.iloc[0]['published_at'])[:10]}" if len(queue) else ""))
-
-    # The relevance gate, BEFORE --limit so the budget is spent on the items
-    # worth it. Below-threshold items are recorded (not on --dry-run, which
-    # writes nothing) in content_transcribe_skip as ``relevance:<score>``
-    # with the point breakdown -- a named reason, never silence.
-    gated: list[tuple[str, str, str]] = []
-    # getattr, because tests drive this command with hand-built Namespaces
-    # that predate the gate; absent means "the default bar", not "off".
-    min_relevance = float(getattr(args, "min_relevance", RELEVANCE_THRESHOLD))
-    if min_relevance > 0 and len(queue):
-        scoring_now = _now()
-        keep: list[int] = []
-        for pos, row in enumerate(queue.itertuples(index=False)):
-            score, why = relevance_score(
-                title=str(row.title or ""), text=str(row.text or ""),
-                resolver=gate_resolver, creator=str(row.creator or ""),
-                published_at=row.published_at, now=scoring_now,
-            )
-            if score >= min_relevance:
-                keep.append(pos)
-            else:
-                gated.append((str(row.item_id), f"relevance:{score:g}",
-                              f"below threshold {min_relevance:g}: {why}"))
-        queue = queue.iloc[keep].reset_index(drop=True)
+    print(f"queued:               {selection.queued_before_gate} items"
+          + (f", newest {selection.newest_published[:10]}"
+             if selection.newest_published else ""))
+    if min_relevance > 0 and selection.queued_before_gate:
         print(f"relevance gate:       {len(gated)} below {min_relevance:g}, "
               f"{len(queue)} pass (deterministic; scores recorded)")
 
@@ -198,19 +310,7 @@ def cmd_transcribe(args: argparse.Namespace) -> int:
         print(f"limited to:           {len(queue)}")
     if queue.empty:
         if gated and not args.dry_run:
-            # The gate's verdicts are still worth their ledger rows: without
-            # them every below-threshold item would be re-scored forever.
-            now = _now()
-            rows = [(i, r, d, now) for i, r, d in gated]
-
-            def _write_gated(wh):
-                wh.sql(_TRANSCRIBE_SKIP_DDL)
-                for r in rows:
-                    wh.sql("INSERT OR REPLACE INTO content_transcribe_skip "
-                           "VALUES (?, ?, ?, ?)", list(r))
-
-            _write_with_retry(args.db, _write_gated)
-            print(f"recorded {len(gated)} relevance skips")
+            print(f"recorded {record_gate_skips(args.db, gated)} relevance skips")
         print("\nnothing to do")
         return 0
 
@@ -258,7 +358,7 @@ def cmd_transcribe(args: argparse.Namespace) -> int:
         fetcher = _asr_fetcher(args.delay)
     yt_fetcher = panel_fetcher() if "youtube" in kinds else None
 
-    done = failed = skipped = 0
+    done = failed = skipped = deferred = 0
     audio_s = 0.0
     asr_wall = 0.0
     segments_written = 0
@@ -280,6 +380,11 @@ def cmd_transcribe(args: argparse.Namespace) -> int:
             if refused:
                 break
             item_id = str(row.item_id)
+            if kind_needs_asr(row.kind) and not status.ready:
+                # The gate, evaluated where the engine is actually needed.
+                # No skip row: the item must stay in the queue for the Mac.
+                deferred += 1
+                continue
             try:
                 if row.kind == "youtube":
                     from fpl_edge.ingest.content.youtube import is_panel_creator
@@ -408,6 +513,10 @@ def cmd_transcribe(args: argparse.Namespace) -> int:
     print(f"failed:          {failed} items -- NOTHING was stored for these; "
           f"reasons in content_transcribe_skip")
     print(f"skipped:         {skipped} items with no audio or no captions")
+    if deferred:
+        print(f"deferred to Mac: {deferred} items need audio ASR and this host "
+              f"has no engine; they stay queued and nothing was recorded "
+              f"against them")
     print(f"stale analyses:  {stale_dropped} show-notes reads deleted so "
           f"`analyze` re-reads the transcript (re-run analyze to refill)")
     if stale_cleanup_failed:
@@ -420,8 +529,8 @@ def cmd_transcribe(args: argparse.Namespace) -> int:
               f"{audio_s / asr_wall:.1f} min audio per min wall clock")
     print(f"wall clock:      {elapsed / 60:.1f} min total "
           f"(includes downloads and DB writes)")
-    print(f"not reached:     {max(0, len(queue) - done - failed - skipped)} queued "
-          f"items left; re-run resumes from here")
+    print(f"not reached:     {max(0, len(queue) - done - failed - skipped - deferred)} "
+          f"queued items left; re-run resumes from here")
     if refused:
         print()
         print(f"STOPPED ON REFUSAL: {refused}")

@@ -30,14 +30,64 @@ def _core_router(deps: Deps) -> APIRouter:
     router = APIRouter()
 
     @router.get("/api/health")
-    def health() -> dict[str, Any]:
-        return {
+    def health() -> JSONResponse:
+        """Railway's healthcheck target, and the operator's one-glance page.
+
+        503 when the volume is absent or unwritable, the warehouse file is
+        missing, or a migration set failed. Each of those means serving a
+        request would lose data or return a wrong answer.
+
+        200 with ``scheduler.running: false`` when the scheduler is dead. The
+        status code deliberately does not follow the scheduler: a failing
+        health check stops Railway routing traffic and restarts a container
+        that keeps failing, so a crashed background task would take the whole
+        UI down with it. The correct response to a dead scheduler is a red dot
+        on the Pipelines panel, not an outage.
+
+        A process that never ran the boot sequence (the Mac dev server, the
+        test suite) reports what it can measure and stays 200.
+        """
+        from fpl_edge.platform import boot as boot_mod
+        from fpl_edge.platform import scheduler as sched_mod
+
+        payload: dict[str, Any] = {
             "ok": True,
             "repo_sha": repo_sha(),
             "warehouse": str(db_path),
             "warehouse_present": db_path.exists(),
             "now": dt.datetime.now(UTC).isoformat(),
         }
+        report = boot_mod.LAST_REPORT
+        if report is not None and report.db_path != str(db_path):
+            # A report for a different warehouse describes a different
+            # deployment. Reporting it here would be a health payload about a
+            # file this app does not serve.
+            report = None
+        if report is None:
+            payload["boot"] = {
+                "ran": False,
+                "reason": f"{boot_mod.__name__}.boot has not run in this "
+                          f"process; set FPL_EDGE_BOOT=1 to run it at startup",
+            }
+        else:
+            payload["boot"] = {"ran": True, **report.to_dict()}
+            payload["volume"] = payload["boot"]["volume"]
+            payload["migrations"] = payload["boot"]["migrations"]
+            payload["artefacts"] = payload["boot"]["artefacts"]
+            payload["ok"] = bool(report.ok) and payload["warehouse_present"]
+
+        scheduler = getattr(deps.app.state, "scheduler", None)
+        if scheduler is None:
+            payload["scheduler"] = {
+                "running": False,
+                "reason": f"{sched_mod.SCHEDULER_ENV} is not set in this "
+                          f"process, so no scheduler was started",
+            }
+        else:
+            payload["scheduler"] = scheduler.state.to_dict()
+
+        return JSONResponse(payload,
+                            status_code=200 if payload["ok"] else 503)
 
     @router.get("/api/deadline")
     def deadline() -> dict[str, Any]:

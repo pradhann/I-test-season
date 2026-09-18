@@ -21,10 +21,65 @@ from fpl_edge.platform.app.routes_inbox import _inbox_router
 from fpl_edge.platform.app.routes_pipelines import _pipelines_router
 from fpl_edge.platform.app.routes_players import _players_router
 from fpl_edge.platform.app.routes_solve import _solve_router
+from fpl_edge.platform.app.routes_transcripts import _transcripts_router
 from fpl_edge.platform.registry import repo_sha
 from fpl_edge.store.warehouse import DEFAULT_DB
 
 WEB_DIST = Path(__file__).resolve().parents[3] / "web" / "dist"
+
+#: Set to anything other than "" or "0" to run the container boot sequence
+#: (fpl_edge/platform/boot.py) on startup. Off by default, so the test suite
+#: and the Mac dev server keep building apps without touching a volume.
+BOOT_ENV = "FPL_EDGE_BOOT"
+
+
+def _lifespan_for(db_path: Path):
+    """Boot steps 7 and 8, and the shutdown that stops the scheduler.
+
+    Boot runs here rather than in the container's CMD so that the report it
+    produces is readable by ``/api/health`` in the same process. A
+    :class:`~fpl_edge.platform.boot.BootFailure` raised here aborts uvicorn's
+    startup, which is the loud failure the spec asks for: a service that
+    answered requests without a mounted volume would accept writes and lose
+    them on the next restart.
+
+    The scheduler starts last and is the one step whose failure does not fail
+    the boot. A dead scheduler shows as ``scheduler.running: false`` in the
+    health payload and a red dot on the Pipelines panel. Failing the health
+    check over it would restart-loop the service and take the UI down for a
+    bug in a background task.
+
+    A lifespan rather than ``on_event``, which FastAPI deprecated: the two
+    handlers added roughly a hundred deprecation warnings to every suite run.
+    Neither runs unless the app is entered as a context manager, so a bare
+    ``TestClient(create_app(db))`` still builds an app that touches no volume
+    and starts no loop.
+    """
+    import os
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _lifespan(app: FastAPI):
+        from fpl_edge.platform import boot as boot_mod
+        from fpl_edge.platform import scheduler as sched_mod
+
+        if str(os.environ.get(BOOT_ENV, "")) not in ("", "0"):
+            data_dir = Path(os.environ.get("FPL_EDGE_DATA_DIR",
+                                           str(boot_mod.DEFAULT_DATA_DIR)))
+            boot_mod.boot(data_dir, db_path=db_path)
+        if sched_mod.scheduler_enabled():
+            scheduler = sched_mod.Scheduler(db_path)
+            app.state.scheduler = scheduler
+            scheduler.start()
+        try:
+            yield
+        finally:
+            scheduler = getattr(app.state, "scheduler", None)
+            if scheduler is not None:
+                await scheduler.stop()
+                app.state.scheduler = None
+
+    return _lifespan
 
 
 def create_app(db: Path | str = DEFAULT_DB,
@@ -40,10 +95,14 @@ def create_app(db: Path | str = DEFAULT_DB,
         version="1.0",
         description="Single-operator FPL decision platform. Panels, one guarded "
                     "query path, inbox, chat.",
+        lifespan=_lifespan_for(db_path),
     )
     # Exposed for tests, which point the agent at a fake CLI script; the
     # chat router closes over the same object.
     app.state.chat_agent = chat_agent
+    # Set at build time, not in the lifespan: /api/health and the tests read it
+    # on apps that were never entered as a context manager.
+    app.state.scheduler = None
 
     deps = Deps(app=app, db_path=db_path, chat_agent=chat_agent)
     app.include_router(_core_router(deps))
@@ -53,6 +112,10 @@ def create_app(db: Path | str = DEFAULT_DB,
     app.include_router(_pipelines_router(deps))
     app.include_router(_content_router(deps))
     app.include_router(_chat_router(deps))
+    # The Mac ASR worker's two routes. Bearer-authenticated, and included here
+    # like every other router: before the static Mount("/"), which is a
+    # catch-all matched in order.
+    app.include_router(_transcripts_router(deps))
 
     # Connect-your-FPL-account routes. Included BEFORE the static mount: that
     # Mount("/") is a catch-all matched in order, and a router added after it

@@ -1,0 +1,48 @@
+# Railway service configuration. DEPLOYMENT.md §2.1, §2.5 and §8.
+#
+# One service owns the volume. The FastAPI app and the scheduler run in one
+# process, with the scheduler as a background asyncio task, and launchd is
+# replaced rather than ported.
+
+[build]
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+# DuckDB permits one writer per file. Warehouse._connect waits for a
+# conflicting writer and then raises WarehouseLockedError naming the timeout,
+# so a second replica would fail to open the database at boot and
+# restart-loop. This number is stated rather than left to a default.
+numReplicas = 1
+
+# A rolling deploy that starts the new container before stopping the old one
+# puts two processes on one volume: the new one cannot open the database and
+# restart-loops while the old one holds the lock. Zero overlap means the old
+# container is stopped first. Confirm the current name of this setting in
+# Railway's own documentation on the first deploy; DEPLOYMENT.md §12 records
+# it as unverified from inside this repo.
+overlapSeconds = 0
+
+healthcheckPath = "/api/health"
+# Above the measured boot time, not a guess to be left alone. Boot step 3 on a
+# 160 MiB database is fast, but step 4 on a first boot applies every migration
+# in the repo. `make deploy-check` prints the real number it measured against
+# an empty volume; set this to a comfortable multiple of that.
+healthcheckTimeout = 300
+
+# A restart loop on a broken image should back off rather than spin.
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 5
+
+[[deploy.volumes]]
+# Every path constant in the repo is relative to the working directory:
+# DEFAULT_DB = data/warehouse/fpl.duckdb, runner.LOG_DIR =
+# data/warehouse/pipeline_logs, deadline_dag.LOG_DIR = data/warehouse/jobs,
+# asr.AUDIO_CACHE = data/raw/content/asr_audio. With WORKDIR /app and the
+# volume here, all of it resolves onto the volume with no code change.
+mountPath = "/app/data"
+# 177 MB today, roughly 1.6 GB of warehouse over a season at the measured
+# 6 MB/day, plus whatever data/raw/ Railway itself fetches, plus headroom for
+# concurrent read copies. Alert at 70%. This is a sizing judgement from 26
+# days of growth, not a season measurement.
+sizeGb = 10
