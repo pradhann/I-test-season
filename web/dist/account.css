@@ -69,3 +69,20 @@
 .acct-cli code { font-family: var(--mono); color: var(--ink);
                  background: var(--raised); padding: 2px 6px; border-radius: 5px;
                  border: 1px solid var(--line); }
+
+/* The team id block. It sits above the credential form because it is what
+   the panels read, and it works before anything is connected. */
+.acct-entry { margin: 14px 0 6px; padding: 12px; border-radius: 8px;
+              border: 1px solid var(--line); background: var(--surface); }
+.acct-entry h3 { margin: 0 0 6px; font-size: 13px; letter-spacing: .02em; }
+.acct-entry-state .acct-line { margin: 0; }
+.acct-entry-form { display: flex; flex-direction: column; gap: 6px;
+                   margin-top: 8px; }
+.acct-entry-form .sub { color: var(--faint); font-size: 11.5px; margin: 0; }
+.acct-entry-form button { align-self: flex-start; }
+.acct-entry-form button:disabled { opacity: .6; cursor: default; }
+.acct-entry-input { width: 12ch; padding: 6px 8px; border-radius: 7px;
+                    border: 1px solid var(--line); background: var(--bg);
+                    color: var(--ink); font: 13px/1.4 var(--mono); }
+.acct-entry-input:focus-visible { outline: 2px solid var(--s1);
+                                  outline-offset: 1px; }

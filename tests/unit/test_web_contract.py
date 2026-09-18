@@ -934,6 +934,41 @@ def test_no_server_error_class_or_stage_enum_reaches_the_account_copy() -> None:
     assert "st.summary" in src, "the server's own summary must be rendered"
 
 
+def test_the_account_card_prints_the_team_id_the_server_reports(tmp_path) -> None:
+    """The card says which team the panels read, and whether the manager chose
+    it. The number comes from the server's reply, never from the input box."""
+    info = {"entry_id": 1234567, "saved": True, "team_name": "Fable XI",
+            "source": "saved on this tab",
+            "where_is_my_id": "Your team id is the number in the address bar."}
+    nodes = _render(tmp_path, "account",
+                    f"const host = document.createElement('div');\n"
+                    f"view.renderEntry(host, {json.dumps(info)});\n"
+                    f"const result = walk(host, []);")
+    text = nodes[0]["text"]
+    assert "1234567" in text
+    assert "Fable XI" in text
+    assert "saved on this tab" in text
+
+
+def test_a_refused_team_id_prints_the_servers_own_remediation(tmp_path) -> None:
+    """The route answers 404 with where to find the right id. The page shows
+    that sentence and invents none of its own."""
+    detail = ("FPL has no team with id 999999999. Nothing was saved. Your "
+              "team id is the number in the address bar.")
+    body = f'{{"detail": {json.dumps(detail)}}}'
+    nodes = _render(tmp_path, "account",
+                    f"const err = new Error('/api/account/entry: HTTP 404 ' + "
+                    f"{json.dumps(body)});\n"
+                    f"const host = document.createElement('div');\n"
+                    f"view.renderEntryResult(host, "
+                    f"{{ok: false, detail: view.serverDetail(err)}});\n"
+                    f"const result = walk(host, []);")
+    text = nodes[0]["text"]
+    assert "Nothing was saved" in text
+    assert "address bar" in text
+    assert "HTTP 404" not in text, "the status line is not user-facing copy"
+
+
 def test_the_account_card_folds_the_steps_and_footers_its_provenance() -> None:
     """Account was the only tab with no provenance footer, and it led with
     four DevTools steps while already connected."""

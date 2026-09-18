@@ -172,10 +172,14 @@ def _held_codes(ctx: TaskContext) -> tuple[frozenset[int], str]:
     if os.environ.get("FPL_EDGE_DISABLE_PRIVATE", "") not in ("", "0"):
         return frozenset(), "private state disabled"
     try:
-        from fpl_edge.config import UserConfig
+        from fpl_edge.config import owner_entry_id
         from fpl_edge.myteam.store import MyTeamStore
 
-        store = MyTeamStore(UserConfig().entry_id)
+        # A scheduled task has no request, and this one is the operator's, so
+        # it reads the owner's entry id. Through config rather than through
+        # the user context: pipelines does not import platform, and this
+        # needs the id rather than the whole context.
+        store = MyTeamStore(owner_entry_id())
         record = store.confirmed(season=ctx.season)
         if record is None:
             return frozenset(), "no confirmed squad"

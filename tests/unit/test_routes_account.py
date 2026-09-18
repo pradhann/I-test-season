@@ -105,6 +105,105 @@ def make_client(paths, *, client=LOOPBACK) -> TestClient:
     return TestClient(app, client=client)
 
 
+#: The team-id routes get their own client: they take a user context, so the
+#: data root has to be a temp directory or a save would write into the repo.
+def make_entry_client(paths, monkeypatch, tmp_path, *, check=None) -> TestClient:
+    from fpl_edge.myteam import account as account_mod
+    from fpl_edge.platform import users as users_mod
+
+    monkeypatch.setenv(users_mod.DATA_ROOT_ENV, str(tmp_path / "data"))
+    monkeypatch.delenv("FPL_ENTRY_ID", raising=False)
+    found = check if check is not None else (
+        lambda eid: account_mod.EntryCheck(found=True, status=200,
+                                           team_name="Fable XI",
+                                           manager_name="N. Pradhan"))
+    app = FastAPI()
+    app.include_router(build_router(
+        env_path=paths["env"], record_path=paths["record"],
+        entry_lookup=lambda eid: ("Fable XI", "N. Pradhan"),
+        client_factory=lambda m: PrivateTeamClient(cookie="", tokens=m),
+        entry_check=found,
+    ))
+    return TestClient(app, client=LOOPBACK)
+
+
+def test_the_team_id_round_trips_through_the_account_tab(
+        paths, monkeypatch, tmp_path) -> None:
+    """Save an id, read it back, and see the panels' id change with it."""
+    client = make_entry_client(paths, monkeypatch, tmp_path)
+
+    before = client.get("/api/account/entry").json()
+    assert before["entry_id"] == ENTRY
+    assert before["saved"] is False
+    assert "address bar" in before["where_is_my_id"]
+
+    saved = client.post("/api/account/entry", json={"entry_id": 1234567})
+    assert saved.status_code == 200
+    body = saved.json()
+    assert body["entry_id"] == 1234567
+    assert body["team_name"] == "Fable XI"
+    assert body["saved"] is True
+
+    after = client.get("/api/account/entry").json()
+    assert after["entry_id"] == 1234567
+    assert after["saved"] is True
+
+    from fpl_edge.platform.users import owner_context
+
+    assert owner_context().entry_id == 1234567
+
+
+def test_an_unknown_team_id_is_refused_and_nothing_is_saved(
+        paths, monkeypatch, tmp_path) -> None:
+    from fpl_edge.myteam import account as account_mod
+
+    client = make_entry_client(
+        paths, monkeypatch, tmp_path,
+        check=lambda eid: account_mod.EntryCheck(found=False, status=404))
+    r = client.post("/api/account/entry", json={"entry_id": 999999999})
+    assert r.status_code == 404
+    assert "no team with id 999999999" in r.json()["detail"]
+    assert "address bar" in r.json()["detail"]
+    assert client.get("/api/account/entry").json()["saved"] is False
+
+
+def test_an_unreachable_check_does_not_call_the_id_wrong(
+        paths, monkeypatch, tmp_path) -> None:
+    """A timeout is not evidence. Nothing is saved and nothing is judged."""
+    from fpl_edge.myteam import account as account_mod
+
+    client = make_entry_client(
+        paths, monkeypatch, tmp_path,
+        check=lambda eid: account_mod.EntryCheck(
+            found=False, status=None, error="ReadTimeout: "))
+    r = client.post("/api/account/entry", json={"entry_id": 1234567})
+    assert r.status_code == 502
+    detail = r.json()["detail"]
+    assert "could not be checked" in detail
+    assert "does not mean the id is wrong" in detail
+    assert client.get("/api/account/entry").json()["saved"] is False
+
+
+def test_an_id_that_is_not_a_number_is_refused_before_any_request(
+        paths, monkeypatch, tmp_path) -> None:
+    def never(eid):
+        raise AssertionError("the endpoint must not be called")
+
+    client = make_entry_client(paths, monkeypatch, tmp_path, check=never)
+    for bad in ("", "abc", -1, 0, None):
+        r = client.post("/api/account/entry", json={"entry_id": bad})
+        assert r.status_code == 400, bad
+
+
+def test_the_team_id_routes_answer_loopback_only(
+        paths, monkeypatch, tmp_path) -> None:
+    client = make_entry_client(paths, monkeypatch, tmp_path)
+    client = TestClient(client.app, client=("10.0.0.9", 51000))
+    assert client.get("/api/account/entry").status_code == 403
+    assert client.post("/api/account/entry",
+                       json={"entry_id": 1234567}).status_code == 403
+
+
 def assert_no_tokens(body_text: str) -> None:
     for tok in ALL_TOKENS:
         assert tok not in body_text

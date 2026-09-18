@@ -310,3 +310,51 @@ def test_the_metrics_note_names_the_source_of_each_column(seeded_db,
     note = run_script("planner_grid", {}, db=seeded_db).result["metrics_note"]
     assert "official settled returns" in note
     assert "shots" in note and "FPL-Core-Insights" in note
+
+
+# -- whose team the grid is about -------------------------------------------
+
+
+def test_the_grid_takes_no_entry_id_param_and_reads_the_context(seeded_db,
+                                                                monkeypatch):
+    """``entry_id`` left the params schema. A request body cannot name a team,
+    so the id and the FPL login always come from the same object."""
+    from fpl_edge.platform.registry import ParamsInvalid, script
+    from fpl_edge.platform.users import Identity, context_for, owner_context
+
+    assert "entry_id" not in (
+        script("planner_grid").params_schema.get("properties") or {})
+    with pytest.raises(ParamsInvalid):
+        run_script("planner_grid", {"entry_id": 7}, db=seeded_db)
+
+    _fake_state(monkeypatch)
+    seen = []
+
+    from fpl_edge.interfaces.qa import QuestionRouter
+
+    real = QuestionRouter.__init__
+
+    def spy(self, wh, *, season, entry_id=None, user=None):
+        seen.append((entry_id, None if user is None else user.user_id))
+        real(self, wh, season=season, entry_id=entry_id, user=user)
+
+    monkeypatch.setattr(QuestionRouter, "__init__", spy)
+
+    run_script("planner_grid", {}, db=seeded_db)
+    assert seen[-1] == (owner_context().entry_id, "owner")
+
+    other = context_for(Identity(user_id="abc123", entry_id=4242))
+    run_script("planner_grid", {}, db=seeded_db, ctx=other)
+    assert seen[-1] == (4242, "abc123")
+
+
+def test_a_user_with_no_login_gets_the_named_gap_not_the_owners_squad(
+        seeded_db, monkeypatch):
+    from fpl_edge.platform.users import PRIVATE_GAP, Identity, context_for
+
+    _fake_state(monkeypatch, picks=None)
+    other = context_for(Identity(user_id="abc123", entry_id=4242))
+    res = run_script("planner_grid", {}, db=seeded_db, ctx=other).result
+    assert res.get("empty") is True
+    assert PRIVATE_GAP in res["reason"]
+    assert "4242" in res["reason"]

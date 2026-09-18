@@ -6,7 +6,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
 from fpl_edge.platform import panels as panels_mod
@@ -20,6 +20,7 @@ from fpl_edge.platform.registry import (
     run_script,
 )
 from fpl_edge.platform.registry import describe_all as describe_scripts
+from fpl_edge.platform.users import UserContext, current_user
 
 
 def _core_router(deps: Deps) -> APIRouter:
@@ -143,10 +144,22 @@ def _core_router(deps: Deps) -> APIRouter:
         )
 
     @router.post("/api/scripts/{name}/run")
-    def post_run_script(name: str, body: RunRequest | None = None) -> JSONResponse:
+    def post_run_script(
+        name: str,
+        body: RunRequest | None = None,
+        user: UserContext = Depends(current_user),
+    ) -> JSONResponse:
+        """Run one panel script for the requesting user.
+
+        The user context is resolved here, once, and handed to the runner,
+        which passes it only to the scripts that declare a ``ctx``. Whose team
+        a panel describes is therefore never something the request body can
+        say: ``squad_overview``, ``dashboard_brief`` and ``planner_grid``
+        stopped taking ``entry_id`` as a param for exactly that reason.
+        """
         params = body.resolved() if body is not None else {}
         try:
-            run = run_script(name, params, db=db_path)
+            run = run_script(name, params, db=db_path, ctx=user)
         except KeyError as exc:
             # Only the registry's own "no such script" KeyError is a 404. A
             # KeyError raised INSIDE a script is that script's bug, and serving

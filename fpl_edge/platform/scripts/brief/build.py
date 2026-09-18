@@ -9,7 +9,6 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any
 
-from fpl_edge.config import USER
 from fpl_edge.platform.registry import register_script
 from fpl_edge.platform.scripts.brief.plan import _moves, _solve_block, _verdict
 from fpl_edge.platform.scripts.brief.schema import PARAMS, RESULT, THRESHOLDS
@@ -30,15 +29,19 @@ from fpl_edge.platform.scripts.brief.tiles import (
     _standing,
 )
 from fpl_edge.platform.scripts.common import UTC, empty
+from fpl_edge.platform.users import UserContext, owner_context
 
 
-def dashboard_brief(wh, *, season: str, entry_id: int | None = None) -> dict[str, Any]:
+def dashboard_brief(wh, *, season: str,
+                    ctx: UserContext | None = None) -> dict[str, Any]:
     """Select-and-threshold over the source panels; one payload, one clock set."""
+    user = ctx if ctx is not None else owner_context()
     ctx = BriefCtx(
         wh=wh,
         season=season,
         now=dt.datetime.now(UTC),
-        eid=int(entry_id) if entry_id is not None else int(USER.entry_id),
+        eid=int(user.entry_id),
+        user=user,
         sources_as_of={},
         alerts=[],
         tiles=[],            # (gate margin, tile)

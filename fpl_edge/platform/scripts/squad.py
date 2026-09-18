@@ -29,14 +29,17 @@ from fpl_edge.platform.scripts.common import (
     q,
     season_param,
 )
-from fpl_edge.config import USER
+from fpl_edge.platform.users import PRIVATE_GAP, UserContext, owner_context
 
+#: ``entry_id`` is NOT a param. Whose team this is comes from the request's
+#: user context and nowhere else: a body that could name an entry id, on a
+#: server that holds the requesting user's bearer token, is one bad line away
+#: from reading somebody else's team with their own login.
 PARAMS: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "properties": {
         "season": season_param(),
-        "entry_id": {"type": ["integer", "null"], "default": None},
     },
 }
 
@@ -122,9 +125,11 @@ _SOURCE_LABEL = {
 }
 
 
-def squad_overview(wh, *, season: str, entry_id: int | None = None) -> dict[str, Any]:
+def squad_overview(wh, *, season: str,
+                   ctx: UserContext | None = None) -> dict[str, Any]:
     """Your 15 with price, availability and this gameweek's projection."""
-    eid = int(entry_id) if entry_id is not None else int(USER.entry_id)
+    ctx = ctx if ctx is not None else owner_context()
+    eid = int(ctx.entry_id)
 
     players = q(
         wh,
@@ -165,9 +170,17 @@ def squad_overview(wh, *, season: str, entry_id: int | None = None) -> dict[str,
     try:
         from fpl_edge.interfaces.qa import QuestionRouter
 
-        router = QuestionRouter(wh, season=season, entry_id=eid)
+        router = QuestionRouter(wh, season=season, entry_id=eid, user=ctx)
         state = router._team_state()
     except Exception as exc:  # noqa: BLE001 - a panel reports, it does not crash
+        if not ctx.can_read_private:
+            # The remedies below are the operator's own: a CLI paste and a
+            # Telegram command. Naming them to a user who has neither would
+            # send them somewhere they cannot go.
+            return empty(
+                f"Could not read squad for entry {eid}: "
+                f"{type(exc).__name__}: {exc}. {PRIVATE_GAP}"
+            )
         return empty(
             f"Could not read squad for entry {eid}: {type(exc).__name__}: {exc}. "
             f"Before GW1 FPL publishes nothing publicly. Connect your account "
@@ -175,6 +188,12 @@ def squad_overview(wh, *, season: str, entry_id: int | None = None) -> dict[str,
         )
 
     if state is None or state.picks is None:
+        if not ctx.can_read_private:
+            # A user with no stored FPL login of their own. The public picks
+            # endpoint answered nothing for their entry, and the private one
+            # is not theirs to read, so the panel names what is missing rather
+            # than falling back to a squad that belongs to somebody else.
+            return empty(f"No squad visible for entry {eid} yet: {PRIVATE_GAP}")
         return empty(
             f"No squad visible for entry {eid} yet. FPL publishes picks only "
             f"after a deadline passes; until GW1 locks, either run "
@@ -297,7 +316,7 @@ def squad_overview(wh, *, season: str, entry_id: int | None = None) -> dict[str,
     return {
         "season": season,
         "entry_id": eid,
-        "team_name": getattr(USER, "team_name", None) if eid == int(USER.entry_id) else None,
+        "team_name": ctx.display_name,
         "gw": int(state.gw) if getattr(state, "gw", None) is not None else None,
         "provenance_source": _SOURCE_LABEL.get(source, source),
         "bank_tenths": int(state.bank.tenths) if getattr(state, "bank", None) else None,

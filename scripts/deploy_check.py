@@ -137,11 +137,10 @@ def start_container(image: str, volume: Path, port: int) -> str:
         "--env", "PORT=8000",
         "--env", "FPL_EDGE_DISABLE_NETWORK_INGEST=1",
         "--env", "FPL_EDGE_SCHEDULER=0",
-        # No FPL_ENTRY_ID: the spec's §5 table lists it, but nothing in the
-        # package reads it. config.UserConfig.entry_id is the literal 4490171
-        # until workstream D replaces the singleton with a per-request user,
-        # so setting the variable here would look like configuration and be
-        # nothing.
+        # No FPL_ENTRY_ID: the image is checked against the committed
+        # default, which is what an unconfigured deployment gets.
+        # fpl_edge.config.owner_entry_id reads the variable when it is set,
+        # so a value here would check a team the fixtures do not describe.
         image,
     ], capture=True)
     return proc.stdout.strip()

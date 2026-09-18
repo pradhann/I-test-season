@@ -108,7 +108,8 @@ def next_gw(wh, season: str, now: dt.datetime | None = None) -> int | None:
 # --------------------------------------------------------------------------
 
 
-def _squad_state(wh, season: str) -> tuple[dict[int, dict] | None, dict[str, Any]]:
+def _squad_state(wh, season: str, ctx=None
+                 ) -> tuple[dict[int, dict] | None, dict[str, Any]]:
     """The user's 15 with their FPL multipliers, or (None, why-not).
 
     Same read path as squad_overview (QuestionRouter._team_state): private API,
@@ -121,12 +122,18 @@ def _squad_state(wh, season: str) -> tuple[dict[int, dict] | None, dict[str, Any
     order: those rows come back with ``mult: None``, which the UI renders as
     "owned, role unknown" — never as a silent 1×.
     """
-    from fpl_edge.config import USER
+    from fpl_edge.platform.users import owner_context
 
+    # ``ctx`` is the requesting user. A caller that passes none is a job, a CLI
+    # command or the Telegram bot, all of which run as the operator; a caller
+    # inside a request passes the request's context, because the entry id and
+    # the FPL login have to come from the same person.
+    ctx = ctx if ctx is not None else owner_context()
     try:
         from fpl_edge.interfaces.qa import QuestionRouter
 
-        router = QuestionRouter(wh, season=season, entry_id=int(USER.entry_id))
+        router = QuestionRouter(wh, season=season, entry_id=int(ctx.entry_id),
+                                user=ctx)
         state = router._team_state()
     except Exception as exc:  # noqa: BLE001 — a panel reports, it does not crash
         return None, {

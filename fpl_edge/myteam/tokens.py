@@ -56,7 +56,7 @@ from pathlib import Path
 
 import httpx
 
-from fpl_edge.config import ENV_PATH, load_env
+from fpl_edge.config import load_env
 from fpl_edge.ingest.http import USER_AGENT
 
 #: Refresh when the access token has less than this long to live: a token that
@@ -104,9 +104,17 @@ class TokenManager:
     """Holds the token pair, refreshing and persisting as needed.
 
     Thread-safe: the Telegram bot and a CLI command may both want a token.
+
+    ``env_path`` has no default. It used to be ``ENV_PATH``, one file for the
+    whole process, so ``TokenManager()`` anywhere in the tree picked up the
+    operator's own FPL tokens. On a server with more than one manager on it
+    that is how one person's request gets sent with another person's bearer.
+    The path now comes from the user context
+    (:meth:`fpl_edge.platform.users.UserContext.token_env_path`), which hands
+    one out for the owner and raises for everybody else.
     """
 
-    env_path: Path = ENV_PATH
+    env_path: Path
     _lock: threading.Lock = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:

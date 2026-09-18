@@ -77,12 +77,15 @@ THRESHOLDS: dict[str, float | int] = {
     "captain_close_call_xpts": 0.5,
 }
 
+#: ``entry_id`` is NOT a param. It stays a RESULT key, because the payload has
+#: to say whose team it describes; it is no longer an input, because the id and
+#: the FPL login must come from the same object, which is the request's user
+#: context.
 PARAMS: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "properties": {
         "season": season_param(),
-        "entry_id": {"type": ["integer", "null"], "default": None},
     },
 }
 

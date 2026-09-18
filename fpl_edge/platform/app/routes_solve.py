@@ -12,7 +12,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 
 from fpl_edge.platform.app.helpers import (
@@ -25,6 +25,13 @@ from fpl_edge.platform.app.helpers import (
     _player_lookup,
 )
 from fpl_edge.platform.query import read_copy
+from fpl_edge.platform.users import (
+    GW1_PLAN_NAME,
+    PLANS_DIR,
+    TRANSFER_PLAN_NAME,
+    UserContext,
+    current_user,
+)
 
 
 def _solve_router(deps: Deps) -> APIRouter:
@@ -34,12 +41,27 @@ def _solve_router(deps: Deps) -> APIRouter:
     router = APIRouter()
 
     @router.post("/api/solve")
-    def post_solve(body: SolveRequest | None = None) -> JSONResponse:
+    def post_solve(
+        body: SolveRequest | None = None,
+        user: UserContext = Depends(current_user),
+    ) -> JSONResponse:
         # Unlike a monitor (the 501 above), the solve is safe to fire from a
         # browser: the CLI subprocess owns its own locking and artefacts, the
         # runner enforces one-at-a-time, and nothing here double-sends.
         mode = (body.mode if body is not None else "both").strip().lower()
         from fpl_edge.platform import solve_runner
+        from fpl_edge.platform.users import PRIVATE_GAP
+
+        if not user.is_owner:
+            # A solve starts from the fifteen the manager holds and commits a
+            # plan priced against their bank, both of which come from a squad
+            # this server cannot read for anybody but the owner. Running it
+            # anyway would solve the owner's team and overwrite the owner's
+            # plan, so the answer is the same named gap the panels give.
+            return JSONResponse(
+                status_code=403,
+                content={"ok": False, "started": False, "reason": PRIVATE_GAP},
+            )
 
         if mode not in solve_runner.MODES:
             raise HTTPException(
@@ -63,14 +85,22 @@ def _solve_router(deps: Deps) -> APIRouter:
         return JSONResponse(solve_runner.status())
 
     @router.get("/api/solve/plan")
-    def get_solve_plan() -> JSONResponse:
-        return JSONResponse(_solve_plan(db_path))
+    def get_solve_plan(
+        user: UserContext = Depends(current_user),
+    ) -> JSONResponse:
+        return JSONResponse(_solve_plan(db_path, user))
 
     @router.get("/api/solve/transfer-plan")
-    def get_transfer_plan() -> JSONResponse:
+    def get_transfer_plan(
+        user: UserContext = Depends(current_user),
+    ) -> JSONResponse:
         """transfer_plan.json (the `fpl recommend` artefact) with names resolved
-        and its freshness judged against the deadline calendar."""
-        return JSONResponse(_transfer_plan(db_path))
+        and its freshness judged against the deadline calendar.
+
+        A plan is one manager's: it names the fifteen they hold and the moves
+        priced against their bank. Each user reads their own copy, and the
+        owner keeps reading the file beside the warehouse until it is moved."""
+        return JSONResponse(_transfer_plan(db_path, user))
 
     return router
 
@@ -78,10 +108,24 @@ def _solve_router(deps: Deps) -> APIRouter:
 #: Anchored to the repo root like squad_section.PLAN_PATH -- a relative path
 #: made that section's plan "missing" whenever the process ran from another
 #: directory, and this route must not re-learn that lesson.
-_PLAN_PATH = Path(__file__).resolve().parents[3] / "data" / "warehouse" / "gw1_plan.json"
+_PLAN_PATH = Path(__file__).resolve().parents[3] / "data" / "warehouse" / GW1_PLAN_NAME
 
 
-def _solve_plan(db_path: Path) -> dict[str, Any]:
+def _plan_path(user: UserContext | None, name: str, legacy: Path) -> Path:
+    """This user's plan artefact, or the owner's pre-split file.
+
+    One helper for both plans so the two routes cannot drift apart about where
+    a plan lives. A caller with no user is the owner, which is what the tests
+    and the CLI are.
+    """
+    if user is None:
+        from fpl_edge.platform.users import owner_context
+
+        user = owner_context()
+    return user.artefact(PLANS_DIR, name, legacy=legacy)
+
+
+def _solve_plan(db_path: Path, user: UserContext | None = None) -> dict[str, Any]:
     """The persisted solve artefact, with enough context to render it honestly.
 
     The file (written by ``fpl solve --commit``) carries player *codes* only,
@@ -94,13 +138,14 @@ def _solve_plan(db_path: Path) -> dict[str, Any]:
     """
     import json
 
-    if not _PLAN_PATH.exists():
+    plan_path = _plan_path(user, GW1_PLAN_NAME, _PLAN_PATH)
+    if not plan_path.exists():
         return {
             "exists": False,
-            "reason": f"no plan artefact at {_PLAN_PATH.name}; run a solve first.",
+            "reason": f"no plan artefact at {plan_path.name}; run a solve first.",
         }
     try:
-        plan = json.loads(_PLAN_PATH.read_text())
+        plan = json.loads(plan_path.read_text())
     except (OSError, json.JSONDecodeError) as exc:
         return {"exists": False,
                 "reason": f"plan artefact unreadable: {type(exc).__name__}: {exc}"}
@@ -134,7 +179,7 @@ def _solve_plan(db_path: Path) -> dict[str, Any]:
 #: solver card both read this one artefact. Module-level so a test can point
 #: it at a fixture.
 _TRANSFER_PLAN_PATH = (Path(__file__).resolve().parents[3] / "data" / "warehouse"
-                       / "transfer_plan.json")
+                       / TRANSFER_PLAN_NAME)
 
 
 _GAP_NOTE = re.compile(r"(\d+(?:\.\d+)?)% optimality gap")
@@ -161,7 +206,7 @@ def _plan_codes(plan: dict[str, Any]) -> set[int]:
     return codes
 
 
-def _transfer_plan(db_path: Path) -> dict[str, Any]:
+def _transfer_plan(db_path: Path, user: UserContext | None = None) -> dict[str, Any]:
     """transfer_plan.json, resolved and judged.
 
     Names, positions, teams and prices for every code the plan mentions come
@@ -175,12 +220,13 @@ def _transfer_plan(db_path: Path) -> dict[str, Any]:
     import json
 
     now = dt.datetime.now(UTC)
-    if not _TRANSFER_PLAN_PATH.exists():
+    plan_path = _plan_path(user, TRANSFER_PLAN_NAME, _TRANSFER_PLAN_PATH)
+    if not plan_path.exists():
         return {"exists": False,
-                "reason": (f"no transfer plan artefact at {_TRANSFER_PLAN_PATH.name}; "
+                "reason": (f"no transfer plan artefact at {plan_path.name}; "
                            f"solve to commit one (POST /api/solve mode=transfers).")}
     try:
-        plan = json.loads(_TRANSFER_PLAN_PATH.read_text())
+        plan = json.loads(plan_path.read_text())
     except (OSError, json.JSONDecodeError) as exc:
         return {"exists": False,
                 "reason": f"transfer plan unreadable: {type(exc).__name__}: {exc}"}
@@ -196,7 +242,7 @@ def _transfer_plan(db_path: Path) -> dict[str, Any]:
                 season = plan.get("season")
                 players = _player_lookup(wh, season, _plan_codes(plan))
                 cal = _deadline_calendar(wh, season, now)
-                held_now = _held_squad(wh, season)
+                held_now = _held_squad(wh, season, user)
         except Exception as exc:  # noqa: BLE001 - names are a nicety, the plan is the payload
             reason = f"could not resolve names: {type(exc).__name__}: {exc}"
     else:
@@ -272,7 +318,7 @@ def _transfer_plan(db_path: Path) -> dict[str, Any]:
         "exists": True,
         "superseded": superseded,
         "superseded_reason": superseded_reason,
-        "path": str(_TRANSFER_PLAN_PATH.relative_to(_TRANSFER_PLAN_PATH.parents[2])),
+        "path": str(plan_path.relative_to(plan_path.parents[2])),
         "plan": plan,
         "players": players,
         "as_of": plan.get("generated_at"),
@@ -286,7 +332,8 @@ def _transfer_plan(db_path: Path) -> dict[str, Any]:
     }
 
 
-def _held_squad(wh, season: str | None) -> list[int]:
+def _held_squad(wh, season: str | None,
+                user: UserContext | None = None) -> list[int]:
     """The codes the manager holds right now, through the squad panel.
 
     The panel is the sanctioned read for this, so the plan check and the
@@ -295,7 +342,7 @@ def _held_squad(wh, season: str | None) -> list[int]:
     try:
         from fpl_edge.platform.scripts.squad import squad_overview
 
-        sq = squad_overview(wh, season=season or SEASON_DEFAULT)
+        sq = squad_overview(wh, season=season or SEASON_DEFAULT, ctx=user)
     except Exception:  # noqa: BLE001 - an unreadable squad is not a plan error
         return []
     if not isinstance(sq, dict) or sq.get("empty"):

@@ -16,6 +16,11 @@ Nothing in this module returns, logs or stores a token value outside the
 ``.env`` file :class:`~fpl_edge.myteam.tokens.TokenManager` already owns. The
 verification record it keeps (``data/cache/fpl_account.json``) holds instants,
 an entry id and an entry name, never a credential.
+
+Whose account this is comes from the caller: the routes and the CLI pass an
+entry id, and a caller that passes none gets the owner context, which follows
+the team id saved on the Account tab. These three functions read a stored FPL
+login, so they are the owner's alone until a second user can store one.
 """
 
 from __future__ import annotations
@@ -29,7 +34,7 @@ from typing import Any
 
 import httpx
 
-from fpl_edge.config import USER
+from fpl_edge.config import ENV_PATH
 from fpl_edge.ingest.http import USER_AGENT
 from fpl_edge.myteam.private import (
     NoSessionError,
@@ -38,6 +43,7 @@ from fpl_edge.myteam.private import (
     StaleSessionError,
 )
 from fpl_edge.myteam.sources import BASE
+from fpl_edge.platform.users import owner_context
 from fpl_edge.myteam.tokens import (
     AuthNotConfiguredError,
     RefreshRefusedError,
@@ -213,7 +219,8 @@ def account_status(
 
     return {
         "ok": True,
-        "entry_id": int(entry_id if entry_id is not None else USER.entry_id),
+        "entry_id": int(entry_id if entry_id is not None
+                        else owner_context().entry_id),
         "refresh_stored": bool(refresh),
         "access": _expiry_block(access, now),
         "refresh": _expiry_block(refresh, now),
@@ -240,26 +247,63 @@ def _squad_dict(squad: PrivateSquad) -> dict[str, Any]:
     }
 
 
-def default_entry_lookup(entry_id: int) -> tuple[str | None, str | None]:
-    """Team name and manager name from the public entry endpoint.
+@dataclass(frozen=True)
+class EntryCheck:
+    """What ``entry/{id}/`` said about a team id, including how it failed.
 
-    Best-effort: the connect has already succeeded by the time this runs, so a
-    failure here costs a label, not the connection.
+    ``status`` is the HTTP status, or None when the request never completed.
+    The distinction is the whole point of this type: 404 means no team has
+    that id, and a timeout means the check could not be run. Telling a manager
+    their id is wrong because FPL was slow sends them looking for a number
+    that was right all along.
+    """
+
+    found: bool
+    status: int | None
+    team_name: str | None = None
+    manager_name: str | None = None
+    error: str | None = None
+
+
+def check_entry(entry_id: int, *, timeout: float = 15.0) -> EntryCheck:
+    """Look one team id up on the public endpoint. No cookie, no bearer.
+
+    ``entry/{id}/`` is public, so this works for a manager validating their own
+    id before they have connected anything.
     """
     try:
-        with httpx.Client(timeout=15, follow_redirects=True) as client:
+        with httpx.Client(timeout=timeout, follow_redirects=True) as client:
             resp = client.get(
                 f"{BASE}/entry/{int(entry_id)}/",
                 headers={"User-Agent": USER_AGENT},
             )
+    except Exception as exc:  # noqa: BLE001 - a network failure is not a verdict
+        return EntryCheck(found=False, status=None,
+                          error=f"{type(exc).__name__}: {exc}")
+    if resp.status_code != 200:
+        return EntryCheck(found=False, status=resp.status_code)
+    try:
         body = resp.json()
-        name = body.get("name") or None
-        player = " ".join(
-            x for x in (body.get("player_first_name"), body.get("player_last_name")) if x
-        ) or None
-        return name, player
-    except Exception:  # noqa: BLE001 - a label, not the credential
-        return None, None
+    except Exception as exc:  # noqa: BLE001 - a 200 that is not JSON is not a team
+        return EntryCheck(found=False, status=resp.status_code,
+                          error=f"{type(exc).__name__}: {exc}")
+    player = " ".join(
+        x for x in (body.get("player_first_name"), body.get("player_last_name")) if x
+    ) or None
+    return EntryCheck(found=True, status=200,
+                      team_name=body.get("name") or None,
+                      manager_name=player)
+
+
+def default_entry_lookup(entry_id: int) -> tuple[str | None, str | None]:
+    """Team name and manager name from the public entry endpoint.
+
+    Best-effort: the connect has already succeeded by the time this runs, so a
+    failure here costs a label, not the connection. A thin wrapper over
+    :func:`check_entry` so there is still one place that knows the URL.
+    """
+    check = check_entry(entry_id)
+    return check.team_name, check.manager_name
 
 
 def _classify(exc: BaseException) -> tuple[str, str | None]:
@@ -334,8 +378,8 @@ def connect(
     token; on any later failure the stored pair is left exactly as the CLI
     would have left it.
     """
-    manager = manager if manager is not None else TokenManager()
-    eid = int(entry_id if entry_id is not None else USER.entry_id)
+    manager = manager if manager is not None else TokenManager(env_path=ENV_PATH)
+    eid = int(entry_id if entry_id is not None else owner_context().entry_id)
     say = progress or (lambda _msg: None)
 
     # -- paste: refuse garbage before it is written anywhere ------------------
@@ -409,8 +453,8 @@ def verify(
     The access token refreshes through the stored grant if it has aged out,
     which is the everyday case and the one that proves the chain is alive.
     """
-    manager = manager if manager is not None else TokenManager()
-    eid = int(entry_id if entry_id is not None else USER.entry_id)
+    manager = manager if manager is not None else TokenManager(env_path=ENV_PATH)
+    eid = int(entry_id if entry_id is not None else owner_context().entry_id)
     client = client if client is not None else PrivateTeamClient(tokens=manager)
     if not manager.configured and not client.configured:
         outcome = Outcome(

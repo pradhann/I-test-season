@@ -18,9 +18,16 @@ import html
 import subprocess
 from pathlib import Path
 
-from fpl_edge.config import USER
 from fpl_edge.interfaces.bias import review as run_review
 from fpl_edge.store import Warehouse
+
+
+def _owner():
+    """The operator, whose report this is. A script has no request."""
+    from fpl_edge.platform.users import owner_context
+
+    return owner_context()
+
 
 SEASON = "2026-27"
 REPO_DIR = Path.home() / "Documents/Github/fpl-reports"
@@ -171,7 +178,7 @@ svg {{ width:100%; height:auto; }}
 .val {{ fill:var(--ink); font-size:11px; font-variant-numeric:tabular-nums; }}
 </style></head><body><main>
 <h1>Idea Review — {esc(SEASON)} through GW{gw}</h1>
-<p class="sub">Entry {USER.entry_id} ({esc(USER.team_name)}) · generated
+<p class="sub">Entry {_owner().entry_id} ({esc(_owner().display_name or "")}) · generated
 {now:%Y-%m-%d %H:%M}Z · every idea ever texted, acted on or not</p>
 
 <h2>Resolved margins — idea vs its comparator</h2>
@@ -248,7 +255,8 @@ def publish(page: str, gw: int) -> str:
         + "</ul>"
     )
     _git(["add", "-A"], REPO_DIR)
-    _git(["-c", "user.name=fpl-edge", "-c", f"user.email={USER.entry_id}@fpl-edge.local",
+    _git(["-c", "user.name=fpl-edge",
+          "-c", f"user.email={_owner().entry_id}@fpl-edge.local",
           "commit", "-m", f"Idea review through GW{gw}"], REPO_DIR)
     push = _git(["push", "-u", "origin", "HEAD"], REPO_DIR)
     if push.returncode != 0:

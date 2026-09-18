@@ -38,8 +38,15 @@ def ownership_eo(
     cohort: str = "elite",
     coverage: bool = True,
     segments: list[str] | None = None,
+    ctx=None,
 ) -> dict[str, Any]:
     """Template and differentials from effective ownership plus consensus xPts.
+
+    ``ctx`` is the requesting user. Everything on this panel is shared
+    warehouse data except two things that are about one manager: the coverage
+    column, which marks the rows that manager owns, and the "this selection
+    includes you" line. Both read the context, and both degrade to their
+    existing blank states when it has no readable squad.
 
     ``rows`` is the current template: ranked by the live EO metric for the
     requested season (falling back to FPL marginal ownership when no external
@@ -81,7 +88,7 @@ def ownership_eo(
         wh, season=season, players=players, limit=limit,
         diff_max_own=diff_max_own, coverage=coverage, elite=elite,
         eo_pred=eo_pred, external=external, cohort_rows=cohort_rows,
-        sel_by_code=sel_by_code, sel_n=sel_n, xp=xp)
+        sel_by_code=sel_by_code, sel_n=sel_n, xp=xp, ctx=ctx)
     last_season = _other_season_eo(wh, season, limit)
     metrics_note, cohort_note = _notes(
         wh, season=season, cohort=cohort, cohorts_present=cohorts_present,
@@ -95,7 +102,7 @@ def ownership_eo(
         wh, season=season, as_of=as_of, fields=fields, known=known,
         n_with=n_with, pick_gw=pick_gw, requested=requested, resolved=resolved,
         seg_inventory=seg_inventory, sel_gw=sel_gw, sel_n=sel_n,
-        sel_slot=sel_slot, squad_meta=squad_meta, unknown=unknown)
+        sel_slot=sel_slot, squad_meta=squad_meta, unknown=unknown, user=ctx)
     diff_rows, by_code_row, squad_codes = _tool_squad_diff(
         all_rows=all_rows, limit=limit, sel_by_code=sel_by_code, sel_n=sel_n,
         squad=squad, squad_meta=squad_meta, template=template)

@@ -109,7 +109,7 @@ uv run python -m fpl_edge.ingest.projections.cli ingest --season <season> --firs
 
 ```
 # in process: fpl_edge.myteam.store.MyTeamStore
-# in process: fpl_edge.config.UserConfig
+# in process: fpl_edge.config.owner_entry_id
 ```
 
 **`final_solve_delivery`**

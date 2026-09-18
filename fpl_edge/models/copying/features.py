@@ -16,7 +16,7 @@ That asymmetry is absolute and it is worth being blunt about, because it decides
 what "winner archaeology" can and cannot mean. Verified against the live API on
 2026-08-18::
 
-    entry/4490171/event/38/picks/   ->  404 {"detail": "Not found."}
+    entry/{entry_id}/event/38/picks/   ->  404 {"detail": "Not found."}
     entry/200/transfers/            ->  200 []
     entry/200/history/  ->  'past' has 13 seasons; every one of them has
                             exactly {season_name, total_points, rank, rank_percentage}
