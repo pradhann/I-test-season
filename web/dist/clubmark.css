@@ -3,8 +3,8 @@
    class (`fall`) to reveal the monogram, so an offline page shows a ringed
    club-coloured disc instead of a broken-image glyph, with no layout shift.
 
-   Three sizes only — s14 (verdict chips, torn-card rows), s20 (the board
-   rail and the League Shape marks), s34 (drawer mastheads) — because those
+   Three sizes only, s14 (verdict chips, torn-card rows), s20 (the board
+   rail and the League Shape marks), s34 (drawer mastheads), because those
    are the only five places a crest is allowed to appear. Never inside a grid
    cell: a scatter mark stands for the entity, a cell is the data field. */
 .crest { position: relative; display: inline-grid; place-items: center;
@@ -18,12 +18,12 @@
   background: var(--club, var(--raised));
   color: var(--club-ink, var(--ink));
   box-shadow: 0 0 0 1px var(--line);       /* ring survives both themes */
-  font: 700 8.5px/1 var(--mono); letter-spacing: .02em;
+  font: 700 var(--t-micro)/1 var(--mono); letter-spacing: .02em;
 }
-.crest.s14 { width: 14px; height: 14px; } .crest.s14 .mg { font-size: 7px; }
-.crest.s34 { width: 34px; height: 34px; } .crest.s34 .mg { font-size: 12px; }
+.crest.s14 { width: 14px; height: 14px; } .crest.s14 .mg { font-size: var(--t-micro); }
+.crest.s34 { width: 34px; height: 34px; } .crest.s34 .mg { font-size: var(--t-cell); }
 
-/* club identity constants — chrome, not data; confined to the disc.
+/* club identity constants, chrome, not data; confined to the disc.
    Keys are payload team_codes; ink chosen per-disc for >=4.5:1. A kit colour
    is a stable public fact about the club, not a warehouse measurement, so it
    lives here the way the colour ramp lives in fixtures.css. */

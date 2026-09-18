@@ -3,8 +3,10 @@
    WHICH gameweeks (toggleable GW chips), then read a matrix where every
    column header sorts. Squad membership is a quiet dot, not a shout. */
 
-import { runPanel, el, emptyBox, errBox, provenance,
-         faceImg, fmtPrice, fmt1, fmt2, fmtSpan } from "/js/app.js";
+import { runPanel, el, emptyBox, errBox, provenance, sortableTh, rowLink,
+         skeleton, staleChip,
+         avatarEl, fmtPrice, fmt1, fmt2, fmtAgeDays, agePhrase, absInstant,
+         rowCount } from "/js/app.js";
 // the SHARED player drawer: per-source pivot, percentile pizza, Understat
 // profile and the chatter strip: the same surface the dashboard opens
 import { attachPlayerDrawer, showPlayerDetail } from "/js/components/playerdrawer.js";
@@ -14,7 +16,7 @@ export default async function xpoints(host) {
   card.appendChild(el("h2", null, "Projections"));
   card.appendChild(el("p", "sub",
     "Numbers are copied from ingested providers, never modelled here. Feeds " +
-    "refresh T-30h before each deadline and nightly; a newly ingested " +
+    "refresh 30 hours before each deadline and nightly; a newly ingested " +
     "provider appears below automatically."));
   const srcRow = el("div", "toolbar");
   const wRow = el("div", "toolbar");       // consensus weighting toggle
@@ -25,13 +27,16 @@ export default async function xpoints(host) {
   // because only the children are rewritten, never the element.
   const wDet = el("details", "wdet");
   const wSum = el("summary", "sub");
-  wSum.style.cursor = "pointer";
   wDet.append(wSum, wRow, wBox);
   const gwRow = el("div", "toolbar");
   const filterRow = el("div", "toolbar");
   const body = el("div");
   const foot = el("div");
-  const dh = attachPlayerDrawer("xpoints");
+  // the drawer carries the path that led into it, so a player opened here
+  // says where he came from and the crumb walks back (R21)
+  const dh = attachPlayerDrawer("xpoints", [
+    { label: "Projections", go: () => dh.close() },
+  ]);
   card.append(srcRow, wDet, gwRow, filterRow, body, foot);
   host.appendChild(card);
 
@@ -47,6 +52,25 @@ export default async function xpoints(host) {
   let sortBy = { kind: "sum" };    // {kind:"gw",gw} | {kind:"col",key} | {kind:"sum"}
   let sortDir = -1;                // -1 desc
   let res = null, squadCodes = new Set();
+  // which gameweeks rest on fewer sources than the anchor, and how many each
+  // has: set while the header row is built, read while the cells are
+  let thinGws = new Set(), srcByGw = new Map();
+  /* One avatar element per player, kept across renders. A sort rebuilds the
+     tbody, and rebuilding it used to build a hundred fresh <img> nodes, which
+     is a hundred new resource entries even when every byte came from cache.
+     appendChild MOVES an existing node, so a sort now issues nothing (R49).
+     The key carries squad membership because the ring rides on the avatar. */
+  const faces = new Map();
+  function faceFor(r) {
+    const mine = squadCodes.has(r.code);
+    const key = `${r.code}:${mine}`;
+    let node = faces.get(key);
+    if (node) return node;
+    node = avatarEl(r.code, r.name, { mine });
+    if (mine) node.title = "in your squad";
+    faces.set(key, node);
+    return node;
+  }
 
   runPanel("squad_overview", {}).then(({ result }) => {
     if (result && !result.empty) {
@@ -57,8 +81,14 @@ export default async function xpoints(host) {
   }).catch(() => {});
 
   async function fetchPanel() {
+    /* A skeleton at the row height and column count the table will have, so
+       data landing does not push the page (R30). The row count is the 100
+       the matrix caps at, or the count already on screen when a filter is
+       re-run, which is the geometry the reader is looking at. */
+    const skelRows = Math.min(100, Math.max(12, (res?.rows || []).length));
+    const skelCols = 8 + Math.max(1, gwSel.size);
     body.textContent = "";
-    body.appendChild(el("p", "sub", "loading…"));
+    body.appendChild(skeleton(skelRows, skelCols));
     const gws = [...gwSel].sort((a, b) => a - b);
     const anchor = gws.length ? gws[0] : "next";
     const span = gws.length ? Math.min(8, gws[gws.length - 1] - gws[0] + 1) : 8;
@@ -86,14 +116,18 @@ export default async function xpoints(host) {
   // ---- row 1: sources (multi-select chips with freshness) ----
   // Two thresholds, used everywhere a feed's age appears: under 36h the feed
   // has been refreshed since the last nightly run, over 72h it has missed two.
+  // The dot's class is still decided in hours, because the refresh cadence
+  // is hourly; the TEXT beside it is days, like every other age in the app
+  // (R23). One line used to read "fplreview · 3h 13m" next to
+  // "apex_airsenal · 18 days" and the reader had to convert one to compare.
   const FRESH_H = 36, STALE_H = 72;
   function ageInfo(iso) {
     const h = (Date.now() - new Date(String(iso).replace(" ", "T"))) / 3.6e6;
-    if (!isFinite(h)) return { h: null, cls: "bad", text: "?" };
-    if (h < FRESH_H)
-      return { h, cls: "good", text: h < 1.5 ? "fresh" : fmtSpan(h) };
-    if (h < STALE_H) return { h, cls: "warn", text: fmtSpan(h) };
-    return { h, cls: "bad", text: fmtSpan(h) };
+    const text = fmtAgeDays(iso) || "unknown";
+    if (!isFinite(h)) return { h: null, cls: "bad", text: "unknown" };
+    if (h < FRESH_H) return { h, cls: "good", text };
+    if (h < STALE_H) return { h, cls: "warn", text };
+    return { h, cls: "bad", text };
   }
   function feedAge(src) {
     const m = (res?.source_meta || []).find(x => x.source === src);
@@ -104,7 +138,10 @@ export default async function xpoints(host) {
     const metas = res?.source_meta || [];
     srcRow.appendChild(el("span", "tlabel", "Sources"));
     const allChip = el("button", "chip src" + (picked.size === 0 ? " on" : ""));
-    allChip.textContent = (picked.size === 0 ? "✓ " : "") + "All";
+    // selection is the `on` class and aria-pressed, never a tick glyph: one
+    // icon set, no geometric characters standing in for a drawing (R41)
+    allChip.textContent = "All";
+    allChip.setAttribute("aria-pressed", String(picked.size === 0));
     allChip.title = "consensus across every provider";
     allChip.onclick = () => { picked.clear(); fetchPanel(); };
     srcRow.appendChild(allChip);
@@ -119,7 +156,7 @@ export default async function xpoints(host) {
       const a = ageInfo(m.last_fetched);
       const chip = el("button",
         "chip src" + (on ? " on" : "") + (covers ? "" : " off"));
-      chip.appendChild(document.createTextNode((on ? "✓ " : "")));
+      chip.setAttribute("aria-pressed", String(on));
       chip.appendChild(el("span", "freshdot " + a.cls));
       chip.appendChild(document.createTextNode(
         ` ${m.source.replace(/^gh_/, "")} · ${a.text}`));
@@ -130,7 +167,7 @@ export default async function xpoints(host) {
         (acc && acc.mae != null
           ? `\nMAE ${acc.mae} on >5%-owned players · earned weight ${acc.weight}`
           : "") +
-        `\nlast fetch ${m.last_fetched}` +
+        `\nlast fetch ${absInstant(m.last_fetched) || m.last_fetched}` +
         (covers ? "\nclick to include/exclude"
                 : "\nNO DATA for the selected gameweeks");
       if (covers) chip.onclick = () => {
@@ -157,14 +194,27 @@ export default async function xpoints(host) {
       const v = el("span",
         "chip " + (stale.length ? "bad" : ageing.length ? "warn" : "good"),
         stale.length
-          ? `${stale.length} of ${n} feeds over ${Math.round(STALE_H / 24)}d old`
+          ? `${stale.length} of ${n} feeds over ` +
+            `${Math.round(STALE_H / 24)} days old`
           : ageing.length
-            ? `${ageing.length} of ${n} feeds over ${FRESH_H}h old`
-            : `all ${n} feeds under ${FRESH_H}h old`);
+            ? `${ageing.length} of ${n} feeds over ${FRESH_H} hours old`
+            : `all ${n} feeds under ${FRESH_H} hours old`);
       v.title = ages.map(x => `${shortName(x.s)} ${x.a.text}`).join("\n");
       srcRow.appendChild(v);
+      /* The oldest feed, as the app's ONE stale marker when it is past its
+         window (R29): the numbers are still real and still shown, they are
+         just older than the refresh cadence promises. */
+      const oldest = ages[0];
+      if (oldest.a.h >= STALE_H) {
+        const meta = (res?.source_meta || [])
+          .find(m => m.source === oldest.s);
+        srcRow.appendChild(staleChip(meta?.last_fetched, {
+          source: shortName(oldest.s),
+          window: `${Math.round(STALE_H / 24)} days`,
+        }));
+      }
       srcRow.appendChild(el("span", "sub",
-        `oldest ${shortName(ages[0].s)} ${ages[0].a.text}`));
+        `oldest ${shortName(oldest.s)} ${oldest.a.text}`));
     }
     if ((res?.accuracy || []).some(a => a.mae != null)) {
       const acc = el("button", "chip" + (showAccuracy ? " s1" : ""),
@@ -459,6 +509,7 @@ export default async function xpoints(host) {
     for (const c of res?.gw_coverage || []) {
       const on = gwSel.has(c.gw);
       const chip = el("button", "chip gw" + (on ? " on" : ""), `GW${c.gw}`);
+      chip.setAttribute("aria-pressed", String(on));
       chip.title = `${c.n_sources} source${c.n_sources !== 1 ? "s" : ""}, ` +
                    `${c.n_players} players. Click to show or hide this column.`;
       chip.onclick = () => {
@@ -521,18 +572,22 @@ export default async function xpoints(host) {
     const v = r[sortBy.key];
     return v == null ? -1e9 : (typeof v === "string" ? v : v);
   }
+  /* The SHARED sortable header (app.js). It carries aria-sort, the keyboard
+     path and the same 16px sort mark on every column, so the five gameweek
+     columns keep one width (R5) and a screen reader is told which column is
+     sorted (R11). The per-column first direction comes from the column type:
+     magnitude descending, name and team ascending (R12). */
   function th(label, sortSpec, opts = {}) {
-    const cls = (opts.num !== false ? "num" : "") +
-      (sameSort(sortSpec) ? " sorted" : "");
-    const h = el("th", cls, label);
-    if (sameSort(sortSpec)) h.dataset.dir = sortDir === -1 ? "▼" : "▲";
-    if (opts.title) h.title = opts.title;
-    h.onclick = () => {
-      sortDir = sameSort(sortSpec) ? -sortDir : -1;
-      sortBy = sortSpec;
-      renderBody();
-    };
-    return h;
+    const active = sameSort(sortSpec);
+    let dir = null;
+    if (active) dir = sortDir;
+    return sortableTh(label, {
+      num: opts.num,
+      title: opts.title,
+      active,
+      dir,
+      onSort: (next) => { sortDir = next; sortBy = sortSpec; renderBody(); },
+    });
   }
   const sameSort = spec =>
     JSON.stringify(spec) === JSON.stringify(sortBy);
@@ -645,43 +700,56 @@ export default async function xpoints(host) {
     hr.appendChild(th("pos", { kind: "col", key: "pos" }, { num: false }));
     hr.appendChild(th("team", { kind: "col", key: "team" }, { num: false }));
     hr.appendChild(th("£", { kind: "col", key: "price" }));
-    hr.appendChild(th("own% now", { kind: "col", key: "own_pct" },
+    hr.appendChild(th("own%", { kind: "col", key: "own_pct" },
       { title: "share of managers owning the player at the last price " +
                "ingest. A live snapshot, not a gameweek number." }));
-    // A column built from fewer sources than the anchor gameweek is a thinner
-    // claim, and toggling it silently changes what the sum means. GW9 has one
-    // source; the count was in a chip tooltip and nowhere near the column.
+    /* THE HEADER IS THE COLUMN NAME AND NOTHING ELSE (R6). The source count
+       and the settled tick used to ride in the label, which made GW9 99px
+       and GW10 106px against 43px for their neighbours: five columns of the
+       same quantity at 2.5x each other's width, which is the misalignment
+       the owner photographed. Both facts move:
+         the count to a marker on the individual cells of a thin column,
+           because it qualifies some gameweeks and not others (R13),
+         the settled state to the cells, which already print the actual in
+           bold with the delta beside it.
+       The full sentence stays in the th title, where it already was. */
     const covBy = new Map((res.gw_coverage || []).map(c => [c.gw, c]));
     const anchorSrc = covBy.get(res.gw)?.n_sources ?? null;
+    thinGws = new Set();
+    srcByGw = new Map();
     for (const g of gws) {
       const settled = (res.settled_gws || []).includes(g);
       const nsrc = covBy.get(g)?.n_sources ?? null;
       const thin = nsrc != null && anchorSrc != null && nsrc < anchorSrc;
-      hr.appendChild(th(
-        `GW${g}${settled ? " ✓" : ""}${thin ? ` · ${nsrc} src` : ""}`,
+      if (nsrc != null) srcByGw.set(g, nsrc);
+      if (thin) thinGws.add(g);
+      const gwTh = th(
+        `GW${g}`,
         { kind: "gw", gw: g },
         { title: (settled
             ? `GW${g} is settled: cells show ACTUAL points with the delta vs projection`
             : `GW${g} projected points`) +
           (nsrc == null ? ""
             : `\n${nsrc} source${nsrc === 1 ? " projects" : "s project"} GW${g}` +
-              (thin ? `, against ${anchorSrc} at GW${res.gw}` : "")) }));
+              (thin ? `, against ${anchorSrc} at GW${res.gw}` : "")) });
+      gwTh.classList.add("gwcol");
+      hr.appendChild(gwTh);
     }
-    const runs = gws.length > 1 &&
-      gws[gws.length - 1] - gws[0] + 1 === gws.length;
-    hr.appendChild(th(
-      !gws.length ? "sum xPts"
-        : gws.length === 1 ? `xPts GW${gws[0]}`
-          : runs ? `sum xPts GW${gws[0]}-GW${gws[gws.length - 1]}`
-            : `sum xPts, ${gws.length} GWs`,
-      { kind: "sum" },
-      { title: `projected points added over GW${gws.join(", GW")}. ` +
+    /* The three long headers shorten to their names and hand the phrase to
+       the title (R6, R7). At 1280 the last column used to render as "P(AP":
+       thirteen headers at their old widths were wider than the content
+       area, and a truncated header is a column with no name at all. */
+    const spanText = gws.length
+      ? `GW${gws.join(", GW")}`
+      : "the selected gameweeks";
+    hr.appendChild(th("sum", { kind: "sum" },
+      { title: `projected points added over ${spanText}. ` +
                `A settled column shows its actual, but the sum uses the ` +
                `projection throughout.` }));
-    hr.appendChild(th(`GW${res.gw} max-min`, { kind: "col", key: "spread" },
+    hr.appendChild(th("spread", { kind: "col", key: "spread" },
       { title: `the highest source minus the lowest at GW${res.gw}. A range ` +
                `across sources, not a symmetric band around the consensus.` }));
-    hr.appendChild(th(`p(appear) GW${res.gw}`, { kind: "col", key: "p_appear" },
+    hr.appendChild(th("p(app)", { kind: "col", key: "p_appear" },
       { title: `probability of appearing at GW${res.gw}, averaged over the ` +
                `sources that publish one. Its own column, never multiplied ` +
                `into xPts.` }));
@@ -691,17 +759,18 @@ export default async function xpoints(host) {
     for (const r of rows.slice(0, 100)) {
       const tr = el("tr");
       const nameTd = el("td");
-      const face = faceImg(r.code, "avatar" +
-        (squadCodes.has(r.code) ? " mine" : ""));
-      if (squadCodes.has(r.code)) face.title = "in your squad";
-      nameTd.appendChild(face);
+      nameTd.appendChild(faceFor(r));
       nameTd.appendChild(document.createTextNode(r.name));
       if (r.status && r.status !== "a")
         nameTd.appendChild(el("span", "chip warn", ` ${r.status}`));
-      nameTd.style.cursor = "pointer";
-      nameTd.title = "click for the per-source breakdown";
-      nameTd.onclick = () => showDetail(r);
       tr.appendChild(nameTd);
+      /* ONE affordance for the whole row (R18). The handler used to sit on
+         cell 0 of 13 while `table.data tr:hover td` lit all thirteen, so
+         twelve cells of every row promised a click that was not there, and
+         no row was reachable from the keyboard at all. */
+      rowLink(tr, () => showDetail(r),
+              `${r.name}: open the per-source breakdown`);
+      tr.title = "opens the per-source breakdown";
       tr.appendChild(el("td", null, r.pos));
       tr.appendChild(el("td", null, r.team ?? "–"));
       tr.appendChild(el("td", "num", fmtPrice(r.price)));
@@ -710,9 +779,19 @@ export default async function xpoints(host) {
         const v = cell(r.code, g);
         const settled = (res.settled_gws || []).includes(g);
         const act = settled ? res.actuals?.[String(r.code)]?.[String(g)] : null;
-        const td = el("td", "num");
+        const td = el("td", "num gwcol");
+        /* The thin-evidence marker: a 3px dot in the cell's corner with the
+           count in its title, so the column carries the caveat without
+           carrying its width (R13). */
+        if (thinGws.has(g)) {
+          td.classList.add("thin");
+          const n = srcByGw.get(g);
+          td.title = `${n} source${n === 1 ? "" : "s"} project GW${g}, ` +
+                     `fewer than the anchor gameweek`;
+        }
         if (settled) {
           // History: the actual leads; the delta vs projection judges the call
+          td.classList.add("settled");
           if (act == null && v == null) td.textContent = "–";
           else {
             const a = act ?? 0;
@@ -724,9 +803,18 @@ export default async function xpoints(host) {
               chip.title = `projected ${fmt1(v)}, actual ${Math.round(a)}`;
               td.appendChild(chip);
             }
-            td.style.background =
-              `color-mix(in oklab, var(${v != null && a - v >= 0 ? "--good" : "--bad"}) ` +
-              `${v == null ? 0 : Math.min(22, Math.round(Math.abs(a - v) * 6))}%, var(--surface))`;
+            /* The SIGN of the miss is the delta chip's job, in --good or
+               --bad, and those two are state colours: scaling them by the
+               size of the miss turned a reserved pair into a diverging
+               magnitude ramp (R32). The magnitude rides the same single
+               --s1 sequential ramp the unsettled cells use, so one tint
+               means one thing on the whole board. */
+            const seen = act ?? v;
+            if (seen != null) {
+              const pct = Math.min(58, Math.round(58 * seen / tintMax));
+              td.style.background =
+                `color-mix(in oklab, var(--s1) ${pct}%, var(--surface))`;
+            }
           }
         } else if (v == null) td.textContent = "–";
         else {
@@ -748,22 +836,31 @@ export default async function xpoints(host) {
     }
     table.appendChild(tbody); wrap.appendChild(table);
     body.appendChild(wrap);
-    const priceAge = res.prices_as_of
-      ? `prices as of ${fmtSpan((Date.now() -
-          new Date(res.prices_as_of.replace(" ", "T"))) / 3.6e6)} ago`
-      : "price age unknown";
+    const priceAge = agePhrase(res.prices_as_of, "prices read")
+      || "price age unknown";
     const blend = res.weighting === "single_source"
       ? `${shortName(res.source)} raw, no blend`
       : `consensus: ${res.weighting} weights`;
+    // what the filters removed, under the table they removed it from (R16)
+    const named = [];
+    if (pos) named.push(`position ${pos}`);
+    if (team) named.push(`team ${team}`);
+    if (maxPrice) named.push(`max £${maxPrice}`);
+    if (minPapp) named.push(`min p(appear) ${minPapp}`);
+    if (search.trim()) named.push(`name contains "${search.trim()}"`);
+    if (squadOnly) named.push("my squad only");
+    body.appendChild(rowCount(Math.min(100, rows.length), rows.length, named));
     body.appendChild(el("p", "sub",
-      `${rows.length} players · showing ${Math.min(100, rows.length)} · ` +
       `${blend} · ` +
-      `ring on a photo = in your squad · click any header to sort · ` +
+      `ring on a photo means the player is in your squad · ` +
+      `every header sorts, by click or by Enter · ` +
+      `a dot in a cell corner means that gameweek rests on fewer sources ` +
+      `than the anchor, with the count in the cell · ` +
       `tint runs 0 to ${fmt1(tintMax)} xPts, the highest cell on the whole ` +
       `board over the shown gameweeks, so it does not move when you ` +
-      `filter · ✓ columns are settled: bold actual, ` +
-      `green over / red under projection · ` +
-      `${priceAge} (refreshed nightly and T-30h)`));
+      `filter · a settled gameweek prints the bold actual with the miss ` +
+      `beside it, green over and red under projection · ` +
+      `${priceAge}, refreshed nightly and 30 hours before each deadline`));
   }
 
   // ---- per-source breakdown: the SHARED drawer ----

@@ -11,14 +11,14 @@
 
 .pipe-head { display: flex; align-items: center; gap: 10px; }
 .pipe-head h2 { flex: 1; }
-.pipe-refresh { font-size: 12px; }
+.pipe-refresh { font-size: var(--t-cell); }
 
 /* ---- summary strip: the states + the credit meter ---- */
 .pipe-summary { display: flex; gap: 10px; flex-wrap: wrap; margin: 10px 0 14px; }
 .pipe-stat { background: var(--raised); border-radius: 9px; padding: 8px 14px;
            min-width: 84px; border: 1px solid transparent; }
-.pipe-stat .v { font: 600 17px/1.2 var(--mono); font-variant-numeric: tabular-nums; }
-.pipe-stat .k { color: var(--faint); font-size: 10.5px; letter-spacing: .06em;
+.pipe-stat .v { font: 600 var(--t-figure)/1.2 var(--mono); font-variant-numeric: tabular-nums; }
+.pipe-stat .k { color: var(--faint); font-size: var(--t-micro); letter-spacing: .06em;
               text-transform: uppercase; margin-top: 1px; }
 .pipe-stat.good .v { color: var(--good); }
 .pipe-stat.warn .v { color: var(--warn); }
@@ -29,37 +29,29 @@
 /* failing > 0: the one loud thing on the page */
 .pipe-stat.alarm { border-color: color-mix(in oklab, var(--bad) 45%, var(--line));
                  background: color-mix(in oklab, var(--bad) 10%, var(--surface)); }
-.pipe-stat.credits .v { font-size: 15px; }
+.pipe-stat.credits .v { font-size: var(--t-figure); }
 .pipe-stat.credits.warn { border-color: color-mix(in oklab, var(--warn) 45%, var(--line)); }
 
 /* ---- the table ---- */
 .pipe-table { table-layout: auto; }
-.pipe-table th { padding: 0; }
-.pipe-th { background: none; border: 0; padding: 5px 10px; width: 100%;
-         text-align: inherit; cursor: pointer; color: var(--muted);
-         font: inherit; letter-spacing: .06em; text-transform: uppercase;
-         display: flex; align-items: center; gap: 4px; }
-.pipe-table th.num .pipe-th { justify-content: flex-end; }
-.pipe-th:hover { color: var(--ink); }
-.pipe-th.on { color: var(--ink); }
-.pipe-th .arr { font-size: 9px; color: var(--s1); }
-.pipe-th:focus-visible { outline: 2px solid var(--s1); outline-offset: -2px; }
+/* the header is app.css's one sortable th: no local button, no local arrow,
+   no local focus ring. This file owned the app's fourth implementation. */
 
 .pipe-row { cursor: pointer; }
 .pipe-row:focus-visible { outline: 2px solid var(--s1); outline-offset: -2px; }
 .pipe-row.failing td { background: color-mix(in oklab, var(--bad) 6%, var(--surface)); }
 .pipe-row.open td { background: var(--raised); }
 .pipe-row.disabled { opacity: .55; }
-.pipe-fam { color: var(--faint); font-size: 11px; letter-spacing: .05em;
+.pipe-fam { color: var(--faint); font-size: var(--t-label); letter-spacing: .05em;
           text-transform: uppercase; }
-.pipe-name b { font-size: 12.5px; }
-.pipe-caret { color: var(--faint); margin-right: 6px; font-size: 10px; }
+.pipe-name b { font-size: var(--t-cell); }
+.pipe-caret { color: var(--faint); margin-right: var(--sp1); display: inline-flex; align-items: center; }
 .pipe-age, .pipe-due { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .pipe-mut { color: var(--faint); }
 
 /* ---- chips: one dot, one word, the same vocabulary everywhere ---- */
 .pipe-chip { display: inline-flex; align-items: center; gap: 5px;
-           white-space: nowrap; font-size: 11.5px; }
+           white-space: nowrap; font-size: var(--t-label); }
 .pipe-chip b { font-weight: 600; text-transform: uppercase;
              letter-spacing: .04em; }
 .pipe-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
@@ -89,27 +81,27 @@
 .pipe-exprow td { padding: 0 0 10px; background: var(--raised); }
 .pipe-exp { padding: 10px 14px 12px; display: flex; flex-direction: column;
           gap: 10px; }
-.pipe-exp h3 { font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
-             color: var(--faint); margin: 0; font-weight: 650; }
+.pipe-exp h3 { font-size: var(--t-label); letter-spacing: .06em; text-transform: uppercase;
+             color: var(--faint); margin: 0; font-weight: 600; }
 .pipe-health { display: flex; flex-direction: column; gap: 2px; }
-.pipe-reason { color: var(--muted); font-size: 12px; line-height: 1.4; }
+.pipe-reason { color: var(--muted); font-size: var(--t-cell); line-height: 1.4; }
 .pipe-row.failing + .pipe-exprow .pipe-reason { color: var(--ink); }
 
 .pipe-facts { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px;
-            margin: 0; font-size: 12px; }
+            margin: 0; font-size: var(--t-cell); }
 .pipe-facts dt { color: var(--faint); text-transform: uppercase;
-               font-size: 10px; letter-spacing: .06em; align-self: center; }
+               font-size: var(--t-micro); letter-spacing: .06em; align-self: center; }
 .pipe-facts dd { margin: 0; }
 
 .pipe-lastrun { display: flex; flex-direction: column; gap: 6px; }
 .pipe-runline { display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
-              font-size: 12px; }
+              font-size: var(--t-cell); }
 .pipe-when { font-variant-numeric: tabular-nums; }
-.pipe-note { font-family: var(--mono); font-size: 11px; line-height: 1.5;
+.pipe-note { font-family: var(--mono); font-size: var(--t-label); line-height: 1.5;
   background: var(--surface); border: 1px solid var(--line); border-radius: 7px;
   padding: 8px 10px; margin: 0; max-height: 160px; overflow: auto;
   white-space: pre-wrap; overflow-wrap: anywhere; }
-.pipe-path { display: flex; gap: 8px; align-items: baseline; font-size: 11px; }
+.pipe-path { display: flex; gap: 8px; align-items: baseline; font-size: var(--t-label); }
 .pipe-path code { font-family: var(--mono); overflow-wrap: anywhere; }
 
 /* ---- recent runs, and one run's log tail ---- */
@@ -117,34 +109,34 @@
 .pipe-runlist { display: flex; flex-direction: column; gap: 2px; }
 .pipe-runitem { display: flex; gap: 12px; align-items: center; width: 100%;
   background: none; border: 0; border-radius: 6px; padding: 4px 8px;
-  cursor: pointer; font: inherit; font-size: 11.5px; color: var(--ink);
+  cursor: pointer; font: inherit; font-size: var(--t-label); color: var(--ink);
   text-align: left; }
 .pipe-runitem:hover { background: var(--surface); }
 .pipe-runitem:focus-visible { outline: 2px solid var(--s1); outline-offset: -2px; }
 .pipe-runitem.bad .pipe-when { color: var(--bad); }
 .pipe-logbox { padding: 0 8px 6px; }
-.pipe-log { font-family: var(--mono); font-size: 11px; line-height: 1.5;
+.pipe-log { font-family: var(--mono); font-size: var(--t-label); line-height: 1.5;
   background: var(--surface); border: 1px solid var(--line); border-radius: 7px;
   padding: 10px 12px; max-height: 320px; overflow: auto; white-space: pre-wrap;
   overflow-wrap: anywhere; margin: 6px 0 0; }
 
 /* ---- the trigger, its confirm strip, and errors from the route ---- */
 .pipe-act { display: flex; align-items: center; gap: 10px; }
-.pipe-run { font-size: 12px; padding: 5px 12px; }
+.pipe-run { font-size: var(--t-cell); padding: 5px 12px; }
 .pipe-run.metered { border-color: color-mix(in oklab, var(--warn) 45%, var(--line)); }
 .pipe-run.confirm { background: var(--accent); border-color: var(--accent);
                   color: #fff; }
-.pipe-cancel { font-size: 12px; padding: 5px 10px; margin-left: 6px; }
-.pipe-confirm { display: flex; gap: 10px; align-items: center; font-size: 12px;
+.pipe-cancel { font-size: var(--t-cell); padding: 5px 10px; margin-left: 6px; }
+.pipe-confirm { display: flex; gap: 10px; align-items: center; font-size: var(--t-cell);
   padding: 7px 10px; border-radius: 7px;
   background: color-mix(in oklab, var(--warn) 10%, var(--surface));
   border: 1px solid color-mix(in oklab, var(--warn) 40%, var(--line)); }
 .pipe-confirm b { color: var(--warn); }
-.pipe-err { font-size: 12px; padding: 7px 10px; border-radius: 7px;
+.pipe-err { font-size: var(--t-cell); padding: 7px 10px; border-radius: 7px;
   color: var(--bad);
   background: color-mix(in oklab, var(--bad) 8%, var(--surface)); }
 
-.pipe-running { display: inline-block; font: 650 10.5px/1 var(--mono);
+.pipe-running { display: inline-block; font: 600 var(--t-micro)/1 var(--mono);
               letter-spacing: .06em; text-transform: uppercase;
               color: var(--s1); padding: 5px 10px; border-radius: 999px;
               background: color-mix(in oklab, var(--s1) 13%, var(--surface));
@@ -155,10 +147,8 @@
 }
 
 /* a named gap: same anatomy as the fixtures view's */
-.pipe-gap { color: var(--muted); background: var(--surface);
-  border: 1px dashed var(--line); border-radius: 8px; padding: 10px 12px;
-  font-size: 12px; }
-.pipe-gap b { color: var(--ink); display: block; margin-bottom: 2px; }
+/* the gap state is app.css's .gap, built by gapBox: a fact the payload says
+   it does not have, with the reason and the action that would fill it. */
 
 /* ---- narrow screens: the table folds into cards ----
    Each cell names its own column instead of relying on a header row that is
@@ -174,8 +164,8 @@
                  align-items: baseline; justify-content: space-between; }
   .pipe-table td.num { text-align: left; }
   .pipe-row > [data-label]::before {
-    content: attr(data-label); font-size: 9.5px; letter-spacing: .07em;
-    text-transform: uppercase; color: var(--faint); font-weight: 650;
+    content: attr(data-label); font-size: var(--t-micro); letter-spacing: .07em;
+    text-transform: uppercase; color: var(--faint); font-weight: 600;
     flex: 0 0 auto;
   }
   .pipe-exprow td { display: block; }

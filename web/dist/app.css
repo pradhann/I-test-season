@@ -1,4 +1,4 @@
-/* i-test platform — design tokens and components.
+/* i-test platform, design tokens and components.
    Dark-first by identity (a trading-desk cockpit), full light theme provided.
    Three theme states: bare :root = dark (the identity default);
    prefers-color-scheme light wins when the user has made no explicit choice;
@@ -6,8 +6,8 @@
    Series palette validated with the dataviz six-checks validator:
      dark  surface #16181b: #2a78d6 #c25322 #1baf7a #b08000  (all pass)
      light surface #ffffff: #2a78d6 #eb6834 #1baf7a #eda100  (pass; s3/s4
-       carry a contrast WARN whose obligation — visible labels or a table
-       view — this table-first app satisfies everywhere)
+       carry a contrast WARN whose obligation, visible labels or a table
+       view, this table-first app satisfies everywhere)
    Status colors are reserved (never "series 4") and always ship with text. */
 
 :root {
@@ -23,6 +23,27 @@
   --good: #2fa463; --warn: #c77f00; --bad: #d64545;
   --shadow: 0 1px 3px rgb(0 0 0 / .4);
   --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* THE TYPE SCALE (DESIGN_PRINCIPLES R1). Six sizes app-wide; a seventh is
+     a bug. Every stylesheet reads these tokens and declares no raw px size.
+       --t-title   the page title in the topbar, once per page
+       --t-figure  the single headline number of a card
+       --t-body    body text and the body default
+       --t-cell    every table and grid cell
+       --t-label   column headers, chips, provenance, card eyebrows
+       --t-micro   stat keys, toolbar row labels, cell markers
+     Emphasis is carried by weight (400/600/700), never by a seventh size. */
+  --t-title: 19px; --t-figure: 17px; --t-body: 13px;
+  --t-cell: 12.5px; --t-label: 11px; --t-micro: 10.5px;
+
+  /* THE SPACING STEPS (R8). Every padding, margin and gap is one of these.
+     Two declared exceptions: 1px for a hairline rule, 2px for an optical
+     nudge inside a single component. */
+  --sp1: 4px; --sp2: 8px; --sp3: 12px; --sp4: 16px; --sp5: 24px;
+
+  /* Motion: one duration for state, one for the drawer. Both under 200ms
+     (R43), both switched off under prefers-reduced-motion (R44). */
+  --dur-state: 120ms; --dur-drawer: 180ms;
 }
 @media (prefers-color-scheme: light) {
   :root:not([data-theme="dark"]) {
@@ -56,46 +77,49 @@
 html, body { margin: 0; height: 100%; }
 body {
   background: var(--bg); color: var(--ink);
-  font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-        Helvetica, Arial, sans-serif;
+  font: var(--t-body)/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI",
+        Roboto, Helvetica, Arial, sans-serif;
   overflow-x: hidden;
-  /* global: digits are data everywhere in this app — columns of xPts must
-     not wobble as values change width (R3: 4/15 numeric leaves had it) */
+  /* global: digits are data everywhere in this app, so columns of xPts must
+     not wobble as values change width (R2) */
   font-variant-numeric: tabular-nums;
 }
 
 /* ---- app frame: left rail + content ---- */
 .frame { display: flex; min-height: 100vh; }
 .rail {
-  width: 168px; flex: none; padding: 14px 10px; border-right: 1px solid var(--line);
+  width: 168px; flex: none; padding: var(--sp3) var(--sp2);
+  border-right: 1px solid var(--line);
   background: var(--surface); display: flex; flex-direction: column; gap: 2px;
   position: sticky; top: 0; height: 100vh;
 }
-.brand { font-weight: 700; font-size: 15px; letter-spacing: .02em;
-         padding: 4px 10px 14px; color: var(--ink); }
+.brand { font-weight: 700; font-size: var(--t-body); letter-spacing: .02em;
+         padding: var(--sp1) var(--sp2) var(--sp3); color: var(--ink); }
 .brand b { color: var(--accent-ink); }
 .rail a {
-  display: block; padding: 7px 10px; border-radius: 7px; color: var(--muted);
+  display: block; padding: var(--sp2); border-radius: 7px; color: var(--muted);
   text-decoration: none; font-weight: 500;
 }
 .rail a:hover { color: var(--ink); background: var(--raised); }
 .rail a.active { color: var(--ink); background: var(--raised);
                  box-shadow: inset 2px 0 0 var(--accent); }
-.rail .foot { margin-top: auto; padding: 8px 10px; color: var(--faint);
-              font-size: 11px; }
-.content { flex: 1; min-width: 0; padding: 18px 22px 40px; }
+.rail .foot { margin-top: auto; padding: var(--sp2); color: var(--faint);
+              font-size: var(--t-label); }
+.content { flex: 1; min-width: 0; padding: var(--sp4) var(--sp5) var(--sp5); }
 
-.topbar { display: flex; align-items: center; gap: 14px; margin-bottom: 16px; }
-.topbar h1 { font-size: 19px; margin: 0; text-wrap: balance; }
+.topbar { display: flex; align-items: center; gap: var(--sp3);
+          margin-bottom: var(--sp4); }
+.topbar h1 { font-size: var(--t-title); margin: 0; text-wrap: balance; }
 .deadline { color: var(--muted); font-variant-numeric: tabular-nums; }
 .deadline b { color: var(--warn); }
-/* urgency register: inside 24h the countdown changes weight and hue */
+/* urgency register: inside 24h the countdown changes weight and hue. Weight
+   carries the emphasis, not a seventh type size (R3). */
 .deadline.urgent { color: var(--ink); font-weight: 600; }
-.deadline.urgent b { color: var(--bad); font-size: 14px; }
+.deadline.urgent b { color: var(--bad); font-weight: 700; }
 .topbar .spacer { flex: 1; }
 button, .btn {
   background: var(--raised); color: var(--ink); border: 1px solid var(--line);
-  border-radius: 7px; padding: 6px 12px; font: inherit; cursor: pointer;
+  border-radius: 7px; padding: 6px var(--sp3); font: inherit; cursor: pointer;
 }
 button:hover, .btn:hover { border-color: var(--muted); }
 button.primary { background: var(--accent); border-color: var(--accent);
@@ -108,50 +132,114 @@ input:focus-visible, textarea:focus-visible,
 [tabindex]:not([tabindex="-1"]):focus-visible {
   outline: 2px solid var(--s1); outline-offset: 1px; }
 
+/* A bare heading inside a view took the browser's 1.5em, which computes to
+   19.5px and is a seventh type size with no declared source. The scale owns
+   every heading; `.card > h2` still overrides this for a card's eyebrow. */
+h1 { font-size: var(--t-title); }
+h2 { font-size: var(--t-figure); }
+h3 { font-size: var(--t-body); }
+h4, h5, h6 { font-size: var(--t-cell); }
+
+/* ---- icons: one set, inline SVG, 14px drawn on a 16px box (R39) ---- */
+.ic { width: 16px; height: 16px; flex: none; vertical-align: -3px; }
+
 /* ---- cards & panels ---- */
+/* R9 names this padding exactly, 14px 16px with 16px below, and no view
+   redefines .card. 14px is the one spacing value outside the five steps and
+   it is here, in the one rule that R9 pins, rather than anywhere else. */
 .card { background: var(--surface); border: 1px solid var(--line);
-        border-radius: 10px; padding: 14px 16px; margin-bottom: 16px;
-        box-shadow: var(--shadow); }
-.card > h2 { margin: 0 0 2px; font-size: 13px; letter-spacing: .06em;
+        border-radius: 10px; padding: 14px var(--sp4);
+        margin-bottom: var(--sp4); box-shadow: var(--shadow); }
+.card > h2 { margin: 0 0 2px; font-size: var(--t-body); letter-spacing: .06em;
              text-transform: uppercase; color: var(--muted); }
-.card > .sub { color: var(--faint); margin: 0 0 10px; font-size: 12px; }
-.grid { display: grid; gap: 16px; }
+.card > .sub { color: var(--faint); margin: 0 0 var(--sp2);
+               font-size: var(--t-cell); }
+.grid { display: grid; gap: var(--sp4); }
 @media (min-width: 1100px) { .grid.two { grid-template-columns: 1fr 1fr; } }
 /* grid/flex children default to min-width:auto, which lets a nowrap table
    force the whole page wide instead of scrolling inside its .scroll-x */
 .grid > *, .card { min-width: 0; }
 
-.provenance { color: var(--faint); font-size: 11px; margin-top: 10px;
-              font-family: var(--mono); }
+.provenance { color: var(--faint); font-size: var(--t-label);
+              margin-top: var(--sp2); font-family: var(--mono); }
+
+/* ---- the four states (R26 to R29): empty, error, gap, stale ---- */
 .empty { color: var(--muted); background: var(--raised);
          border: 1px dashed var(--line); border-radius: 8px;
-         padding: 14px; }
-.empty b { display: block; margin-bottom: 4px; color: var(--ink); }
-.err { color: var(--bad); background: color-mix(in oklab, var(--bad) 8%, var(--surface));
+         padding: var(--sp3); }
+.empty b { display: block; margin-bottom: var(--sp1); color: var(--ink); }
+.err { color: var(--bad);
+       background: color-mix(in oklab, var(--bad) 8%, var(--surface));
        border: 1px solid color-mix(in oklab, var(--bad) 35%, var(--line));
-       border-radius: 8px; padding: 10px 12px; }
+       border-radius: 8px; padding: var(--sp2) var(--sp3); }
+/* A fact the payload says it does not have. Absence shown as absence, with
+   the reason the payload gave and the action that would fill it. Never .err:
+   a missing field is not a failed request. */
+.gap { background: var(--raised); border-left: 3px solid var(--warn);
+       border-radius: 0 8px 8px 0; padding: var(--sp2) var(--sp3);
+       margin-bottom: var(--sp2); color: var(--muted); }
+.gap b { display: block; color: var(--ink); font-size: var(--t-label);
+         letter-spacing: .05em; text-transform: uppercase; }
+.gap .fix { display: block; margin-top: var(--sp1); color: var(--faint);
+            font-size: var(--t-cell); }
 
 /* ---- tables: wide content scrolls in its own container, never the page ---- */
 .scroll-x { overflow-x: auto; }
-table.data { border-collapse: collapse; width: 100%; font-size: 12.5px; }
-table.data th, table.data td { padding: 5px 10px; text-align: left;
+table.data { border-collapse: collapse; width: 100%; font-size: var(--t-cell); }
+table.data th, table.data td { padding: 5px var(--sp2); text-align: left;
   white-space: nowrap; border-bottom: 1px solid var(--line); }
-table.data th { color: var(--muted); font-weight: 600; font-size: 11px;
-  letter-spacing: .05em; text-transform: uppercase; cursor: pointer;
+table.data th { color: var(--muted); font-weight: 600; font-size: var(--t-label);
+  letter-spacing: .05em; text-transform: uppercase;
   user-select: none; position: sticky; top: 0; background: var(--surface); }
 table.data th.sorted { color: var(--ink); }
 table.data td.num, table.data th.num { text-align: right;
   font-family: var(--mono); font-variant-numeric: tabular-nums; }
 table.data tr:hover td { background: var(--raised); }
 
-/* inline magnitude bar (sequential: one hue) — value always printed beside */
-.bar { display: inline-block; height: 8px; border-radius: 4px;
+/* the one sortable header (app.js sortableTh): the arrow is a 16px icon, the
+   same width on every column, so a block of like columns stays aligned (R5).
+   The inactive columns keep the sort-none mark at low opacity, so the header
+   says it sorts before anyone clicks it (R11). */
+table.data th.sortable { cursor: pointer; }
+table.data th .th-in { display: inline-flex; align-items: center; gap: 2px; }
+table.data th.num .th-in { flex-direction: row-reverse; }
+table.data th .ic { opacity: .35; }
+table.data th.sorted .ic { opacity: 1; color: var(--s1); }
+table.data th.sortable:hover { color: var(--ink); }
+table.data th.sortable:hover .ic { opacity: .8; }
+
+/* a cell built on thinner evidence than its column's neighbours: a dot in
+   the corner, the count in the cell's title, and no width taken (R13) */
+table.data td.thin { position: relative; }
+table.data td.thin::after { content: ""; position: absolute; top: 2px;
+  right: 2px; width: 3px; height: 3px; border-radius: 50%;
+  background: var(--warn); }
+
+/* a row that opens something: one affordance, whole width, keyboard path
+   (R18). A row without a handler gets none of it (R19). */
+.rowlink { cursor: pointer; }
+table.data tr.rowlink td { cursor: pointer; }
+.rowlink:focus-visible { outline: 2px solid var(--s1); outline-offset: -2px; }
+
+/* skeleton: the final row count at the final row height, so data landing
+   moves nothing (R30, R47) */
+.skel { border-collapse: collapse; width: 100%; }
+.skel td { padding: 5px var(--sp2); border-bottom: 1px solid var(--line); }
+.skel i { display: block; height: 11px; border-radius: 3px;
+          background: var(--raised); }
+@media (prefers-reduced-motion: no-preference) {
+  .skel i { animation: skelpulse 1.1s ease-in-out infinite; }
+}
+@keyframes skelpulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+
+/* inline magnitude bar (sequential: one hue), value always printed beside */
+.bar { display: inline-block; height: 8px; border-radius: var(--sp1);
        background: var(--s1); vertical-align: middle; margin-right: 6px;
        min-width: 2px; }
 
-/* chips — filled tints, never colour-alone (text always present) */
+/* chips: filled tints, never colour-alone (text always present) */
 .chip { display: inline-block; padding: 2px 9px; border-radius: 999px;
-        font-size: 11px; font-weight: 600; letter-spacing: .015em;
+        font-size: var(--t-label); font-weight: 600; letter-spacing: .015em;
         background: var(--raised); color: var(--muted);
         border: 1px solid transparent; }
 .chip.good { color: var(--good);
@@ -162,14 +250,16 @@ table.data tr:hover td { background: var(--raised); }
              background: color-mix(in oklab, var(--bad) 13%, var(--surface)); }
 .chip.s1   { color: var(--s1);
              background: color-mix(in oklab, var(--s1) 13%, var(--surface)); }
-.chip.big  { font-size: 12.5px; padding: 5px 13px; }
+.chip.big  { font-size: var(--t-cell); padding: 5px var(--sp3); }
 
 /* stat tiles */
-.stats { display: flex; gap: 10px; flex-wrap: wrap; margin: 4px 0 12px; }
-.stat { background: var(--raised); border-radius: 9px; padding: 8px 14px;
-        min-width: 92px; }
-.stat .v { font: 600 17px/1.2 var(--mono); font-variant-numeric: tabular-nums; }
-.stat .k { color: var(--faint); font-size: 10.5px; letter-spacing: .06em;
+.stats { display: flex; gap: var(--sp2); flex-wrap: wrap;
+         margin: var(--sp1) 0 var(--sp3); }
+.stat { background: var(--raised); border-radius: 9px;
+        padding: var(--sp2) var(--sp3); min-width: 92px; }
+.stat .v { font: 600 var(--t-figure)/1.2 var(--mono);
+           font-variant-numeric: tabular-nums; }
+.stat .k { color: var(--faint); font-size: var(--t-micro); letter-spacing: .06em;
            text-transform: uppercase; margin-top: 1px; }
 .stat.good .v { color: var(--good); } .stat.bad .v { color: var(--bad); }
 
@@ -181,18 +271,19 @@ table.sticky-first tr:hover td:first-child { background: var(--raised); }
 table.data td.clickable { cursor: pointer; }
 table.data td.clickable:hover { box-shadow: inset 0 0 0 1.5px var(--s1); }
 
-/* pitch — photo cards on stripes */
+/* pitch: photo cards on stripes */
 .pitch {
   background:
     repeating-linear-gradient(180deg,
       transparent 0 44px, rgb(255 255 255 / .045) 44px 88px),
     linear-gradient(180deg,
       color-mix(in oklab, var(--pitch) 92%, #fff) 0%, var(--pitch) 100%);
-  border-radius: 12px; padding: 18px 10px 14px;
-  display: flex; flex-direction: column; gap: 14px;
+  border-radius: var(--sp3); padding: var(--sp4) var(--sp2) var(--sp3);
+  display: flex; flex-direction: column; gap: var(--sp3);
   box-shadow: inset 0 0 0 2px rgb(255 255 255 / .10);
 }
-.pitch .row { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; }
+.pitch .row { display: flex; justify-content: center; gap: var(--sp2);
+              flex-wrap: wrap; }
 .pcard { background: var(--surface); border-radius: 9px;
          text-align: center; width: 86px; box-shadow: var(--shadow);
          position: relative; overflow: hidden; padding-bottom: 5px; }
@@ -201,144 +292,209 @@ table.data td.clickable:hover { box-shadow: inset 0 0 0 1.5px var(--s1); }
                background: linear-gradient(180deg,
                  color-mix(in oklab, var(--accent) 18%, var(--raised)), var(--raised)); }
 .pcard .face.missing { visibility: hidden; }
-.pcard .nm { font-weight: 650; font-size: 11.5px; padding: 3px 4px 0;
+.pcard .nm { font-weight: 600; font-size: var(--t-label);
+             padding: 3px var(--sp1) 0;
              white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pcard .sub { color: var(--muted); font-size: 10.5px;
+.pcard .sub { color: var(--muted); font-size: var(--t-micro);
               font-family: var(--mono); font-variant-numeric: tabular-nums; }
-.pcard .badge { position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; }
+.pcard .badge { position: absolute; top: 3px; left: 3px; }
 .pcard .ribbon { position: absolute; top: 3px; right: 3px;
                  width: 17px; height: 17px; border-radius: 50%;
-                 font: 700 10px/17px inherit; color: #fff;
-                 background: var(--warn); font-family: var(--mono); }
+                 font: 700 var(--t-micro)/17px var(--mono); color: #fff;
+                 background: var(--warn); }
 .pcard .ribbon.v { background: var(--faint); }
-.pcard .dot { position: absolute; top: 24px; right: 5px; width: 8px; height: 8px;
+.pcard .dot { position: absolute; top: var(--sp5); right: 5px;
+              width: 8px; height: 8px;
               border-radius: 50%; background: var(--warn);
               box-shadow: 0 0 0 2px var(--surface); }
 .pcard .dot.bad { background: var(--bad); }
 .pcard.cap { box-shadow: 0 0 0 2px var(--warn), var(--shadow); }
-.bench { display: flex; gap: 10px; justify-content: center; margin-top: 10px;
-         flex-wrap: wrap; }
+.bench { display: flex; gap: var(--sp2); justify-content: center;
+         margin-top: var(--sp2); flex-wrap: wrap; }
 .bench .pcard { opacity: .92; }
 
 /* pitch-select: the FPL-site pick-a-shirt interaction */
 .pitch-select .pcard.selectable { cursor: pointer;
-  transition: transform .12s, box-shadow .12s; }
+  transition: transform var(--dur-state), box-shadow var(--dur-state); }
 .pitch-select .pcard.selectable:hover { transform: translateY(-3px);
   box-shadow: 0 0 0 2px var(--s1), 0 6px 14px rgb(0 0 0 / .25); }
 .pitch-select .pcard.incoming { box-shadow: 0 0 0 2px var(--good), var(--shadow); }
 .pitch-select .pcard.incoming::after { content: "IN"; position: absolute;
-  bottom: 34px; left: 3px; font: 700 9px/1.4 inherit; padding: 0 5px;
-  border-radius: 4px; color: #fff; background: var(--good); }
+  bottom: var(--sp5); left: 3px; font: 700 var(--t-micro)/1.4 inherit;
+  padding: 0 5px; border-radius: var(--sp1); color: #fff;
+  background: var(--good); }
 
-/* small round face for table rows */
-.avatar { width: 24px; height: 24px; border-radius: 50%; object-fit: cover;
-          object-position: center 20%; vertical-align: middle; margin-right: 7px;
-          background: var(--raised); }
+/* ---- the avatar (app.js avatarEl): one fixed box, image over monogram ----
+   The box is sized in CSS before the image loads and the monogram sits in
+   the identical box, so a failed CDN load flips one class and moves nothing
+   (R35, R37, R47). Three sizes and no fourth: 24px in a table row, 64px on a
+   pitch card, 56x68 in a drawer masthead. */
+.avatar { width: var(--sp5); height: var(--sp5); border-radius: 50%;
+          object-fit: cover; object-position: center 20%;
+          vertical-align: middle; margin-right: 7px;
+          background: var(--raised); flex: none; }
 .avatar.missing { visibility: hidden; }
+/* the wrapper form, built by avatarEl: the same box, with the monogram
+   underneath. A bare img.avatar keeps working, so the views that have not
+   been converted render exactly as before. */
+span.avatar { position: relative; display: inline-grid; place-items: center;
+              overflow: hidden; }
+span.avatar img { width: 100%; height: 100%; object-fit: cover;
+                  object-position: center 20%; }
+span.avatar .mono { display: none; }
+span.avatar.fall img { display: none; }
+span.avatar.fall .mono { display: grid; place-items: center;
+  width: 100%; height: 100%; color: var(--muted);
+  font: 700 var(--t-micro)/1 var(--mono); letter-spacing: .02em; }
+/* squad membership rides ON the avatar so text never shifts */
+.avatar.mine { box-shadow: inset 0 0 0 2px var(--accent); }
 
-/* xPoints: the operated toolbar — three labelled rows, one visual system */
-.toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
-           padding: 8px 0; }
+/* xPoints: the operated toolbar, three labelled rows, one visual system */
+.toolbar { display: flex; gap: var(--sp2); flex-wrap: wrap; align-items: center;
+           padding: var(--sp2) 0; }
+/* a toolbar waiting for its panel holds the height its chips will take, so
+   the table below it does not jump down when the data lands (R30, R47) */
+.toolbar:empty { min-height: var(--sp5); }
 .toolbar + .toolbar { border-top: 1px solid var(--line); }
-.tlabel { color: var(--faint); font-size: 10.5px; letter-spacing: .09em;
-          text-transform: uppercase; min-width: 76px; font-weight: 650; }
+.tlabel { color: var(--faint); font-size: var(--t-micro); letter-spacing: .09em;
+          text-transform: uppercase; min-width: 76px; font-weight: 600; }
 .freshdot { display: inline-block; width: 7px; height: 7px; border-radius: 50%;
             vertical-align: 1px; }
 .freshdot.good { background: var(--good); }
 .freshdot.warn { background: var(--warn); }
 .freshdot.bad  { background: var(--bad); }
 button.chip { cursor: pointer; }
-.chip.src, .chip.gw { padding: 5px 12px; font-size: 12px;
-  border: 1px solid var(--line); background: var(--surface); }
+.chip.src, .chip.gw { padding: 5px var(--sp3); font-size: var(--t-cell);
+  border: 1px solid var(--line); background: var(--surface);
+  display: inline-flex; align-items: center; gap: var(--sp1); }
 .chip.src:hover, .chip.gw:hover { border-color: var(--muted); }
 .chip.src.on, .chip.gw.on {
   background: color-mix(in oklab, var(--s1) 14%, var(--surface));
   border-color: var(--s1); color: var(--ink); }
-.chk { color: var(--muted); font-size: 12px; display: inline-flex;
+.chk { color: var(--muted); font-size: var(--t-cell); display: inline-flex;
        align-items: center; gap: 5px; }
 .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px;
        overflow: hidden; }
-.seg button { border: 0; border-radius: 0; padding: 5px 12px; font-size: 12px;
+.seg button { border: 0; border-radius: 0; padding: 5px var(--sp3);
+              font-size: var(--t-cell);
               background: var(--surface); color: var(--muted); }
 .seg button + button { border-left: 1px solid var(--line); }
 .seg button.on { background: var(--accent); color: #fff; }
 
-/* squad membership rides ON the avatar so text never shifts */
-.avatar.mine { box-shadow: 0 0 0 2px var(--accent); }
-
 /* a chip whose source has nothing for the selected gameweeks */
 .chip.off { opacity: .45; cursor: not-allowed; }
 
-/* the drawer's header + settled-delta chips */
-.dhead { display: flex; gap: 12px; align-items: center; margin-bottom: 10px; }
+/* the drawer's header, breadcrumb and settled-delta chips */
+.dhead { display: flex; gap: var(--sp3); align-items: center;
+         margin-bottom: var(--sp2); }
 .dhead .bigface { width: 56px; height: 68px; object-fit: cover;
   object-position: top center; border-radius: 8px; background: var(--raised); }
-.dhead .dname { font-size: 17px; font-weight: 700; }
+.dhead .dname { font-size: var(--t-figure); font-weight: 700; }
 .dhead button { margin-left: auto; }
-.delta { font-size: 10px; font-weight: 700; font-family: var(--mono); }
+/* the fractal path, one level per segment, every segment but the last a
+   button back to that level (R21) */
+.crumb { display: flex; align-items: center; gap: var(--sp1); flex-wrap: wrap;
+         font-size: var(--t-label); color: var(--faint);
+         margin-bottom: var(--sp2); }
+.crumb button { background: none; border: 0; padding: 0; color: var(--muted);
+                font: inherit; text-decoration: underline; cursor: pointer; }
+.crumb button:hover { color: var(--ink); }
+.crumb .here { color: var(--ink); font-weight: 600; }
+.delta { font-size: var(--t-micro); font-weight: 700; font-family: var(--mono); }
 .delta.over { color: var(--good); }
 .delta.under { color: var(--bad); }
 
-/* the detail drawer: underlying data without losing your place */
-.drawer { position: fixed; top: 0; right: 0; height: 100vh; width: min(460px, 92vw);
+/* the detail drawer: underlying data without losing your place. ONE
+   implementation, one width, opened through app.js makeDrawer (R20). */
+.drawer { position: fixed; top: 0; right: 0; height: 100vh;
+  width: min(560px, 96vw);
   background: var(--surface); border-left: 1px solid var(--line);
   box-shadow: -12px 0 32px rgb(0 0 0 / .28); z-index: 40;
-  padding: 16px 18px; overflow-y: auto;
-  transform: translateX(100%); transition: transform .18s ease-out; }
+  padding: var(--sp4) var(--sp4); overflow-y: auto;
+  transform: translateX(100%); transition: transform var(--dur-drawer) ease-out; }
 .drawer.open { transform: none; }
-@media (prefers-reduced-motion: reduce) { .drawer { transition: none; } }
 
 /* the matrix itself */
 table.matrix th { white-space: nowrap; }
-table.matrix th.sorted::after { content: " " attr(data-dir); color: var(--s1); }
+/* R5: one quantity, one width, in every gameweek. "GW10" is one character
+   wider than "GW6", which alone put 8px between two columns holding the same
+   number to one decimal place, so the block is pinned to one width and the
+   reader's eye tracks straight down it. */
+table.matrix th.gwcol, table.matrix td.gwcol { min-width: 72px; }
+/* a settled gameweek, marked on the cell and not in the header: a hairline
+   on the leading edge, which costs no layout width and carries no hue */
+table.matrix td.settled { box-shadow: inset 2px 0 0 var(--line); }
 table.matrix td.sum { font-weight: 700;
   background: color-mix(in oklab, var(--ink) 5%, var(--surface)); }
 .minedot { display: inline-block; width: 6px; height: 6px; border-radius: 50%;
            background: var(--accent); margin-right: 6px; vertical-align: 2px; }
 
+/* a disclosure summary is a control and shows it, in one place rather than
+   on three elements by hand */
+summary { cursor: pointer; }
+
 /* forms */
-select, input[type="text"], input[type="number"] {
+/* every control, not three of them by type: an input the list forgot kept
+   the browser's own 13.3333px, which is a seventh type size arriving through
+   a UA stylesheet rather than through this file (R1) */
+select, textarea, input:not([type="checkbox"]):not([type="radio"]) {
   background: var(--raised); color: var(--ink); border: 1px solid var(--line);
   border-radius: 7px; padding: 5px 9px; font: inherit; }
-.filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
-           margin-bottom: 10px; }
-.filters label { color: var(--muted); font-size: 12px; }
+input[type="checkbox"], input[type="radio"] { font: inherit; }
+.filters { display: flex; gap: var(--sp2); flex-wrap: wrap; align-items: center;
+           margin-bottom: var(--sp2); }
+.filters label { color: var(--muted); font-size: var(--t-cell); }
+/* what a filter removed, printed under the table it filtered (R16) */
+.rowcount { color: var(--faint); font-size: var(--t-cell);
+            margin-top: var(--sp2); }
 
 /* chat */
-.chat-log { display: flex; flex-direction: column; gap: 10px;
+.chat-log { display: flex; flex-direction: column; gap: var(--sp2);
             max-width: 860px; }
-.msg { border-radius: 10px; padding: 10px 14px; max-width: 92%; }
+.msg { border-radius: 10px; padding: var(--sp2) var(--sp3); max-width: 92%; }
 .msg.user { align-self: flex-end; background: var(--raised);
             border: 1px solid var(--line); }
 .msg.bot { align-self: flex-start; background: var(--surface);
            border: 1px solid var(--line); }
-.msg pre { overflow-x: auto; background: var(--raised); padding: 8px;
+.msg pre { overflow-x: auto; background: var(--raised); padding: var(--sp2);
            border-radius: 6px; }
-.msg table { font-size: 12px; }
+.msg table { font-size: var(--t-cell); }
 
 /* mobile */
 @media (max-width: 820px) {
   .frame { flex-direction: column; }
   .rail { width: 100%; height: auto; position: static; flex-direction: row;
-          flex-wrap: wrap; align-items: center; gap: 2px 4px;
+          flex-wrap: wrap; align-items: center; gap: 2px var(--sp1);
           border-right: 0; border-bottom: 1px solid var(--line); }
-  .brand { padding: 4px 8px; }
-  .rail a { padding: 6px 9px; font-size: 12px; }
+  .brand { padding: var(--sp1) var(--sp2); }
+  .rail a { padding: 6px 9px; font-size: var(--t-cell); }
   .rail .foot { display: none; }
-  .content { padding: 12px 12px 32px; }
+  .content { padding: var(--sp3) var(--sp3) var(--sp5); }
 }
 
+/* the four things that may animate (R42), each under 200ms (R43) */
 @media (prefers-reduced-motion: no-preference) {
-  .card { transition: border-color .15s; }
+  .card { transition: border-color var(--dur-state); }
+  table.data tr td { transition: background-color var(--dur-state); }
+  .chip.src, .chip.gw { transition: background-color var(--dur-state),
+                                    border-color var(--dur-state); }
+}
+/* reduce: every one of them off, the drawer included (R44) */
+@media (prefers-reduced-motion: reduce) {
+  .drawer, .card, table.data tr td, .chip.src, .chip.gw,
+  .pitch-select .pcard.selectable { transition: none; }
+  .skel i { animation: none; }
 }
 
 /* xPoints: consensus weighting toggle, weights table, provider accuracy strip */
-.wbox { margin: 4px 0 10px; }
-.wbox h3 { font-size: 11px; font-weight: 600; letter-spacing: .06em;
-           text-transform: uppercase; color: var(--muted); margin: 8px 0 4px; }
-.wnote { color: var(--muted); font-size: 12px; }
-table.acc { font-size: 12px; }
+.wbox { margin: var(--sp1) 0 var(--sp2); }
+.wbox h3 { font-size: var(--t-label); font-weight: 600; letter-spacing: .06em;
+           text-transform: uppercase; color: var(--muted);
+           margin: var(--sp2) 0 var(--sp1); }
+.wnote { color: var(--muted); font-size: var(--t-cell); }
+table.acc { font-size: var(--t-cell); }
 table.acc td.underfloor { color: var(--faint); font-style: italic; }
-.accd { font-size: 10px; font-weight: 700; font-family: var(--mono); margin-left: 5px; }
+.accd { font-size: var(--t-micro); font-weight: 700; font-family: var(--mono);
+        margin-left: 5px; }
 .accd.good { color: var(--good); }
 .accd.bad  { color: var(--bad); }

@@ -19,7 +19,8 @@
    credential and the page has no business holding it once the server has
    answered. */
 
-import { getJSON, postJSON, el, errBox, fmtSpan, provenance } from "/js/app.js";
+import { getJSON, postJSON, el, errBox, provenance, agePhrase,
+         absInstant } from "/js/app.js";
 
 const STEPS = [
   "Log in at fantasy.premierleague.com in this browser.",
@@ -71,15 +72,17 @@ function failureText(cls) { return FAILURE[cls] || "the check failed"; }
 
 function fmtWhen(iso) {
   if (!iso) return "never";
-  const d = new Date(iso);
-  if (isNaN(d)) return String(iso);
-  return d.toISOString().slice(0, 16).replace("T", " ") + " UTC";
+  const abs = absInstant(iso);
+  if (!abs) return String(iso);
+  return abs;
 }
 
+/* The shared day vocabulary: "today", "yesterday", "4 days ago". A token
+   checked eleven hours ago was checked today, and the hours are noise. */
 function fmtAge(iso) {
-  // shared formatter: minutes, then Nh Mm, then Nd Nh, then N days
-  const h = (iso ? (Date.now() - new Date(iso).getTime()) / 36e5 : null);
-  return h == null || !isFinite(h) ? "?" : fmtSpan(h) + " ago";
+  const phrase = agePhrase(iso);
+  if (!phrase) return "at an unknown time";
+  return phrase;
 }
 
 function money(tenths) {

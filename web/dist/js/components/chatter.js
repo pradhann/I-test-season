@@ -1,23 +1,23 @@
-/* chatter.js — the cross-tab player strip.
+/* chatter.js, the cross-tab player strip.
  *
- * "Every data must connect with everything — so data must be highly
+ * "Every data must connect with everything, so data must be highly
  * accessible across the different tabs." Creator content lived in one tab;
  * this component is the seam that puts it wherever a player is in focus.
  * One panel call (`player_chatter`), one node, mountable in any drawer.
  *
- * THE ORDERING IS THE DESIGN — DID → SAID → NOTICED:
- *   DID     `owned`   — which panel members actually HOLD him. Verified fact,
+ * THE ORDERING IS THE DESIGN, DID → SAID → NOTICED:
+ *   DID     `owned`, which panel members actually HOLD him. Verified fact,
  *                       so it leads. Empty means "we have not crawled their
  *                       squads" (7 of 15 verified entries, GW1 only), NEVER
- *                       "nobody owns him" — `owned_reason` says which.
- *   SAID    `said`    — creator claims. The aggregate creator record is below
+ *                       "nobody owns him", `owned_reason` says which.
+ *   SAID    `said`, creator claims. The aggregate creator record is below
  *                       chance, so this section never implies authority: no
  *                       net, no consensus score, no "5 agree" verdict. A
  *                       `watch` call is an OBSERVATION and is never rendered
  *                       as a recommendation (that bug shipped once and put
  *                       buys in people's mouths they never made).
- *   NOTICED `noticed` — intel_item. MEASURED, not spoken, and never merged
- *                       into the same feed as SAID: 🗣 opinion vs ⚙ computed.
+ *   NOTICED `noticed`, intel_item. MEASURED, not spoken, and never merged
+ *                       into the same feed as SAID: opinion against computed.
  *
  * THE MODAL STATE IS SILENCE. Creator claims cover 119 of 614 players, so
  * roughly four drawers in five have nothing said. The three rails are
@@ -30,9 +30,10 @@
  */
 
 import { runPanel, getJSON, el } from "/js/app.js";
+import { icon } from "/js/components/icons.js";
 
 /* ---------------- the gameweek axis ----------------
-   "What will happen next GW — there should be a way for me to know what was
+   "What will happen next GW, there should be a way for me to know what was
    said in GW2." Every statement already carries its own `gameweek`; the strip
    just never used it, so a drawer opened on Friday showed last week's takes
    and this week's in one undated pile.
@@ -40,7 +41,7 @@ import { runPanel, getJSON, el } from "/js/app.js";
    SO THE RAIL IS INDEXED, AND THE INDEX IS HONEST:
      · the default is the NEXT gameweek, the one the reader is about to play;
      · every gameweek the payload actually holds is one click away, with its
-       own count on the chip — a chip is never offered for a gameweek with
+       own count on the chip, a chip is never offered for a gameweek with
        nothing behind it;
      · A FILTER NEVER IMPLIES SILENCE. When the selected gameweek is empty and
        another is not, the rail says so with the counts ("nothing for GW3; 4
@@ -77,19 +78,19 @@ function gwIndex(said) {
 /* ---------------- size budget (chosen, and kept) ----------------
    This renders inside a 460px drawer that already has content above it, so
    the budget is stated in HEIGHT and enforced as a CARD COUNT:
-     quiet strip   ≤ 200px  — the modal case, ~4 drawers in 5 (measured 190)
-     collapsed     ≤ 500px  — THREE cards total across SAID + NOTICED, never
+     quiet strip   ≤ 200px, the modal case, ~4 drawers in 5 (measured 190)
+     collapsed     ≤ 500px, THREE cards total across SAID + NOTICED, never
                               three per section, because a card is ~75–110px
                               and per-section limits blow the budget on the
                               handful of players who have both
      expanded      6 + 6, then a printed "+N more". The DRAWER scrolls; the
                    strip never opens a second scroll context
      quote clamp   2 lines, expand in place on click; reasons clamp the same
-                   way — clamped, never edited
+                   way, clamped, never edited
    Measured in the 460px drawer: quiet 190px, intel-only 377px, a Haaland-tier
    player with owners + statements + intel 497px.
    The three cards go to SAID first, but NOTICED always keeps at least one
-   when it has something — it is the only populated section for most players
+   when it has something, it is the only populated section for most players
    with any content at all, which is exactly why it earns its place. */
 const CARDS = 3;
 const FULL  = { said: 6, noticed: 6 };
@@ -143,12 +144,16 @@ function hms(s) {
   return h ? `${h}:${p(m)}:${p(t % 60)}` : `${m}:${p(t % 60)}`;
 }
 function link(url, text, cls) {
-  const a = el("a", cls, text);
+  const a = el("a", cls);
+  a.appendChild(document.createTextNode(text));
+  // the one external mark, from the one icon set: this file used to reach
+  // for two different arrows for the same job (R39, R41)
+  a.appendChild(icon("external"));
   a.href = url; a.target = "_blank"; a.rel = "noopener noreferrer";
   return a;
 }
 /* A reason the payload gave. Rendered VERBATIM, as an explanation and not as
-   breakage — "their squads have not been crawled" is the world working. It is
+   breakage, "their squads have not been crawled" is the world working. It is
    clamped, never edited: the full sentence is one click (and the title) away,
    because roughly four drawers in five are made of these. */
 function reason(text) {
@@ -158,27 +163,30 @@ function reason(text) {
   return n;
 }
 
-/* Actions on the two-hue axis. The word always ships beside the glyph. */
+/* Actions on the two-hue axis. The WORD is the mark: eight actions needed
+   eight characters from four families and none of them is in the app's one
+   icon set, so the glyph column went and the word carries it, with the hue
+   for direction and the payload's own verb for the rest (R41). */
 const ACTIONS = {
-  buy:            { label: "buy",       dir: "pos",  glyph: "▲" },
-  sell:           { label: "sell",      dir: "neg",  glyph: "▼" },
-  avoid:          { label: "avoid",     dir: "neg",  glyph: "⊘" },
-  bench:          { label: "bench",     dir: "neg",  glyph: "▽" },
-  hold:           { label: "hold",      dir: "flat", glyph: "=" },
-  captain:        { label: "captain",   dir: "cap",  glyph: "★" },
-  triple_captain: { label: "triple C",  dir: "cap",  glyph: "★★" },
-  watch:          { label: "watching",  dir: "obs",  glyph: "◇" },
+  buy:            { label: "buy",       dir: "pos" },
+  sell:           { label: "sell",      dir: "neg" },
+  avoid:          { label: "avoid",     dir: "neg" },
+  bench:          { label: "bench",     dir: "neg" },
+  hold:           { label: "hold",      dir: "flat" },
+  captain:        { label: "captain",   dir: "cap" },
+  triple_captain: { label: "triple C",  dir: "cap" },
+  watch:          { label: "watching",  dir: "obs" },
 };
-/* `is_observation` exists so the UI cannot get this wrong by omission — and a
+/* `is_observation` exists so the UI cannot get this wrong by omission, and a
    `watch` is treated as one even if the flag is missing. An observation is
    never coloured as a direction and never uses a recommending verb. */
 function actionMeta(s) {
   const obs = s.is_observation === true || s.action === "watch";
-  const a = ACTIONS[s.action] || { label: String(s.action || "?"), dir: "flat", glyph: "•" };
+  const a = ACTIONS[s.action] || { label: String(s.action || "unknown"),
+                                  dir: "flat" };
   if (!obs) return { ...a, obs: false };
   return {
-    glyph: "◇",
-    label: s.action === "watch" ? "watching" : `${a.label} — as an observation`,
+    label: s.action === "watch" ? "watching" : `${a.label}, as an observation`,
     dir: "obs", obs: true,
   };
 }
@@ -189,12 +197,12 @@ function extractorMeta(x) {
   if (s.startsWith("llm")) return {
     // the model name lives in the title: the footer must stay one line
     kind: "llm", label: "considered take",
-    title: `read semantically by ${s.slice(4) || "a model"} — the quote is verbatim`,
+    title: `read semantically by ${s.slice(4) || "a model"}, the quote is verbatim`,
   };
   if (s === "cue") return {
     kind: "cue", label: "keyword match",
     title: "a keyword landed near this player's name inside show notes. " +
-           "A search hit, not a stated opinion — read the window before you trust it.",
+           "A search hit, not a stated opinion, read the window before you trust it.",
   };
   return { kind: "cue", label: s || "unknown source", title: "unrecognised extractor" };
 }
@@ -217,7 +225,7 @@ function convPips(band) {
 /* Quotes are the point, so they clamp rather than truncate: two lines, and
    the whole thing on click. Nothing is ever silently dropped.
    The affordance is added ONLY where the text really overflows, and only
-   once layout can answer that — a keyboard stop on every short paragraph in
+   once layout can answer that, a keyboard stop on every short paragraph in
    a strip made mostly of short paragraphs is noise, not access. */
 function clampable(tag, cls, text) {
   const n = el(tag, cls + " pc-clamp", text);
@@ -270,7 +278,7 @@ function renderDid(body, d) {
   if (!owned.length) {
     // NEVER "nobody owns him": an uncrawled squad and an absent player are
     // different facts and must not render the same. When the panel wrote a
-    // reason, the reason IS the answer — we do not append a second sentence
+    // reason, the reason IS the answer, we do not append a second sentence
     // of our own beside it.
     if (d.owned_reason) body.appendChild(reason(d.owned_reason));
     else if (c.squads_known != null && c.panel_size != null)
@@ -287,7 +295,7 @@ function renderDid(body, d) {
     const s = el("span", "pc-own" + (o.role === "captain" ? " cap" : ""));
     s.appendChild(el("b", null, o.person || "unnamed entry"));
     const bits = [];
-    if (o.role === "captain") bits.push("★");
+    if (o.role === "captain") bits.push("C");
     if (o.multiplier != null) bits.push(`×${o.multiplier}`);
     else if (o.role) bits.push(o.role);
     if (bits.length) s.appendChild(el("span", "pc-mult", bits.join("")));
@@ -303,7 +311,7 @@ function renderDid(body, d) {
   const gws = [...new Set(owned.map(o => o.gw).filter(g => g != null))];
   if (gws.length) parts.push(`GW${gws.join("/")}`);
   if (parts.length) body.appendChild(el("div", "pc-note",
-    parts.join(" · ") + " — measured picks, not opinions."));
+    parts.join(" · ") + ", measured picks, not opinions."));
 }
 
 function renderStatement(s) {
@@ -313,8 +321,8 @@ function renderStatement(s) {
 
   const top = el("div", "pc-st-top");
   const act = el("span", "pc-act");
-  act.append(el("span", "pc-glyph", a.glyph), document.createTextNode(a.label));
-  if (a.obs) act.title = "an observation — 'keep an eye on him'. Not a recommendation.";
+  act.appendChild(document.createTextNode(a.label));
+  if (a.obs) act.title = "an observation, 'keep an eye on him'. Not a recommendation.";
   top.appendChild(act);
   // person_basis matters: a show is not a person. The Wire is four people.
   const who = s.person || s.show || "unattributed";
@@ -322,7 +330,7 @@ function renderStatement(s) {
   w.title = s.person
     ? `${s.person}${s.show ? ` on ${s.show}` : ""}` +
       (s.person_basis ? ` · attributed by ${s.person_basis}` : "")
-    : "attributed to the show, not to a person — the show may have several hosts";
+    : "attributed to the show, not to a person, the show may have several hosts";
   if (!s.person) w.appendChild(el("i", "pc-showonly", " (show)"));
   top.appendChild(w);
   /* WHICH GAMEWEEK THIS IS ABOUT, on the card itself. Without it a rail
@@ -350,9 +358,9 @@ function renderStatement(s) {
   const evc = el("span", "pc-ev", ev.label); evc.title = ev.title;
   foot.appendChild(evc);
   if (ev.kind === "llm") foot.appendChild(convPips(s.conviction));
-  if (s.deep_link) foot.appendChild(link(s.deep_link,
-    (s.url_basis === "enclosure" ? "▶ " : "↗ ") + deepVerb(s), "pc-deep"));
-  else if (s.item_url) foot.appendChild(link(s.item_url, "↗ open source", "pc-deep"));
+  if (s.deep_link) foot.appendChild(link(s.deep_link, deepVerb(s), "pc-deep"));
+  else if (s.item_url) foot.appendChild(link(s.item_url, "open source",
+                                             "pc-deep"));
   else foot.appendChild(el("span", "pc-note", "no link stored"));
   n.appendChild(foot);
   if (s.item_title) n.title = s.item_title;
@@ -369,10 +377,10 @@ function renderSaid(body, d, limit, onMore, gwState) {
   const label = g => g == null ? "undated" : `GW${g}`;
 
   /* THE INDEX ROW. One chip per gameweek the payload holds, each carrying its
-     own count, plus the selected gameweek even when it holds nothing — the
+     own count, plus the selected gameweek even when it holds nothing, the
      reader has to be able to see that this week is empty and last week is not. */
   /* Shown whenever there is a choice to make OR the reader has been moved off
-     the default — landing on GW1 with no chips would strand them there with
+     the default, landing on GW1 with no chips would strand them there with
      nothing saying they had left the gameweek they are about to play. */
   const home = gwState.next != null ? gwState.next : ALLGW;
   if (index.length > 1 || sel !== home || !said.length) {
@@ -393,21 +401,21 @@ function renderSaid(body, d, limit, onMore, gwState) {
     for (const [g, n] of index)
       bar.appendChild(chip(g, label(g), n,
         g == null
-          ? `${n} statement${n === 1 ? "" : "s"} the extractor could not date — ` +
+          ? `${n} statement${n === 1 ? "" : "s"} the extractor could not date, ` +
             "they are kept, not dropped"
           : `${n} statement${n === 1 ? "" : "s"} about GW${g}` +
-            (g === gwState.next ? "\nthe next deadline — the strip opens here" : ""),
+            (g === gwState.next ? "\nthe next deadline, the strip opens here" : ""),
         sel === g));
     /* The selected gameweek and the DEFAULT one both stay on the row even
        with nothing behind them: a measured zero is an answer, and dropping
-       the chip would quietly turn "nothing said for the deadline you are
+       the chip would turn "nothing said for the deadline you are
        about to play" into a gameweek that appears not to exist. */
     for (const g of [sel, home])
       if (g !== ALLGW && g != null && !known.has(g)) {
         known.add(g);
         bar.appendChild(chip(g, label(g), 0,
           `nothing in this window is about ${label(g)}` +
-          (g === gwState.next ? " — and it is the next deadline" : ""), sel === g));
+          (g === gwState.next ? ", and it is the next deadline" : ""), sel === g));
       }
     body.appendChild(bar);
   }
@@ -421,7 +429,7 @@ function renderSaid(body, d, limit, onMore, gwState) {
     if (elsewhere.length) {
       box.append(" But " + elsewhere
         .map(([g, n]) => `${n} statement${n === 1 ? "" : "s"} for ${label(g)}`)
-        .join(", ") + " — ");
+        .join(", ") + ", ");
       const b = el("button", "pc-more", `show ${label(elsewhere[0][0])}`);
       b.onclick = () => gwState.pick(elsewhere[0][0]);
       box.appendChild(b);
@@ -429,7 +437,7 @@ function renderSaid(body, d, limit, onMore, gwState) {
     }
     body.appendChild(box);
     body.appendChild(el("div", "pc-caveat", d.record_note ||
-      "Not a forecast — the panel's record is below chance. This is what was said."));
+      "Not a forecast, the panel's record is below chance. This is what was said."));
     return;
   }
 
@@ -440,7 +448,7 @@ function renderSaid(body, d, limit, onMore, gwState) {
   const nSaid = whole && c.said != null ? c.said : said.length - obs;
   const nObs = whole && c.observations != null ? c.observations : obs;
 
-  // A count, never a verdict. No net, no consensus score — deliberately.
+  // A count, never a verdict. No net, no consensus score, deliberately.
   const sum = el("div", "pc-sum");
   sum.appendChild(el("b", null, `${nSaid} statement${nSaid === 1 ? "" : "s"}`));
   if (!whole) sum.appendChild(el("span", null, ` for ${label(sel)}`));
@@ -462,7 +470,7 @@ function renderSaid(body, d, limit, onMore, gwState) {
   // The fixed caveat. Same sentence for everyone, because it is true for
   // everyone: the record is measured and it is below chance.
   body.appendChild(el("div", "pc-caveat", d.record_note ||
-    "Not a forecast — the panel's record is below chance. This is what was said."));
+    "Not a forecast, the panel's record is below chance. This is what was said."));
 }
 
 const INTEL = {
@@ -539,15 +547,15 @@ function mount(host, code, opts, limitsFor) {
     // keeps its own verbatim reason. Same skeleton as a full strip, so silence
     // reads as an answer rather than as something that failed to load.
     if (quiet) rails.appendChild(el("div", "pc-quiet",
-      "Nothing owned, said or noticed here — the usual answer, not a gap."));
+      "Nothing owned, said or noticed here, the usual answer, not a gap."));
 
     const did = railNode("did", "DID", "owns");
     renderDid(did.body, d);
-    const said = railNode("said", "SAID", "🗣 spoken");
+    const said = railNode("said", "SAID", "spoken");
     renderSaid(said.body, d, L.said,
       () => { lim = { ...L, said: L.said >= FULL.said ? 1e9 : FULL.said }; draw(d); },
       gwState);
-    const noticed = railNode("noticed", "NOTICED", "⚙ measured");
+    const noticed = railNode("noticed", "NOTICED", "measured");
     renderNoticed(noticed.body, d, L.noticed,
       () => { lim = { ...L, noticed: L.noticed >= FULL.noticed ? 1e9 : FULL.noticed }; draw(d); });
     rails.append(did.node, said.node, noticed.node);
@@ -574,9 +582,9 @@ function mount(host, code, opts, limitsFor) {
     rails.textContent = "";
     rails.appendChild(el("div", "pc-down", r.down
       ? "The `player_chatter` panel is not registered on this server yet, so " +
-        "there is nothing to read. This strip renders as soon as it ships — " +
+        "there is nothing to read. This strip renders as soon as it ships, " +
         "nothing is cached or invented in the meantime."
-      : `player_chatter could not be read — ${r.error}`));
+      : `player_chatter could not be read, ${r.error}`));
   });
 
   return {
@@ -586,13 +594,13 @@ function mount(host, code, opts, limitsFor) {
   };
 }
 
-/* Compact — for a drawer, mounted under the host's own content.
+/* Compact, for a drawer, mounted under the host's own content.
    Returns a handle; call cancel() when the drawer closes. */
 export function chatterStrip(host, code, opts = {}) {
   return mount(host, code, { ...opts, variant: "strip" },
                opts.limits ? () => opts.limits : compactLimits);
 }
-/* Fuller — for a page column or a wide panel. Same data, more of it. */
+/* Fuller, for a page column or a wide panel. Same data, more of it. */
 export function chatterSection(host, code, opts = {}) {
   return mount(host, code, { ...opts, variant: "section" },
                () => opts.limits || FULL);

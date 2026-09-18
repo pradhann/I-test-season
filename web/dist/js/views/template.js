@@ -8,11 +8,11 @@
  * Template holdings CANCEL out of that sum. So a high-EO player is insurance,
  * not upside: owning him is neutral, missing him is a hole. The number that
  * actually carries information is the GAP between the field you are racing and
- * the game as a whole — which is why this page is a comparison of two fields
+ * the game as a whole, which is why this page is a comparison of two fields
  * everywhere, never a single ownership column.
  *
  * Consequences that shaped every decision below:
- *   - The gap is genuinely diverging around zero, so it gets a diverging
+ *   - The gap diverges around zero, so it gets a diverging
  *     encoding (two hues + neutral gray midpoint) and a y=x reference line that
  *     makes "template", "neutral" and "fade" SPATIAL rather than numeric.
  *   - Like is only ever compared with like. `own` (head count) and `eo`
@@ -20,7 +20,7 @@
  *     will refuse to plot one against the other.
  *   - Every percentage names its denominator, from `fields[].denominator`.
  *     311 managers is not a lot, and 49 of them are the owner's own
- *     mini-league — the composition strip says so on the page, not in a doc.
+ *     mini-league, the composition strip says so on the page, not in a doc.
  *   - Nothing is labelled from a hard-coded string. Cohort names, gameweeks,
  *     provider names and freshness all come from the payload, because the
  *     panel can report top1k under the same keys it reports elite under.
@@ -35,7 +35,7 @@
  *   THE TEMPLATE IS DRAWN, NOT DISTRIBUTED. The beeswarm answered "what is the
  *   spread of ownership within a position", a question nobody has at a
  *   deadline. The XV pitch answers "what IS the template" by drawing it, sorted
- *   by started_by / n rather than ownership — the field's spare goalkeeper is
+ *   by started_by / n rather than ownership, the field's spare goalkeeper is
  *   64.9% owned and 3.8% started, and sorting by ownership gives him the shirt.
  *
  *   THREE STATES, NOT TWO. Matched, owned-but-you-bench-him, and missing. Only
@@ -44,7 +44,7 @@
  *   ONE EXPOSURE EXPLANATION. The meaning of the minus sign is written once,
  *   on the exposure strip, from the selected field's own head counts; every
  *   other multiplier on the page links to it. And the headline is the quantity
- *   that wants to be SMALL — field EO you do not cover — because Σ over your
+ *   that wants to be SMALL, field EO you do not cover, because Σ over your
  *   15 rises when your uncovered exposure rises.
  *
  *   CAPTAINCY, NOT OWNERSHIP MOMENTUM. Ownership moves ~1pp a week and the old
@@ -56,8 +56,10 @@
  */
 
 import { runPanel, getJSON, el, emptyBox, errBox, provenance, faceImg,
-         playerCard, fmtPrice, fmt1, fmt2, fmtSpan } from "/js/app.js";
+         avatarEl, playerCard, sortableTh, rowLink, makeDrawer, drawerHead,
+         rowCount, fmtPrice, fmt1, fmt2, agePhrase } from "/js/app.js";
 import { renderTools } from "/js/views/template-tools.js";
+import { icon } from "/js/components/icons.js";
 // the cross-tab player strip: what the panel owns, said and noticed about him
 import { chatterStrip } from "/js/components/chatter.js";
 
@@ -81,9 +83,10 @@ function ageInfo(iso) {
   if (!iso) return { cls: "bad", text: "age unknown" };
   const h = (Date.now() - new Date(String(iso).replace(" ", "T"))) / 3.6e6;
   if (!isFinite(h)) return { cls: "bad", text: "age unknown" };
-  if (h < 36) return { cls: "good", text: h < 1.5 ? "fresh" : `${fmtSpan(h)} old` };
-  if (h < 72) return { cls: "warn", text: `${fmtSpan(h)} old` };
-  return { cls: "bad", text: `${fmtSpan(h)} old` };
+  const text = agePhrase(iso, "read");
+  if (h < 36) return { cls: "good", text };
+  if (h < 72) return { cls: "warn", text };
+  return { cls: "bad", text };
 }
 
 const MEASURE = {
@@ -103,7 +106,7 @@ const MEASURE = {
 
 /* My side of the identity. A read that carried a real multiplier is used as
    given; otherwise the role is converted with the standard weights and the
-   result is FLAGGED as assumed — a triple captain would make it 3 and this
+   result is FLAGGED as assumed, a triple captain would make it 3 and this
    page cannot see chips. "Not owned" is a measured 0, never an assumption. */
 const ROLE_MULT = { captain: 2, start: 1, bench: 0 };
 function myMult(r) {
@@ -185,7 +188,7 @@ function makeTip(wrap) {
 
    It exists because the two halves of this feature ship independently, and a
    build whose panel predates them must still disclose what the older payload
-   does carry — `fields[].composition`, which is tags and counts and no meaning
+   does carry, `fields[].composition`, which is tags and counts and no meaning
    at all. `warn` is a disclosure the reader has to see wherever the set is in
    play; `off` keeps the set out of the derived default. A tag the crawl invents
    that is not listed here is offered unflagged and included, because inventing
@@ -229,12 +232,12 @@ const tagInfo = t => TAG_INFO[t] || {};
    own account of the set and outrank anything in the table above.
 
    The panel draws a distinction this page has to keep. `trusted: false` is a
-   provenance verdict — the selection rule that put those entries in the pool
+   provenance verdict, the selection rule that put those entries in the pool
    means nothing, so neither does any share over them. `caveat` is the weaker
    signal: a set that is measurable and honest but whose reading needs a
    sentence beside it. Painting both in the warning colour would put an alarm
    next to two sets the panel itself defaults to, and an alarm that fires on
-   everything stops being read — which is exactly what would then happen to the
+   everything stops being read, which is exactly what would then happen to the
    one set that must not be used. So: DANGER gets the status colour and a box,
    CAVEAT gets a quiet mark and a sentence. */
 const tagWhy = c =>
@@ -250,7 +253,7 @@ const tagWarns = c => tagDanger(c) || tagCaveat(c);
 
 /* FPL availability status codes. The payload carries a one-letter status and
    no chance-of-playing percentage, so the chip renders a status dot plus the
-   WORD — never a bare letter glued to a surname ("Rodon d" read as "Rodond",
+   WORD, never a bare letter glued to a surname ("Rodon d" read as "Rodond",
    the R3 blocker). If a chance % ever lands on the wire it belongs here. */
 const STATUS_WORD = { d: "doubtful", i: "injured", s: "suspended",
                       u: "unavailable", n: "not in squad" };
@@ -314,14 +317,16 @@ export default async function view(host) {
   for (const [k, c] of [["map", mapCard], ["cmp", compareCard], ["tbl", tableCard]])
     c.addEventListener("toggle", () => { foldOpen[k] = c.open; });
 
-  const drawer = el("aside", "drawer");
-  document.body.appendChild(drawer);
+  /* The ONE drawer (R20): app.js makeDrawer owns the aside, its width, the
+     focus trap, Escape, the click outside and the focus return. This view
+     used to build its own at a different width with none of that. */
+  const dh = makeDrawer("template", "player detail");
+  const drawer = dh.drawer;
   let chatter = null;                    // the player strip's live handle
   const closeDrawer = () => {
-    drawer.classList.remove("open");
+    dh.close();
     chatter?.cancel(); chatter = null;   // a closed drawer stops rendering
   };
-  addEventListener("keydown", e => { if (e.key === "Escape") closeDrawer(); });
 
   const PARAMS = { limit: 200 };
 
@@ -364,13 +369,12 @@ export default async function view(host) {
   /* Namesakes. Two players named "Palmer" (CHE MID and IPS GKP) render as one
      word wherever a name stands alone, and the reader assumes Cole. The
      payload's own `disambiguator` wins when present; otherwise a name shared
-     by two rows gets its club appended — from the row itself, never guessed. */
+     by two rows gets its club appended, from the row itself, never guessed. */
   let dupNames = new Set();
   function relearnNames() {
     const seen = new Map(), codes = new Set();
     for (const r of (res.rows || []).concat(res.differentials || [])) {
-      if (codes.has(r.code)) continue;      // rows ∪ differentials overlap —
-      codes.add(r.code);                    // one player is never a namesake
+      if (codes.has(r.code)) continue;      // rows ∪ differentials overlap, codes.add(r.code);                    // one player is never a namesake
       seen.set(r.name, (seen.get(r.name) || 0) + 1);
     }
     dupNames = new Set([...seen].filter(([, n]) => n > 1).map(([k]) => k));
@@ -390,8 +394,7 @@ export default async function view(host) {
   const pickable = m => allFields.filter(f => f.role === "field" && has(f, m));
   const baseOf = m => allFields.find(f => f.role === "baseline" && has(f, m));
 
-  /* The default field is the one the reader composes — the segment selection —
-     then any crawl above the floor, then whatever publishes EO. A cohort under
+  /* The default field is the one the reader composes, the segment selection, then any crawl above the floor, then whatever publishes EO. A cohort under
      MIN_N is never handed out; it cannot even be picked.
 
      The measure is no longer a control. It FOLLOWS the field, because a field
@@ -407,7 +410,7 @@ export default async function view(host) {
   let sortBy = { kind: "gap" }, sortDir = -1;
   let showAllRows = false;           // the 150-row cut, with a control on it
 
-  const BAND = 10;                   // percentage points — stated, not implied
+  const BAND = 10;                   // percentage points, stated, not implied
 
   /* ---- segment state -------------------------------------------------
      ONE model, two possible sources, and the panel always wins.
@@ -514,7 +517,7 @@ export default async function view(host) {
   }
 
   /* Ask the panel to rebuild the crawled cohorts over the selected sets. Only
-     the panel can do this — it holds the picks — so when there is no parameter
+     the panel can do this, it holds the picks, so when there is no parameter
      to send, nothing is sent and nothing is claimed. The previous render is
      held at reduced opacity rather than replaced by a skeleton.
 
@@ -564,8 +567,7 @@ export default async function view(host) {
       res = out.result; prov = out.provenance;
       reindex(); learnTags();
       /* Bookkeeping for the composition fallback only. When the panel serves a
-         `selection`, `segModel()` reads the applied union straight off it —
-         which is the whole point: the chips then describe the numbers rather
+         `selection`, `segModel()` reads the applied union straight off it, which is the whole point: the chips then describe the numbers rather
          than the request. Re-seed the pending set from what came back so a
          panel that widened or narrowed the request is visible immediately. */
       segApplied = new Set(want); segAppliedKey = key;
@@ -584,8 +586,7 @@ export default async function view(host) {
     const v = f ? f[m] : null;
     return v == null ? null : v;
   };
-  /* EXPOSURE IS ALWAYS EO. The identity's second term is effective ownership
-     — Σ multipliers — and subtracting a head-count share from a multiplier is
+  /* EXPOSURE IS ALWAYS EO. The identity's second term is effective ownership, Σ multipliers, and subtracting a head-count share from a multiplier is
      a units error, not a simplification. So the map's gap follows whichever
      measure the reader picked, but every exposure number on the page reads the
      field's `eo` and says EO in its label. A field with no EO gets an explained
@@ -611,7 +612,7 @@ export default async function view(host) {
   /* Anchored at the 90th percentile of |gap|, not the maximum: one
      captain-heavy premium at ±80pp would otherwise flatten every ordinary
      ±15pp gap to the same neutral gray. Values past the anchor saturate, and
-     the legend says so — a clamped scale that admits it is honest, a scale
+     the legend says so, a clamped scale that admits it is honest, a scale
      silently dominated by one outlier is not. */
   const rampScale = () => {
     const gs = sourceRows().map(r => gapOf(r, fieldKey, measure))
@@ -629,7 +630,7 @@ export default async function view(host) {
   // ---- shared craft helpers -------------------------------------------
   /* Caption tiering (R1+R3): every chart carries ONE always-on line, and the
      methodology moves behind the drawer's existing "how this is computed"
-     disclosure pattern. Nothing is deleted — it is re-shelved. */
+     disclosure pattern. Nothing is deleted, it is re-shelved. */
   function caption(host2, line, paras, label) {
     if (line) host2.appendChild(el("p", "sub capline", line));
     const texts = (paras || []).filter(Boolean);
@@ -640,7 +641,7 @@ export default async function view(host) {
     host2.appendChild(d);
   }
 
-  /* What the baseline column actually IS under the current measure — under
+  /* What the baseline column actually IS under the current measure, under
      "Effective ownership" it is LiveFPL's predicted EO (with the feed's own
      capture instant from `eo_pred_captured`), under "Ownership" it is FPL's
      own%. Same header word, two different numbers, so the header says which
@@ -667,7 +668,7 @@ export default async function view(host) {
   };
 
   /* The low-n watermark: the n is already printed, but printing n is not the
-     same as protecting the reader — a chart drawn from 4 managers says so
+     same as protecting the reader, a chart drawn from 4 managers says so
      ACROSS the marks (R3). */
   function watermark(svg, W, H, f) {
     if (!lowN(f)) return;
@@ -677,8 +678,7 @@ export default async function view(host) {
     }, `n=${f.n}, quantized`));
   }
 
-  /* An accessible mark: <title>, tabindex, aria-label, and keyboard open —
-     the promised hover/click was mouse-only and invisible to assistive tech
+  /* An accessible mark: <title>, tabindex, aria-label, and keyboard open, the promised hover/click was mouse-only and invisible to assistive tech
      on 102 circles (R3). Focus shows the same tooltip hover does. */
   function accessMark(c, label, onOpen, onShow, onHide) {
     c.appendChild(sv("title", {}, label));
@@ -694,7 +694,7 @@ export default async function view(host) {
 
   /* "cover this hole →": the plan that says what to sell to fund him lives on
      the Dashboard's verdict/solver card, and nothing connected them (R1).
-     Simple tab + focus navigation — it IS a cross-tab action. */
+     Simple tab + focus navigation, it IS a cross-tab action. */
   function focusDashboardPlan() {
     let tries = 0;
     const seek = () => {
@@ -712,7 +712,7 @@ export default async function view(host) {
   // ---- header ---------------------------------------------------------
   // ---- header: one line, everything else folded under it ----------------
   /* NAMING BY WHO PRODUCED THE NUMBER. FPL publishes a share, LiveFPL models
-     one, and we crawled the rest — so the selector groups by producer and a
+     one, and we crawled the rest, so the selector groups by producer and a
      crawled field is named by its n, which is also the only thing that tells
      two crawls apart. "elite" survives ONLY inside LiveFPL's own product name;
      it is never this page's word for a pool it crawled itself.
@@ -762,7 +762,7 @@ export default async function view(host) {
        itself; the rest is the caveat and stays in the title. A comma inside a
        number is not a clause break: splitting on it turned "the provider's
        top-10,000 sample" into "the provider's top-10". */
-    const head = d.split(/[.;:]|,(?!\d)| — /)[0].trim() || d;
+    const head = d.split(/[.;:]|,(?!\d)|, /)[0].trim() || d;
     const short = head.length > STAMP_MAX
       ? head.slice(0, STAMP_MAX - 1).trimEnd() + "…" : head;
     return f.kind === "fpl" ? `${short}, share not a count` : short;
@@ -816,7 +816,7 @@ export default async function view(host) {
     b.setAttribute("role", "radio");
     b.setAttribute("aria-checked", String(g.key === fieldKey));
     const a = ageInfo(g.as_of);
-    b.append(el("span", "fmark", g.key === fieldKey ? "●" : "○"),
+    b.append(el("span", "fmark"),
              el("span", "fnm", fieldName(g)),
              el("span", "freshdot " + a.cls),
              el("span", "fstamp" + (small ? " bad" : ""), fieldStamp(g)));
@@ -866,7 +866,7 @@ export default async function view(host) {
          `selection.n` with `selection.denominator` in the panel's own words.
        - THE STATE SHOWN IS THE STATE SERVED, read off `selection.segments`
          rather than remembered from the request.
-       - AN UNTRUSTWORTHY SET IS FLAGGED, NEVER QUIETLY DROPPED. */
+       - AN UNTRUSTWORTHY SET IS FLAGGED, NEVER DROPPED WITHOUT A WORD. */
   function composerEl(m, f) {
     const universe = m.universe;
     if (!universe?.length) return null;
@@ -888,7 +888,10 @@ export default async function view(host) {
       const chip = el("button",
         "chip seg" + (on ? " on" : "") + (danger ? " flagged danger" : "") +
         (caveat ? " caveated" : ""));
-      chip.appendChild(el("span", "segbox", on ? "✓" : ""));
+      // the selected set is the filled box plus aria-pressed, not a tick
+      // glyph: the box is drawn by CSS and carries no character (R41)
+      chip.setAttribute("aria-pressed", String(on));
+      chip.appendChild(el("span", "segbox"));
       chip.append(` ${c.label || c.tag}`);
       /* The count on the chip is managers WITH a stored squad, which is the
          only count that can enter a denominator. When the set has members the
@@ -902,7 +905,7 @@ export default async function view(host) {
       if (danger) chip.appendChild(el("span", "segwarn", "!"));
       else if (caveat) chip.appendChild(el("span", "segcav", "*"));
       const why = tagWhy(c);
-      /* `n` is managers WITH a stored squad — the only count that can enter a
+      /* `n` is managers WITH a stored squad, the only count that can enter a
          denominator. `n_pool` is how many carry the tag at all, and the gap
          between them is the part of the set nothing here can measure. */
       chip.title = `${c.label || c.tag}` +
@@ -1041,8 +1044,8 @@ export default async function view(host) {
       body.appendChild(cb);
     }
     body.appendChild(el("p", "sub glyphkey",
-      "Marks on the set chips: ✓ = in the field · * = read with a caveat " +
-      "(sentence above) · ! = untrustworthy, never in a default."));
+      "Marks on the set chips: a filled chip is in the field · * = read with " +
+      "a caveat (sentence above) · ! = untrustworthy, never in a default."));
     return box;
   }
 
@@ -1115,7 +1118,7 @@ export default async function view(host) {
        thirds of the board sits under 20%, so the interesting cluster collapses
        into a corner. √ is monotone and applied identically to x and y, so the
        y = x reference line is still exactly the diagonal and "above the line"
-       still means exactly what it meant — only the spacing changes. The ticks
+       still means exactly what it meant, only the spacing changes. The ticks
        are deliberately unevenly spaced so the nonlinearity is visible rather
        than smuggled in, and the caption says it in words. */
     const W = 760, H = 470, L = 56, R = 20, T = 18, B = 48;
@@ -1133,7 +1136,7 @@ export default async function view(host) {
     svg.appendChild(sv("title", {},
       `${f.label} against ${b.label}, ${shown.length} players`));
 
-    // grid — solid hairlines, one shade off the surface, never dashed.
+    // grid, solid hairlines, one shade off the surface, never dashed.
     // The x labels render as one run and the y labels as another (each run
     // aria-hidden): interleaving them per-tick read "0% 5% 5% 10% 10%…" in
     // the text layer, two axes shuffled into one nonsense sequence (R3).
@@ -1180,7 +1183,7 @@ export default async function view(host) {
         class: "mark" + (mine ? " mine" : " out"),
       });
       // Redundant with position (distance from the diagonal) and with the
-      // printed number in the tooltip — colour is never the only channel.
+      // printed number in the tooltip, colour is never the only channel.
       if (mine) c.setAttribute("fill", rampColor(g, scale));
       else { c.setAttribute("fill", "none"); c.setAttribute("stroke", rampColor(g, scale)); }
       c.addEventListener("mouseenter", () => showTip(p, g));
@@ -1262,7 +1265,7 @@ export default async function view(host) {
     }
     function hideTip() { tip.classList.remove("on"); }
 
-    // scale legend — a diverging encoding always ships one
+    // scale legend, a diverging encoding always ships one
     const leg = el("div", "maplegend");
     const ramp = el("div", "ramp");
     for (let i = -6; i <= 6; i++) {
@@ -1304,14 +1307,14 @@ export default async function view(host) {
 
      THREE STATES PER SHIRT, and the third is the point. You match him; you own
      him but leave him on your bench; or you do not own him at all. Only the
-     last two cost anything, so only the last two carry a number — three pills
+     last two cost anything, so only the last two carry a number, three pills
      on a pitch rather than eleven. Calvert-Lewin's −0.81 is unreadable as a
      row in a ranked list and obvious as an amber pill on a shirt you own. */
   const SHAPE  = { GKP: 2, DEF: 5, MID: 5, FWD: 3 };
   const XI_MIN = { GKP: 1, DEF: 3, MID: 2, FWD: 1 };
   const XI_MAX = { GKP: 1, DEF: 5, MID: 5, FWD: 3 };
   const POS_ROWS = ["GKP", "DEF", "MID", "FWD"];
-  const CAP_FLOOR = 25;              // pp — below this the field has no armband
+  const CAP_FLOOR = 25;              // pp, below this the field has no armband
 
   const startShare = (r, key) => {
     const f = r.fields?.[key];
@@ -1527,9 +1530,7 @@ export default async function view(host) {
      today's wire), any legal squad spends exactly 12.0 multiplier units, so
 
          Σ over your 15  =  12.0 − (field EO you DO cover)
-                         =  −0.437 + (field EO you do NOT cover)
-
-     — it RISES when your uncovered exposure rises. Headlining it rewarded the
+                         =  −0.437 + (field EO you do NOT cover), it RISES when your uncovered exposure rises. Headlining it rewarded the
      reader for being more exposed. So the headline is now the thing that
      actually wants to be small: the field EO sitting on players you do not
      own. The Σ is kept, behind the fold, carrying that identity.
@@ -1586,7 +1587,7 @@ export default async function view(host) {
   }
 
   /* The one explanation, built from the selected field's own head counts and
-     the page's own worst hole — never a hard-coded example. */
+     the page's own worst hole, never a hard-coded example. */
   function worstHole() {
     const holes = sourceRows()
       .filter(r => r.in_squad === false)
@@ -1696,7 +1697,8 @@ export default async function view(host) {
           `${(w.f.eo_ex_tc / 100).toFixed(2)} each. Both numbers are real: ` +
           `${s} is what GW${f.gw} cost you, ${(w.f.eo_ex_tc / 100).toFixed(2)} ` +
           `is what a week without the chip would.`));
-      const go = el("a", "coverlink", "cover this hole →");
+      const go = el("a", "coverlink", "cover this hole");
+      go.appendChild(icon("chevron-right"));
       go.href = "#home";
       go.title = "Opens the Dashboard and focuses the verdict and solver " +
                  "card, the plan that says what to sell to fund him.";
@@ -1737,15 +1739,8 @@ export default async function view(host) {
           (res.xpts_gw != null ? ` gw${res.xpts_gw}` : "") : "") +
         `\n${neg ? "You lose" : "You gain"} ${Math.abs(p.e).toFixed(2)} for ` +
         `every point he scores.`;
-      row.tabIndex = 0;
-      row.setAttribute("role", "button");
-      row.setAttribute("aria-label", row.title);
-      row.onclick = () => showDetail(p.r);
-      row.onkeydown = ev => {
-        if (ev.key === "Enter" || ev.key === " ") {
-          ev.preventDefault(); showDetail(p.r);
-        }
-      };
+      // the shared affordance: pointer, focus ring, tab stop, Enter and Space
+      rowLink(row, () => showDetail(p.r), row.title);
       strip.appendChild(row);
     }
     stripCard.appendChild(strip);
@@ -1776,7 +1771,7 @@ export default async function view(host) {
   }
 
   // ---- cohort vs cohort: where the informed fields disagree -----------
-  /* Two informed fields agreeing is not information — it is the same consensus
+  /* Two informed fields agreeing is not information, it is the same consensus
      twice. The edge is where they split, so this card is sorted by the size of
      the split and nothing else. A dumbbell puts both fields on ONE shared axis:
      the two dots give the levels, the connector between them IS the
@@ -1803,8 +1798,8 @@ export default async function view(host) {
        chart watermarks itself when one is picked (tri-consensus n-guard). */
     const ok = f => !lowN(f);
     const bySize = list => [...list].sort((x, y) => (y.n ?? -1) - (x.n ?? -1));
-    /* A follows the field chosen at the top of the page — the reader who
-       switches fields up there means "study this one" — until he picks A here
+    /* A follows the field chosen at the top of the page, the reader who
+       switches fields up there means "study this one", until he picks A here
        himself, at which point this card is his and stops being steered. */
     if (!cmpTouched && keys.includes(fieldKey) && ok(byKey[fieldKey]))
       cmpA = fieldKey;
@@ -1812,8 +1807,8 @@ export default async function view(host) {
       cmpA = (bySize(opts.filter(ok))[0] || opts[0] || {}).key
              || (keys.includes(fieldKey) ? fieldKey : keys[0]);
     if (!keys.includes(cmpB) || cmpB === cmpA) {
-      // Prefer the other CRAWLED pool — two observed cohorts disagreeing is a
-      // sharper read than an observed cohort against a modelled one — then
+      // Prefer the other CRAWLED pool, two observed cohorts disagreeing is a
+      // sharper read than an observed cohort against a modelled one, then
       // fall back to whatever else publishes the same measure. Never a
       // below-floor cohort by default: n=4 quantizes every share to 25%.
       const a = byKey[cmpA];
@@ -1825,7 +1820,7 @@ export default async function view(host) {
     }
   }
 
-  const SPLIT = 20;                  // pp — what counts as a real disagreement
+  const SPLIT = 20;                  // pp, what counts as a real disagreement
   function renderCompare() {
     const opts = informedFields(measure);
     ensureComparePair();
@@ -1870,7 +1865,7 @@ export default async function view(host) {
     };
     picker("Field A", cmpA, cmpB);
     picker("Field B", cmpB, cmpA);
-    const swap = el("button", "chip src", "⇄ swap");
+    const swap = el("button", "chip src", "swap");
     swap.title = "Swap the two fields. The warm pole always means “A is heavier”, " +
                  "so swapping mirrors the colours as well as the dots.";
     swap.onclick = () => {
@@ -2016,7 +2011,7 @@ export default async function view(host) {
       svg.appendChild(sv("text", { x: NUMX[2], y: cy + 4,
                                    class: "dnum end strong" }, `${signed(p.d)}`));
 
-      // Direct labels on the first row only — the legend below carries the
+      // Direct labels on the first row only, the legend below carries the
       // rest, and a label on every dot would be 28 labels of noise.
       if (i === 0) {
         svg.appendChild(sv("text", { x: xa, y: cy - 12, class: "dkey",
@@ -2083,13 +2078,13 @@ export default async function view(host) {
   // ---- the armband swing -----------------------------------------------
   /* OWNERSHIP MOMENTUM IS DEAD, AND MEASURED DEAD. Across the two stored
      gameweeks the largest move in ownership anywhere in this selection is
-     1.1pp — noise wearing a trend's clothes, and the old card spent a whole
+     1.1pp, noise wearing a trend's clothes, and the old card spent a whole
      screen apologising for it. The CAPTAINCY channel moved 21 points in the
      same window, off one player and onto another, and that is the live
      question at a deadline. So this card draws cap% only, from
      momentum.series[].points[].cap_pct, and states both gameweeks and the
      population every time. */
-  const MIN_SWING = 1.0;             // pp — below this it is rounding
+  const MIN_SWING = 1.0;             // pp, below this it is rounding
 
   function capSwings() {
     const mo = res.momentum;
@@ -2167,17 +2162,7 @@ export default async function view(host) {
         `${n ?? "?"} at GW${sw.a} and ${x.to.toFixed(1)}% at GW${sw.b}. ` +
         `Both bars are the same population measured twice.`;
       const r = rowByCode(x.code);
-      if (r) {
-        row.tabIndex = 0;
-        row.setAttribute("role", "button");
-        row.setAttribute("aria-label", row.title);
-        row.onclick = () => showDetail(r);
-        row.onkeydown = ev => {
-          if (ev.key === "Enter" || ev.key === " ") {
-            ev.preventDefault(); showDetail(r);
-          }
-        };
-      }
+      if (r) rowLink(row, () => showDetail(r), row.title);
       grid.appendChild(row);
     }
     armCard.appendChild(grid);
@@ -2236,7 +2221,7 @@ export default async function view(host) {
     /* The `on` class is updated here rather than by a re-render: rebuilding
        the toolbar would blow away the search box's focus and caret mid-type.
        (The first cut called renderBody() alone, which filtered correctly and
-       left the segment showing the wrong selection — a filter you cannot see
+       left the segment showing the wrong selection, a filter you cannot see
        the state of is worse than no filter.) */
     const ps = el("span", "seg");
     for (const v of ["", "GKP", "DEF", "MID", "FWD"]) {
@@ -2292,29 +2277,22 @@ export default async function view(host) {
   }
 
   const sameSort = spec => JSON.stringify(spec) === JSON.stringify(sortBy);
-  /* Sortable headers that SAY so: aria-sort for assistive tech, a persistent
-     glyph on every sortable column (the sorted one gets the direction, the
-     rest a quiet ⇅), and keyboard operation — a cursor:pointer with no
-     affordance was a promised interaction that wasn't real (R3). */
+  /* Sortable headers that SAY so. This view held the app's best
+     implementation and it is now app.js sortableTh, shared by every table:
+     aria-sort for assistive tech, the same 16px mark on every sortable
+     column, the keyboard path, and a first direction set by the column
+     rather than by one global default (R11, R12). */
   function th(label, spec, opts = {}) {
     const on = sameSort(spec);
-    const h = el("th", (opts.num === false ? "" : "num") +
-                       (on ? " sorted" : " sortable"), label);
-    h.dataset.dir = on ? (sortDir === -1 ? "▼" : "▲") : "⇅";
-    h.setAttribute("aria-sort",
-      on ? (sortDir === -1 ? "descending" : "ascending") : "none");
-    h.setAttribute("role", "columnheader");
-    h.tabIndex = 0;
-    if (opts.title) h.title = opts.title;
-    const go = () => {
-      sortDir = sameSort(spec) ? -sortDir : -1;
-      sortBy = spec; renderBody();
-    };
-    h.onclick = go;
-    h.onkeydown = e => {
-      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); }
-    };
-    return h;
+    let dir = null;
+    if (on) dir = sortDir;
+    return sortableTh(label, {
+      num: opts.num,
+      title: opts.title,
+      active: on,
+      dir,
+      onSort: (next) => { sortDir = next; sortBy = spec; renderBody(); },
+    });
   }
 
   function renderBody() {
@@ -2367,17 +2345,21 @@ export default async function view(host) {
       th("pos", { kind: "col", key: "pos" }, { num: false }),
       th("team", { kind: "col", key: "team" }, { num: false }),
       th("£", { kind: "col", key: "price" }),
-      /* The baseline header names its MEASURE and its capture instant: under
-         the EO toggle this column is LiveFPL's predicted EO (captured before
-         the previous deadline), under own% it is FPL ownership. Without the
-         suffix the same words held two numbers 2× apart (R2). */
-      th(baselineLabel(b), { kind: "base" },
-         { title: b ? `% of: ${b.denominator}` +
-             (b.key === "eo_predicted" && res.eo_pred_captured?.as_of
-               ? `\nLiveFPL capture instant: ${res.eo_pred_captured.as_of}` +
-                 (res.eo_pred_captured.gw != null
-                   ? ` (GW${res.eo_pred_captured.gw})` : "")
-               : "") : "" }),
+      /* The baseline column is the MEASURE and its capture instant: under the
+         EO toggle it is LiveFPL's predicted EO (captured before the previous
+         deadline), under own% it is FPL ownership, and the same words held
+         two numbers 2× apart until that was said. It is said in the title,
+         not in the label: as a label it rendered 350px wide against 54px for
+         the price beside it, which is the Projections defect again (R6). */
+      th(b ? (b.short || b.label) : "game", { kind: "base" },
+         { title: [baselineLabel(b),
+                   b ? `% of: ${b.denominator}` : null,
+                   b && b.key === "eo_predicted" && res.eo_pred_captured?.as_of
+                     ? `LiveFPL capture instant: ` +
+                       `${res.eo_pred_captured.as_of}` +
+                       (res.eo_pred_captured.gw != null
+                         ? ` (GW${res.eo_pred_captured.gw})` : "")
+                     : null].filter(Boolean).join("\n") }),
       th(f ? (f.short || f.label) : "field", { kind: "field" },
          { title: f ? `% of: ${f.denominator}` : "" }),
       th("gap", { kind: "gap" },
@@ -2400,14 +2382,18 @@ export default async function view(host) {
     for (const r of shown2) {
       const g = gapOf(r, fieldKey, measure);
       const tr = el("tr");
-      const nameTd = el("td", "clickable");
-      nameTd.appendChild(faceImg(r.code, "avatar" +
-        (r.in_squad === true ? " mine" : "")));
+      const nameTd = el("td");
+      nameTd.appendChild(avatarEl(r.code, dispName(r),
+                                  { mine: r.in_squad === true }));
       nameTd.appendChild(document.createTextNode(dispName(r)));
       const av = availChip(r.status);
       if (av) { nameTd.appendChild(document.createTextNode(" ")); nameTd.appendChild(av); }
-      nameTd.title = "click for every field's read on him";
-      nameTd.onclick = () => showDetail(r);
+      /* ONE affordance for the whole row (R18): the handler used to sit on
+         cell 0 while every cell lit on hover, and the keyboard path was per
+         cell, so reaching a row meant tabbing through its columns. */
+      tr.title = "opens every field's read on him";
+      rowLink(tr, () => showDetail(r),
+              `${dispName(r)}: open every field's read on him`);
       tr.append(nameTd, el("td", null, r.pos ?? "–"),
                 el("td", null, r.team ?? "–"),
                 el("td", "num", fmtPrice(r.price)),
@@ -2431,7 +2417,7 @@ export default async function view(host) {
       const cap = (r.fields?.[fieldKey] || {}).cap;
       tr.appendChild(el("td", "num", cap == null ? "–" : pct(cap)));
 
-      /* Three facts, three separated badges — "270/309240 C" in the text
+      /* Three facts, three separated badges, "270/309240 C" in the text
          layer was three values glued into one unpunctuated cell (R1). */
       const m = r.fields?.[fieldKey] || {};
       const heldTd = el("td", "held");
@@ -2488,18 +2474,15 @@ export default async function view(host) {
   function showDetail(r) {
     chatter?.cancel(); chatter = null;
     drawer.textContent = "";
-    drawer.classList.add("open");
-    const hd = el("div", "dhead");
-    hd.appendChild(faceImg(r.code, "bigface"));
-    const id = el("div");
-    id.appendChild(el("div", "dname", dispName(r)));
-    id.appendChild(el("div", "sub", [r.pos, r.team, fmtPrice(r.price),
-      r.xpts != null ? `${fmt1(r.xpts)} xPts` : null].filter(Boolean).join(" · ")));
-    hd.appendChild(id);
-    const x = el("button", null, "✕");
-    x.onclick = closeDrawer;
-    hd.appendChild(x);
-    drawer.appendChild(hd);
+    dh.open();
+    drawer.appendChild(drawerHead(dispName(r),
+      [r.pos, r.team, fmtPrice(r.price),
+       r.xpts != null ? `${fmt1(r.xpts)} xPts` : null]
+        .filter(Boolean).join(" · "),
+      { face: faceImg(r.code, "bigface"),
+        crumb: [{ label: "Ownership", go: closeDrawer },
+                { label: dispName(r) }],
+        onClose: closeDrawer }));
 
     const av = availChip(r.status);
     if (av) {
@@ -2604,7 +2587,7 @@ export default async function view(host) {
         f.composition.map(c => `${c.n} ${c.label || c.tag}`).join(", ") + "."));
 
     // Below "Your position on him": what the panel owns, said and noticed
-    // about him. Async and self-contained — it never blocks the drawer above.
+    // about him. Async and self-contained, it never blocks the drawer above.
     chatter = chatterStrip(drawer, r.code, { name: r.name });
   }
 
@@ -2613,7 +2596,6 @@ export default async function view(host) {
     foot.textContent = "";
     const d = el("details", "card");
     const s = el("summary", null, "Provenance, metric coverage and last season");
-    s.style.cursor = "pointer";
     d.appendChild(s);
     const body = el("div");
     d.appendChild(body);
@@ -2669,20 +2651,43 @@ export default async function view(host) {
       const wrap = el("div", "scroll-x");
       const t = el("table", "data");
       const th_ = el("thead"), hr = el("tr");
-      for (const [l, num] of [["player", 0], ["pos", 0], ["team", 0],
-                              ["EO top10k", 1], ["EO elite", 1]])
-        hr.appendChild(el("th", num ? "num" : "", l));
       th_.appendChild(hr); t.appendChild(th_);
       const tb = el("tbody");
       const LS_MAX = 40;
-      for (const r of ls.rows.slice(0, LS_MAX)) {
-        const tr = el("tr");
-        tr.append(el("td", null, r.name), el("td", null, r.pos ?? "–"),
-                  el("td", null, r.team ?? "–"),
-                  el("td", "num", pct(r.eo_top10k_pct)),
-                  el("td", "num", pct(r.eo_elite_pct)));
-        tb.appendChild(tr);
-      }
+      /* This table sorted on nothing, which made it the one place on
+         the tab where a column heading was a label rather than a
+         control (R11). It holds its own small sort state, because it is
+         a fold on a different season and must not move the page sort. */
+      const LS_COLS = [["player", "name", false], ["pos", "pos", false],
+                       ["team", "team", false],
+                       ["EO top10k", "eo_top10k_pct", true],
+                       ["EO elite", "eo_elite_pct", true]];
+      let lsKey = "eo_top10k_pct", lsDir = -1;
+      const drawLs = () => {
+        hr.textContent = "";
+        for (const [label, key, num] of LS_COLS) {
+          hr.appendChild(sortableTh(label, {
+            num, active: key === lsKey, dir: lsDir,
+            onSort: (next) => { lsKey = key; lsDir = next; drawLs(); },
+          }));
+        }
+        const sorted = ls.rows.slice().sort((a, b) => {
+          const x = a[lsKey], y = b[lsKey];
+          if (typeof x === "string" || typeof y === "string")
+            return String(x).localeCompare(String(y)) * lsDir;
+          return ((y ?? -1e9) - (x ?? -1e9)) * -lsDir;
+        });
+        tb.textContent = "";
+        for (const r of sorted.slice(0, LS_MAX)) {
+          const tr = el("tr");
+          tr.append(el("td", null, r.name), el("td", null, r.pos ?? "–"),
+                    el("td", null, r.team ?? "–"),
+                    el("td", "num", pct(r.eo_top10k_pct)),
+                    el("td", "num", pct(r.eo_elite_pct)));
+          tb.appendChild(tr);
+        }
+      };
+      drawLs();
       t.appendChild(tb); wrap.appendChild(t); body.appendChild(wrap);
       if (ls.rows.length > LS_MAX) body.appendChild(el("p", "sub",
         `Top ${LS_MAX} of ${ls.rows.length}. It is context, not a working set.`));
@@ -2696,7 +2701,7 @@ export default async function view(host) {
      It renders from ctx and holds no cross-render state, so it is re-invoked on
      every selection change alongside everything else. The four documented keys
      come first; the rest are conveniences it may ignore. A throw from that
-     module is contained here — a broken tool must not take the page with it. */
+     module is contained here, a broken tool must not take the page with it. */
   function rowByCode(code) {
     const all = (res.rows || []).concat(res.differentials || []);
     return all.find(r => r.code === code) || null;
@@ -2752,7 +2757,7 @@ export default async function view(host) {
 
   /* The default field is the curated elite WITHOUT the owner's own mini-league.
      A panel that publishes `selection` has already applied its own default on
-     the first call, and `selection.is_default` says so — nothing to do, and no
+     the first call, and `selection.is_default` says so, nothing to do, and no
      second round trip. Only the composition fallback needs a nudge, and it
      cannot have one: recutting is arithmetic that build's panel will not do, so
      the selector says plainly that every set is in the numbers rather than the

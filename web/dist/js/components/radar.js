@@ -1,21 +1,20 @@
-/* The pizza chart — one player's per-90 percentiles vs same-position peers,
+/* The pizza chart, one player's per-90 percentiles vs same-position peers,
    rendered from the `player_radar` panel inside the shared player drawer.
 
    THE RULES THE RENDERING KEEPS:
    - Colour = metric family only (--s1 threat / --s3 creation / --s2
      defending, at 78% mix). The radius already encodes the value; a value
      ramp on top would say the same thing twice in two vocabularies.
-   - Percentile method, peer count and minutes floor PRINT on the chart —
-     a percentile whose population is unstated is a decoration.
+   - Percentile method, peer count and minutes floor PRINT on the chart, a percentile whose population is unstated is a decoration.
    - The four states are visually distinct: full; below-floor (faded, with a
-     banner, numbers still printed — hiding true small-sample facts is a
+     banner, numbers still printed, hiding true small-sample facts is a
      different dishonesty); no rows (the panel's own reason, no fetch button:
      there is no sanctioned on-demand route for this table); zero-separation
-     (hatched at 50 — "no separation yet" is a different word from "short").
+     (hatched at 50, "no separation yet" is a different word from "short").
    - Overlay-ready by construction: the SVG ships a `pz-fill` group for the
      subject and an empty `pz-cmp` layer; a second player would draw as an
      outline polygon with vertex dots (--s4), colour switching to the PLAYER
-     entity — two colour systems never active at once. Cross-position overlay
+     entity, two colour systems never active at once. Cross-position overlay
      is refused with a named reason: different peer groups, percentiles not
      comparable. The "+ compare" chip is reserved and disabled until built.
    - The pizza never mentions Understat. Two sources, two sections, two
@@ -62,7 +61,7 @@ function wedgePath(cx, cy, r0, r1, a0, a1) {
 /* Pure renderer: takes [{code, name, series}] where series is the panel
    result. One player = family-hued fills. A second player would draw into
    `pz-cmp` as an outline polygon (fill vs stroke, never two fills) and the
-   colour system would switch to the player entity — the guard and the layer
+   colour system would switch to the player entity, the guard and the layer
    exist now so the overlay lands without reshaping the SVG. */
 export function renderPizza(players) {
   const wrap = el("div", "pz-wrap");
@@ -73,7 +72,7 @@ export function renderPizza(players) {
     const g = el("div", "empty");
     g.appendChild(el("b", null, "Overlay refused."));
     g.appendChild(document.createTextNode(
-      "Different peer groups — percentiles are not comparable across "
+      "Different peer groups, percentiles are not comparable across "
       + "positions."));
     wrap.appendChild(g);
     return wrap;
@@ -99,7 +98,7 @@ export function renderPizza(players) {
   defs.appendChild(pat);
   svg.appendChild(defs);
 
-  // guide rings at 25/50/75 — the 50 ring stronger: the median is the reference
+  // guide rings at 25/50/75, the 50 ring stronger: the median is the reference
   for (const g of [25, 50, 75]) {
     svg.appendChild(sv("circle", {
       cx, cy, r: r0 + (R - r0) * g / 100,
@@ -131,7 +130,7 @@ export function renderPizza(players) {
     path.appendChild(tip);
     fillG.appendChild(path);
 
-    // percentile numeral at the arc end — the number always prints
+    // percentile numeral at the arc end, the number always prints
     const tn = sv("text", { x: px(cx, r1 + 9, mid).toFixed(1),
                             y: (py(cy, r1 + 9, mid) + 3).toFixed(1),
                             "text-anchor": "middle", class: "pz-num" });
@@ -165,12 +164,12 @@ export function renderPizza(players) {
     }
   }
 
-  // the empty compare layer — outline polygons with vertex dots land here
+  // the empty compare layer, outline polygons with vertex dots land here
   svg.appendChild(sv("g", { class: "pz-cmp" }));
 
   wrap.appendChild(svg);
 
-  // legend chips — one per family present, text always beside colour
+  // legend chips, one per family present, text always beside colour
   const legend = el("div", "pz-legend");
   const seen = [...new Set(slices.map(s => s.group))];
   for (const g of seen) {
@@ -188,10 +187,10 @@ export function renderPizza(players) {
 export function radarSection(host, code) {
   const box = el("div", "pz-box");
   const hd = el("div", "pz-hd");
-  hd.appendChild(el("h2", null, "Percentiles — per 90, vs position"));
+  hd.appendChild(el("h2", null, "Percentiles, per 90, vs position"));
   const cmp = el("button", "chip pz-compare", "+ compare");
   cmp.disabled = true;
-  cmp.title = "overlay a second same-position player — reserved, not built yet";
+  cmp.title = "overlay a second same-position player, reserved, not built yet";
   hd.appendChild(cmp);
   box.appendChild(hd);
   const body = el("div");
@@ -232,7 +231,7 @@ export function radarSection(host, code) {
     if (res.below_floor) {
       const b = el("div", "pz-floorbanner");
       b.textContent =
-        `${Math.round(res.window.minutes)}′ played — below the `
+        `${Math.round(res.window.minutes)}′ played, below the `
         + `${res.floor_minutes}′ floor. Percentiles this thin reorder on one `
         + `match; shown faded, read gently.`;
       body.appendChild(b);
@@ -254,7 +253,7 @@ export function radarSection(host, code) {
         + "the settled season, never below one full match).",
       res.method + ". Ties split; an all-zero metric collapses to 50.",
       "Everything is oriented more-is-better; goals_prevented is already "
-        + "signed; nothing is inverted silently. Minutes is never a slice — "
+        + "signed; nothing is inverted silently. Minutes is never a slice, "
         + "it is the floor and the header line.",
     ]) how.appendChild(el("p", "sub", line));
     body.appendChild(how);
