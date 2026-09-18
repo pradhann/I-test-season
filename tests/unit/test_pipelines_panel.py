@@ -79,9 +79,14 @@ def test_board_serves_the_registry_with_history_and_a_true_summary(db):
 
     by_id = {r["id"]: r for r in res["rows"]}
     row = by_id["content_fast_rss"]
-    # The pipeline_status contract rides through untouched, plus `runs`.
-    assert set(row) == {"id", "description", "family", "schedule", "enabled",
-                        "health", "last_run", "avg_duration_ms", "next_due",
+    # The pipeline_status contract rides through untouched, plus `runs` and
+    # the registry facts health.py does not carry: the due kind, the task's
+    # own stale window and whether it is past it, the last success, and the
+    # last run's age in days (the table's first sort key).
+    assert set(row) == {"id", "description", "family", "schedule", "due_kind",
+                        "enabled", "health", "last_run", "last_run_age_days",
+                        "last_success", "stale_window", "stale_window_hours",
+                        "stale_by_window", "avg_duration_ms", "next_due",
                         "metered", "runs"}
     # History is newest-first and carries the sparkline/drawer fields.
     assert [r["status"] for r in row["runs"]] == ["error", "ok"]
@@ -127,6 +132,71 @@ def test_a_refused_run_is_its_own_state_and_never_reads_as_ok(db):
     states = [r["health"]["state"] for r in res["rows"]]
     assert res["summary"]["n_refused"] == states.count("refused") == 1
     assert res["summary"]["n_ok"] == states.count("ok")
+
+
+def test_the_stale_flag_follows_the_task_s_own_window(db):
+    """The row says stale against the registry's `stale_window`, which is not
+    health.state's cadence budget. `content_fast_rss` has a 3h window, so a
+    success four hours ago is past it; `post_gw_settlement` has 23h and is
+    not. Both facts come off the same ledger rows."""
+    with Warehouse(db) as wh:
+        _ledger_row(wh, "content_fast_rss", status="ok", age_h=4.0)
+        _ledger_row(wh, "post_gw_settlement", status="ok", age_h=4.0)
+    rows = {r["id"]: r for r in run_script("pipeline_board", db=db).result["rows"]}
+
+    fast, chain = rows["content_fast_rss"], rows["post_gw_settlement"]
+    assert fast["stale_window"] == "3h 0m" and fast["stale_window_hours"] == 3.0
+    assert fast["stale_by_window"] is True
+    assert chain["stale_window_hours"] == 23.0
+    assert chain["stale_by_window"] is False
+    assert fast["last_success"] and chain["last_success"]
+    # Never having succeeded is not freshness.
+    assert rows["briefing_intel"]["last_success"] is None
+    assert rows["briefing_intel"]["stale_by_window"] is True
+    # The window is words, never seconds.
+    assert all("s" not in r["stale_window"].replace("days", "")
+               for r in rows.values())
+
+
+def test_the_due_kind_and_the_last_run_age_are_served_not_derived_in_the_view(db):
+    """The four registry Due shapes reach the view as words, and the age the
+    table sorts on is a number the panel computed against its own
+    generated_at rather than the browser's clock."""
+    with Warehouse(db) as wh:
+        _ledger_row(wh, "post_gw_settlement", status="ok", age_h=48.0)
+    rows = {r["id"]: r for r in run_script("pipeline_board", db=db).result["rows"]}
+
+    assert rows["post_gw_settlement"]["due_kind"] == "daily"
+    assert rows["content_fast_rss"]["due_kind"] == "interval"
+    assert rows["odds_refresh"]["due_kind"] == "deadline"
+    assert {r["due_kind"] for r in rows.values()} <= {
+        "daily", "deadline", "interval", "on demand"}
+    assert rows["post_gw_settlement"]["last_run_age_days"] == pytest.approx(
+        2.0, abs=0.01)
+    assert rows["content_fast_rss"]["last_run_age_days"] is None
+
+
+def test_a_json_note_gives_up_its_model_and_tokens_and_a_prose_note_does_not(db):
+    """The note belongs to whoever wrote it. A JSON note's model and token
+    count are surfaced as named fields; anything else is served raw and says
+    it is not JSON, so the panel never depends on a format it does not own."""
+    with Warehouse(db) as wh:
+        _ledger_row(wh, "briefing_intel", status="ok", age_h=1.0,
+                    note='{"model": "claude-opus-5", "tokens_in": 1200, '
+                         '"tokens_out": 300}')
+        _ledger_row(wh, "content_analyse", status="ok", age_h=1.0,
+                    note="quiet: last 21d; +4 analyses")
+    rows = {r["id"]: r for r in run_script("pipeline_board", db=db).result["rows"]}
+
+    intel = rows["briefing_intel"]["last_run"]
+    assert intel["note_is_json"] is True
+    assert intel["model"] == "claude-opus-5"
+    assert intel["tokens"] == 1500.0
+
+    prose = rows["content_analyse"]["last_run"]
+    assert prose["note_is_json"] is False
+    assert prose["model"] is None and prose["tokens"] is None
+    assert prose["note"] == "quiet: last 21d; +4 analyses"
 
 
 def test_board_history_is_capped_per_pipeline(db):

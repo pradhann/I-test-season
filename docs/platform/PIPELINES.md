@@ -1,6 +1,6 @@
-# Data pipelines — the map, the facts, and the plan
+# Data pipelines: the runbook, the map, and the closed spec
 
-Status: SPEC CLOSED 2026-08-31; SCOPE ELEVATED 2026-09-01 — the owner's
+Status: SPEC CLOSED 2026-08-31; SCOPE ELEVATED 2026-09-01. The owner's
 direction: "pipelines are the most important thing here... take this as the
 main product, pipelines is the edge, organize it properly, best in class."
 Concretely: a first-class `fpl_edge/pipelines/` package (registry, runner,
@@ -17,6 +17,221 @@ receipts). Collateral fixes from the GW2 investigation: b0943ca (transfer
 entity key), ee16f16 (paid-means-kept). Open by design: the post_gw parity
 window (retirement procedure in the plist) and the deep router/Telegram
 untangling (its own task chip).
+
+---
+
+## 0 · The runbook
+
+Everything in this section is the operating manual: what runs, when, what it
+writes, what breaks when it stops, and how to run one by hand. The table and
+the commands are generated from `fpl_edge/pipelines/registry.py` by
+`scripts/pipelines_runbook.py`, so a task added or rescheduled in the registry
+and not regenerated here fails `tests/unit/test_no_double_work.py`. Sections 1
+to 6 below are the closed spec that produced the system and are cited from the
+code by section number; they are history, not the operating manual.
+
+**Where the facts come from.** The schedule, the stale window, the family and
+the description are registry columns. Health, last run and next due are
+computed by `fpl_edge/pipelines/health.py` over the `fetch_run` ledger and
+served by the `pipeline_board` panel. Nothing in this file is a second
+opinion about any of them.
+
+**Reading the stale column.** Two different windows share the word. The
+registry's `stale_window` is the scheduler's rule: a firing that is due
+longer ago than this is recorded `skipped_stale` and dropped rather than run
+late. Health's own staleness is about the data: it asks how long ago the last
+run succeeded, against 30h for a daily task and twice the interval for an
+interval one. The panel serves both, named apart.
+
+**The one overlap this table cannot show.** `deploy/com.fpledge.postgw.plist`
+runs `python -m fpl_edge.jobs.post_gw`, which iterates the same
+`settlement_steps` list as the `post_gw_settlement` task, half an hour
+earlier. Loading that agent means the whole chain, including two crawls of
+several hundred requests each, runs twice a day. `post_gw.main` writes no
+`fetch_run` row, so the second run is invisible to the panel and to the
+overlap test below. Retiring the plist is the scheduler workstream's item.
+
+**Both launchd agents are unloaded today**, which is why every row in the
+panel is past its own window: nothing has fired on a schedule since the tick
+stopped. The board reports that honestly rather than smoothing it, and a hand
+run or a click on Run is what moves a row back to fresh until the in-process
+scheduler lands.
+
+**When a task has gone red.** Open the Pipelines tab, sort by stale, expand
+the row. The expandable carries the last run's note and the path to its
+captured log; the log is the full stdout and stderr of every step. Re-running
+from the row is the same seam the scheduler uses, so a manual run and a
+scheduled run leave identical ledger rows.
+
+<!-- BEGIN GENERATED: scripts/pipelines_runbook.py -->
+
+| Task | Family | Schedule | Writes | Stale after | If it stops |
+|---|---|---|---|---|---|
+| `presser_projection_refresh` | core | T-30h before each deadline | fact_player_state, fact_fixture, content_item, the three fixture parquets, fact_projection | 20h 0m | the pre-deadline injury digest and the projections behind it are a day old |
+| `price_radar` | core | daily 02:00 Europe/London | dag_observation rows and one alert | 8h 0m | price rises and falls land without warning |
+| `final_solve_delivery` | core | T-4h before each deadline | nothing; it reads the newest plan artefact | 3h 0m | no plan is delivered before the deadline |
+| `lineup_captain_check` | core | T-1.5h before each deadline | fact_lineup, and one alert | 1h 15m | a benched captain is not caught |
+| `odds_refresh` | odds | deadline ladder T-36h/T-12h/T-5h | fact_odds and the derived market tables | 6h 0m | the odds strip ages and the derived markets with it |
+| `post_gw_settlement` | settlement | daily 10:30 UTC | fact_player_fixture, fact_projection, projection_weight, the fixture parquets, fact_odds, content tables, the rivals tables, the retro and weekly reports | 23h 0m | no actuals, so projection weights, creator scores and the cohort crawls all freeze |
+| `fpl_core_insights` | results | daily 11:30 UTC | fact_match_xg | 12h 0m | per-match xG stops at the last settled gameweek |
+| `panel_picks_crawl` | settlement | daily 11:15 UTC | dim_manager, fact_manager_season, fact_manager_gw, fact_manager_pick, fact_manager_transfer, fact_manager_chip | 23h 0m | the Creators board shows last week's squads |
+| `content_transcribe` | content | daily 12:00 UTC | content_transcript and transcript_provenance | 6h 0m | new episodes hold audio and no text |
+| `content_analyse` | content | daily 13:30 UTC | content_analysis and content_claim | 23h 0m | stored text produces no claims, so the Creators tab ages while the feed keeps filling |
+| `content_analyse_backlog` | content | daily 01:30 UTC | content_analysis and content_claim | 23h 0m | the never-analysed backlog stops draining |
+| `content_fast_rss` | content | every 4h | content_source, content_item, content_transcript | 3h 0m | creator feeds go unread for the day |
+| `forecast_refresh` | core | daily 11:30 UTC | forecast.parquet and its sidecar | 23h 0m | forecast.parquet covers a horizon the solver has already passed and the solve refuses to score it |
+| `fixture_ratings_refit` | core | daily 11:00 UTC | fixture_ratings.parquet, fixture_difficulty.parquet, fixture_calibration.parquet | 23h 0m | the Fixtures board colours an older fit |
+| `briefing_intel` | core | daily 07:40 Europe/London | briefing_intel.json | 23h 0m | the dashboard loses its salience pass |
+| `audio_retention` | maintenance | weekly | nothing; it deletes swept audio files | 24h 0m | the ASR audio cache grows without a sweep |
+
+### Running one by hand
+
+Every task runs through the same seam the scheduler and the Pipelines tab use, so a hand run leaves the same ledger row and the same log file:
+
+```
+uv run python -c "from fpl_edge.pipelines import runner; o = runner.run_task('<task id>'); print(o.result.outcome, o.log_path)"
+```
+
+The commands each task runs, in order, for running one step on its own:
+
+**`presser_projection_refresh`**
+
+```
+uv run python scripts/ingest_live.py
+uv run python scripts/ingest_odds.py --fixtures
+uv run python -m fpl_edge.ingest.content.pipeline ingest --backfill-days 2
+uv run python -m fpl_edge.platform.scripts.fixtures --build --season <season> --db <db_path>
+uv run python -m fpl_edge.ingest.projections.cli ingest --season <season> --first-gw <gw> --last-gw <gw plus 5>
+# in process: fpl_edge.interfaces.watchlist.digest_lines
+```
+
+**`price_radar`**
+
+```
+# in process: fpl_edge.myteam.store.MyTeamStore
+# in process: fpl_edge.config.UserConfig
+```
+
+**`final_solve_delivery`**
+
+```
+# no subprocess: the task reads the warehouse in process
+```
+
+**`lineup_captain_check`**
+
+```
+uv run python -m fpl_edge.ingest.lineups --season <season> --db <db_path>
+```
+
+**`odds_refresh`**
+
+```
+uv run python scripts/ingest_odds.py --odds-api --season <season>
+uv run python scripts/ingest_odds_extras.py --season <season>
+# in process: fpl_edge.ingest.odds.freshness_summary
+# in process: fpl_edge.ingest.odds.odds_freshness
+```
+
+**`post_gw_settlement`**
+
+```
+uv run python scripts/ingest_live.py
+uv run python scripts/ingest_odds.py --fixtures
+uv run python -m fpl_edge.ingest.results
+uv run python -m fpl_edge.ingest.projections.cli ingest
+uv run python -m fpl_edge.eval.projection_scoring
+uv run python -m fpl_edge.platform.scripts.fixtures --build
+uv run python scripts/ingest_odds.py --odds-api --max-age-hours 48
+uv run python -m fpl_edge.cli.main idea track
+uv run python -m fpl_edge.ingest.content.pipeline score
+uv run python -m fpl_edge.ingest.content.pipeline ingest --backfill-days 3
+uv run python -m fpl_edge.ingest.rivals.crawl --budget 1100
+uv run python -m fpl_edge.ingest.rivals.elite --budget 200
+uv run python -m fpl_edge.ingest.rivals.top1k --grow 300 --budget 1200 --transfers-top 300
+uv run python -m fpl_edge.intel.cli collect
+uv run python scripts/retro_report.py
+uv run python scripts/weekly_idea_report.py
+```
+
+**`fpl_core_insights`**
+
+```
+uv run python -m fpl_edge.ingest.fpl_core_insights --season <season>
+```
+
+**`panel_picks_crawl`**
+
+```
+uv run python -m fpl_edge.ingest.rivals.panel_picks --db <db_path>
+```
+
+**`content_transcribe`**
+
+```
+uv run python -m fpl_edge.ingest.content.pipeline transcribe --budget-s <budget>
+```
+
+**`content_analyse`**
+
+```
+uv run python -m fpl_edge.ingest.content.pipeline analyze --since <since_days> --budget-s <budget>
+```
+
+**`content_analyse_backlog`**
+
+```
+uv run python -m fpl_edge.ingest.content.pipeline analyze --since <since_days> --budget-s <budget>
+```
+
+**`content_fast_rss`**
+
+```
+uv run python -m fpl_edge.ingest.content.pipeline ingest --backfill-days 1 --only <keys>
+uv run python -m fpl_edge.ingest.content.pipeline transcribe --kinds youtube --since 2 --budget-s 300
+# in process: fpl_edge.ingest.content.sources.fast_tier
+```
+
+**`forecast_refresh`**
+
+```
+uv run python -m fpl_edge.cli.main solve --db <db_path> --forecast-only --forecast-source consensus --horizon 5
+```
+
+**`fixture_ratings_refit`**
+
+```
+uv run python -m fpl_edge.platform.scripts.fixtures --build --db <db_path>
+```
+
+**`briefing_intel`**
+
+```
+uv run python -m fpl_edge.platform.briefing_intel --db <db_path> --season <season> --now <isoformat>
+```
+
+**`audio_retention`**
+
+```
+# in process: fpl_edge.ingest.content.asr.sweep_audio_cache
+```
+
+### Deliberate overlaps
+
+One module on two scheduled paths is double work until the code says why. `tests/unit/test_no_double_work.py` walks every path, extracts every target, and fails on an overlap that is not listed here; each row cites the comment that documents it, and the citation is checked against the file.
+
+| Target | Runs on | Why | Documented at |
+|---|---|---|---|
+| `fpl_edge.ingest.projections.cli ingest` | `post_gw_settlement`, `presser_projection_refresh` | Providers publish on their own clocks, so the nightly pull bounds every feed at a day old and the T-30h pull catches what moved before the deadline. Section 6 of ARCHITECTURE_REVIEW.md keeps the nightly one: it is a documented fix, not double work. | `fpl_edge/jobs/post_gw.py:209`, `fpl_edge/pipelines/tasks.py:74` |
+| `fpl_edge.platform.scripts.fixtures --build` | `fixture_ratings_refit`, `post_gw_settlement`, `presser_projection_refresh` | One writer, three callers. Refactor group 6 merged models/team_goals/ratings_cache.py into fixtures/build.py, so the two fits of one model became one fit writing all three artefacts. The 11:00 UTC refit is the daily one, settlement rebuilds after results land, and T-30h rebuilds after midweek rescheduling. | `fpl_edge/jobs/post_gw.py:227`, `fpl_edge/pipelines/tasks.py:82`, `fpl_edge/pipelines/registry.py:592` |
+| `fpl_edge.ingest.content.pipeline ingest` | `content_fast_rss`, `post_gw_settlement`, `presser_projection_refresh` | The content tiers are a decision: 13 creator feeds every four hours, the other 27 sources once a night over a wider window, and a two-day catch-up before each deadline. | `fpl_edge/ingest/content/sources.py:267`, `fpl_edge/pipelines/tasks.py:74` |
+| `fpl_edge.ingest.content.pipeline transcribe` | `content_fast_rss`, `content_transcribe` | Captions and audio are different costs. The 4-hourly rung takes captions only and never downloads audio; the nightly task runs the GPU under a wall-clock budget. | `fpl_edge/pipelines/registry.py:667` |
+| `fpl_edge.ingest.content.pipeline analyze` | `content_analyse`, `content_analyse_backlog` | Same budgeted, resumable pass over two different queues: the daily one covers the last 21 days, the overnight one drops the window and eats the never-analysed backlog. | `fpl_edge/pipelines/registry.py:552` |
+| `scripts/ingest_odds.py --odds-api` | `odds_refresh`, `post_gw_settlement` | The nightly top-up is a no-op whenever the deadline ladder has already priced the week. --max-age-hours 48 is what makes it one, and it reports the skip rather than a fake ok. | `fpl_edge/jobs/post_gw.py:247` |
+| `scripts/ingest_live.py` | `post_gw_settlement`, `presser_projection_refresh` | The bootstrap snapshot before a deadline is the point of the T-30h task: prices, injuries and news move after the nightly run. | `fpl_edge/pipelines/tasks.py:74` |
+| `scripts/ingest_odds.py --fixtures` | `post_gw_settlement`, `presser_projection_refresh` | Forward fixtures are free and reschedules land midweek, so the T-30h task refetches them alongside the rest of the chain's head. | `fpl_edge/pipelines/tasks.py:74` |
+
+<!-- END GENERATED -->
 
 ---
 
@@ -54,7 +269,7 @@ operating map. **Bold** = scheduled today; *italics* = manual-only today.
 | livefpl (same CLI) | EO predicted/top10k/elite | daily |
 
 We pull all of them once daily (post_gw). **Measured: most pulls re-store
-value-identical rows** — fplform is 60k rows over 13 pulls and it is the
+value-identical rows**. fplform is 60k rows over 13 pulls and it is the
 *most* volatile provider; fpl_ep/airsenal re-store unchanged numbers for days.
 
 ### D · Content (creators)
@@ -69,13 +284,13 @@ value-identical rows** — fplform is 60k rows over 13 pulls and it is the
 
 ### E · Cohort crawls (elite field)
 **elite snowball** (budget 1100), **named elite** (identity-verified),
-**top10k sampler** (grow +300/night) — all nightly post_gw, all budgeted with
+**top10k sampler** (grow +300/night), all nightly post_gw, all budgeted with
 per-endpoint HTTP TTL caches (finished-GW picks cached ~forever; transfers 3h).
 
 ### F · On-demand / manual
 Understat player profile (UI click), Pulselive confirmed lineups (DAG T-90m),
 intel (offline replay of archived bootstraps, nightly), *FPL-Core-Insights
-per-match xG (manual — worth scheduling)*, *vaastav history (one-off)*.
+per-match xG (manual, worth scheduling)*, *vaastav history (one-off)*.
 
 ### The scheduler that already exists
 `deadline_dag` is launchd-ticked every 600s and is **already the Argus
@@ -85,7 +300,7 @@ per-task stale windows so a slept-through rung is dropped rather than
 double-fired, an idempotent `dag_firing` ledger claimed before running, and
 honest outcome rows (`delivered/quiet/skipped_stale/no_source/error`).
 post_gw is the calendar-daily settlement chain. The design question is not
-"build a scheduler" — it is "promote the one we have to own everything".
+"build a scheduler", it is "promote the one we have to own everything".
 
 **How an outcome becomes a health state (2026-09-08).** The board used to
 count only `error` toward the failure streak, so a run that correctly
@@ -103,30 +318,30 @@ the full tail stays one click away in the drawer.
 
 ## 2 · The owner's questions, answered with facts
 
-**xPoints — how often do providers publish?** Measured above (§1C). Daily
+**xPoints: how often do providers publish?** Measured above (§1C). Daily
 pulls are right for fplform; wasteful-but-harmless for the static ones. The
-real waste is *storage semantics*, not fetch count — see change detection.
+real waste is *storage semantics*, not fetch count; see change detection.
 
-**xMins — do we fetch it?** Yes: `fact_projection.xmins` from gh_fplbench
+**xMins: do we fetch it?** Yes: `fact_projection.xmins` from gh_fplbench
 (every row) and gh_blueladd (partial); `xp_if_appears` from fplform;
 `p_appear` from fplform + premierinjuries; rotowire predicted XI kept
 separate as the journalist-proxy (`fact_predicted_lineup`). The migration
-that added the column forbids squashing p_appear↔xmins into each other —
+that added the column forbids squashing p_appear↔xmins into each other,
 deriving one from the other is a minutes model, which we refuse to fake.
 
 **Transcription "on disk"?** Two-tier: panel-creator YouTube captions at
 ~286× realtime (cheap), MLX-Whisper on-GPU ASR at ~11.5× for podcast audio.
 Audio downloads are content-addressed to `data/raw/content/asr_audio/` so a
-re-run never re-downloads — that is the "disk" part, and it is correct.
+re-run never re-downloads, which is the "disk" part, and it is correct.
 Two real problems: **transcription is manual-only** (nothing schedules it),
 and **the audio cache has no cleanup** (grows forever; episodes are
 20-400MB).
 
-**Injuries — source, store, surface?** Three paths, deliberately ranked:
+**Injuries: source, store, surface?** Three paths, deliberately ranked:
 1. **FPL API bootstrap** → `fact_player_state` (status, chance_of_playing,
    news, `news_added`). Chosen as PRIMARY because `news_added` is an honest
-   published-at — exactly what a PIT store needs. 119k rows.
-2. `intel_item` — the same facts replayed as dated AVAILABILITY items
+   published-at, exactly what a PIT store needs. 119k rows.
+2. `intel_item`, the same facts replayed as dated AVAILABILITY items
    (content-hashed, so 300 polls of one injury = one row).
 3. premierinjuries.com → `fact_projection.p_appear`.
 Surfaced today: fixtures drawer team news, DAG T-30h digest, player_intel
@@ -139,7 +354,7 @@ expensive step and is separate. What is missing is (a) a faster RSS cadence
 for the top creators than nightly, and (b) a *relevance gate* between
 description and transcription so GPU/LLM spend follows worth.
 
-**Manual link — don't fetch if not relevant?** Built: the paste-a-link job
+**Manual link: don't fetch if not relevant?** Built: the paste-a-link job
 parks at a preview (publisher, title, GW, description, duration, ETA) and
 transcribes only on explicit accept; decline/expiry stores nothing.
 
@@ -154,15 +369,15 @@ under new as_of* (next section).
 
 ## 3 · Defects found during inventory (fix regardless of design)
 
-1. ~~`make deploy` copies the deleted telegram plist~~ — fixed (fe8ad79).
+1. ~~`make deploy` copies the deleted telegram plist~~, fixed (fe8ad79).
 2. **`fpl_mcp` is a second, worse fetch surface**: bare `requests`, no
    archive, no budget, overwrites plain-JSON caches inside the hash-named
-   archive dir, and — worst — `video_transcript.py` uses the youtubei route
+   archive dir, and worst, `video_transcript.py` uses the youtubei route
    `fpl_edge` explicitly refuses as robots-disallowed, with no robots check
    and silent-empty failures. Must be unified onto the fpl_edge fetchers.
-3. **Audio cache unbounded** — needs a post-transcription retention rule.
+3. **Audio cache unbounded**, needs a post-transcription retention rule.
 4. **paste-a-link writes `transcript_segment` without a
-   `transcript_provenance` row** — the one transcript path with no receipt.
+   `transcript_provenance` row**, the one transcript path with no receipt.
 5. Stale prose: T-3h appears in two comments; the ladder is T-5h.
 6. Manual-only pipelines that should be scheduled: transcription,
    FPL-Core-Insights (per-match xG for the fixtures form window!).
@@ -196,9 +411,9 @@ values; write only rows whose payload differs; count the rest as
 `rows_unchanged` in the ledger.
 
 What this buys, in the owner's words:
-- "don't rerun the whole thing if already latest" — the freshness gate reads
+- "don't rerun the whole thing if already latest": the freshness gate reads
   the ledger: last successful run + rows_unchanged says *confirmed current*.
-- "should not restore the same thing" — value-identical pulls stop writing
+- "should not restore the same thing": value-identical pulls stop writing
   fact rows at all.
 - The PIT ambiguity dies: today "no new as_of" cannot distinguish *not
   refetched* from *refetched, unchanged*. Ledger + unchanged-count makes
@@ -211,7 +426,7 @@ One panel listing every registered task: last run, outcome, rows
 written/unchanged, next due, freshness state (unifying today's four disjoint
 staleness registries into one module the panel, the DAG gates, and the
 drawers all read). Trigger buttons POST `/api/pipelines/{id}/run` (the
-fetch_profile route is the precedent) — with metered pipelines either
+fetch_profile route is the precedent), with metered pipelines either
 excluded or confirm-gated (open question).
 
 ### 4.4 Content cadence + the relevance gate
@@ -219,7 +434,7 @@ excluded or confirm-gated (open question).
   full-roster nightly as today. RSS polls are conditional-fetch cheap.
 - New scheduled `transcribe` task with a nightly wall-clock budget:
   captions-first for panel creators (286×), ASR queue for podcasts ordered
-  by a **relevance gate** — score the stored description (players named ×
+  by a **relevance gate**: score the stored description (players named ×
   resolver hits, gameweek terms, panel status, recency) and transcribe above
   threshold; below-threshold items stay description-only with the score
   recorded (a named reason, not silence). No LLM in the gate at first: the
@@ -237,7 +452,7 @@ with refusal-before-spend, honest outcome rows.
 ## 5 · Decisions (closed with owner, 2026-08-31)
 
 1. **One scheduler.** deadline_dag becomes THE scheduler with an explicit
-   task registry — calendar tasks (post_gw's steps fold in), deadline-relative
+   task registry: calendar tasks (post_gw's steps fold in), deadline-relative
    tasks (the ladders stay), on-demand tasks. The postgw plist retires once
    parity is proven; launchd's only job is waking the tick.
 2. **Fetch ledger + write-on-change.** `fetch_run` records every pull;
@@ -255,7 +470,7 @@ with refusal-before-spend, honest outcome rows.
 1. **fetch_run ledger + write-on-change** in the three append paths
    (Warehouse.append, ProjectionStore, UnderstatStore) behind one helper.
    The PIT contract note: an entity's absent new as_of now means "no change
-   observed OR not fetched", and the ledger is the disambiguator — every
+   observed OR not fetched", and the ledger is the disambiguator: every
    consumer that cares reads fetch_run. Tests must pin: unchanged rows not
    written but counted; changed rows written; the skip gate honours
    ledger+freshness; contradiction refusal unchanged.

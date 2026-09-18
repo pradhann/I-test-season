@@ -468,9 +468,16 @@ def test_the_pipeline_health_dot_never_travels_without_its_reason() -> None:
     panel exists to prevent. The one function that renders health must render
     the reason string alongside the dot."""
     body = _fn_body(VIEWS["pipelines"], "healthEl")
-    assert "pipe-dot" in body and "reason" in body, (
-        "healthEl must render both the dot and md.reason; a dot without its "
-        "sentence is decoration"
+    # Repointed 2026-09-18: the dot is drawn by chip(), which the status and
+    # stale columns share. The intent is unchanged, so it is now checked in
+    # two halves: healthEl renders the reason beside a chip, and chip is
+    # where pipe-dot lives.
+    assert "chip(" in body and "reason" in body, (
+        "healthEl must render both the state chip and md.reason; a dot "
+        "without its sentence is decoration"
+    )
+    assert "pipe-dot" in _fn_body(VIEWS["pipelines"], "chip"), (
+        "chip() must draw the dot; it is the only thing that does"
     )
 
 
@@ -704,19 +711,36 @@ def test_every_pipeline_state_and_status_has_words_and_a_dot() -> None:
 
 
 def test_pipeline_rows_are_operable_and_labelled() -> None:
-    """The rows are div-based buttons opening a drawer: they need the role,
-    both activation keys, and a dialog the focus actually moves into. The
-    grid's columns need names, since eight positional cells fold to two."""
+    """The rows are buttons opening an expandable: they need the role, both
+    activation keys, a named region the focus actually moves into, and a way
+    back out. The columns need names, since they fold to a card.
+
+    Repointed 2026-09-18: the drawer became a per-row expandable, so the
+    dialog assertions became the disclosure ones. The intent survives
+    verbatim: a row is operable from the keyboard, it says whether it is
+    open, and focus goes into what it opened and comes back when it closes.
+    """
     src = _strip_comments(VIEWS["pipelines"])
     assert 'setAttribute("role", "button")' in src, "rows need a button role"
     assert re.search(r'e\.key [!=]== " "', src), (
         "Space must activate a row, not scroll the page"
     )
-    assert 'setAttribute("role", "dialog")' in src, "the drawer is a dialog"
-    assert 'setAttribute("aria-labelledby"' in src, "the dialog needs a name"
-    assert "close.focus()" in src, "focus must move into the drawer"
-    assert "opener.focus()" in src, "focus must return to the row on close"
-    assert "const COLUMNS = [" in src, "the grid's columns must be named once"
+    assert 'setAttribute("aria-expanded"' in src, (
+        "a row that opens something must say whether it is open"
+    )
+    assert 'setAttribute("aria-controls"' in src, (
+        "the row must name the expandable it controls"
+    )
+    assert 'setAttribute("role", "region")' in src, (
+        "the expandable is a named region"
+    )
+    assert re.search(r'first\.focus\(\)', src), (
+        "focus must move into the expandable"
+    )
+    assert re.search(r'row\.focus\(\)', src), (
+        "focus must return to the row when it closes"
+    )
+    assert "const COLUMNS = [" in src, "the table's columns must be named once"
     assert "dataset.label" in src, "each cell must carry its column's name"
 
 
