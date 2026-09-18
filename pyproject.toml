@@ -50,6 +50,12 @@ fpl = "fpl_edge.cli.main:app"
 fpl-mcp = "fpl_edge.mcp.__main__:main"
 
 [tool.pytest.ini_options]
+# Each suite run seeds several 160 MB warehouse copies under tmp_path; with
+# pytest's default of keeping the last three trees per interpreter and six
+# interpreters running suites, the disk filled twice on 2026-09-18. Keep the
+# trees of failed tests only, and only the latest run.
+tmp_path_retention_policy = "failed"
+tmp_path_retention_count = 1
 testpaths = ["tests"]
 markers = ["network: requires live network (deselected by default)"]
 addopts = "-m 'not network' -q"
