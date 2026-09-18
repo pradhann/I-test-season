@@ -57,7 +57,7 @@ _IMPORT_ERROR: Optional[str] = None
 try:
     from fpl_edge.interfaces.bias import review as _review  # type: ignore
     from fpl_edge.interfaces.inbox import IdeaInbox  # type: ignore
-    from fpl_edge.interfaces.registry import IdeaRegistry  # type: ignore
+    from fpl_edge.interfaces.store import IdeaRegistry  # type: ignore
     from fpl_edge.interfaces.report import weekly_report as _weekly_report  # type: ignore
     from fpl_edge.interfaces.tracking import track as _track  # type: ignore
     from fpl_edge.store import Warehouse  # type: ignore

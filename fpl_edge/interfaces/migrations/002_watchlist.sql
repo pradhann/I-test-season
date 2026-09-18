@@ -7,7 +7,7 @@
 -- surface it in every pre-deadline digest, resolve it when the user moves on.
 --
 -- Same DDL-ownership rule as 001: interface-owned table, applied idempotently
--- by the runner in fpl_edge/interfaces/registry.py, recorded in
+-- by the runner in fpl_edge/interfaces/store.py, recorded in
 -- schema_migration. Not in store.PIT_KEYS -- like ideas, this is a record of
 -- what the user wanted, not a fact about the world.
 --

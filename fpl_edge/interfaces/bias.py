@@ -43,7 +43,7 @@ import pandas as pd
 
 from fpl_edge.config import USER
 from fpl_edge.interfaces.features import RECENT_HAUL_WINDOW
-from fpl_edge.interfaces.registry import IdeaRegistry
+from fpl_edge.interfaces.store import IdeaRegistry
 from fpl_edge.store import Warehouse
 
 try:  # scipy is a hard dependency of the project, but the review must not be

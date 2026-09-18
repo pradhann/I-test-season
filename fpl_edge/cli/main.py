@@ -29,7 +29,7 @@ from rich.table import Table
 from fpl_edge.interfaces.bias import MIN_OBSERVATIONS, review as run_review
 from fpl_edge.interfaces.ideas import IdeaStatus
 from fpl_edge.interfaces.inbox import IdeaInbox
-from fpl_edge.interfaces.registry import IdeaRegistry
+from fpl_edge.interfaces.store import IdeaRegistry
 from fpl_edge.interfaces.report import weekly_report
 from fpl_edge.interfaces.tracking import track as run_track
 # Importing the package also registers the weekly report's `transfers` section.

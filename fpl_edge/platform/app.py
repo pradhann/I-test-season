@@ -66,7 +66,7 @@ from pydantic import BaseModel, Field
 
 # Importing the scripts package is what registers the five panel scripts.
 import fpl_edge.platform.scripts  # noqa: F401
-from fpl_edge.platform import inbox as inbox_mod
+from fpl_edge.platform import deliveries as deliveries_mod
 from fpl_edge.platform import link_jobs as link_jobs_mod
 from fpl_edge.platform import panels as panels_mod
 from fpl_edge.platform.query import QueryError, guarded_query, read_copy
@@ -305,13 +305,13 @@ def create_app(db: Path | str = DEFAULT_DB,
     @app.get("/api/inbox")
     def get_inbox(limit: int = 50, include_acked: bool = False) -> JSONResponse:
         return JSONResponse(
-            inbox_mod.list_deliveries(db=db_path, limit=limit,
-                                      include_acked=include_acked)
+            deliveries_mod.list_deliveries(db=db_path, limit=limit,
+                                           include_acked=include_acked)
         )
 
     @app.post("/api/inbox/{delivery_id}/ack")
     def post_ack(delivery_id: str) -> JSONResponse:
-        result = inbox_mod.ack(delivery_id, db=db_path)
+        result = deliveries_mod.ack(delivery_id, db=db_path)
         if not result.get("found"):
             raise HTTPException(status_code=404, detail=result.get("reason", "not found"))
         return JSONResponse(result)

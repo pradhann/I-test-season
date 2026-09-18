@@ -5,7 +5,7 @@
 -- file is the shared contract every other team reads; adding tables there makes
 -- every team's DDL conflict. The runner in fpl_edge/ingest/projections/store.py
 -- applies this file idempotently against the same DuckDB file, exactly as
--- fpl_edge/interfaces/registry.py does for the idea registry. One warehouse,
+-- fpl_edge/interfaces/store.py does for the idea registry. One warehouse,
 -- one connection, several owners of DDL.
 --
 -- Point-in-time discipline is the same as store/schema.sql: `as_of` is the

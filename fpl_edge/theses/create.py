@@ -467,7 +467,7 @@ def sync_from_registry(
     mirrors anything new. Ideas without a resolved subject are skipped (the
     inbox is still asking the user which player they meant).
     """
-    from fpl_edge.interfaces.registry import IdeaRegistry
+    from fpl_edge.interfaces.store import IdeaRegistry
 
     store = store or ThesesStore()
     season = season or USER.season

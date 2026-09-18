@@ -13,7 +13,7 @@ import pytest
 
 from fpl_edge.interfaces.ideas import Comparator, IdeaKind, IdeaStatus, Outcome, make_idea_id
 from fpl_edge.interfaces.inbox import IdeaInbox
-from fpl_edge.interfaces.registry import IdeaRegistry
+from fpl_edge.interfaces.store import IdeaRegistry
 from fpl_edge.interfaces.testing import SEASON, seed_warehouse
 from fpl_edge.interfaces.tracking import track
 from fpl_edge.interfaces.verdict import PriorVerdict

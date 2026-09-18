@@ -68,7 +68,7 @@ from fpl_edge.interfaces.parsing import (
     has_fpl_intent,
     interpret_reply,
 )
-from fpl_edge.interfaces.registry import IdeaRegistry
+from fpl_edge.interfaces.store import IdeaRegistry
 from fpl_edge.interfaces.verdict import PriorVerdict, TimeBounded, VerdictProvider, issue
 from fpl_edge.store import Snapshot, Warehouse
 from fpl_edge.types import GwId, PlayerCode, Season

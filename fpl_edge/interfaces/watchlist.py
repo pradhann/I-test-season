@@ -7,7 +7,7 @@ so every pre-deadline Telegram delivery reminds the user what they said they
 wanted. ``resolve`` closes an item without deleting it.
 
 The schema is applied by the same migration runner as the idea registry
-(:class:`fpl_edge.interfaces.registry.IdeaRegistry` applies every file in
+(:class:`fpl_edge.interfaces.store.IdeaRegistry` applies every file in
 ``fpl_edge/interfaces/migrations/`` idempotently), so constructing a
 :class:`Watchlist` against any warehouse -- including a test one -- creates the
 table on first use. Name resolution is deliberately NOT here: callers (the MCP
@@ -23,7 +23,7 @@ import datetime as dt
 
 import pandas as pd
 
-from fpl_edge.interfaces.registry import IdeaRegistry
+from fpl_edge.interfaces.store import IdeaRegistry
 from fpl_edge.store import Warehouse
 
 UTC = dt.timezone.utc

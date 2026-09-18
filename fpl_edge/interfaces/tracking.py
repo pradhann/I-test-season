@@ -35,7 +35,7 @@ from fpl_edge.interfaces.features import (
     realised_points,
 )
 from fpl_edge.interfaces.ideas import Idea, IdeaKind, IdeaStatus, Outcome
-from fpl_edge.interfaces.registry import IdeaRegistry
+from fpl_edge.interfaces.store import IdeaRegistry
 from fpl_edge.store import Warehouse
 
 UTC = dt.timezone.utc

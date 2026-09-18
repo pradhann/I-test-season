@@ -4,7 +4,7 @@
 -- fpl_edge/store/schema.sql on purpose. schema.sql is the shared contract that
 -- the ingest, model and optimiser teams read; adding interface-owned tables
 -- there would make every one of those teams' migrations conflict with ours.
--- The runner in fpl_edge/interfaces/registry.py applies this file idempotently
+-- The runner in fpl_edge/interfaces/store.py applies this file idempotently
 -- against the same DuckDB file, so there is one warehouse and one connection --
 -- just two owners of DDL.
 --

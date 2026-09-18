@@ -22,7 +22,7 @@ import pytest
 from fpl_edge.interfaces.bias import review
 from fpl_edge.interfaces.ideas import IdeaStatus, Outcome
 from fpl_edge.interfaces.inbox import IdeaInbox
-from fpl_edge.interfaces.registry import IdeaRegistry
+from fpl_edge.interfaces.store import IdeaRegistry
 from fpl_edge.interfaces.report import weekly_report
 from fpl_edge.interfaces.telegram import FakeTransport, TelegramBot
 from fpl_edge.interfaces.testing import SEASON, seed_warehouse

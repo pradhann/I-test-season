@@ -1,6 +1,6 @@
 """Persistence, and the one read path that is safe to use.
 
-The migration runner mirrors :meth:`fpl_edge.interfaces.registry.IdeaRegistry.migrate`
+The migration runner mirrors :meth:`fpl_edge.interfaces.store.IdeaRegistry.migrate`
 exactly: idempotent, recorded in ``schema_migration`` with the file's sha256, and
 applied to the same DuckDB file the store team owns. ``fpl_edge/store/schema.sql``
 is not touched.

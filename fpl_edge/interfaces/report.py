@@ -24,7 +24,7 @@ from typing import Callable
 
 from fpl_edge.interfaces.bias import review as run_review
 from fpl_edge.interfaces.ideas import IdeaStatus
-from fpl_edge.interfaces.registry import IdeaRegistry
+from fpl_edge.interfaces.store import IdeaRegistry
 from fpl_edge.store import Warehouse
 
 UTC = dt.timezone.utc
