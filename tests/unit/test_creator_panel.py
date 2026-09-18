@@ -1724,9 +1724,10 @@ def _runtime_strings(path):
 
 
 def test_no_panel_string_carries_a_dash_aside():
-    assert len(_CREATORS_PY) == 7, (
-        "the package is __init__ plus the six modules of row 22; a seventh "
-        f"module would go unchecked: {[p.name for p in _CREATORS_PY]}")
+    assert len(_CREATORS_PY) == 8, (
+        "the package is __init__, the six modules of row 22, and episodes.py "
+        "(creator_episodes / episode_summary); another module would go "
+        f"unchecked: {[p.name for p in _CREATORS_PY]}")
     bad = [(path.name, line, text) for path in _CREATORS_PY
            for line, text in _runtime_strings(path)
            if " -- " in text or "—" in text]
