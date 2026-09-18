@@ -182,17 +182,48 @@ def test_the_doors_would_notice_a_model_call(no_doors_out):
 
 def test_transcription_refuses_rather_than_falling_back_to_a_model(
         tmp_path, monkeypatch, no_doors_out, capsys):
-    """With no local engine the command stops and says so. The failure mode
-    that would cost tokens is a remote fallback, and there is not one."""
+    """With no local engine an audio item is left in the queue for the Mac
+    worker: nothing stored, nothing recorded, no remote fallback. The exit is
+    0 because a Linux host without a GPU is the expected shape after the
+    Railway move (DEPLOYMENT.md 1.3), not a fault. Repointed from the pre-B2
+    contract, which exited 1 before reading the queue."""
     from fpl_edge.ingest.content import transcribe_cmd
 
     db = _seed(tmp_path)
+    wh = Warehouse(db)
+    try:
+        wh.sql(
+            "INSERT INTO content_item (item_id, source_key, creator, kind, "
+            "title, url, published_at, fetched_at, text_source, text, "
+            "text_sha256) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ["pod1", "pod_fplharry", CREATOR, "podcast",
+             "GW6 pod: transfers and captaincy",
+             "https://example.invalid/pod/gw6.mp3", NOW, NOW,
+             "description", "the GW6 pod on transfers and captaincy",
+             hashlib.sha256(b"pod1").hexdigest()],
+        )
+        # A stored enclosure keeps the queue builder from reading the feed,
+        # which is a network fetch this test's socket guard would refuse.
+        wh.sql("INSERT INTO content_item_asset (item_id, enclosure_url, "
+               "checked_utc) VALUES (?, ?, ?)",
+               ["pod1", "https://example.invalid/pod/gw6.mp3", NOW])
+    finally:
+        wh.close()
     monkeypatch.setattr(
         asr, "backend_status",
         lambda: asr.BackendStatus(mlx_whisper=False, decoder=None,
                                   mlx_whisper_error="not installed here"))
 
-    assert transcribe_cmd.cmd_transcribe(_args(db)) == 1
+    assert transcribe_cmd.cmd_transcribe(_args(db, kinds="podcast")) == 0
     out = capsys.readouterr().out
-    assert "no local transcription engine" in out
-    assert "must not spend Anthropic tokens" in out
+    assert transcribe_cmd.ASR_DEFERRED_NOTE in out
+    assert "nothing to do" not in out
+    assert "ModelCallAttempted" not in out
+    wh = Warehouse(db)
+    try:
+        assert int(wh.sql("SELECT count(*) AS n FROM transcript_segment")
+                   .iloc[0, 0]) == 0
+        assert int(wh.sql("SELECT count(*) AS n FROM content_transcribe_skip "
+                          "WHERE item_id = 'pod1'").iloc[0, 0]) == 0
+    finally:
+        wh.close()
