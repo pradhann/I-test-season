@@ -416,3 +416,14 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     return int(args.func(args))
+
+
+# Every content step in pipelines/registry.py and jobs/post_gw.py runs
+# `python -m fpl_edge.ingest.content.pipeline ...`. Without this block the
+# module imports, defines main() and exits 0 having done nothing, and run_step
+# records that as a successful step. Refactor group 4 (b952101) dropped it,
+# and content ingest, transcription, claim extraction and creator scoring were
+# silent no-ops for nine hours. Guarded, not a bare raise, because the audit
+# suite imports every module (see fixtures/__main__.py for the same trap).
+if __name__ == "__main__":
+    raise SystemExit(main())
