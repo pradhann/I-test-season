@@ -817,6 +817,11 @@ def test_selecting_the_set_that_contains_you_is_disclosed(segmented_db,
                                                           monkeypatch):
     """If the owner is inside the field, his own transfer moves the
     denominator, and the what-if simulator's central assumption is false."""
+    # The owner's entry id resolves through config.owner_entry_id(), which
+    # reads FPL_ENTRY_ID from the environment or the repo .env before falling
+    # back to config.USER. The operator's .env carries the real id, so the
+    # test sets the variable rather than the fallback it would never reach.
+    monkeypatch.setenv("FPL_ENTRY_ID", "4")
     monkeypatch.setattr("fpl_edge.config.USER", SimpleNamespace(entry_id=4))
     res = run(segmented_db, segments=["mini_league"])
     assert res["selection"]["includes_you"] is True
