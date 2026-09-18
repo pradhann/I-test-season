@@ -114,7 +114,8 @@ def test_default_append_behaviour_is_byte_identical(tmp_path):
 
 def test_record_run_writes_ok_with_counts(tmp_path):
     wh = _wh(tmp_path)
-    with fetch_ledger.record_run(wh, "ingest_projections", "fplform") as rec:
+    with fetch_ledger.record_run(wh, "ingest_projections", "fplform",
+                                 trigger="scheduler") as rec:
         rec.add(written=10, unchanged=4600)
         rec.credits = 0.0
     row = fetch_ledger.last_run(wh, "ingest_projections", "fplform")
@@ -125,7 +126,8 @@ def test_record_run_writes_ok_with_counts(tmp_path):
 
 def test_a_raising_run_lands_as_error_and_reraises(tmp_path):
     wh = _wh(tmp_path)
-    with pytest.raises(RuntimeError), fetch_ledger.record_run(wh, "p", "s"):
+    with pytest.raises(RuntimeError), fetch_ledger.record_run(
+            wh, "p", "s", trigger="scheduler"):
         raise RuntimeError("provider fell over")
     row = fetch_ledger.last_run(wh, "p", "s", ok_only=False)
     assert row["status"] == "error"
@@ -140,11 +142,12 @@ def test_checked_within_is_the_skip_gate(tmp_path):
     wh = _wh(tmp_path)
     assert not fetch_ledger.checked_within(wh, "p", hours=1)
 
-    with fetch_ledger.record_run(wh, "p") as rec:
+    with fetch_ledger.record_run(wh, "p", trigger="scheduler") as rec:
         rec.add(0, 100)
     assert fetch_ledger.checked_within(wh, "p", hours=1)
 
-    with pytest.raises(RuntimeError), fetch_ledger.record_run(wh, "q"):
+    with pytest.raises(RuntimeError), fetch_ledger.record_run(
+            wh, "q", trigger="scheduler"):
         raise RuntimeError("boom")
     assert not fetch_ledger.checked_within(wh, "q", hours=1)
     wh.close()
@@ -154,7 +157,7 @@ def test_skipped_fresh_counts_as_a_check(tmp_path):
     """A skip that verified freshness IS a check -- otherwise every gated tick
     would look unchecked and the gate would defeat itself."""
     wh = _wh(tmp_path)
-    with fetch_ledger.record_run(wh, "p") as rec:
+    with fetch_ledger.record_run(wh, "p", trigger="scheduler") as rec:
         rec.status = "skipped_fresh"
         rec.note = "all markets younger than 24h"
     assert fetch_ledger.checked_within(wh, "p", hours=1)

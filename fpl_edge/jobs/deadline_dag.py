@@ -55,6 +55,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from fpl_edge.config import BRIEFING_MODEL
 from fpl_edge.jobs import outbox
 from fpl_edge.pipelines import registry, runner
 from fpl_edge.pipelines.contracts import (
@@ -388,6 +389,13 @@ def polish_copy(title: str, body: str, *, timeout: float = 45.0) -> tuple[str, s
     3. CLAUDECODE / CLAUDE_CODE_ENTRYPOINT are scrubbed from the child's
        environment. Inherited, they make the CLI believe it is nested inside an
        agent session and it behaves differently or refuses.
+
+    The model is named explicitly. Without ``--model`` this ran at whatever
+    that machine's CLI defaulted to, once per delivered alert, and nothing
+    recorded which model rewrote the copy. It reads the briefing pin because
+    it is the same job: prose over facts a deterministic step already decided.
+    This call reports no usage anywhere, because it happens after the task
+    result is built and has no ledger row of its own to carry one.
     """
     if not CLAUDE_BIN.exists():
         return title, body
@@ -401,7 +409,7 @@ def polish_copy(title: str, body: str, *, timeout: float = 45.0) -> tuple[str, s
     )
     try:
         proc = subprocess.run(
-            [str(CLAUDE_BIN), "-p", prompt],
+            [str(CLAUDE_BIN), "-p", "--model", BRIEFING_MODEL, prompt],
             capture_output=True, text=True, timeout=timeout, check=False, env=env,
         )
         if proc.returncode != 0:

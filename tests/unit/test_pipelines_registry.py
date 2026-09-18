@@ -578,7 +578,7 @@ def test_an_invalid_trigger_is_refused(tmp_path):
 
 def _ledger_row(wh, pipeline, *, status="ok", age_h=0.0, credits=0.0,
                 duration_s=1.0):
-    rec = fetch_ledger.RunRecord(pipeline)
+    rec = fetch_ledger.RunRecord(pipeline, trigger="scheduler")
     rec.started = dt.datetime.now(UTC) - dt.timedelta(hours=age_h)
     rec.finished = rec.started + dt.timedelta(seconds=duration_s)
     rec.credits = credits
@@ -688,7 +688,7 @@ def test_a_health_reason_carries_the_sentence_not_the_traceback(tmp_path):
                      window=dt.timedelta(hours=3))
     wh = Warehouse(tmp_path / "t.duckdb")
     try:
-        rec = fetch_ledger.RunRecord("tb")
+        rec = fetch_ledger.RunRecord("tb", trigger="scheduler")
         rec.started = dt.datetime.now(UTC) - dt.timedelta(minutes=5)
         rec.finished = dt.datetime.now(UTC)
         fetch_ledger.record_finished(wh, rec, status="error", note=note)

@@ -137,7 +137,8 @@ def seed_item(db, *, item_id: str, url: str, segments=(), analysis=None,
             wh.sql("INSERT INTO transcript_segment VALUES (?, ?, ?, ?)",
                    [item_id, seq, start, body])
         if analysis is not None:
-            wh.sql("INSERT INTO content_analysis VALUES (?, ?, ?, ?)",
+            wh.sql("INSERT INTO content_analysis (item_id, model, "
+                   "created_utc, analysis_json) VALUES (?, ?, ?, ?)",
                    [item_id, "claude-test", now, json.dumps(analysis)])
     finally:
         wh.close()

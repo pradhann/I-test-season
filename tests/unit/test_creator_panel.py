@@ -330,7 +330,8 @@ def seeded_db(tmp_path):
                ["watch_row", seq, start_s, text])
     # The analysis is attached to the OTHER row of the same video, which is
     # exactly the live shape: only canonicalisation pairs it with the transcript.
-    wh.sql("INSERT INTO content_analysis VALUES (?, ?, ?, ?)",
+    wh.sql("INSERT INTO content_analysis (item_id, model, created_utc, "
+           "analysis_json) VALUES (?, ?, ?, ?)",
            ["short_row", "claude-opus-5", PAST, json.dumps(ANALYSIS)])
     # The same position recorded against both stored rows: one publication.
     _claim(wh, "c_watch", "watch_row", "The Talker", "yt_talker", HAALAND,
@@ -1347,7 +1348,8 @@ def _plant_undated_watch(db):
     wh = Warehouse(db)
     _item(wh, "undated_row", "yt_notes", "Notes Only", "youtube", "Rambles",
           "https://www.youtube.com/watch?v=UNDATEDvid1", PAST, "description")
-    wh.sql("INSERT INTO content_analysis VALUES (?, ?, ?, ?)",
+    wh.sql("INSERT INTO content_analysis (item_id, model, created_utc, "
+           "analysis_json) VALUES (?, ?, ?, ?)",
            ["undated_row", "claude-opus-5", PAST, json.dumps(undated)])
     wh.close()
 
@@ -1617,7 +1619,8 @@ def test_an_unresolvable_spoken_name_in_a_take_stays_raw_and_flagged(seeded_db):
     _item(wh, "ghost_item", "yt_ghost", "Ghost Caller", "youtube",
           "GW2 bargains", "https://www.youtube.com/watch?v=GHOSTvid001",
           PAST, "description")
-    wh.sql("INSERT INTO content_analysis VALUES (?, ?, ?, ?)",
+    wh.sql("INSERT INTO content_analysis (item_id, model, created_utc, "
+           "analysis_json) VALUES (?, ?, ?, ?)",
            ["ghost_item", "claude-opus-5", PAST, json.dumps(analysis)])
     wh.close()
     take = _by_name(board(seeded_db))["Ghost Caller"]["take"]

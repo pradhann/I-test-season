@@ -112,6 +112,20 @@ ANALYSE_BUDGET_S = 1800.0
 #: the row that actually eats a backlog.
 ANALYSE_SINCE_DAYS = 21
 
+#: Reported model tokens one backlog firing may spend. Overridable per-deploy
+#: with FPL_EDGE_ANALYSE_TOKEN_BUDGET.
+#:
+#: Derived from the warehouse rather than picked. On 2026-09-18 the 799 stored
+#: analyses covered 8,540,938 characters of body text plus 8,714 characters of
+#: system prompt and JSON schema per call; at roughly 4 characters a token
+#: that is 3.88M input and 1.09M output tokens, so 6,210 reported tokens for
+#: an average item. The 30-minute wall clock at three workers fits on the
+#: order of 270 calls, which is about 1.68M tokens. 1.5M therefore bites just
+#: before the wall clock on a transcript-heavy night and never on a light one:
+#: a ceiling, not a throttle. The pass is resumable, so a firing that stops
+#: here leaves a smaller queue and the next one continues.
+ANALYSE_TOKEN_BUDGET = 1_500_000
+
 
 # --------------------------------------------------------------------------
 # Due shapes
@@ -200,6 +214,17 @@ class Task:
     scheduled_by_dag: bool = False
     #: Wall-clock budget metadata for the panel, where the task has one.
     budget_s: float | None = None
+    #: Reported model tokens one firing may spend before it stops and leaves
+    #: the rest for the next one. None means the task spends no tokens, or
+    #: spends a fixed amount per firing that needs no ceiling.
+    #:
+    #: A wall-clock budget already bounds how LONG a firing runs, and for a
+    #: long time that was treated as bounding what it costs. It does not: the
+    #: same thirty minutes buys a handful of two-hour transcripts or a hundred
+    #: pages of show notes, and those differ by more than an order of
+    #: magnitude in tokens. This is the ceiling in the unit the spend is
+    #: actually measured in.
+    token_budget: int | None = None
     #: Grouping for the control panel, following PIPELINES.md §1's map:
     #: core / odds / settlement / results / content / maintenance.
     family: str = "core"
@@ -484,7 +509,26 @@ def _content_analysis_rows(ctx: TaskContext) -> int | None:
     return _table_rows(ctx, "content_analysis")
 
 
-def _run_analyse(ctx: TaskContext, *, since_days: int, label: str) -> TaskResult:
+def _analyse_summary(path) -> dict:
+    """The measured totals the analyse subprocess wrote, or an empty dict.
+
+    Read off a file rather than parsed out of stdout, for the same reason
+    ``_briefing_artefact_counts`` reads the artefact: ``run_step`` keeps the
+    last 300 characters of a step's output, and a run whose tail is a stack
+    of per-item lines would lose its totals.
+    """
+    import json
+    from pathlib import Path
+
+    try:
+        loaded = json.loads(Path(path).read_text())
+    except (OSError, ValueError):
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _run_analyse(ctx: TaskContext, *, since_days: int, label: str,
+                 task_id: str) -> TaskResult:
     """One budgeted, resumable claim-extraction pass over stored text.
 
     THE missing rung. Discovery (``content_fast_rss``, ``post_gw_settlement``)
@@ -513,19 +557,49 @@ def _run_analyse(ctx: TaskContext, *, since_days: int, label: str) -> TaskResult
     """
     if _network_disabled():
         return _GATED
+    import tempfile
+    from pathlib import Path
+
+    from fpl_edge.store.fetch_ledger import CallUsage, spend_note
+
     budget = float(os.environ.get("FPL_EDGE_ANALYSE_BUDGET_S", ANALYSE_BUDGET_S))
+    # The ceiling comes off this task's own registry row, so the Task field is
+    # what the run obeys rather than a number repeated beside it.
+    task = by_id(task_id)
+    tokens = int(os.environ.get(
+        "FPL_EDGE_ANALYSE_TOKEN_BUDGET",
+        (task.token_budget if task is not None else None) or 0))
     before = _content_analysis_rows(ctx)
-    step = run_step(
-        "content_analyse",
-        [ctx.python, "-m", "fpl_edge.ingest.content.pipeline", "analyze",
-         "--since", str(since_days), "--budget-s", str(budget)],
-        # The command stops itself at the budget between items; the process
-        # timeout is the backstop for one call that hangs, never the plan.
-        timeout=budget + 600,
-    )
+    with tempfile.TemporaryDirectory(prefix="fpl-analyse-") as tmp:
+        summary_path = Path(tmp) / "summary.json"
+        step = run_step(
+            "content_analyse",
+            [ctx.python, "-m", "fpl_edge.ingest.content.pipeline", "analyze",
+             "--since", str(since_days), "--budget-s", str(budget),
+             "--token-budget", str(tokens),
+             "--summary-json", str(summary_path)],
+            # The command stops itself at the budget between items; the
+            # process timeout is the backstop for one call that hangs, never
+            # the plan.
+            timeout=budget + 600,
+        )
+        summary = _analyse_summary(summary_path)
     after = _content_analysis_rows(ctx)
     written = _grew_by(before, after)
-    detail = f"{label}; +{written} analyses; {step.detail[-200:]}"
+
+    # The ledger note carries what the run actually spent, as one line of
+    # JSON inside the existing note column. fetch_run grows no columns.
+    spend = spend_note(
+        CallUsage(model_reported=summary.get("model_reported"),
+                  tokens_in=summary.get("tokens_in"),
+                  tokens_out=summary.get("tokens_out")),
+        model_requested=summary.get("model_requested"),
+        calls=summary.get("calls"),
+        token_budget=tokens or None,
+        budget_stopped=bool(summary.get("budget_stopped")),
+        skipped_no_body=summary.get("skipped_no_body"),
+    )
+    detail = f"{label}; +{written} analyses; {step.detail[-200:]}\n{spend}"
     if step.ok:
         return TaskResult(outcome="quiet", detail=detail, steps=[step],
                           ledger_written=written)
@@ -545,7 +619,8 @@ def run_content_analyse(ctx: TaskContext) -> TaskResult:
     13:30 is after it on any night it behaves and still before the evening.
     """
     return _run_analyse(ctx, since_days=ANALYSE_SINCE_DAYS,
-                        label=f"last {ANALYSE_SINCE_DAYS}d")
+                        label=f"last {ANALYSE_SINCE_DAYS}d",
+                        task_id="content_analyse")
 
 
 def run_content_analyse_backlog(ctx: TaskContext) -> TaskResult:
@@ -556,7 +631,8 @@ def run_content_analyse_backlog(ctx: TaskContext) -> TaskResult:
     them seasons old, and the only place a creator's *measured* hit rate can
     come from before a gameweek is played -- actually get read.
     """
-    return _run_analyse(ctx, since_days=0, label="full backlog")
+    return _run_analyse(ctx, since_days=0, label="full backlog",
+                        task_id="content_analyse_backlog")
 
 
 def run_forecast_refresh(ctx: TaskContext) -> TaskResult:
@@ -737,14 +813,37 @@ def run_briefing_intel(ctx: TaskContext) -> TaskResult:
                           title="Briefing intel FAILED",
                           body=f"briefing_intel exited non-zero after "
                                f"{step.seconds}s.\n\n{step.detail}")
+    from fpl_edge.store.fetch_ledger import CallUsage, spend_note
+
     kept, rejected, meta_hash, duration = _briefing_artefact_counts(ctx.db_path)
+    artefact = _briefing_artefact(ctx.db_path)
+    spend = spend_note(
+        CallUsage(model_reported=artefact.get("model_reported"),
+                  tokens_in=artefact.get("tokens_in"),
+                  tokens_out=artefact.get("tokens_out")),
+        model_requested=artefact.get("model"),
+        calls=1,
+    )
     return TaskResult(
         outcome="quiet",
         steps=[step],
         detail=(f"{kept} item(s) kept, {rejected} rejected, "
-                f"meta_prompt {meta_hash}, {duration}s"),
+                f"meta_prompt {meta_hash}, {duration}s\n{spend}"),
         ledger_written=kept,
     )
+
+
+def _briefing_artefact(db_path) -> dict:
+    """The briefing artefact as written, or an empty dict. Same path helper
+    and same "absent reads as nothing" rule as the counts below."""
+    import json
+    from pathlib import Path
+
+    try:
+        loaded = json.loads((Path(db_path).parent / "briefing_intel.json").read_text())
+    except (OSError, ValueError):
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
 
 
 def _briefing_artefact_counts(db_path) -> tuple[int, int, str | None, float | None]:
@@ -915,6 +1014,11 @@ TASKS: tuple[Task, ...] = (
         stale_window=dt.timedelta(hours=23),
         run=run_content_analyse,
         budget_s=ANALYSE_BUDGET_S,
+        # The same ceiling as the backlog row. The 21-day window usually
+        # keeps this pass far under it, but a week of slept-through firings
+        # lands three weeks of items in one queue, and that is precisely the
+        # night a wall-clock-only bound spends the most.
+        token_budget=ANALYSE_TOKEN_BUDGET,
         family="content",
     ),
     Task(
@@ -925,6 +1029,7 @@ TASKS: tuple[Task, ...] = (
         stale_window=dt.timedelta(hours=23),
         run=run_content_analyse_backlog,
         budget_s=ANALYSE_BUDGET_S,
+        token_budget=ANALYSE_TOKEN_BUDGET,
         family="content",
     ),
     Task(

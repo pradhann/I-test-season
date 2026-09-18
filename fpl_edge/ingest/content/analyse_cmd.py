@@ -193,6 +193,31 @@ CREATE TABLE IF NOT EXISTS content_analysis_skip (
 _DEPTH_RANK = {"transcript": 0, "article": 1, "notes": 2, "unknown": 3}
 
 
+def _write_summary(path, payload: dict) -> None:
+    """One run's measured totals, for the registry task to read back.
+
+    A file, not stdout. The registry task reads its numbers off this the same
+    way the briefing task reads its artefact, because ``run_step`` keeps only
+    the last 300 characters of a step's output and a run with a long tail
+    would silently lose the totals.
+
+    Written on every exit, including the ones that did no work: a run that
+    spent nothing has to be distinguishable from a run that never reported.
+    """
+    if not path:
+        return
+    from pathlib import Path
+
+    Path(path).write_text(json.dumps(payload, sort_keys=True))
+
+
+def _tokens_str(value: int | None) -> str:
+    """A token count, or the word for not knowing one. Never a bare 0 for an
+    unreported number: the two would be indistinguishable on the line that
+    exists to say what a run cost."""
+    return "unreported" if value is None else f"{value:,}"
+
+
 def rank_candidates(items: pd.DataFrame) -> pd.DataFrame:
     """Order items so a truncated run still covers the most creators.
 
@@ -340,8 +365,9 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     from fpl_edge.ingest.content.analyze import (
         AnalysisUnavailable,
         analysis_is_empty,
-        analyze_transcript,
+        analyze_transcript_measured,
         claims_from_analysis,
+        has_body,
         insights_from_analysis,
         is_scoreable,
         store_analysis,
@@ -349,6 +375,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
         validate_model_id,
     )
     from fpl_edge.ingest.content.store import ContentStore
+    from fpl_edge.store.fetch_ledger import CallUsage
 
     model = validate_model_id(args.model)
     started = time.monotonic()
@@ -420,11 +447,26 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     if ranked.empty:
         print("\nnothing to do: every item in this window is already analysed "
               "or already recorded as skipped")
+        _write_summary(getattr(args, "summary_json", None), {
+            "model_requested": model, "model_reported": None,
+            "tokens_in": None, "tokens_out": None, "calls": 0, "stored": 0,
+            "empty": 0, "failed": 0, "skipped_no_body": 0,
+            "token_budget": int(getattr(args, "token_budget", 0) or 0) or None,
+            "budget_stopped": False,
+        })
         return 0
 
     skipped: list[tuple[str, str, str, str]] = []  # item_id, ts, reason, detail
     queue = []
     for row in ranked.itertuples(index=False):
+        if not getattr(args, "analyse_notes", False) and not has_body(row.text_source):
+            skipped.append((
+                row.item_id, row.text_source, "no_body",
+                (f"text_source={row.text_source!r}: no transcript and no "
+                 f"article body, so a call here can produce neither a claim "
+                 f"nor an insight (see analyze.has_body)"),
+            ))
+            continue
         if row.substantive_chars < args.min_chars:
             skipped.append((
                 row.item_id, row.text_source, "too_thin",
@@ -435,7 +477,9 @@ def cmd_analyze(args: argparse.Namespace) -> int:
             continue
         queue.append(row)
 
-    print(f"pre-filtered: {len(skipped)} items carry too little prose to analyse; "
+    no_body = sum(1 for _, _, reason, _ in skipped if reason == "no_body")
+    print(f"pre-filtered: {no_body} items have no transcript and no article "
+          f"body; {len(skipped) - no_body} carry too little prose to analyse; "
           f"{len(queue)} will be sent to the model")
     if args.dry_run:
         for row in queue[:20]:
@@ -451,15 +495,21 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     unresolved_names: list[str] = []
     fatal: str | None = None
     spent: list[float] = []
+    #: Running sum of what the backend REPORTED across this run. The token
+    #: budget is checked against this and nothing else: an estimate would be
+    #: a ceiling on a guess.
+    tokens = CallUsage()
+    token_budget = int(getattr(args, "token_budget", 0) or 0)
+    budget_stopped = False
 
     def analyse(row):
         t0 = time.monotonic()
-        return row, analyze_transcript(
+        return row, analyze_transcript_measured(
             title=row.title, creator=row.creator, text=row.text,
-            text_source=row.text_source,
+            text_source=row.text_source, model=model,
         ), time.monotonic() - t0
 
-    def persist(row, analysis) -> None:
+    def persist(row, analysis, usage) -> None:
         nonlocal stored, claims_written, insights_written
         # gw/season are inferred from THIS item's own published_at, so a call
         # is filed against the gameweek that was next when it was published --
@@ -509,7 +559,8 @@ def cmd_analyze(args: argparse.Namespace) -> int:
             nonlocal claims_written, insights_written
             store_analysis(wh, row.item_id, analysis, model=model,
                            text_source=row.text_source, chars=len(row.text),
-                           substantive_chars=int(row.substantive_chars))
+                           substantive_chars=int(row.substantive_chars),
+                           usage=usage)
             if claims:
                 store = ContentStore.__new__(ContentStore)
                 store.wh = wh
@@ -529,19 +580,30 @@ def cmd_analyze(args: argparse.Namespace) -> int:
     def out_of_time() -> bool:
         return deadline is not None and time.monotonic() >= deadline
 
+    def out_of_tokens() -> bool:
+        return bool(token_budget) and tokens.total >= token_budget
+
     try:
         with ThreadPoolExecutor(max_workers=max(1, args.workers)) as pool:
             pending, cursor = [], 0
             while (cursor < len(queue) or pending) and fatal is None:
                 while (len(pending) < max(1, args.workers) and cursor < len(queue)
-                       and not out_of_time()):
+                       and not out_of_time() and not out_of_tokens()):
                     pending.append(pool.submit(analyse, queue[cursor]))
                     cursor += 1
                 if not pending:
                     break
                 future = pending.pop(0)
                 try:
-                    row, analysis, took = future.result()
+                    row, measured, took = future.result()
+                    analysis, usage = measured.analysis, measured.usage
+                    # Counted before anything else this item might do. A call
+                    # that returned an empty analysis, or one whose write
+                    # failed, was still paid for, and a budget that only
+                    # counted successes would overrun on a bad night.
+                    tokens = tokens + usage
+                    if out_of_tokens() and cursor < len(queue):
+                        budget_stopped = True
                 except AnalysisUnavailable as exc:
                     # No backend is not a per-item failure: it is the whole
                     # run. Stop rather than march through 400 items failing.
@@ -561,7 +623,7 @@ def cmd_analyze(args: argparse.Namespace) -> int:
                           f"{row.creator[:22]:<22} {row.title[:44]}", flush=True)
                     continue
                 try:
-                    persist(row, analysis)
+                    persist(row, analysis, usage)
                 except Exception as exc:  # noqa: BLE001 - one bad write
                     # The same rule the model call already follows: one item
                     # that cannot be stored is one item, not the end of the
@@ -607,8 +669,10 @@ def cmd_analyze(args: argparse.Namespace) -> int:
               f"{len(uniq)} distinct, e.g. {', '.join(uniq[:6])}")
     print(f"empty results:   {empty} items where the model found no positions "
           f"(recorded in content_analysis_skip, NOT stored as a take)")
-    print(f"pre-skipped:     {len(skipped) - empty} items below "
+    print(f"pre-skipped:     {len(skipped) - empty - no_body} items below "
           f"{args.min_chars} substantive chars")
+    print(f"gated (no body): {no_body} items with neither a transcript nor an "
+          f"article body; no model call was made for any of them")
     print(f"errors:          {failed} items failed mid-call and were left for a re-run")
     print(f"not reached:     {max(0, len(queue) - stored - empty - failed)} queued "
           f"items left (budget or limit)")
@@ -618,6 +682,29 @@ def cmd_analyze(args: argparse.Namespace) -> int:
               f"(min {min(spent):.1f}s, max {max(spent):.1f}s)")
     else:
         print(f"cost:            0 model calls, {elapsed:.0f}s wall-clock")
+    print(f"tokens:          {_tokens_str(tokens.tokens_in)} in, "
+          f"{_tokens_str(tokens.tokens_out)} out, as reported by "
+          f"{tokens.model_reported or 'a backend that reported no model'}")
+    if budget_stopped:
+        print(f"BUDGET STOPPED:  {tokens.total} reported tokens reached the "
+              f"{token_budget} budget with {len(queue) - cursor} items still "
+              f"queued; they are left for the next run")
+
+    summary = {
+        "model_requested": model,
+        "model_reported": tokens.model_reported,
+        "tokens_in": tokens.tokens_in,
+        "tokens_out": tokens.tokens_out,
+        "calls": len(spent),
+        "stored": stored,
+        "empty": empty,
+        "failed": failed,
+        "skipped_no_body": no_body,
+        "token_budget": token_budget or None,
+        "budget_stopped": budget_stopped,
+    }
+    _write_summary(getattr(args, "summary_json", None), summary)
+
     if fatal:
         print()
         print(f"STOPPED: no usable analysis backend. {fatal}")

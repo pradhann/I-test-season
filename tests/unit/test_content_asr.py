@@ -356,10 +356,12 @@ def test_stale_show_notes_analyses_are_dropped_but_transcript_reads_are_kept(tmp
     """`analyze` skips items that already have a row, so a stale read sticks."""
     wh = _warehouse(tmp_path)
     try:
-        wh.sql("INSERT INTO content_analysis VALUES (?, ?, ?, ?)",
+        wh.sql("INSERT INTO content_analysis (item_id, model, created_utc, "
+               "analysis_json) VALUES (?, ?, ?, ?)",
                ["item1", "model-a", NOW,
                 json.dumps({"evidence": {"text_source": "description"}})])
-        wh.sql("INSERT INTO content_analysis VALUES (?, ?, ?, ?)",
+        wh.sql("INSERT INTO content_analysis (item_id, model, created_utc, "
+               "analysis_json) VALUES (?, ?, ?, ?)",
                ["item1", "model-b", NOW,
                 json.dumps({"evidence": {"text_source": "transcript"}})])
         assert asr.stale_analyses(wh, "item1") == 1

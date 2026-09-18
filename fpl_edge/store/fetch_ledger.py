@@ -33,9 +33,13 @@ Two rules keep the PIT contract honest:
 from __future__ import annotations
 
 import datetime as dt
+import json
+import os
+import re
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from typing import Any
 
 UTC = dt.UTC
@@ -66,6 +70,123 @@ STATUSES = ("ok", "error", "refused", "skipped_fresh", "no_source")
 #: manual triggers through fpl_edge.pipelines.runner.run_task.
 TRIGGERS = ("scheduler", "ui", "cli")
 
+#: The environment variable a run's trigger travels on into its subprocesses.
+#: A registry task is one process that spawns several, each of which opens the
+#: warehouse and writes its own ledger row; without this the child has no way
+#: to know who asked, and the column it wrote was a guess.
+TRIGGER_ENV = "FPL_EDGE_RUN_TRIGGER"
+
+
+def trigger_from_env(default: str = "cli") -> str:
+    """The trigger this process inherited, for a subprocess ledger writer.
+
+    A subprocess started by :mod:`fpl_edge.pipelines.runner` inherits
+    ``FPL_EDGE_RUN_TRIGGER`` and reports the trigger of the run that spawned
+    it. Nothing set it means nothing spawned this: a person typed the command,
+    so the default is "cli" and not "scheduler".
+
+    This is the fix for the item PIPELINES_AUDIT.md raised. ``RunRecord``
+    used to default ``trigger`` to "scheduler", so every subprocess-written
+    row claimed the scheduler, and a settlement chain started from the
+    Pipelines panel on 2026-09-09 left five rows saying a scheduler that was
+    not even loaded had run them. An unset variable now says "somebody ran
+    this by hand", which is true of every process nothing spawned.
+    """
+    value = (os.environ.get(TRIGGER_ENV) or "").strip()
+    return value if value in TRIGGERS else default
+
+
+@dataclass(frozen=True)
+class CallUsage:
+    """What a model backend REPORTED about one call. Never what we asked for.
+
+    ``model_reported`` is the id the Claude CLI's ``modelUsage`` map or the
+    SDK's ``response.model`` names, which is the only evidence of what
+    actually ran. The requested id is already known from the pin in
+    :mod:`fpl_edge.config` and is stored separately; conflating the two is how
+    799 ``content_analysis`` rows came to be stamped ``claude-opus-5`` by
+    assertion while the CLI was free to run whatever its default was.
+
+    Every field is ``None`` when the backend said nothing. None means unknown
+    and is stored as NULL; it is never rounded down to zero, because "this
+    call spent nothing" and "nobody told us what this call spent" are
+    different facts.
+    """
+
+    model_reported: str | None = None
+    #: Every input token the call reported: fresh, cache-creation and
+    #: cache-read together. One number with one stated meaning.
+    tokens_in: int | None = None
+    tokens_out: int | None = None
+
+    @property
+    def total(self) -> int:
+        """Reported tokens, counting an unknown as zero. Budget arithmetic
+        only: a budget that treated unknowns as infinite would stop on the
+        first call against a backend that reports nothing, and one that
+        treated them as a number would be inventing it."""
+        return int(self.tokens_in or 0) + int(self.tokens_out or 0)
+
+    def __add__(self, other: CallUsage) -> CallUsage:
+        """Running total across a batch. A known value plus an unknown is the
+        known value; only all-unknown stays unknown, so a partial report is
+        never rounded up into a full one."""
+        def plus(a: int | None, b: int | None) -> int | None:
+            return None if a is None and b is None else (a or 0) + (b or 0)
+
+        return CallUsage(
+            model_reported=other.model_reported or self.model_reported,
+            tokens_in=plus(self.tokens_in, other.tokens_in),
+            tokens_out=plus(self.tokens_out, other.tokens_out),
+        )
+
+
+#: How a run's model spend is written into the existing ``note`` column. The
+#: note is free text that already reads "<outcome>: <detail>" and, on a
+#: failure, carries a log tail after a "--- log tail ---" line. So the spend
+#: goes on a line of its own, prefixed, as one line of JSON: a reader finds
+#: the prefix, parses to end of line, and every other reader sees a note that
+#: still reads as prose. fetch_run grows no columns.
+SPEND_PREFIX = "spend="
+_SPEND_RE = re.compile(rf"^{re.escape(SPEND_PREFIX)}(\{{.*\}})$", re.MULTILINE)
+
+
+def spend_note(usage: CallUsage, **extra: Any) -> str:
+    """One ``spend={...}`` line for a task that spent model tokens.
+
+    ``extra`` carries whatever else that task measured -- ``calls``,
+    ``budget_stopped``, ``skipped_no_body`` -- next to the three fields every
+    spending task reports. Keys are sorted so two runs of the same task
+    produce byte-comparable notes.
+    """
+    payload: dict[str, Any] = {
+        "model": usage.model_reported,
+        "tokens_in": usage.tokens_in,
+        "tokens_out": usage.tokens_out,
+    }
+    payload.update(extra)
+    return SPEND_PREFIX + json.dumps(payload, sort_keys=True, default=str)
+
+
+def parse_spend(note: str | None) -> dict[str, Any] | None:
+    """The spend payload out of a ledger note, or None if it carries none.
+
+    Reads the LAST such line: a note that somehow accumulated two is telling
+    us about the most recent write, and silently merging them would invent a
+    total nobody measured.
+    """
+    if not note:
+        return None
+    found = _SPEND_RE.findall(note)
+    for raw in reversed(found):
+        try:
+            parsed = json.loads(raw)
+        except ValueError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
 
 def ensure_table(wh) -> None:
     wh.sql(_DDL)
@@ -77,7 +198,10 @@ def ensure_table(wh) -> None:
 class RunRecord:
     """Mutable per-run accumulator the ``record_run`` context hands out."""
 
-    def __init__(self, pipeline: str, source: str | None = None):
+    def __init__(self, pipeline: str, source: str | None = None, *,
+                 trigger: str):
+        if trigger not in TRIGGERS:
+            raise ValueError(f"trigger {trigger!r} not in {TRIGGERS}")
         self.run_id = uuid.uuid4().hex
         self.pipeline = pipeline
         self.source = source
@@ -90,8 +214,14 @@ class RunRecord:
         #: Set to a non-"ok" STATUSES value for a run that completed without
         #: raising but did not fetch: "skipped_fresh", "refused", "no_source".
         self.status: str | None = None
-        #: Who asked (see TRIGGERS). The pipelines runner sets this.
-        self.trigger: str = "scheduler"
+        #: Who asked (see TRIGGERS). Required, with no default, because the
+        #: default used to be "scheduler" and only the pipelines runner ever
+        #: overrode it: every subprocess-written row therefore claimed the
+        #: scheduler, including five written on 2026-09-09 by a settlement
+        #: chain a person started from the Pipelines panel while launchd was
+        #: unloaded. A caller that does not know who asked calls
+        #: :func:`trigger_from_env`, which answers from what spawned it.
+        self.trigger: str = trigger
         #: Honest end-of-work stamp, set by runners that finish the work
         #: before they can reach the write lock. None means "stamp at insert".
         self.finished: dt.datetime | None = None
@@ -102,16 +232,19 @@ class RunRecord:
 
 
 @contextmanager
-def record_run(wh, pipeline: str, source: str | None = None,
-               ) -> Iterator[RunRecord]:
+def record_run(wh, pipeline: str, source: str | None = None, *,
+               trigger: str) -> Iterator[RunRecord]:
     """One ledger row per execution, written even when the run raises.
 
     The exception is re-raised after the row lands: the ledger observes,
     it never swallows. A raised run gets status="error" with the exception
     in the note (bounded); a clean exit gets the record's own status or "ok".
+
+    ``trigger`` is required. A CLI entry point that can be run either by hand
+    or as a step of a scheduled task passes :func:`trigger_from_env`.
     """
     ensure_table(wh)
-    rec = RunRecord(pipeline, source)
+    rec = RunRecord(pipeline, source, trigger=trigger)
     try:
         yield rec
     except BaseException as exc:

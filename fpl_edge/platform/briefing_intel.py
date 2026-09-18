@@ -51,9 +51,12 @@ import json
 import os
 import re
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from fpl_edge.config import BRIEFING_MODEL
+from fpl_edge.store.fetch_ledger import CallUsage
 from fpl_edge.platform.prose_style import (
     STYLE_RULES,
     normalize_prose,
@@ -93,8 +96,12 @@ MAX_CHARS = 60_000
 MAX_ITEMS = 8
 HEADLINE_MAX = 120
 WHY_MAX = 280
-#: The owner's decision is Opus always; the alias tracks the CLI's newest.
-MODEL = "opus"
+#: The model this pass REQUESTS, pinned in :mod:`fpl_edge.config`. It was the
+#: bare alias "opus", which tracks whatever the CLI calls newest and therefore
+#: names a different model from one week to the next; the artefact recorded
+#: that alias as if it were a model id. The requested id is now fixed and what
+#: the backend says it ran is recorded beside it.
+MODEL = BRIEFING_MODEL
 #: Wall-clock budget for the one-shot synthesis call. Generous: a large
 #: context read plus an 8-item answer, not an agentic loop.
 MODEL_TIMEOUT_S = 240.0
@@ -391,13 +398,53 @@ def _scrub_environment() -> None:
         os.environ.pop(var, None)
 
 
-def _run_model(prompt: str, *, timeout_s: float = MODEL_TIMEOUT_S) -> str:
+@dataclass(frozen=True)
+class ModelAnswer:
+    """The model's text and what the SDK reported the call cost."""
+
+    text: str
+    usage: CallUsage = CallUsage()
+
+
+def _usage_from_result(msg: Any) -> CallUsage:
+    """Read a ``ResultMessage``'s reported spend. Absent fields read as
+    unknown, never as zero."""
+    usage = getattr(msg, "usage", None) or {}
+    per_model = getattr(msg, "model_usage", None) or {}
+
+    def as_int(value: object) -> int | None:
+        try:
+            return int(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return None
+
+    reported: str | None = None
+    best = -1
+    for key, entry in per_model.items():
+        out = as_int(getattr(entry, "output_tokens", None)
+                     or (entry.get("outputTokens") if isinstance(entry, dict)
+                         else None)) or 0
+        if isinstance(key, str) and out > best:
+            reported, best = key, out
+    parts = [as_int(usage.get(k)) for k in
+             ("input_tokens", "cache_creation_input_tokens",
+              "cache_read_input_tokens")]
+    return CallUsage(
+        model_reported=reported,
+        tokens_in=(None if all(p is None for p in parts)
+                   else sum(p or 0 for p in parts)),
+        tokens_out=as_int(usage.get("output_tokens")),
+    )
+
+
+def _run_model(prompt: str, *, timeout_s: float = MODEL_TIMEOUT_S) -> ModelAnswer:
     """One query() against the Max-plan CLI via claude-agent-sdk.
 
     Same auth posture as chat_agent.py: no API key here, environment
     scrubbed, ``tools=[]`` (every built-in disabled), no MCP servers — this
     is pure synthesis over the provided JSON. Returns the final assistant
-    text; raises :class:`BriefingIntelError` on anything else.
+    text with the reported spend beside it; raises
+    :class:`BriefingIntelError` on anything else.
     """
     try:
         from claude_agent_sdk import (
@@ -423,22 +470,24 @@ def _run_model(prompt: str, *, timeout_s: float = MODEL_TIMEOUT_S) -> str:
         max_turns=1,
     )
 
-    async def _collect() -> str:
+    async def _collect() -> ModelAnswer:
         parts: list[str] = []
         error: str | None = None
+        usage = CallUsage()
         async for msg in query(prompt=prompt, options=options):
             if isinstance(msg, AssistantMessage):
                 for block in msg.content or []:
                     if isinstance(block, TextBlock) and block.text:
                         parts.append(block.text)
             elif isinstance(msg, ResultMessage):
+                usage = _usage_from_result(msg)
                 if msg.is_error or msg.subtype != "success":
                     error = str(msg.result or msg.subtype or "model call failed")
         if error is not None:
             raise BriefingIntelError(f"model call failed: {error}")
-        return "\n".join(parts)
+        return ModelAnswer(text="\n".join(parts), usage=usage)
 
-    async def _bounded() -> str:
+    async def _bounded() -> ModelAnswer:
         return await asyncio.wait_for(_collect(), timeout=timeout_s)
 
     try:
@@ -866,7 +915,14 @@ def generate(
     meta_text, meta_hash = load_meta_prompt()
     prompt = build_prompt(meta_text, context, input_as_of)
 
-    text = (run_model or _run_model)(prompt)
+    # The injected seam returns a bare string (every test uses it that way);
+    # the real one returns the text with what the call reported. Normalised
+    # here rather than forcing every seam to carry a usage it cannot know.
+    answer = (run_model or _run_model)(prompt)
+    if isinstance(answer, ModelAnswer):
+        text, usage = answer.text, answer.usage
+    else:
+        text, usage = str(answer), CallUsage()
     items = parse_items(text)
     kept, rejected_n, reasons = validate_items_verbose(
         items, panels=set(context), codes=known_codes(context),
@@ -881,7 +937,12 @@ def generate(
 
     artefact: dict[str, Any] = {
         "generated_at": now.isoformat(),
+        # The id asked for, and the id the backend said it ran. They are two
+        # facts and the artefact keeps them apart.
         "model": MODEL,
+        "model_reported": usage.model_reported,
+        "tokens_in": usage.tokens_in,
+        "tokens_out": usage.tokens_out,
         "meta_prompt_hash": meta_hash,
         "input_as_of": input_as_of,
         "items": kept,

@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import datetime as dt
 import io
+import os
 import traceback
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
@@ -141,12 +142,19 @@ def execute(
     if trigger not in TRIGGERS:
         raise ValueError(f"trigger {trigger!r} not in {TRIGGERS}")
     fn = fn or registry.runner_for(task_id)
-    rec = fetch_ledger.RunRecord(task_id, "deadline_dag")
+    rec = fetch_ledger.RunRecord(task_id, "deadline_dag", trigger=trigger)
     if run_id is not None:
         rec.run_id = run_id
-    rec.trigger = trigger
 
     buf = io.StringIO()
+    # Every step this task shells out to opens the warehouse and writes its
+    # own ledger row, and until now those rows all claimed the scheduler
+    # because that was RunRecord's default. The trigger travels to them the
+    # only way it can cross a process boundary: the environment they inherit.
+    # Restored afterwards rather than left set, so a second run in another
+    # thread cannot read a trigger this one abandoned.
+    previous = os.environ.get(fetch_ledger.TRIGGER_ENV)
+    os.environ[fetch_ledger.TRIGGER_ENV] = trigger
     try:
         with redirect_stdout(buf), redirect_stderr(buf):
             if fn is None:
@@ -160,6 +168,11 @@ def execute(
         tb = traceback.format_exc()
         buf.write("\n" + tb)
         result = TaskResult(outcome="error", detail=tb[-600:])
+    finally:
+        if previous is None:
+            os.environ.pop(fetch_ledger.TRIGGER_ENV, None)
+        else:
+            os.environ[fetch_ledger.TRIGGER_ENV] = previous
     rec.finished = dt.datetime.now(UTC)
 
     # The log: a header, every recorded step, then whatever was printed.
