@@ -1,753 +1,41 @@
-"""projection_table: the player board, joined to live price and ownership.
+"""``_gw_mode``: provider projections for one gameweek, through the views.
 
-Two data regimes live behind one registered name:
-
-* **Artefact mode** (the original, still the default): the solved simulation
-  parquet frozen at solve time, joined to live price/ownership. The dashboard
-  calls this with ``{limit, sort}`` and must keep rendering unchanged.
-* **Gameweek mode** (``gw`` or any gw-only param present): the third-party
-  provider projections in ``projection_normalized``, read through the semantic
-  layer (``sem_projections`` / ``sem_projection_consensus``). ``source="all"``
-  (or omitted) gives the consensus per player with the min-max SPREAD as a
-  first-class column: source disagreement is the uncertainty estimate. A
-  specific ``source`` gives that vendor's raw numbers. ``detail_code`` adds a
-  per-source breakdown for one player over the chosen GW and the next four.
-
-``weighting`` picks which consensus the gameweek mode serves: ``"equal"``
-(the default; ``sem_projection_consensus``) or ``"earned"`` (the inverse-MSE
-weights the calibration loop fitted, through
-``sem_projection_consensus_weighted``). The two are never blended: the payload
-names which one drove every row-bearing block, and the earned view travels
-with the weights table (weight, n_obs, MAE, baseline MAE, fitted-at) so the
-reader can see WHY a provider is down-weighted. The default stays equal on
-purpose: three settled gameweeks is a thin track record.
-
-``p_appear`` is deliberately a separate column from ``xpts`` and is never
-multiplied in: "3.1 xPts" and "82% to appear" are different claims about
-different random variables, and the rank layer needs them separate
-(FPLForm's design, kept on purpose).
-"""
+Seven functions: the inputs (gameweek, sources, consensus flag, coverage), the
+frame, the aggregates, the rows, the meta, the annotations, and the assembler
+that returns the payload. The four blocks the annotations build
+(``_latest_scores_sql``, ``_weights_block``, ``_annotate_applied_weights``,
+``_provider_accuracy_block``) and the per-player detail sit here too: nothing
+outside this mode calls them."""
 
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Callable
 from typing import Any
 
 from fpl_edge.eval.projection_scoring import N_OBS_FLOOR
-from fpl_edge.platform.registry import register_script
-from fpl_edge.platform.scripts.common import (
-    POSITION_NAME,
-    UTC,
-    empty,
-    latest_as_of,
-    load_projection,
-    next_gw,
-    q,
-    season_param,
-)
-
-#: How many gameweeks past the chosen one the player detail covers (gw..gw+4).
-DETAIL_HORIZON = 4
-
-PARAMS: dict[str, Any] = {
-    "type": "object",
-    "additionalProperties": False,
-    "properties": {
-        "season": season_param(),
-        "position": {
-            "type": ["integer", "null"],
-            "enum": [1, 2, 3, 4, None],
-            "default": None,
-            "description": "1 GKP, 2 DEF, 3 MID, 4 FWD; null for all.",
-        },
-        "sort": {
-            "type": "string",
-            "enum": ["xpts", "p_haul", "value", "price", "own",
-                     "spread", "p_appear", "xmins"],
-            "default": "xpts",
-            "description": "spread/p_appear/xmins apply to gameweek mode; "
-                           "p_haul applies to artefact mode.",
-        },
-        "limit": {"type": "integer", "minimum": 1, "maximum": 800, "default": 50},
-        "max_price": {"type": ["number", "null"], "default": None},
-        "gw": {
-            "default": None,
-            "oneOf": [
-                {"type": "integer", "minimum": 1, "maximum": 38},
-                {"const": "next"},
-                {"type": "null"},
-            ],
-            "description": "Gameweek for provider-projection mode. 'next' "
-                           "resolves the first future deadline. null keeps "
-                           "the original solved-artefact behaviour.",
-        },
-        "source": {
-            "type": ["string", "null"],
-            "default": None,
-            "description": "'all' (or null) = consensus across sources; a "
-                           "specific source name shows that vendor alone.",
-        },
-        "team": {
-            "type": ["string", "null"],
-            "default": None,
-            "description": "Team short_name filter, e.g. 'ARS'. Gameweek mode.",
-        },
-        "min_p_appear": {
-            "type": ["number", "null"],
-            "minimum": 0,
-            "maximum": 1,
-            "default": None,
-            "description": "Drop players whose consensus appearance "
-                           "probability is below this (or unknown).",
-        },
-        "detail_code": {
-            "type": ["integer", "null"],
-            "default": None,
-            "description": "Player code: include a per-source breakdown for "
-                           "the chosen GW and the next four.",
-        },
-        "sources": {
-            "type": ["array", "null"], "items": {"type": "string"},
-            "default": None,
-            "description": "Restrict the consensus to this subset of "
-                           "providers (2+ names). One name behaves like "
-                           "`source`; omitted/null means every provider.",
-        },
-        "span": {
-            "type": "integer", "minimum": 1, "maximum": 8, "default": 5,
-            "description": "How many gameweeks the matrix covers from the "
-                           "anchor gw.",
-        },
-        "weighting": {
-            "type": "string",
-            "enum": ["equal", "earned"],
-            "default": "equal",
-            "description": "Consensus blend for gameweek mode. 'equal' = the "
-                           "unweighted mean (sem_projection_consensus). "
-                           "'earned' = the calibration loop's inverse-MSE "
-                           "weights (sem_projection_consensus_weighted). "
-                           "Never blended; the result names which applied.",
-        },
-    },
-}
-
-_ARTEFACT_RESULT: dict[str, Any] = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": ["season", "rows", "row_count", "sort", "projection_generated"],
-    "properties": {
-        "season": {"type": "string"},
-        "sort": {"type": "string"},
-        "row_count": {"type": "integer"},
-        "projection_generated": {"type": ["string", "null"]},
-        "state_as_of": {"type": ["string", "null"]},
-        "as_of": {"type": ["string", "null"]},
-        "notes": {"type": "array", "items": {"type": "string"}},
-        "rows": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["code", "name", "pos", "price", "own_pct", "xpts"],
-                "properties": {
-                    "code": {"type": "integer"},
-                    "name": {"type": "string"},
-                    "pos": {"type": "string"},
-                    "team": {"type": ["string", "null"]},
-                    "price": {"type": "number"},
-                    "own_pct": {"type": ["number", "null"]},
-                    "xpts": {"type": "number"},
-                    "p10": {"type": ["number", "null"]},
-                    "p90": {"type": ["number", "null"]},
-                    "p_haul": {"type": ["number", "null"]},
-                    "value": {"type": ["number", "null"]},
-                    "status": {"type": ["string", "null"]},
-                },
-            },
-        },
-    },
-}
-
-_GW_ROW: dict[str, Any] = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": ["code", "name", "pos", "xpts", "n_sources", "p_appear"],
-    "properties": {
-        "code": {"type": "integer"},
-        "name": {"type": "string"},
-        "pos": {"type": "string"},
-        "team": {"type": ["string", "null"]},
-        "team_code": {"type": ["integer", "null"]},
-        "price": {"type": ["number", "null"]},
-        "own_pct": {"type": ["number", "null"]},
-        "status": {"type": ["string", "null"]},
-        "xpts": {"type": "number",
-                 "description": "consensus mean, or the single source's value"},
-        "xpts_min": {"type": ["number", "null"]},
-        "xpts_max": {"type": ["number", "null"]},
-        "spread": {"type": ["number", "null"],
-                   "description": "xpts_max - xpts_min across sources"},
-        "sd": {"type": ["number", "null"]},
-        "n_sources": {"type": "integer"},
-        "n_weighted_sources": {
-            "type": ["integer", "null"],
-            "description": "earned weighting only: how many of n_sources "
-                           "carried weight > 0 in the blend; null under "
-                           "equal weighting or a single source"},
-        "xmins": {"type": ["number", "null"]},
-        "p_appear": {"type": ["number", "null"],
-                     "description": "separate from xpts by design; never "
-                                    "multiplied in"},
-        "xp_if_appears": {"type": ["number", "null"]},
-        "value": {"type": ["number", "null"]},
-    },
-}
-
-_GW_RESULT: dict[str, Any] = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": ["mode", "season", "gw", "source", "sort", "row_count", "rows",
-                 "gw_coverage", "sources", "by_team", "by_position", "detail",
-                 "notes"],
-    "properties": {
-        "mode": {"enum": ["consensus", "source"]},
-        "season": {"type": "string"},
-        "gw": {"type": "integer"},
-        "source": {"type": ["string", "null"],
-                   "description": "null in consensus mode"},
-        "active_sources": {
-            "type": "array", "items": {"type": "string"},
-            "description": "exactly which providers drive rows and matrix"},
-        "sort": {"type": "string"},
-        "row_count": {"type": "integer"},
-        "as_of": {"type": ["string", "null"],
-                  "description": "latest provider fetch instant at this GW"},
-        "notes": {"type": "array", "items": {"type": "string"}},
-        "rows": {"type": "array", "items": _GW_ROW},
-        "gw_coverage": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["gw", "n_sources", "n_players"],
-                "properties": {
-                    "gw": {"type": "integer"},
-                    "n_sources": {"type": "integer"},
-                    "n_players": {"type": "integer"},
-                },
-            },
-        },
-        "sources": {"type": "array", "items": {"type": "string"}},
-        "source_meta": {
-            "type": "array",
-            "description": "Per provider: what it covers and how fresh it is. "
-                           "Data-driven, so a newly registered feed (e.g. a "
-                           "paid FPL Review subscription) appears with no UI "
-                           "change.",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["source", "gw_min", "gw_max", "last_fetched",
-                             "n_rows"],
-                "properties": {
-                    "source": {"type": "string"},
-                    "gw_min": {"type": "integer"},
-                    "gw_max": {"type": "integer"},
-                    "last_fetched": {"type": "string"},
-                    "n_rows": {"type": "integer"},
-                    "has_xmins": {"type": "boolean"},
-                    "has_p_appear": {"type": "boolean"},
-                },
-            },
-        },
-        "prices_as_of": {"type": ["string", "null"],
-            "description": "when player prices/ownership were last ingested"},
-        "accuracy": {
-            "type": "array",
-            "description": "measured per-provider accuracy vs settled actuals "
-                           "(the calibration loop's output; empty until a "
-                           "gameweek has settled)",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["provider", "scope", "mae", "n_obs", "weight",
-                             "earned"],
-                "properties": {
-                    "provider": {"type": "string"},
-                    "scope": {"enum": ["overall", "own_gt5", "own_gt20"]},
-                    "mae": {"type": ["number", "null"]},
-                    "rmse": {"type": ["number", "null"]},
-                    "baseline_mae": {"type": ["number", "null"]},
-                    "baseline_rmse": {"type": ["number", "null"]},
-                    "n_obs": {"type": "integer"},
-                    "weight": {"type": "number"},
-                    "earned": {"type": "boolean"},
-                    "track_record_gws": {"type": ["integer", "null"]},
-                },
-            },
-        },
-        "weighting": {
-            "enum": ["equal", "earned", "single_source"],
-            "description": "which blend actually drove rows, matrix and the "
-                           "team/position aggregates. 'single_source' when "
-                           "one vendor's raw numbers are shown (no blend)."},
-        "weighting_requested": {"enum": ["equal", "earned"]},
-        "blocks_weighting": {
-            "type": "object",
-            "description": "the same answer per row-bearing block, so no "
-                           "consumer has to assume: rows, matrix, by_team, "
-                           "by_position, detail. detail is always 'raw', "
-                           "which means per-source numbers with nothing "
-                           "blended.",
-            "additionalProperties": False,
-            "required": ["rows", "matrix", "by_team", "by_position", "detail"],
-            "properties": {
-                "rows": {"enum": ["equal", "earned", "single_source"]},
-                "matrix": {"enum": ["equal", "earned", "single_source"]},
-                "by_team": {"enum": ["equal", "earned", "single_source"]},
-                "by_position": {"enum": ["equal", "earned", "single_source"]},
-                "detail": {"const": "raw"},
-            },
-        },
-        "weights": {
-            "type": ["object", "null"],
-            "description": "the earned weights with the evidence that "
-                           "earned them: the latest fit at query time, "
-                           "whatever `weighting` was asked for, so the equal "
-                           "view can still show what earned weighting would "
-                           "use. null when no fit exists yet.",
-            "additionalProperties": False,
-            "required": ["as_of", "fit_id", "scored_gws", "n_floor", "rows"],
-            "properties": {
-                "as_of": {"type": "string",
-                          "description": "when the fit was written"},
-                "fit_id": {"type": "string"},
-                "anchor_gw": {
-                    "type": "integer",
-                    "description": "the gameweek `applied_weight` is "
-                                   "renormalised for"},
-                "applied_by_gw": {
-                    "type": "object",
-                    "description": "{gw(str) -> {provider -> weight}}: the "
-                                   "weight each provider actually carries in "
-                                   "that gameweek's blend. The blend "
-                                   "renormalises over the providers present, "
-                                   "so a provider that stops projecting drops "
-                                   "out and the rest rise. Providers with no "
-                                   "weight are absent from the inner map.",
-                    "additionalProperties": {
-                        "type": "object",
-                        "additionalProperties": {"type": "number"},
-                    },
-                },
-                "scored_gws": {"type": "array", "items": {"type": "integer"},
-                               "description": "the settled gameweeks the fit "
-                                              "pooled"},
-                "n_floor": {"type": "integer",
-                            "description": "player-GW observations a provider "
-                                           "needs before its weight is earned"},
-                "rows": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "required": ["provider", "weight", "n_obs", "mae",
-                                     "baseline_mae", "earned"],
-                        "properties": {
-                            "provider": {"type": "string"},
-                            "weight": {"type": "number",
-                                       "description": "the fitted weight, "
-                                                      "before renormalisation"},
-                            "applied_weight": {
-                                "type": ["number", "null"],
-                                "description": "the weight this provider "
-                                               "actually carries at "
-                                               "anchor_gw, renormalised over "
-                                               "the providers present there; "
-                                               "0 when it does not cover that "
-                                               "gameweek"},
-                            "covers_anchor": {
-                                "type": "boolean",
-                                "description": "the provider has xPts at "
-                                               "anchor_gw"},
-                            "publishes_xpts": {
-                                "type": "boolean",
-                                "description": "false for a feed that carries "
-                                               "no xPts at all (an injury "
-                                               "feed, say): it is in the fit "
-                                               "table but is not a projection "
-                                               "provider"},
-                            "n_obs": {"type": "integer"},
-                            "mae": {"type": ["number", "null"],
-                                    "description": "mean of the provider's "
-                                                   "per-GW overall MAE"},
-                            "baseline_mae": {"type": ["number", "null"],
-                                             "description": "same, for the "
-                                                            "equal-weight "
-                                                            "consensus"},
-                            "loss": {"type": ["number", "null"],
-                                     "description": "pooled MSE the weight "
-                                                    "was inverted from"},
-                            "baseline_loss": {"type": ["number", "null"]},
-                            "earned": {"type": "boolean"},
-                            "holdout": {"type": ["string", "null"]},
-                        },
-                    },
-                },
-            },
-        },
-        "provider_accuracy": {
-            "type": "object",
-            "description": "the accuracy strip: each provider's overall MAE "
-                           "against the equal-weight consensus baseline, PER "
-                           "settled gameweek (fact_projection_score, latest "
-                           "scoring per cell). Empty rows until a gameweek "
-                           "settles.",
-            "additionalProperties": False,
-            "required": ["scope", "scored_gws", "n_floor", "rows"],
-            "properties": {
-                "scope": {"const": "overall"},
-                "scored_gws": {"type": "array", "items": {"type": "integer"}},
-                "n_floor": {"type": "integer"},
-                "rows": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "required": ["provider", "gw", "mae", "baseline_mae",
-                                     "n_obs", "meets_floor"],
-                        "properties": {
-                            "provider": {"type": "string"},
-                            "gw": {"type": "integer"},
-                            "mae": {"type": "number"},
-                            "baseline_mae": {"type": ["number", "null"]},
-                            "rmse": {"type": ["number", "null"]},
-                            "baseline_rmse": {"type": ["number", "null"]},
-                            "n_obs": {"type": "integer"},
-                            "meets_floor": {
-                                "type": "boolean",
-                                "description": "n_obs >= n_floor; a cell "
-                                               "below the floor is shown, "
-                                               "never ranked"},
-                        },
-                    },
-                },
-            },
-        },
-        "actuals": {
-            "type": "object",
-            "description": "{code -> {gw -> official points}} for SETTLED "
-                           "gameweeks inside the window, so the matrix can "
-                           "show projection vs what actually happened",
-            "additionalProperties": {
-                "type": "object",
-                "additionalProperties": {"type": "number"},
-            },
-        },
-        "settled_gws": {"type": "array", "items": {"type": "integer"}},
-        "gws": {"type": "array", "items": {"type": "integer"},
-                "description": "the matrix window: anchor gw .. anchor+span-1, "
-                               "clamped to coverage"},
-        "matrix": {
-            "type": "object",
-            "description": "{code(str) -> {gw(str) -> xpts}} for the window, "
-                           "same source/consensus selection as rows",
-            "additionalProperties": {
-                "type": "object",
-                "additionalProperties": {"type": "number"},
-            },
-        },
-        "by_team": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["team", "avg_xpts", "n_players"],
-                "properties": {
-                    "team": {"type": "string"},
-                    "avg_xpts": {"type": "number"},
-                    "n_players": {"type": "integer"},
-                },
-            },
-        },
-        "by_position": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["pos", "avg_xpts", "n_players"],
-                "properties": {
-                    "pos": {"type": "string"},
-                    "avg_xpts": {"type": "number"},
-                    "n_players": {"type": "integer"},
-                },
-            },
-        },
-        "detail": {
-            "type": ["object", "null"],
-            "additionalProperties": False,
-            "required": ["code", "name", "gw_from", "gw_to", "rows", "outlier"],
-            "properties": {
-                "code": {"type": "integer"},
-                "name": {"type": "string"},
-                "gw_from": {"type": "integer"},
-                "gw_to": {"type": "integer"},
-                "rows": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "additionalProperties": False,
-                        "required": ["gw", "source", "xpts"],
-                        "properties": {
-                            "gw": {"type": "integer"},
-                            "source": {"type": "string"},
-                            "xpts": {"type": ["number", "null"]},
-                            "xmins": {"type": ["number", "null"]},
-                            "p_appear": {"type": ["number", "null"]},
-                            "xp_if_appears": {"type": ["number", "null"]},
-                        },
-                    },
-                },
-                "outlier": {
-                    "type": ["object", "null"],
-                    "additionalProperties": False,
-                    "required": ["source", "gw", "xpts", "delta_vs_rest"],
-                    "properties": {
-                        "source": {"type": "string"},
-                        "gw": {"type": "integer"},
-                        "xpts": {"type": "number"},
-                        "delta_vs_rest": {
-                            "type": "number",
-                            "description": "this source's xpts minus the mean "
-                                           "of the other sources at the "
-                                           "chosen GW",
-                        },
-                    },
-                },
-            },
-        },
-    },
-}
-
-#: One registered name, two honest shapes. The branches cannot both match:
-#: the gameweek shape requires ``mode``, which the artefact shape's
-#: additionalProperties:false forbids.
-RESULT: dict[str, Any] = {"type": "object", "oneOf": [_ARTEFACT_RESULT, _GW_RESULT]}
-
-
-def _num(v) -> float | None:
-    """None for missing/NaN, float otherwise (pandas round-trips None as NaN)."""
-    if v is None or v != v:
-        return None
-    return float(v)
-
-
-def _rnd(v, places: int = 3) -> float | None:
-    n = _num(v)
-    return None if n is None else round(n, places)
-
-
-def projection_table(
-    wh,
-    *,
-    season: str,
-    position: int | None = None,
-    sort: str = "xpts",
-    limit: int = 50,
-    max_price: float | None = None,
-    gw: int | str | None = None,
-    source: str | None = None,
-    team: str | None = None,
-    min_p_appear: float | None = None,
-    detail_code: int | None = None,
-    span: int = 5,
-    sources: list[str] | None = None,
-    weighting: str = "equal",
-) -> dict[str, Any]:
-    """Projected points per player: solved artefact by default, or per-gameweek
-    provider consensus (with the cross-source spread as the uncertainty column)
-    when ``gw``/``source``/``team``/``min_p_appear``/``detail_code`` is given.
-
-    Returns empty when the requested regime has no data, naming what does
-    exist: the artefact branch says to run the solve, the gameweek branch
-    lists which gameweeks the ingested sources actually cover.
-    """
-    gw_mode = any(p is not None for p in (gw, source, team, min_p_appear,
-                                          detail_code, sources))
-    if gw_mode:
-        return _gw_mode(
-            wh, season=season, position=position, sort=sort, limit=limit,
-            max_price=max_price, gw=gw, source=source, team=team,
-            min_p_appear=min_p_appear, detail_code=detail_code, span=span,
-            subset=sources, weighting=weighting,
-        )
-    return _artefact_mode(
-        wh, season=season, position=position, sort=sort, limit=limit,
-        max_price=max_price,
-    )
-
-
-# ---------------------------------------------------------------------------
-# artefact mode: the original behaviour, unchanged (the dashboard's contract)
-# ---------------------------------------------------------------------------
-
-def _artefact_mode(
-    wh,
-    *,
-    season: str,
-    position: int | None,
-    sort: str,
-    limit: int,
-    max_price: float | None,
-) -> dict[str, Any]:
-    proj = load_projection(wh)
-    if proj is None:
-        return empty(
-            "No projection artefact cached. Run `make solve` to write "
-            "data/warehouse/gw1_projection.parquet, then reload this panel."
-        )
-    if proj.empty:
-        return empty("The projection artefact exists but contains no players.")
-
-    notes: list[str] = []
-    if sort in ("spread", "p_appear", "xmins"):
-        notes.append(
-            f"sort={sort!r} belongs to gameweek mode; the artefact carries no "
-            f"such column, so this fell back to xpts."
-        )
-        sort = "xpts"
-
-    state = q(
-        wh,
-        """
-        SELECT s.code, p.web_name, p.position, t.short_name AS team,
-               s.price_tenths, s.selected_by_pct, s.status
-        FROM (
-            SELECT * EXCLUDE (rn) FROM (
-                SELECT *, row_number() OVER (PARTITION BY season, code
-                                             ORDER BY as_of DESC) rn
-                FROM fact_player_state WHERE season = ?
-            ) WHERE rn = 1
-        ) s
-        JOIN (
-            SELECT * EXCLUDE (rn) FROM (
-                SELECT *, row_number() OVER (PARTITION BY season, code
-                                             ORDER BY as_of DESC) rn
-                FROM dim_player WHERE season = ?
-            ) WHERE rn = 1
-        ) p USING (season, code)
-        LEFT JOIN (
-            SELECT * EXCLUDE (rn) FROM (
-                SELECT *, row_number() OVER (PARTITION BY season, team_code
-                                             ORDER BY as_of DESC) rn
-                FROM dim_team WHERE season = ?
-            ) WHERE rn = 1
-        ) t ON t.team_code = p.team_code
-        """,
-        (season, season, season),
-    )
-    if state.empty:
-        notes.append(
-            f"No {season} player state in the warehouse, so price, ownership and "
-            f"availability come from the projection artefact and may be stale."
-        )
-        merged = proj.copy()
-        merged["team"] = None
-        merged["status"] = None
-    else:
-        # The warehouse wins on every column both sides carry: the artefact's
-        # copies of price/ownership/name are a snapshot from solve time, and
-        # showing them beside a live projection is the stale-panel trap this
-        # script exists to avoid.
-        overlap = [c for c in ("web_name", "position", "price_tenths", "selected_by_pct")
-                   if c in proj.columns and c in state.columns]
-        merged = proj.drop(columns=overlap).merge(state, on="code", how="inner")
-        if merged.empty:
-            return empty(
-                f"The projection artefact and the {season} warehouse rows share no "
-                f"player codes. The artefact is probably from another season."
-            )
-
-    if position is not None:
-        merged = merged[merged["position"] == position]
-    if max_price is not None:
-        merged = merged[merged["price_tenths"] <= max_price * 10]
-    if merged.empty:
-        return empty("No player matches that position/price filter.")
-
-    merged["value"] = merged["xpts"] / (merged["price_tenths"] / 10.0).clip(lower=0.1)
-    key = {"xpts": "xpts", "p_haul": "p_haul", "value": "value",
-           "price": "price_tenths", "own": "selected_by_pct"}[sort]
-    merged = merged.sort_values(key, ascending=False).head(int(limit))
-
-    def num(row, col):
-        v = row.get(col)
-        return None if v is None or v != v else float(v)
-
-    rows = []
-    for _, r in merged.iterrows():
-        rows.append({
-            "code": int(r["code"]),
-            "name": str(r["web_name"]),
-            "pos": POSITION_NAME.get(int(r["position"]), str(r["position"])),
-            "team": None if r.get("team") is None or r.get("team") != r.get("team")
-                    else str(r["team"]),
-            "price": round(float(r["price_tenths"]) / 10.0, 1),
-            "own_pct": num(r, "selected_by_pct"),
-            "xpts": round(float(r["xpts"]), 3),
-            "p10": num(r, "p10"),
-            "p90": num(r, "p90"),
-            "p_haul": num(r, "p_haul"),
-            "value": round(float(r["value"]), 3),
-            "status": None if r.get("status") is None or r.get("status") != r.get("status")
-                      else str(r["status"]),
-        })
-
-    generated = None
-    path = getattr(wh, "source_path", None)
-    if path is not None:
-        import datetime as dt
-        from pathlib import Path
-
-        artefact = Path(path).parent / "gw1_projection.parquet"
-        if artefact.exists():
-            generated = dt.datetime.fromtimestamp(
-                artefact.stat().st_mtime, dt.timezone.utc).isoformat()
-
-    state_as_of = latest_as_of(wh, "fact_player_state", season)
-    return {
-        "season": season,
-        "sort": sort,
-        "row_count": len(rows),
-        "rows": rows,
-        "projection_generated": generated,
-        "state_as_of": state_as_of,
-        "as_of": state_as_of,
-        "notes": notes,
-    }
-
+from fpl_edge.platform.scripts.common import POSITION_NAME, UTC, empty, next_gw, q
+from fpl_edge.platform.scripts.projections.schema import DETAIL_HORIZON, _num, _rnd
 
 # ---------------------------------------------------------------------------
 # gameweek mode: provider projections through the semantic layer
 # ---------------------------------------------------------------------------
 
-def _gw_mode(
+def _gw_inputs(
     wh,
     *,
     season: str,
-    position: int | None,
-    sort: str,
-    limit: int,
-    max_price: float | None,
     gw: int | str | None,
     source: str | None,
-    team: str | None,
-    min_p_appear: float | None,
-    detail_code: int | None,
-    span: int = 5,
-    subset: list[str] | None = None,
-    weighting: str = "equal",
-) -> dict[str, Any]:
+    subset: list[str] | None,
+    weighting: str,
+) -> dict[str, Any] | tuple[
+    dt.datetime, list[str], bool, list[str] | None, str | None, int,
+    Any, list[str], bool, list[int], Callable[[], str], list[dict[str, Any]]]:
+    """Resolve the gameweek, the sources, the consensus flag and the coverage.
+
+    Returns the ``empty()`` payload as a bare dict when it has nothing to
+    work with; the assembler returns that dict unchanged."""
     now = dt.datetime.now(UTC)
     notes: list[str] = []
     if weighting not in ("equal", "earned"):
@@ -839,6 +127,27 @@ def _gw_mode(
             )
         notes.append(f"Consensus restricted to: {', '.join(sorted(subset))}.")
 
+    return (now, notes, earned, subset, source, gw, sources_df, sources,
+            consensus, covered, coverage_text, cov_rows)
+
+
+def _gw_frame(
+    wh,
+    *,
+    season: str,
+    gw: int,
+    source: str | None,
+    subset: list[str] | None,
+    consensus: bool,
+    coverage_text: Callable[[], str],
+    earned: bool,
+    notes: list[str],
+    now: dt.datetime,
+) -> dict[str, Any] | Any:
+    """One row per player for the chosen gameweek, consensus or single source.
+
+    Returns the ``empty()`` payload as a bare dict when it has nothing to
+    work with; the assembler returns that dict unchanged."""
     if consensus and subset and earned:
         # The subset blend with earned weights: the SAME arithmetic as
         # sem_projection_consensus_weighted (SUM(x*w)/SUM(w) over w > 0,
@@ -1013,6 +322,27 @@ def _gw_mode(
     # Aggregates over the FULL gameweek board, before player filters: the
     # strip answers "which teams/positions look best this GW", and a price
     # filter should not quietly reshape that answer.
+    return frame
+
+
+def _gw_aggregates(
+    *,
+    frame: Any,
+    consensus: bool,
+    gw: int,
+    limit: int,
+    max_price: float | None,
+    min_p_appear: float | None,
+    notes: list[str],
+    position: int | None,
+    sort: str,
+    sources_df: Any,
+    team: str | None,
+) -> dict[str, Any] | tuple[Any, list[dict[str, Any]], list[dict[str, Any]]]:
+    """The per-team and per-position averages, then the filters and the sort.
+
+    Returns the ``empty()`` payload as a bare dict when it has nothing to
+    work with; the assembler returns that dict unchanged."""
     def agg(col: str, name_of) -> list[dict[str, Any]]:
         grouped = (frame.dropna(subset=[col]).groupby(col)["xpts"]
                    .agg(["mean", "count"]).reset_index()
@@ -1060,6 +390,20 @@ def _gw_mode(
     frame = frame.sort_values(sort_key, ascending=False, na_position="last")
     frame = frame.head(int(limit))
 
+    return frame, by_team, by_position
+
+
+def _gw_rows(
+    wh,
+    *,
+    season: str,
+    frame: Any,
+    gw: int,
+    detail_code: int | None,
+    notes: list[str],
+    now: dt.datetime,
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    """The served rows, and the per-source breakdown for one player when asked."""
     rows = []
     for _, r in frame.iterrows():
         pos_v = r["position"]
@@ -1098,6 +442,23 @@ def _gw_mode(
     if detail_code is not None:
         detail = _player_detail(wh, now, season, gw, int(detail_code), notes)
 
+    return rows, detail
+
+
+def _gw_meta(
+    wh,
+    *,
+    season: str,
+    gw: int,
+    consensus: bool,
+    covered: list[int],
+    earned: bool,
+    now: dt.datetime,
+    source: str | None,
+    span: int,
+    subset: list[str] | None,
+) -> tuple[list[int], list[int], dict[str, Any], dict[str, Any], dict[str, Any], str | None]:
+    """The gameweek axis, the settled actuals, the source matrix and the clocks."""
     fetched = q(
         wh,
         "SELECT max(fetched_at) AS f FROM sem_projections(?) "
@@ -1212,6 +573,24 @@ def _gw_mode(
             actuals.setdefault(str(int(r["code"])), {})[str(g)] = float(r["pts"])
         settled_gws.sort()
 
+    return gws, settled_gws, actuals, matrix, source_meta, as_of
+
+
+def _gw_annotations(
+    wh,
+    *,
+    season: str,
+    gw: int,
+    consensus: bool,
+    earned: bool,
+    gws: list[int],
+    notes: list[str],
+    now: dt.datetime,
+    source: str | None,
+    source_meta: dict[str, Any],
+    subset: list[str] | None,
+) -> tuple[str | None, Any, dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Prices, the weights actually applied, the weights block and the accuracy."""
     prices_df = q(
         wh, "SELECT MAX(as_of) AS a FROM fact_player_state WHERE season = ?",
         (season,))
@@ -1286,6 +665,58 @@ def _gw_mode(
                    else (None if consensus else {str(source)})),
     )
     provider_accuracy = _provider_accuracy_block(wh, season)
+
+    return prices_as_of, applied, weights_block, provider_accuracy, accuracy
+
+
+def _gw_mode(
+    wh,
+    *,
+    season: str,
+    position: int | None,
+    sort: str,
+    limit: int,
+    max_price: float | None,
+    gw: int | str | None,
+    source: str | None,
+    team: str | None,
+    min_p_appear: float | None,
+    detail_code: int | None,
+    span: int = 5,
+    subset: list[str] | None = None,
+    weighting: str = "equal",
+) -> dict[str, Any]:
+    inputs = _gw_inputs(wh, season=season, gw=gw, source=source, subset=subset,
+                        weighting=weighting)
+    if isinstance(inputs, dict):
+        return inputs
+    (now, notes, earned, subset, source, gw, sources_df, sources, consensus,
+     covered, coverage_text, cov_rows) = inputs
+
+    frame = _gw_frame(wh, season=season, gw=gw, source=source, subset=subset,
+                      consensus=consensus, coverage_text=coverage_text,
+                      earned=earned, notes=notes, now=now)
+    if isinstance(frame, dict):
+        return frame
+
+    aggregates = _gw_aggregates(
+        frame=frame, consensus=consensus, gw=gw, limit=limit,
+        max_price=max_price, min_p_appear=min_p_appear, notes=notes,
+        position=position, sort=sort, sources_df=sources_df, team=team)
+    if isinstance(aggregates, dict):
+        return aggregates
+    frame, by_team, by_position = aggregates
+
+    rows, detail = _gw_rows(wh, season=season, frame=frame, gw=gw,
+                            detail_code=detail_code, notes=notes, now=now)
+    gws, settled_gws, actuals, matrix, source_meta, as_of = _gw_meta(
+        wh, season=season, gw=gw, consensus=consensus, covered=covered,
+        earned=earned, now=now, source=source, span=span, subset=subset)
+    (prices_as_of, applied, weights_block, provider_accuracy,
+     accuracy) = _gw_annotations(
+        wh, season=season, gw=gw, consensus=consensus, earned=earned, gws=gws,
+        notes=notes, now=now, source=source, source_meta=source_meta,
+        subset=subset)
 
     return {
         "mode": "consensus" if consensus else "source",
@@ -1560,15 +991,3 @@ def _player_detail(
         "rows": d_rows,
         "outlier": outlier,
     }
-
-
-register_script(
-    "projection_table",
-    projection_table,
-    params_schema=PARAMS,
-    result_schema=RESULT,
-    title="Projection table",
-    description="Projected points per player: the solved artefact by default, "
-                "or per-gameweek provider consensus with the cross-source "
-                "spread when a gameweek is chosen.",
-)
