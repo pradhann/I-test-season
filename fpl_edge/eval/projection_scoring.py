@@ -422,8 +422,28 @@ def run(wh: Warehouse, season: str = SEASON,
     return {"season": season, "pending": None, "scoring": reports, "fit": fit}
 
 
-def main() -> int:
-    with Warehouse() as wh:
+def main(argv: list[str] | None = None) -> int:
+    """Score and refit, then print the report.
+
+    argv is parsed before anything opens a database. Without a parser this
+    entry point ignored its arguments, so ``python -m
+    fpl_edge.eval.projection_scoring --help`` scored the real season against
+    the default warehouse, which is how the suite's entry-point check came to
+    write to the owner's live file. ``--db`` is here for the same reason every
+    other scheduled step has one: the caller says which warehouse the run
+    belongs to.
+    """
+    import argparse
+
+    from fpl_edge.store.warehouse import DEFAULT_DB
+
+    parser = argparse.ArgumentParser(
+        description="Score settled gameweeks and refit the provider weights.")
+    parser.add_argument("--db", default=str(DEFAULT_DB),
+                        help="Path to the DuckDB warehouse.")
+    args = parser.parse_args(argv)
+
+    with Warehouse(args.db) as wh:
         report = run(wh)
     print(json.dumps(report, indent=1, default=str))
     # Pending is not failure: before settlement the honest result is "not yet".

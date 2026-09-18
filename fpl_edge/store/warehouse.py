@@ -18,6 +18,7 @@ read-only.
 from __future__ import annotations
 
 import datetime as dt
+import os
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -89,6 +90,19 @@ class WarehouseLockedError(RuntimeError):
     """Another process holds the single writer lock and did not release it."""
 
 
+class DefaultWarehouseUnderTest(RuntimeError):
+    """A test asked to open the default warehouse for writing.
+
+    On the owner's machine ``data/warehouse/fpl.duckdb`` is the live 160 MB
+    database. Opening it writable takes DuckDB's single writer lock and runs
+    schema.sql, the additive column migrations and views.sql against real data,
+    and whatever the caller does next appends to it. A unit test must pass its
+    own path, normally ``tmp_path``. Reads are untouched: ``read_only=True``
+    and :meth:`Warehouse.read_copy` are both still allowed, which is what the
+    live-warehouse audits in ``tests/audit`` use.
+    """
+
+
 class ConflictingFactError(ValueError):
     """Two different values claim the same entity at the same instant.
 
@@ -99,6 +113,27 @@ class ConflictingFactError(ValueError):
     without trace. The caller must resolve it explicitly, normally by giving the
     correction its own later ``as_of``.
     """
+
+
+def _refuse_default_db_under_pytest(path: Path) -> None:
+    """Refuse a writable open of ``DEFAULT_DB`` from inside a test run.
+
+    ``PYTEST_CURRENT_TEST`` is set by pytest for the duration of each test and
+    is inherited by subprocesses, so this also covers a step the suite shells
+    out to, which is where the leak was found. It does not cover an open that
+    happens at import time during collection; the session guard in
+    ``tests/conftest.py`` watches for that.
+    """
+    if "PYTEST_CURRENT_TEST" not in os.environ:
+        return
+    if path.resolve() != (Path.cwd() / DEFAULT_DB).resolve():
+        return
+    raise DefaultWarehouseUnderTest(
+        f"a test tried to open {DEFAULT_DB} for writing "
+        f"({os.environ['PYTEST_CURRENT_TEST']}). That path is the live "
+        f"warehouse on the owner's machine. Pass a tmp_path database, or "
+        f"open read_only=True."
+    )
 
 
 def _require_utc(ts: dt.datetime, label: str) -> dt.datetime:
@@ -367,6 +402,7 @@ class Warehouse:
         #: read_copy(); plain opens own nothing.
         self._owned_tmpdir: Path | None = None
         if not read_only:
+            _refuse_default_db_under_pytest(self.path)
             self.path.parent.mkdir(parents=True, exist_ok=True)
         self._con = self._connect(read_only, lock_timeout_s)
         # Pin the session timezone. DuckDB stores TIMESTAMPTZ as a correct
