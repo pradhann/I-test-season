@@ -9,7 +9,8 @@ What is pinned here:
 * a success stores the ROTATED pair, records the entry name, and flips the
   squad source to ``private`` with no restart (a fresh TokenManager reads
   the file on every request);
-* only loopback clients are answered;
+* a stranger cannot reach these routes: no session is 401, a signed-in
+  non-operator is 403 on the credential routes, and the operator is 200;
 * no token value appears in any response body, ever.
 """
 
@@ -28,6 +29,7 @@ from fastapi.testclient import TestClient
 from fpl_edge.config import load_env
 from fpl_edge.myteam.private import PrivateTeamClient
 from fpl_edge.platform.routes_account import build_router
+from tests.unit import auth_fixtures
 
 ISSUER = "https://auth.example.test/env/as"
 CLIENT = "client-123"
@@ -93,8 +95,14 @@ def paths(tmp_path: Path, monkeypatch) -> dict[str, Path]:
     return {"env": tmp_path / ".env", "record": tmp_path / "record.json"}
 
 
-def make_client(paths, *, client=LOOPBACK) -> TestClient:
-    app = FastAPI()
+def make_client(paths, *, client=LOOPBACK, guard=False) -> TestClient:
+    """A scratch app with this router on it.
+
+    ``guard=True`` also installs the access matrix, which is what the real
+    app does and what the two tier tests below need. The other tests leave it
+    off so they exercise the handlers rather than the check in front of them.
+    """
+    app = _app(guard)
     app.include_router(build_router(
         env_path=paths["env"], record_path=paths["record"], entry_id=ENTRY,
         entry_lookup=lambda eid: ("Fable XI", "N. Pradhan"),
@@ -105,9 +113,26 @@ def make_client(paths, *, client=LOOPBACK) -> TestClient:
     return TestClient(app, client=client)
 
 
+def _app(guard: bool) -> FastAPI:
+    """A scratch app, with the access matrix on it when the test wants one.
+
+    install_auth runs before any router is included, which is the order
+    create_app uses and the only order that works: FastAPI copies the parent
+    router's dependencies into each include, so a check appended afterwards
+    would never reach the routes it is meant to guard.
+    """
+    app = FastAPI()
+    if guard:
+        from fpl_edge.platform.auth.routes import install_auth
+
+        install_auth(app)
+    return app
+
+
 #: The team-id routes get their own client: they take a user context, so the
 #: data root has to be a temp directory or a save would write into the repo.
-def make_entry_client(paths, monkeypatch, tmp_path, *, check=None) -> TestClient:
+def make_entry_client(paths, monkeypatch, tmp_path, *, check=None,
+                      guard=False) -> TestClient:
     from fpl_edge.myteam import account as account_mod
     from fpl_edge.platform import users as users_mod
 
@@ -117,7 +142,7 @@ def make_entry_client(paths, monkeypatch, tmp_path, *, check=None) -> TestClient
         lambda eid: account_mod.EntryCheck(found=True, status=200,
                                            team_name="Fable XI",
                                            manager_name="N. Pradhan"))
-    app = FastAPI()
+    app = _app(guard)
     app.include_router(build_router(
         env_path=paths["env"], record_path=paths["record"],
         entry_lookup=lambda eid: ("Fable XI", "N. Pradhan"),
@@ -195,13 +220,28 @@ def test_an_id_that_is_not_a_number_is_refused_before_any_request(
         assert r.status_code == 400, bad
 
 
-def test_the_team_id_routes_answer_loopback_only(
+def test_the_team_id_routes_need_a_session_not_a_loopback_address(
         paths, monkeypatch, tmp_path) -> None:
-    client = make_entry_client(paths, monkeypatch, tmp_path)
-    client = TestClient(client.app, client=("10.0.0.9", 51000))
-    assert client.get("/api/account/entry").status_code == 403
-    assert client.post("/api/account/entry",
-                       json={"entry_id": 1234567}).status_code == 403
+    """What the loopback guard used to pin, pinned by the session check.
+
+    The guard compared ``request.client.host``, which behind a platform proxy
+    is the proxy's address rather than the visitor's. The address is now
+    irrelevant: the same non-loopback client is refused without a session and
+    answered with one.
+    """
+    auth_fixtures.configure(monkeypatch, tmp_path)
+    client = make_entry_client(paths, monkeypatch, tmp_path, guard=True)
+    stranger = TestClient(client.app, client=("10.0.0.9", 51000))
+    assert stranger.get("/api/account/entry").status_code == 401
+    assert stranger.post("/api/account/entry",
+                         json={"entry_id": 1234567}).status_code == 401
+
+    # A signed-in manager reaches their own team id from the same address.
+    who = auth_fixtures.sign_in(stranger)
+    assert stranger.get("/api/account/entry").status_code == 200
+    saved = stranger.post("/api/account/entry", json={"entry_id": 1234567},
+                          headers=who.headers())
+    assert saved.status_code == 200, saved.text
 
 
 def assert_no_tokens(body_text: str) -> None:
@@ -439,20 +479,37 @@ def test_bad_body_is_a_400_that_echoes_nothing(paths) -> None:
     assert not paths["env"].exists()
 
 
-def test_non_loopback_clients_are_refused(paths, monkeypatch) -> None:
+def test_the_credential_routes_are_operator_only(paths, monkeypatch, tmp_path) -> None:
+    """The FPL token store writes one .env, which cannot hold two managers'
+    tokens, so these three answer the operator and nobody else. No session is
+    401; a signed-in manager who is not the operator is 403 and the paste is
+    never read."""
     monkeypatch.setattr(httpx, "post", lambda *a, **k: pytest.fail("no network"))
-    client = make_client(paths, client=("192.168.1.20", 4242))
+    auth_fixtures.configure(monkeypatch, tmp_path)
+    client = make_client(paths, client=("192.168.1.20", 4242), guard=True)
+
+    assert client.get("/api/account/status").status_code == 401
+    assert client.post("/api/account/connect",
+                       json={"cookie": FULL_COOKIE}).status_code == 401
+
+    who = auth_fixtures.sign_in(client)
     assert client.get("/api/account/status").status_code == 403
-    r = client.post("/api/account/connect", json={"cookie": FULL_COOKIE})
+    r = client.post("/api/account/connect", json={"cookie": FULL_COOKIE},
+                    headers=who.headers())
     assert r.status_code == 403
-    assert client.post("/api/account/verify").status_code == 403
+    assert client.post("/api/account/verify",
+                       headers=who.headers()).status_code == 403
     assert not paths["env"].exists(), "a refused connect must not store anything"
     assert_no_tokens(r.text)
 
 
-def test_ipv6_loopback_is_allowed(paths) -> None:
-    r = make_client(paths, client=("::1", 4242)).get("/api/account/status")
-    assert r.status_code == 200
+def test_the_operator_reaches_the_credential_routes_from_anywhere(
+        paths, monkeypatch, tmp_path) -> None:
+    auth_fixtures.configure(monkeypatch, tmp_path)
+    client = make_client(paths, client=("203.0.113.7", 4242), guard=True)
+    auth_fixtures.sign_in(client, email=auth_fixtures.OPERATOR_EMAIL,
+                          is_operator=True)
+    assert client.get("/api/account/status").status_code == 200
 
 
 def test_token_values_never_leave_through_any_route(paths, monkeypatch) -> None:

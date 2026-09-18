@@ -37,6 +37,14 @@ dependencies = [
   "mlx-whisper>=0.4; sys_platform == 'darwin'",
   "av>=12",  # v2 renamed FastMCP->MCPServer; migration is its own change
   "claude-agent-sdk>=0.2.149",
+  # Google sign-in (docs/platform/AUTH.md §11). Both already resolve in
+  # uv.lock as transitives of mcp, which pins pyjwt[crypto]; declaring them
+  # direct changes the lock's shape not at all and makes the two imports the
+  # auth package depends on visible in this file.
+  # pyjwt: id_token signature verification against Google's rotating JWKS.
+  # cryptography: AESGCM for the per-user Anthropic key at rest.
+  "pyjwt[crypto]>=2.9",
+  "cryptography>=43",
 ]
 
 [project.optional-dependencies]

@@ -953,12 +953,46 @@ Every name the image reads. The Dockerfile bakes `FPL_EDGE_BOOT=1`,
 | `FPL_EDGE_DAG_POLISH` | model-polish of delivered copy; spends tokens | no | leave unset |
 | `FPL_THEME_MODE` | chart theme, `dark` by default | no | optional |
 
+Google sign-in and the per-user model key add seven more. Two naming sets
+reached the build, so both are read and either one configures the value. Set
+one name per row and leave the other unset; setting both to different values
+raises at startup rather than picking a winner.
+
+| Name | Also accepted as | What it does | Secret | First deploy |
+|---|---|---|---|---|
+| `GOOGLE_CLIENT_ID` | | the OAuth client from the Google Console, section 13.7 | no | set it |
+| `GOOGLE_CLIENT_SECRET` | | the secret from the same screen | yes | set it |
+| `GOOGLE_REDIRECT_URI` | `OAUTH_REDIRECT_URL` | must match a registered URI byte for byte, scheme, host, port and path | no | `https://<service>.up.railway.app/auth/google/callback` |
+| `SESSION_SECRET` | `SESSION_SIGNING_KEY` | signs the session cookie; rotating it signs everyone out | yes | set it |
+| `USER_KEY_ENC_SECRET` | `KEY_ENCRYPTION_KEY` | AES-256-GCM key for the stored Anthropic keys, 32 bytes base64 | yes | set it |
+| `USER_KEY_ENC_SECRET_PREV` | `KEY_ENCRYPTION_KEY_PREV` | the previous encryption secret, during a rotation window only | yes | leave unset |
+| `OPERATOR_EMAIL` | `OWNER_EMAIL` | the one Google address that gets the operator routes | no | set to your own address |
+| `PUBLIC_ENTRY_ID` | | the FPL entry an anonymous visitor's panels read | no | `4490171` |
+| `FPL_EDGE_ANON_IS_OWNER` | | `1` answers unauthenticated requests as the operator; `0` forces the signed-out route set. Unset means `1` while no `GOOGLE_CLIENT_ID` exists and `0` once one does | no | leave unset |
+| `AUTH_DB` | | where the sessions and encrypted keys live; default `<data dir>/auth/auth.sqlite3` | no | leave unset |
+| `COOKIE_SECURE` | | overrides the Secure flag; derived from the redirect URI's scheme when unset | no | leave unset |
+| `FPL_EDGE_VERIFY_USER_KEY` | | `0` stores a pasted key without checking it against Anthropic first | no | leave unset |
+
+Generate the two secrets on your own machine and paste them straight into
+Railway's secret store:
+
+    python -c "import secrets;print(secrets.token_urlsafe(32))"                      # SESSION_SECRET
+    python -c "import base64,os;print(base64.b64encode(os.urandom(32)).decode())"   # USER_KEY_ENC_SECRET
+
 No `ANTHROPIC_*` variable is ever set on this service: not the key, not the
-auth token, not the base URL. The server holds no model key; chat_agent.py
-and briefing_intel.py scrub those names from every child environment. No
-`FPL_*` credential either (`FPL_SESSION_COOKIE`, `FPL_ACCESS_TOKEN`,
-`FPL_REFRESH_TOKEN`, `FPL_USERNAME`, `FPL_PASSWORD`): routes_account.py is
-loopback-only and answers 403 behind the proxy until workstream E lands.
+auth token, not the base URL. The server holds no model key of its own. Each
+signed-in manager's key is stored encrypted under `USER_KEY_ENC_SECRET` and
+reaches the CLI subprocess through `ClaudeAgentOptions.env` for one turn;
+chat_agent.py and briefing_intel.py still scrub the `ANTHROPIC_*` names from
+`os.environ`, which is what makes a bug that forgot to pass the per-user key
+fail with an auth error instead of silently spending somebody else's plan. The
+batch content analysis stays on the Mac under the operator's own credential
+and never reads the per-user store.
+
+No `FPL_*` credential either (`FPL_SESSION_COOKIE`, `FPL_ACCESS_TOKEN`,
+`FPL_REFRESH_TOKEN`, `FPL_USERNAME`, `FPL_PASSWORD`). The three routes that
+write them are operator-only on the access matrix, because the token store
+writes one `.env` and cannot hold two managers' tokens.
 
 ### 13.4 First boot, then the seed
 
@@ -1009,3 +1043,68 @@ keychain and runs one pass nightly at 12:00.
 
 Two accepted values during the window mean the two sides never restart
 together. Rotate quarterly, and at once on any suspicion.
+
+### 13.7 Google sign-in: the owner's own steps
+
+Five minutes, once, and nobody else can do them. An agent cannot sign in to
+the Google Console as you, and no agent ever reads or writes the two values
+this produces.
+
+1. Open `console.cloud.google.com` and select a project, or create one called
+   `i-test-season`.
+2. APIs and Services, then OAuth consent screen. User type External. Fill in
+   the app name, your support email and your developer contact email. Save.
+3. On the Scopes step add `openid` and `.../auth/userinfo.email`, and nothing
+   else. Save. While the app is in Testing, add your own Google address under
+   Test users. Publishing is only needed when somebody other than a test user
+   signs in.
+4. APIs and Services, then Credentials, then Create credentials, then OAuth
+   client ID. Application type Web application.
+5. Under Authorised redirect URIs add both of these, exactly:
+   - `https://<your-service>.up.railway.app/auth/google/callback`
+   - `http://localhost:8321/auth/google/callback`
+
+   Google permits `http` for `localhost` specifically, which is what makes
+   local development work without a tunnel. A URI that differs by a trailing
+   slash, by `http` against `https`, or by `www`, is a different URI and
+   Google refuses it with `redirect_uri_mismatch`. That error is the most
+   common failure here and it is always this.
+6. Create. Copy the client id and the client secret into Railway's variables,
+   and into your local `.env` for the localhost redirect.
+7. Generate `SESSION_SECRET` and `USER_KEY_ENC_SECRET` with the two one-liners
+   in 13.3 and set them in Railway's secret store. Generate them on your own
+   machine.
+8. Set `OPERATOR_EMAIL` to your own Google address and `PUBLIC_ENTRY_ID` to
+   `4490171`.
+9. Deploy, open the app and sign in once. That first sign-in is what writes
+   the `users` row with `is_operator = 1`. Until it happens every operator
+   route answers 403 for everybody, which is the correct state for a server
+   nobody has claimed.
+10. On the Account tab, paste your own Anthropic API key from
+    `console.anthropic.com`. Chat answers 403 for a signed-in manager until
+    they paste one of their own, and each manager's turns are billed to their
+    own Anthropic account.
+11. If anyone other than you is to use the app, publish the consent screen in
+    the Console or add each person under Test users. Google blocks sign-in
+    for anybody else while the app is in Testing.
+
+To check the flow locally before deploying, set the same variables in `.env`
+with `GOOGLE_REDIRECT_URI=http://localhost:8321/auth/google/callback`, run
+`uv run fpl serve`, and open `http://localhost:8321/#account`. With no
+`GOOGLE_CLIENT_ID` set at all the server keeps answering as the operator,
+which is how the Mac has always run.
+
+### 13.8 Rotating the two auth secrets
+
+`SESSION_SECRET` invalidates every session cookie the moment it changes.
+Every manager signs in again, which costs one click because Google does not
+re-prompt for consent. Rotate it only on a suspected leak.
+
+`USER_KEY_ENC_SECRET` makes every stored Anthropic key undecryptable. To
+rotate without anyone re-pasting: set `USER_KEY_ENC_SECRET_PREV` to the old
+value, set `USER_KEY_ENC_SECRET` to the new one, and redeploy. Each stored
+key is decrypted with the old secret and re-encrypted at the new one the
+first time it is used, so the window closes on its own and
+`USER_KEY_ENC_SECRET_PREV` can be cleared afterwards. Rotating without the
+`_PREV` value leaves every manager with a 409 on the Account tab telling them
+to paste their key again, which is the honest answer and never a 500.

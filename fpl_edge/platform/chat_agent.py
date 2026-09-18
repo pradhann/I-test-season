@@ -427,8 +427,12 @@ class _Turn:
     flag handoff safe, and nothing here ever touches the loop from outside.
     """
 
-    def __init__(self, text: str):
+    def __init__(self, text: str, user: Any = None):
         self.text = text
+        #: The caller's context, or None for the operator. The turn asks it
+        #: for a key at the moment it needs one; the key itself is never an
+        #: attribute here, so a repr of an in-flight turn holds no credential.
+        self.user = user
         self.started = _now()
         self.finished = threading.Event()
         self.timed_out: str | bool = False
@@ -654,7 +658,13 @@ class ChatAgent:
 
     # -- the turn -----------------------------------------------------------
 
-    def start_turn(self, conv_id: str, text: str) -> dict[str, Any]:
+    def start_turn(self, conv_id: str, text: str, user: Any = None) -> dict[str, Any]:
+        """Queue one turn. ``user`` is the caller's context, or None.
+
+        The context is carried rather than a key, because the key is
+        decrypted inside the runner thread at the moment the SDK options are
+        built. A turn that never reaches that point never decrypts anything.
+        """
         text = (text or "").strip()
         if not text:
             raise ChatAgentError("text is required")
@@ -662,7 +672,7 @@ class ChatAgent:
         with self._registry_lock:
             if conv.turn is not None and conv.turn.alive():
                 raise TurnInFlight(conv_id, conv.turn.started)
-            turn = _Turn(text)
+            turn = _Turn(text, user=user)
             conv.turn = turn
         user_ev = self._emit(conv, "user", {"text": text})
         self._update_meta(conv)
@@ -722,14 +732,38 @@ class ChatAgent:
         ANTHROPIC_BASE_URL once sent the CLI's OAuth token to a dev proxy
         that rejected it as revoked. CLAUDECODE itself is stripped by the SDK
         (its issue #573); the rest are ours to clear.
+
+        This stays now that turns carry a per-user key in ``options.env``, and
+        it is what makes "the operator's environment is never consulted" true
+        by construction: nothing is left in ``os.environ`` for the CLI to
+        inherit, so a bug that forgot to pass ``options.env`` fails loudly
+        with an auth error instead of silently spending somebody else's plan.
         """
         for var in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
                     "ANTHROPIC_BASE_URL", "ANTHROPIC_CUSTOM_HEADERS",
                     "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT"):
             os.environ.pop(var, None)
 
+    def _key_for(self, turn: _Turn):
+        """The caller's decrypted key for this turn, or None.
+
+        Decryption happens here, in the runner thread, one turn before the
+        SDK options are built, which is the point of use. The value lives in
+        one local variable in ``_async_turn`` and in the options dict the SDK
+        hands to one subprocess. It is never stored on the turn, never written
+        to ``os.environ``, never passed in argv and never put in a log line.
+        """
+        user = getattr(turn, "user", None)
+        if user is None:
+            return None
+        try:
+            return user.anthropic_key()
+        except Exception as exc:  # noqa: BLE001 - the transcript gets the reason
+            raise ChatAgentError(str(exc)) from None
+
     def build_options(self, conv: _Conv, session_id: str | None,
                       stderr_cb: Callable[[str], None] | None = None,
+                      anthropic_key: str | None = None,
                       ) -> ClaudeAgentOptions:
         """The SDK options for one turn. Pure given its inputs; the tests pin
         that resume, the toolbelt, and the tool posture survive the engine
@@ -746,8 +780,25 @@ class ChatAgent:
           a CLI upgrade and nothing recorded that it had.
         - The system prompt APPENDS to the claude_code preset, matching the
           old ``--append-system-prompt`` exactly.
+        - ``env`` carries the caller's own Anthropic key when they have one
+          stored, and nothing at all when they do not. The SDK composes the
+          CLI's environment as ``os.environ`` plus this dict, which is exactly
+          the seam a per-user key needs: per turn and per subprocess. Writing
+          it to ``os.environ`` instead would be wrong for a concrete reason.
+          The server runs turns from different conversations concurrently in
+          threads and ``os.environ`` is process global, so two managers' turns
+          would race and one could be billed to the other's key.
+
+          No key means the turn runs on the operator's own Claude CLI login,
+          which is the arrangement on the owner's Mac. Only the owner reaches
+          that branch: a signed-in manager who is not the operator is refused
+          by the key tier in ``fpl_edge/platform/auth/policy.py`` before the
+          turn starts, so there is no path from a stranger's message to the
+          operator's subscription.
         """
+        env = {"ANTHROPIC_API_KEY": anthropic_key} if anthropic_key else {}
         return ClaudeAgentOptions(
+            env=env,
             cwd=str(self.cwd),
             model=CHAT_MODEL,
             # The old engine preferred ~/.local/bin/claude over PATH because
@@ -846,12 +897,21 @@ class ChatAgent:
         period (the cancel tears down the transport, which kills the CLI).
         """
         stderr_tail: list[str] = []
+        key = self._key_for(turn)
+        secret_value = key.value if key is not None else None
 
         def _tail(line: str) -> None:
+            # Filtered before it is kept, because this stream ends up in the
+            # stored transcript and in the error the UI prints. A CLI that
+            # echoed its own environment on a crash would otherwise put the
+            # caller's key in a file on disk.
+            if secret_value:
+                line = line.replace(secret_value, "sk-ant-[redacted]")
             stderr_tail.append(line.rstrip("\n"))
             del stderr_tail[:-40]
 
-        options = self.build_options(conv, session_id, stderr_cb=_tail)
+        options = self.build_options(conv, session_id, stderr_cb=_tail,
+                                     anthropic_key=secret_value)
         transport = (self._transport_factory(options)
                      if self._transport_factory is not None else None)
         client = ClaudeSDKClient(options, transport=transport)

@@ -34,6 +34,10 @@ code_bases/
 data/warehouse/chat/
 data/raw/content/
 
+# sessions and the encrypted per-user Anthropic keys (AUTH_DB). Runtime state
+# and credential material, never source. On Railway this lives on the volume.
+data/auth/
+
 # chat sub-app toolchain (web/chat-app builds into web/dist/chat-app)
 web/chat-app/node_modules/
 .claude/worktrees/

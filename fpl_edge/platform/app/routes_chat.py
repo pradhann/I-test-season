@@ -88,8 +88,13 @@ def _chat_router(deps: Deps) -> APIRouter:
         body: TurnRequest,
         user: UserContext = Depends(current_user),
     ) -> JSONResponse:
+        # The context goes with the turn so the runner thread can ask it for
+        # the caller's own Anthropic key at the point of use. A signed-in
+        # manager with no stored key never reaches here: the key tier in
+        # fpl_edge/platform/auth/policy.py refused the request already.
         try:
-            started = deps.agent_for(user).start_turn(conv_id, body.text)
+            started = deps.agent_for(user).start_turn(conv_id, body.text,
+                                                      user=user)
         except TurnInFlight as exc:
             return JSONResponse(
                 {"detail": str(exc), **deps.agent_for(user).running(conv_id)},
