@@ -720,10 +720,13 @@ Note 1. Rows 13 (`crawl_panel`) and 21 (`fixture_difficulty` step and
 `load_legacy_difficulty`) overlap workstream F's build. The refactor executor
 owns them; F's builder must not touch `jobs/post_gw.py` for those two steps.
 
-Note 2. Row 30 adds `models/points/__init__.py`. The walk-forward audit test
-already fails in the frozen baseline; the new package appears in that same
-test's list under the same FAILED id, so membership is unchanged. Confirmed
-against `tests/audit/test_walk_forward.py` before freezing.
+Note 2. Row 2 adds `models/points/__init__.py` (this note originally said
+row 30, which is the `platform/scripts/__init__.py` export fix; agent A3c
+followed the Section 4 table and this note is corrected to match). The
+walk-forward audit test already fails in the frozen baseline; the new
+package appears in that same test's list under the same FAILED id, so
+membership is unchanged. Confirmed against `tests/audit/test_walk_forward.py`
+before freezing.
 
 Note 3. Execution runs in the main tree, one group at a time, with the full
 suite and a baseline diff after each group and a commit only on a clean gate.
