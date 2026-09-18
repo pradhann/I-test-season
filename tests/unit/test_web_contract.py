@@ -766,14 +766,23 @@ def test_pipeline_prose_holds_the_house_style() -> None:
 
 def test_pipeline_times_use_the_shared_span_vocabulary() -> None:
     """"43h" and "86m" are arithmetic, not a reading. relTime affixes the
-    direction onto app.js's fmtSpan/fmtAge and computes no ladder of its
-    own."""
+    direction onto app.js's day vocabulary and computes no ladder of its own.
+
+    Repointed 2026-09-18: the shared vocabulary this view reads is now the DAY
+    one (`fmtAgeDays` and `agePhrase`), because R23 puts every age in the app
+    in days and reserves hours and minutes for the deadline countdown alone.
+    The invariant is unchanged: the words come from app.js, and relTime does
+    no unit arithmetic of its own.
+    """
     src = VIEWS["pipelines"]
-    assert "fmtSpan" in src and "fmtAge" in src, (
+    assert "fmtAgeDays" in src and "agePhrase" in src, (
         "the shared helpers must be imported, not re-implemented"
     )
+    assert "fmtSpan" not in src, (
+        "an hours-and-minutes span is back on a tab that renders ages"
+    )
     body = _fn_body(src, "relTime")
-    assert "fmtSpan(" in body and "fmtAge(" in body
+    assert "fmtAgeDays(" in body and "agePhrase(" in body
     assert "60" not in body, "relTime is computing its own units again"
 
 
@@ -811,16 +820,42 @@ function walk(n, out) {
 """
 
 
+#: Repointed 2026-09-18: `app.js` now imports two shared components (the one
+#: club-badge builder and the one icon set), so copying it alone left node
+#: resolving "/js/components/clubmark.js" against the filesystem root. The
+#: harness copies the component tree beside it and rewrites the app's own
+#: absolute import paths, which is what the browser's server does. The
+#: assertions the harness serves are unchanged.
+def _as_module(src: str, prefix: str) -> str:
+    """Rewrite this app's absolute `/js/...` imports to local `.mjs` ones."""
+    src = src.replace('"/js/app.js"', f'"{prefix}app.mjs"')
+    src = re.sub(r'"/js/components/(\w[\w-]*)\.js"',
+                 rf'"{prefix}components/\1.mjs"', src)
+    return re.sub(r'"/js/views/(\w[\w-]*)\.js"',
+                  rf'"{prefix}views/\1.mjs"', src)
+
+
 def _render(tmp_path, view: str, body: str) -> dict:
     """Render `view` in node with a DOM shim; `body` leaves `result` set."""
     node = shutil.which("node")
     if not node:                       # the suite must not need a JS runtime
         import pytest
         pytest.skip("node is not installed")
-    # `.mjs` so node reads both as modules without a package.json of its own
-    shutil.copy(WEB / "js" / "app.js", tmp_path / "app.mjs")
+    # `.mjs` so node reads them all as modules without a package.json
+    (tmp_path / "app.mjs").write_text(
+        _as_module((WEB / "js" / "app.js").read_text(), "./"))
+    comp = tmp_path / "components"
+    comp.mkdir(exist_ok=True)
+    for path in (WEB / "js" / "components").glob("*.js"):
+        (comp / f"{path.stem}.mjs").write_text(
+            _as_module(path.read_text(), "../"))
+    views = tmp_path / "views"
+    views.mkdir(exist_ok=True)
+    for path in (WEB / "js" / "views").glob("*.js"):
+        (views / f"{path.stem}.mjs").write_text(
+            _as_module(path.read_text(), "../"))
     src = (WEB / "js" / "views" / f"{view}.js").read_text()
-    (tmp_path / f"{view}.mjs").write_text(src.replace('"/js/app.js"', '"./app.mjs"'))
+    (tmp_path / f"{view}.mjs").write_text(_as_module(src, "./"))
     (tmp_path / "run.mjs").write_text(
         _SHIM
         + f'const view = await import("./{view}.mjs");\n'
@@ -1281,3 +1316,119 @@ def test_the_loading_affordance_has_one_glyph_and_one_capitalisation() -> None:
     dotted = [(line, text) for line, text in _js_string_literals(CREATORS)
               if re.search(r"[A-Za-z]\.\.\.(?!\.)\s*$", text)]
     assert dotted == [], f"the ellipsis is spelled with dots: {dotted}"
+
+
+# --------------------------------------------------------------------------
+# The shared layer, phase 1 of the UI sweep. DESIGN_PRINCIPLES R1, R11, R20,
+# R23, R39, R40 name one implementation of each of these; these assertions
+# pin that there is exactly one and that the views reach for it.
+#
+# SCOPE. The file list is the shared layer plus the views phase 1 converted.
+# `home.js`, `creators.js` and `planner.js` are being rebuilt or deprecated by
+# other agents and phase 2 folds them in; naming them here would break this
+# gate on work that is still in flight.
+# --------------------------------------------------------------------------
+
+#: The shared layer and the views already converted to it.
+SWEPT = {name: VIEWS[name] for name in
+         ("account", "pipelines", "template", "template-tools", "xpoints")
+         if name in VIEWS}
+SWEPT.update(COMPONENTS)
+SWEPT["app"] = APP
+
+
+def test_one_type_scale_and_no_raw_font_size_in_the_swept_stylesheets() -> None:
+    """R1: six sizes app-wide, declared once in app.css as tokens. A raw px
+    font-size in a stylesheet is a seventh size waiting to happen; 27 of them
+    is what the audit measured before this sweep."""
+    app_css = (WEB / "app.css").read_text()
+    tokens = ("--t-title", "--t-figure", "--t-body", "--t-cell",
+              "--t-label", "--t-micro")
+    for token in tokens:
+        assert re.search(rf"{token}:\s*[\d.]+px", app_css), (
+            f"{token} is not declared in app.css"
+        )
+    for name in ("app.css", "account.css", "chatter.css", "clubmark.css",
+                 "pipelines.css", "template.css", "template-tools.css"):
+        css = (WEB / name).read_text()
+        raw = re.findall(r"font-size:\s*([\d.]+px)", css)
+        raw += re.findall(r"font:[^;{}]*?\s([\d.]+px)", css)
+        if name == "app.css":
+            # app.css declares the scale itself, inside :root
+            raw = [v for v in raw if v not in
+                   {"19px", "17px", "13px", "12.5px", "11px", "10.5px"}]
+        assert not raw, f"{name} declares raw font sizes {sorted(set(raw))}"
+
+
+def test_one_sortable_header_and_the_views_call_it() -> None:
+    """R11, R12: four implementations became one, and the first sort
+    direction is the column's, not a global default."""
+    assert "export function sortableTh" in APP
+    body = _fn_body(APP, "sortableTh")
+    for needed in ("aria-sort", "tabIndex", '"Enter"', "role"):
+        assert needed in body, f"sortableTh dropped {needed}"
+    assert "opts.first" in body, (
+        "the first direction must come from the column (R12)"
+    )
+    for view in ("xpoints", "pipelines", "template"):
+        assert "sortableTh" in VIEWS[view], (
+            f"{view} does not use the shared sortable header"
+        )
+        assert "h.dataset.dir" not in VIEWS[view], (
+            f"{view} is drawing its own sort glyph again"
+        )
+
+
+def test_one_drawer_in_the_swept_layer() -> None:
+    """R20: one aside, one width, one focus trap. `fixtures.js` and
+    `creators.js` still build their own; phase 2 converts them."""
+    assert "export function makeDrawer" in APP
+    built = [name for name, src in SWEPT.items()
+             if re.search(r'el\("aside", "drawer', src)]
+    assert built == ["app"], (
+        f"a second drawer is built in {built}; makeDrawer is the one"
+    )
+    assert "width: min(560px, 96vw)" in (WEB / "app.css").read_text()
+
+
+def test_every_age_in_the_swept_views_is_days() -> None:
+    """R23: "today", "yesterday", "N days". The hours-and-minutes span is
+    reserved for the deadline countdown (R24), which lives in app.js."""
+    assert "export function fmtAgeDays" in APP
+    assert "export function agePhrase" in APP
+    for name in ("xpoints", "pipelines", "account", "template"):
+        src = _strip_comments(VIEWS[name])
+        assert "fmtSpan" not in src, (
+            f"{name} renders an hours-and-minutes span again"
+        )
+    # the one exception, and it names itself
+    assert "fmtSpan(hours)" in _fn_body(APP, "mountDeadline")
+
+
+def _icon_names(icons: str) -> list[str]:
+    """The keys of the PATHS table in components/icons.js."""
+    block = re.search(r"const PATHS = \{(.*?)\n\};", icons, re.DOTALL)
+    assert block, "the icon table is gone"
+    return re.findall(r'^\s*"?([a-z-]+)"?:', block.group(1), re.MULTILINE)
+
+
+def test_one_icon_set_and_no_emoji_in_the_swept_layer() -> None:
+    """R39, R40, R41: eleven inline SVG marks, no emoji, and no geometric
+    character standing in for a drawing."""
+    icons = (WEB / "js" / "components" / "icons.js").read_text()
+    assert icons.count('svg.setAttribute("width", "16")') == 1, (
+        "every icon is 14px of geometry on a 16px box"
+    )
+    assert len(_icon_names(icons)) == 11, (
+        "the set is the eleven marks the app needs, no more and no fewer"
+    )
+    emoji = re.compile("[\U0001F300-\U0001FAFF\u2600-\u27BF]")
+    glyphs = re.compile("[\u2190-\u21FF\u25A0-\u25FF\u2713\u2715\u2717]")
+    for name, src in SWEPT.items():
+        # comments naming the glyph a file used to draw are documentation of
+        # the rule, the same exemption every other scan in this file takes
+        code = _strip_comments(src)
+        found = emoji.findall(code)
+        assert not found, f"{name} prints an emoji: {found}"
+        stray = glyphs.findall(code)
+        assert not stray, f"{name} uses a character as an icon: {stray}"

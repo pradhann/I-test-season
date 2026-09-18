@@ -1,15 +1,15 @@
 /* The Move Card. Owned by template-tools.js.
  *
  * THEMES. Every colour here resolves to a token app.css defines for BOTH
- * themes — it declares the palette dark-first on bare :root and redefines it
+ * themes, it declares the palette dark-first on bare :root and redefines it
  * under @media (prefers-color-scheme: light) plus [data-theme="light"] and
  * [data-theme="dark"], so all three theme states are covered. Nothing below
  * hard-codes a hex, which is what keeps the "readable in one theme only" bug
  * out of this file.
  *
  * THE ONE PLACE COLOUR ASSERTS A DIRECTION. Tracking exposure is a distance,
- * so a move that grows it and a move that shrinks it are genuinely opposite —
- * that is the single earned diverging encoding on this tab. It reuses the pair
+ * so a move that grows it and a move that shrinks it are opposite, and that
+ * is the single earned diverging encoding on this tab. It reuses the pair
  * the rest of the page already teaches: --s2 (warm) is "further from the
  * field", --s1 (cool) is "closer to it". The direction is ALSO spelled in the
  * word beside the arrow and in the arrow's own shape, so nothing here is
@@ -17,8 +17,8 @@
  *
  * WHY THE DUMBBELL MARKS ARE NOT COLOURED. The two marks carry the same KIND
  * of number (your multiplier, the field's EO as a multiplier), so they sit on
- * one axis and their identity is carried by SHAPE — a hollow ring for the
- * field, a filled square for you — with a legend and the value printed on
+ * one axis and their identity is carried by SHAPE, a hollow ring for the
+ * field, a filled square for you, with a legend and the value printed on
  * every row.
  *
  * These class names are deliberately prefixed `tt` / `rm`. The tab's two
@@ -32,25 +32,25 @@
   --ttl-mid: var(--faint);   /* neutral midpoint: the two agree              */
 }
 
-.tt h3 { margin: 16px 0 2px; font-size: 12px; letter-spacing: .04em;
+.tt h3 { margin: 16px 0 2px; font-size: var(--t-cell); letter-spacing: .04em;
          color: var(--ink); }
-.tt > .sub { color: var(--faint); font-size: 12px; margin: 0 0 10px;
+.tt > .sub { color: var(--faint); font-size: var(--t-cell); margin: 0 0 10px;
              line-height: 1.55; }
 .tt p.sub { max-width: 82ch; }
-.tt button.chip { font: inherit; font-size: 11px; font-weight: 600;
+.tt button.chip { font: inherit; font-size: var(--t-label); font-weight: 600;
                   cursor: pointer; }
 .tt button.chip:hover { border-color: var(--muted); }
 
 /* ---- the move card ------------------------------------------------------ */
 
-.rm-lede { color: var(--muted); font-size: 13px; line-height: 1.6;
+.rm-lede { color: var(--muted); font-size: var(--t-body); line-height: 1.6;
            margin: 0 0 12px; max-width: 74ch; }
-.rm-lede .big { font: 650 19px/1 var(--mono); color: var(--ink);
+.rm-lede .big { font: 600 var(--t-title)/1 var(--mono); color: var(--ink);
                 font-variant-numeric: tabular-nums; cursor: help; }
 
-table.rm-moves { width: 100%; border-collapse: collapse; font-size: 12.5px;
+table.rm-moves { width: 100%; border-collapse: collapse; font-size: var(--t-cell);
                  margin: 4px 0 8px; }
-.rm-moves th { text-align: left; font: 600 10px/1.6 inherit;
+.rm-moves th { text-align: left; font: 600 var(--t-micro)/1.6 inherit;
                letter-spacing: .06em; text-transform: uppercase;
                color: var(--faint); border-bottom: 1px solid var(--line);
                padding: 0 8px 5px; }
@@ -62,7 +62,7 @@ table.rm-moves { width: 100%; border-collapse: collapse; font-size: 12.5px;
 
 /* The rule between the two directions. It is a row, not a colour change, so
    the split survives a monochrome print and a screen reader reads it. */
-.rm-sep td { font: 600 10px/1.6 inherit; letter-spacing: .06em;
+.rm-sep td { font: 600 var(--t-micro)/1.6 inherit; letter-spacing: .06em;
              text-transform: uppercase; color: var(--faint);
              padding: 12px 8px 4px; border-bottom: 1px solid var(--line); }
 .rm-moves tr:first-child.rm-sep td { padding-top: 6px; }
@@ -70,7 +70,7 @@ table.rm-moves { width: 100%; border-collapse: collapse; font-size: 12.5px;
 .rm-names { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
 .rm-names .arw { color: var(--faint); font-family: var(--mono); flex: none; }
 
-/* Each name is its own button into the drawer — the row is two players, and a
+/* Each name is its own button into the drawer, the row is two players, and a
    reader who wants one of them should not have to guess which the row opens. */
 .rm-p { display: inline-flex; align-items: center; gap: 5px; min-width: 0;
         background: none; border: 1px solid transparent; border-radius: 7px;
@@ -81,14 +81,14 @@ table.rm-moves { width: 100%; border-collapse: collapse; font-size: 12.5px;
 .rm-p .avatar { width: 20px; height: 20px; flex: none; }
 .rm-p .n { font-weight: 600; white-space: nowrap; overflow: hidden;
            text-overflow: ellipsis; max-width: 15ch; }
-.rm-p .m { font-family: var(--mono); font-size: 11px; color: var(--muted);
+.rm-p .m { font-family: var(--mono); font-size: var(--t-label); color: var(--muted);
            flex: none; }
 /* The man going out is struck through: he is leaving, and that is structure,
    not decoration. His multiplier stays legible beside it. */
 .rm-p.out .n { text-decoration: line-through;
                text-decoration-color: var(--faint); color: var(--muted); }
 
-.rm-who { color: var(--faint); font-size: 10.5px; font-family: var(--mono);
+.rm-who { color: var(--faint); font-size: var(--t-micro); font-family: var(--mono);
           margin-top: 3px; padding-left: 4px; display: flex; gap: 6px;
           flex-wrap: wrap; }
 .rm-who span { cursor: help; }
@@ -97,9 +97,9 @@ table.rm-moves { width: 100%; border-collapse: collapse; font-size: 12.5px;
 /* The direction. Shape (▲/▼), word ("higher"/"lower") and hue all say the
    same thing, so any one of the three is enough. */
 .rm-moves td.d { color: var(--ink); }
-.rm-moves td.d .arrow { font-size: 11px; margin-right: 3px; }
+.rm-moves td.d .arrow { font-size: var(--t-label); margin-right: 3px; }
 .rm-moves td.d .mag { font-weight: 700; }
-.rm-moves td.d .w { display: block; font-family: inherit; font-size: 10px;
+.rm-moves td.d .w { display: block; font-family: inherit; font-size: var(--t-micro);
                     letter-spacing: .04em; color: var(--muted);
                     text-transform: uppercase; margin-top: 2px; }
 .rm-up td.d .arrow, .rm-up td.d .mag { color: var(--ttl-heavy); }
@@ -112,15 +112,16 @@ table.rm-moves { width: 100%; border-collapse: collapse; font-size: 12.5px;
 .rm-mine td { background: color-mix(in oklab, var(--accent) 9%, transparent); }
 .rm-mysep td { color: var(--accent-ink); }
 
-.rm-gen { color: var(--faint); font-size: 11.5px; line-height: 1.5;
+.rm-gen { color: var(--faint); font-size: var(--t-label); line-height: 1.5;
           margin: 0 0 8px; max-width: 82ch; }
-.rm-guard { color: var(--muted); font-size: 11.5px; margin: 10px 0 0; }
+.rm-guard { color: var(--muted); font-size: var(--t-label); margin: 10px 0 0; }
 
 .rm-manual { margin-top: 10px; }
 .rm-manual > summary, .howto > summary, .ttrail > summary {
-  cursor: pointer; color: var(--muted); font-size: 12px;
+  cursor: pointer; color: var(--muted); font-size: var(--t-cell);
   list-style-position: outside; padding: 3px 0; }
-.rm-manual > summary:hover, .howto > summary:hover, .ttrail > summary:hover {
+.rm-manual > summary:hover, .howto > summary:hover,
+.ttrail > summary:hover {
   color: var(--ink); }
 .howto { margin: 2px 0 4px; }
 
@@ -134,13 +135,13 @@ table.rm-moves { width: 100%; border-collapse: collapse; font-size: 12.5px;
 
 .ttid { min-width: 0; }
 .ttname { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.ttname .n { color: var(--ink); font-size: 13px; font-weight: 600;
+.ttname .n { color: var(--ink); font-size: var(--t-body); font-weight: 600;
              white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ttname .chip { flex: none; font-size: 10px; padding: 1px 6px; }
-.ttid .sub { color: var(--faint); font-size: 10.5px; line-height: 1.4;
+.ttname .chip { flex: none; font-size: var(--t-micro); padding: 1px 6px; }
+.ttid .sub { color: var(--faint); font-size: var(--t-micro); line-height: 1.4;
              white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ttid .sub.ctx { color: var(--muted); font-family: var(--mono);
-                 font-size: 10px; letter-spacing: -.01em; }
+                 font-size: var(--t-micro); letter-spacing: -.01em; }
 
 /* Both marks sit on ONE axis because both are multipliers. The rule at 1× is
    the reference every reader actually wants: "am I above or below a start?"
@@ -160,7 +161,7 @@ table.rm-moves { width: 100%; border-collapse: collapse; font-size: 12.5px;
 .ttmine { position: absolute; top: 50%; left: 0; width: 11px; height: 11px;
           border-radius: 2px; background: var(--ink); z-index: 4;
           box-shadow: 0 0 0 2px var(--surface); transform: translate(-50%, -50%); }
-/* "your multiplier was here" — the same SQUARE as the live mark so shape says
+/* "your multiplier was here", the same SQUARE as the live mark so shape says
    whose it is, hollow and on --muted so it reads as history without dropping
    under the 3:1 a graphical mark owes its surface. */
 .ttghost { position: absolute; top: 50%; left: 0; width: 11px; height: 11px;
@@ -169,7 +170,7 @@ table.rm-moves { width: 100%; border-collapse: collapse; font-size: 12.5px;
            transform: translate(-50%, -50%); }
 .ttrow:hover .ttfield { border-color: var(--ink); }
 
-.ttterm { font: 600 13px/1 var(--mono); font-variant-numeric: tabular-nums;
+.ttterm { font: 600 var(--t-body)/1 var(--mono); font-variant-numeric: tabular-nums;
           text-align: right; color: var(--ink); }
 
 /* the shared multiplier scale, drawn once above the pair */
@@ -181,7 +182,7 @@ table.rm-moves { width: 100%; border-collapse: collapse; font-size: 12.5px;
 .tttick::after { content: ""; position: absolute; left: 0; bottom: 0;
                  width: 1px; height: 4px; background: var(--line); }
 .tttick i { position: absolute; top: 0; left: 0; transform: translateX(-50%);
-            font: 10px/1 var(--mono); font-style: normal; color: var(--muted);
+            font: var(--t-micro)/1 var(--mono); font-style: normal; color: var(--muted);
             white-space: nowrap; }
 .tttick:first-of-type i { transform: translateX(0); }
 .tttick:last-of-type i { transform: translateX(-100%); }
@@ -194,7 +195,7 @@ table.rm-moves { width: 100%; border-collapse: collapse; font-size: 12.5px;
             margin: 6px 0 4px; }
 /* --muted: the legend names the marks, so it is read, not glanced at.
    (6.0:1 light / 6.9:1 dark against the card.) */
-.ttlegend .sub { color: var(--muted); font-size: 11px; font-family: var(--mono); }
+.ttlegend .sub { color: var(--muted); font-size: var(--t-label); font-family: var(--mono); }
 .ttkey { display: inline-block; flex: none; margin-left: 8px; }
 .ttkey.field { width: 12px; height: 12px; border-radius: 50%;
                border: 2px solid var(--muted); background: var(--surface); }
@@ -212,22 +213,22 @@ table.rm-moves { width: 100%; border-collapse: collapse; font-size: 12.5px;
 .ttcand:hover { border-color: var(--muted); }
 .ttcand:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ttcand > div { min-width: 0; }
-.ttcand .n { font-size: 12.5px; font-weight: 600; white-space: nowrap;
+.ttcand .n { font-size: var(--t-cell); font-weight: 600; white-space: nowrap;
              overflow: hidden; text-overflow: ellipsis; }
-.ttcand .sub { color: var(--faint); font-size: 10.5px; white-space: nowrap;
+.ttcand .sub { color: var(--faint); font-size: var(--t-micro); white-space: nowrap;
                overflow: hidden; text-overflow: ellipsis; }
 
 /* ---- the one honesty rail ----------------------------------------------- */
 
 .ttcaveats { margin-top: 8px; display: grid; gap: 6px; }
-.ttcav { color: var(--muted); font-size: 11.5px; line-height: 1.5;
+.ttcav { color: var(--muted); font-size: var(--t-label); line-height: 1.5;
          max-width: 88ch; }
 .ttcav b { color: var(--ink); font-weight: 600; }
 /* The panel's own sentences about what may be recomputed client-side. The
    "may" list is behind a fold because it is reassurance, not a warning; the
    "may not" list is never folded once the rail is open. */
 .ttsafe { margin-top: 4px; }
-.ttsafe > summary { cursor: pointer; color: var(--muted); font-size: 11.5px;
+.ttsafe > summary { cursor: pointer; color: var(--muted); font-size: var(--t-label);
                     list-style-position: outside; }
 .ttsafe > summary:hover { color: var(--ink); }
 .ttsafe > .ttcav { margin-top: 4px; }
@@ -237,7 +238,7 @@ table.rm-moves { width: 100%; border-collapse: collapse; font-size: 12.5px;
 @media (max-width: 620px) {
   /* name and term stay on one line; the track drops to a full-width second
      row, which is the only way it keeps a readable domain at 375px. Both are
-     placed explicitly — auto-placement pushes the term below the spanning
+     placed explicitly, auto-placement pushes the term below the spanning
      track and it lands under the wrong column. */
   .ttrow { grid-template-columns: 26px minmax(0, 1fr) 58px;
            row-gap: 3px; padding: 6px 7px; }

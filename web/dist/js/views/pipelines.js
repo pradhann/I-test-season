@@ -23,15 +23,18 @@
 
    AGES ARE IN DAYS. "today", "yesterday", "6 days". A pipeline that ran 14
    hours ago either ran today or it did not, and "14h" makes a reader do the
-   arithmetic. Next due keeps the shared span vocabulary, because "in 3h 20m"
-   is a countdown and not an age.
+   arithmetic. Next due reads the same way, "today", "tomorrow", "in 4 days":
+   the deadline countdown in the topbar is the one surface in the app that
+   keeps hours and minutes, because inside a day the minutes are the
+   decision there and nowhere else (R23, R24).
 
    NOTHING IS FABRICATED. A pipeline that never ran says so; a run with no log
    file gets a named gap; an empty ledger renders the panel's own {empty,
    reason}. Every timestamp is relative with the absolute in its title. */
 
 import { runPanel, el, emptyBox, errBox, provenance, getJSON, postJSON,
-         fmtSpan, fmtAge } from "/js/app.js";
+         sortableTh, gapBox, fmtAgeDays, agePhrase, absInstant } from "/js/app.js";
+import { icon } from "/js/components/icons.js";
 
 /* ------------------------------------------------------------------ utils */
 
@@ -66,24 +69,24 @@ function parseTs(s) {
   if (isNaN(d)) return null;
   return d;
 }
-/* "12m ago" / "in 4d 16h": the shared span vocabulary from app.js with the
-   direction affixed. Used for what is coming, never for an age. */
+/* "today" / "in 4 days": the shared DAY vocabulary from app.js with the
+   direction affixed, and no ladder of its own. A stamp in the past goes
+   through agePhrase, a stamp in the future counts whole days, and the exact
+   instant is always one hover away through absTime. */
 function relTime(s) {
   const d = parseTs(s);
   if (!d) return null;
   const hours = (d.getTime() - Date.now()) / 3.6e6;
-  if (hours > 0) return `in ${fmtSpan(hours)}`;
-  const age = fmtAge(s);
-  if (!age) return null;
-  return `${age} ago`;
+  if (hours <= 0) return agePhrase(s);
+  if (fmtAgeDays(s) == null) return null;
+  if (hours < 24) return "today";
+  if (hours < 48) return "tomorrow";
+  return `in ${Math.floor(hours / 24)} days`;
 }
 function absTime(s) {
-  const d = parseTs(s);
-  if (!d) return "unknown instant";
-  return d.toLocaleString(undefined, {
-    weekday: "short", day: "numeric", month: "short",
-    hour: "2-digit", minute: "2-digit", second: "2-digit",
-  });
+  const abs = absInstant(s);
+  if (!abs) return "unknown instant";
+  return abs;
 }
 /* Ages, in days, as a person says them. The board serves the last run's age
    in days (last_run_age_days, computed against its own generated_at); a run
@@ -411,31 +414,23 @@ export default async function pipelines(host) {
       || String(a.id).localeCompare(String(b.id)));
   }
 
+  /* The SHARED sortable header (app.js sortableTh). This view had the app's
+     only complete implementation and it drew its arrow inside the label text
+     ("STALE ▼"), which is metadata in a header cell. The shared one draws
+     the mark as its own 16px icon beside the name, keeps the aria-sort and
+     the keyboard path, and takes the first direction from COLUMNS. */
   function headerCell(col) {
     const on = sort.key === col.key;
-    const th = el("th", pick(col.numeric, "num", null));
-    th.setAttribute("aria-sort", ariaSort(on, sort.dir));
-    const b = el("button", "pipe-th" + when(on, " on"));
-    b.appendChild(el("span", null, col.label));
-    b.appendChild(el("span", "arr", arrow(on, sort.dir)));
-    b.title = `sort by ${col.label}`;
-    b.onclick = () => {
-      if (on) sort = { key: col.key, dir: -sort.dir };
-      else sort = { key: col.key, dir: col.first };
-      renderTable();
-    };
-    th.appendChild(b);
-    return th;
-  }
-  function ariaSort(on, dir) {
-    if (!on) return "none";
-    if (dir > 0) return "ascending";
-    return "descending";
-  }
-  function arrow(on, dir) {
-    if (!on) return "";
-    if (dir > 0) return "▲";
-    return "▼";
+    let dir = null;
+    if (on) dir = sort.dir;
+    return sortableTh(col.label, {
+      num: col.numeric,
+      first: col.first,
+      active: on,
+      dir,
+      title: `sort by ${col.label}`,
+      onSort: (next) => { sort = { key: col.key, dir: next }; renderTable(); },
+    });
   }
 
   function renderTable() {
@@ -473,7 +468,11 @@ export default async function pipelines(host) {
     tr.appendChild(cell(el("td", "pipe-fam", md.family || NONE), "family"));
 
     const name = el("td", "pipe-name");
-    const caret = el("span", "pipe-caret", pick(open.has(md.id), "▾", "▸"));
+    // the disclosure mark comes from the one icon set, not from two
+    // different arrow families (R39, R41)
+    const caret = el("span", "pipe-caret");
+    caret.appendChild(icon(pick(open.has(md.id), "chevron-down",
+                                "chevron-right")));
     name.appendChild(caret);
     name.appendChild(el("b", null, md.id));
     if (md.description) name.title = md.description;
@@ -612,12 +611,10 @@ export default async function pipelines(host) {
     const box = el("div", "pipe-lastrun");
     box.appendChild(el("h3", null, "Last run"));
     if (!md.last) {
-      const gap = el("div", "pipe-gap");
-      gap.appendChild(el("b", null, "No runs recorded."));
-      gap.appendChild(document.createTextNode(
-        " This pipeline has no fetch_run rows yet, which is what its status "
-        + "says. The first scheduler tick or Run click writes one."));
-      box.appendChild(gap);
+      box.appendChild(gapBox("no runs recorded",
+        "this pipeline has no fetch_run rows yet, which is what its status "
+        + "says",
+        "the first scheduler tick or Run click writes one"));
       return box;
     }
     const l = md.last;
@@ -702,12 +699,10 @@ export default async function pipelines(host) {
     if (!r.ok) { logBox.appendChild(errBox(r.error)); return; }
     const res = r.result;
     if (res.empty || !res.found) {
-      const gap = el("div", "pipe-gap");
-      gap.appendChild(el("b", null, "No log for this run."));
-      gap.appendChild(document.createTextNode(
-        " " + (res.reason || "The ledger row is the run's record; its log "
-        + "file is not on this machine.")));
-      logBox.appendChild(gap);
+      logBox.appendChild(gapBox("no log for this run",
+        res.reason || "the ledger row is the run's record; its log file is "
+        + "not on this machine",
+        "run it again from this row to capture one"));
       return;
     }
     if (res.truncated) {

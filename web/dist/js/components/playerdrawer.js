@@ -1,4 +1,4 @@
-/* The SHARED player drawer — one drawer, mounted from any view that puts a
+/* The SHARED player drawer, one drawer, mounted from any view that puts a
    player in focus (xPoints, the Dashboard). Extracted from the xPoints view
    so the dashboard's pitch cards and the projection matrix open the SAME
    surface: per-source projections, the percentile pizza (player_radar), the
@@ -7,7 +7,7 @@
 
    Section order is load-bearing (FINAL_SPEC §9): matrix → pizza → Understat
    → chatter. The last three mount in a `finally` so they appear on every
-   path — including the no-projections one — and can never block the matrix.
+   path, including the no-projections one, and can never block the matrix.
    The pizza never mentions Understat: two sources, two sections, two clocks.
 
    Drawer lifecycle is the fixtures idiom: one drawer per visit (re-entering
@@ -15,79 +15,27 @@
    the view unmounts it and its key handler. */
 
 import { runPanel, postJSON, getJSON, el, emptyBox, errBox, faceImg,
-         fmtPrice, fmt1, fmt2 } from "/js/app.js";
+         makeDrawer, drawerHead, fmtPrice, fmt1, fmt2 } from "/js/app.js";
 import { chatterStrip } from "/js/components/chatter.js";
 import { radarSection } from "/js/components/radar.js";
 
-/* Mount the drawer for a view. `viewName` is the hash route that owns it —
-   navigating anywhere else removes the drawer and its listeners. */
-export function attachPlayerDrawer(viewName) {
-  document.querySelectorAll("aside.pd-drawer").forEach(n => n.remove());
-  const drawer = el("aside", "drawer pd-drawer");
-  // dialog semantics: assistive tech must know this is a modal surface, and
-  // focus must move IN on open and RETURN on close (Escape already closes)
-  drawer.setAttribute("role", "dialog");
-  drawer.setAttribute("aria-modal", "true");
-  drawer.setAttribute("aria-label", "player detail");
-  drawer.tabIndex = -1;
-  document.body.appendChild(drawer);
-  let handles = [];
-  let opener = null;           // the element focus returns to on close
-  const close = () => {
-    drawer.classList.remove("open");
-    for (const h of handles) h?.cancel?.();
-    handles = [];
-    if (opener && opener.isConnected
-        && drawer.contains(document.activeElement)) opener.focus();
-    opener = null;
-  };
-  const onKey = (e) => {
-    if (!drawer.isConnected) { removeEventListener("keydown", onKey); return; }
-    if (e.key === "Escape") close();
-    // a minimal focus trap: Tab cycles inside the open dialog
-    if (e.key === "Tab" && drawer.classList.contains("open")) {
-      const focusables = drawer.querySelectorAll(
-        "button, a[href], input, select, textarea, [tabindex]:not([tabindex='-1'])");
-      if (!focusables.length) return;
-      const first = focusables[0];
-      const last = focusables[focusables.length - 1];
-      if (e.shiftKey && document.activeElement === first) {
-        e.preventDefault(); last.focus();
-      } else if (!e.shiftKey && document.activeElement === last) {
-        e.preventDefault(); first.focus();
-      } else if (!drawer.contains(document.activeElement)) {
-        e.preventDefault(); first.focus();
-      }
-    }
-  };
-  addEventListener("keydown", onKey);
-  const onHash = () => {
-    close();
-    if ((location.hash || "").slice(1).split("?")[0] !== viewName) {
-      drawer.remove();
-      removeEventListener("hashchange", onHash);
-      removeEventListener("keydown", onKey);
-    }
-  };
-  addEventListener("hashchange", onHash);
-  return {
-    drawer,
-    close,
-    open: () => {
-      if (!drawer.classList.contains("open"))
-        opener = document.activeElement instanceof HTMLElement
-          ? document.activeElement : null;
-      drawer.classList.add("open");
-      drawer.scrollTop = 0;
-      drawer.focus();
-    },
-    setHandles: (hs) => { handles = hs; },
-  };
+/* Mount the drawer for a view. `viewName` is the hash route that owns it,
+   and navigating anywhere else removes the drawer and its listeners. The
+   aside, the focus trap, Escape, the click outside and the focus return all
+   come from app.js makeDrawer, which is the app's ONE drawer (R20). This
+   file used to build the fourth one.
+
+   `crumb` is the path that led here, as [{label, go}], so the drawer head
+   can say "Projections / Haaland" and walk back up. */
+export function attachPlayerDrawer(viewName, crumb = []) {
+  const dh = makeDrawer(viewName, "player detail");
+  dh.crumb = crumb;
+  return dh;
 }
 
 /* Show one player. `p` needs {code, name}; pos/team/price/own_pct optional.
-   opts: { gw }   — anchor gameweek for the per-source pivot
-         { actuals } — {gw: points} map of settled actuals, when the caller
+   opts: { gw }, anchor gameweek for the per-source pivot
+         { actuals }, {gw: points} map of settled actuals, when the caller
                        has them (the xPoints matrix does; the pitch does not) */
 export async function showPlayerDetail(dh, p, opts = {}) {
   const { drawer } = dh;
@@ -100,27 +48,26 @@ export async function showPlayerDetail(dh, p, opts = {}) {
       { gw: opts.gw ?? "next", span: 8, detail_code: p.code, limit: 1 });
     drawer.textContent = "";
 
-    // header: who this is
-    const head = el("div", "dhead");
-    head.appendChild(faceImg(p.code, "bigface"));
-    const id = el("div");
-    id.appendChild(el("div", "dname", p.name));
-    id.appendChild(el("div", "sub",
-      [p.pos, p.team, p.price != null ? fmtPrice(p.price) : null,
-       p.own_pct != null ? fmt1(p.own_pct) + "% owned" : null]
-        .filter(Boolean).join(" · ")));
-    head.appendChild(id);
-    const close = el("button", null, "✕");
-    close.onclick = dh.close;
-    head.appendChild(close);
-    drawer.appendChild(head);
+    /* header: the path that led here, then who this is. The breadcrumb is
+       the fractal made visible (R21): a player opened from Projections says
+       so, and every segment before the last goes back to that level. The
+       close control is a word, not one of the three different characters
+       this app used to use for it. */
+    const sub = [p.pos, p.team, p.price != null ? fmtPrice(p.price) : null,
+                 p.own_pct != null ? fmt1(p.own_pct) + "% owned" : null]
+      .filter(Boolean).join(" · ");
+    drawer.appendChild(drawerHead(p.name, sub, {
+      face: faceImg(p.code, "bigface"),
+      crumb: [...(dh.crumb || []), { label: p.name }],
+      onClose: dh.close,
+    }));
 
     // settled reality first, if the caller carries it
     const acts = opts.actuals || {};
     const settled = Object.keys(acts).sort();
     if (settled.length)
       drawer.appendChild(el("p", "sub", "Settled: " + settled.map(g =>
-        `GW${g} → ${Math.round(acts[g])} pts`).join(" · ")));
+        `GW${g} ${Math.round(acts[g])} pts`).join(" · ")));
 
     // pivot: sources × gameweeks
     const rowsD = (result.detail?.rows) || [];
@@ -187,8 +134,8 @@ export async function showPlayerDetail(dh, p, opts = {}) {
       "uncertainty."));
   } catch (e) { drawer.textContent = ""; drawer.appendChild(errBox(e)); }
   finally {
-    // Mounted last and in `finally` so they appear on every path — including
-    // the no-projections one — and never block or break the drawer above.
+    // Mounted last and in `finally` so they appear on every path, including
+    // the no-projections one, and never block or break the drawer above.
     // Order per FINAL_SPEC §9: pizza between the matrix and Understat.
     const radar = radarSection(drawer, p.code);
     const profile = profileSection(drawer, p.code);
@@ -203,7 +150,7 @@ export async function showPlayerDetail(dh, p, opts = {}) {
    polls the panel until rows appear or the route reports an error. */
 function profileSection(host, code) {
   const box = el("div");
-  box.appendChild(el("h2", null, "Profile — Understat"));
+  box.appendChild(el("h2", null, "Profile, Understat"));
   const pbody = el("div");
   box.append(pbody);
   host.appendChild(box);
@@ -271,7 +218,7 @@ function profileSection(host, code) {
   function renderEmpty(reason) {
     pbody.textContent = "";
     // reader copy carries no raw internals: the panel's reason may name the
-    // POST route — the button IS that route, so the mention is stripped here
+    // POST route, the button IS that route, so the mention is stripped here
     const readable = String(reason || "")
       .replace(/\s*\((POST|GET)\s+\/api\/[^)]*\)/g, "")
       .replace(/\s*(POST|GET)\s+\/api\/\S+/g, "")
@@ -312,7 +259,7 @@ function profileSection(host, code) {
       } catch (e) { pbody.textContent = ""; pbody.appendChild(errBox(e)); return; }
       if (tries < 20) poll(tries + 1);
       else pbody.appendChild(el("p", "sub",
-        "still fetching — reopen the drawer to check again"));
+        "still fetching, reopen the drawer to check again"));
     }, 2000);
   }
 

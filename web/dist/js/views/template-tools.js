@@ -1,4 +1,4 @@
-/* The Move Card — "would this move raise my risk against the field?"
+/* The Move Card, "would this move raise my risk against the field?"
  *
  * Owned separately from template.js so the two halves of the EliteFPL tab can
  * be built in parallel. template.js calls renderTools(host, ctx); everything
@@ -17,9 +17,9 @@
  * WHAT THIS CARD IS, AND WHY IT REPLACED THREE OTHERS
  *
  * The page's identity is  rank move ≈ Σ (your multiplier − the field's EO) × pts.
- * The old tools printed that subtraction in four different shapes — a swarm, a
+ * The old tools printed that subtraction in four different shapes, a swarm, a
  * holes ranking, a differentials ranking, and a literal "2.00× − 1.65× = +0.35"
- * block — and never once answered the only question a manager actually asks:
+ * block, and never once answered the only question a manager actually asks:
  * DOES THIS MOVE RAISE OR LOWER MY RISK? So all of that is gone and one card
  * remains, whose every row carries a direction.
  *
@@ -39,13 +39,13 @@
  * means the manual swap below the card is priced by the identical formula, so
  * a hand-picked move arrives in the same encoding as a generated one.
  *
- * WHERE THE NUMBERS COME FROM — the discipline this file must keep.
+ * WHERE THE NUMBERS COME FROM, the discipline this file must keep.
  *   - Every MEASURED number reads `rows[].fields[ctx.fieldKey]`, because the
  *     seam is field-KEYED: the reader can point this card at any field in the
  *     ladder, and the per-field block is the only source that answers for all
  *     of them.
  *   - `whatif.players` is the swap UNIVERSE and nothing else. It lists every
- *     current-season player, which is who may be bought — but its
+ *     current-season player, which is who may be bought, but its
  *     `field_eo_pct` is keyed to the `selected` field alone, so it cannot
  *     price a swap against a fieldKey the page has switched to. Reading it for
  *     a measurement would blend two populations silently. It is never read for
@@ -53,17 +53,24 @@
  *     unpriceable, not assumed to be zero.
  *   - `whatif.safe_to_recompute` / `not_safe_to_recompute` are the panel's own
  *     statement of what a client may recompute. They are rendered VERBATIM in
- *     the single disclosure rail at the foot — a UI that restates the boundary
+ *     the single disclosure rail at the foot, a UI that restates the boundary
  *     in its own words is a UI that will drift off it.
  */
 
-import { el, emptyBox, faceImg, fmtPrice, fmt1 } from "/js/app.js";
+import { el, emptyBox, avatarEl, fmtPrice, fmt1 } from "/js/app.js";
+import { icon } from "/js/components/icons.js";
 
 /* ---------------------------------------------------------------- helpers */
 
 const pct = v => v == null ? "–" : `${Number(v).toFixed(1)}%`;
 const sgn2 = v => v == null ? "–"
   : `${v > 0 ? "+" : v < 0 ? "−" : ""}${Math.abs(v).toFixed(2)}`;
+/* Which of the two sort marks a signed move takes. A helper rather than a
+   conditional inside the call, so the line reads as a sentence. */
+function pickIcon(up) {
+  if (up) return "sort-up";
+  return "sort-down";
+}
 const mult = v => v == null ? "–" : `${Number(v).toFixed(2)}×`;
 const multS = v => v == null ? "–" : `${Number(v)}×`;
 /* Tracking exposure is a SUM of per-player distances, not a multiple of
@@ -103,7 +110,7 @@ function pctileIn(sorted, v) {
   return 100 * lo / sorted.length;
 }
 
-const HELD_FLOOR = 1;      // % EO — under this, fewer than 1 rival in 100 has any
+const HELD_FLOOR = 1;      // % EO, under this, fewer than 1 rival in 100 has any
 const SHOW = 3;            // rows per direction
 const IN_CAP = 2;          // no buy is named more than twice on the card
 
@@ -154,7 +161,7 @@ export function renderTools(host, ctx) {
   // ---- the measured set -----------------------------------------------
   /* rows ∪ differentials, deduped by code: the page above toggles between the
      two, and a move must not appear and vanish with a toolbar the reader has
-     forgotten about. THIS is the measured population — every EO below comes
+     forgotten about. THIS is the measured population, every EO below comes
      from `fields[field.key]` on one of these rows. */
   const uni = new Map();
   for (const r of [...(res.rows || []), ...(res.differentials || [])])
@@ -162,7 +169,7 @@ export function renderTools(host, ctx) {
   const all = [...uni.values()];
 
   /* The swap UNIVERSE, and only that: who exists to be bought. Identity, not
-     measurement — see the header note. */
+     measurement, see the header note. */
   const wiPlayers = Array.isArray(res.whatif?.players) ? res.whatif.players : null;
   const wiCodes = wiPlayers ? new Set(wiPlayers.map(p => p.code)) : null;
   const inUniverse = r => wiCodes ? wiCodes.has(r.code) : true;
@@ -202,7 +209,7 @@ export function renderTools(host, ctx) {
     return;
   }
 
-  // the field's held population — the denominator every percentile names
+  // the field's held population, the denominator every percentile names
   const heldVals = all.map(eoOf).filter(v => v != null && v >= HELD_FLOOR)
     .sort((a, b) => a - b);
   const pctileOf = v => v == null || v < HELD_FLOOR ? null : pctileIn(heldVals, v);
@@ -237,10 +244,10 @@ export function renderTools(host, ctx) {
 
   /* The two halves of Δ. sell() is what letting a man go does on its own;
      buy() is what taking a man in at multiplier m does on its own. Their sum
-     is exact — every other player's term is untouched by the swap. */
+     is exact, every other player's term is untouched by the swap. */
   const sellTerm = r => eoOf(r) / 100 - gap(r);
   const buyTerm = (r, m) => Math.abs(m - eoOf(r) / 100) - eoOf(r) / 100;
-  /* The incoming player takes the outgoing player's multiplier — or 1× if that
+  /* The incoming player takes the outgoing player's multiplier, or 1× if that
      man was benched, because nobody buys a replacement in order to bench him.
      One rule, printed on the card. */
   const incoming = out => (myMult(out).v === 0 ? 1 : myMult(out).v);
@@ -407,7 +414,7 @@ export function renderTools(host, ctx) {
     const line = el("div", "rm-names");
     const nameBtn = (r, cls, m) => {
       const b = el("button", "rm-p " + cls);
-      b.appendChild(faceImg(r.code, "avatar"));
+      b.appendChild(avatarEl(r.code, dName(r)));
       b.appendChild(el("span", "n", dName(r)));
       b.appendChild(el("span", "m", multS(m)));
       b.title = [r.pos, r.team, fmtPrice(r.price),
@@ -416,8 +423,10 @@ export function renderTools(host, ctx) {
       b.onclick = e => { e.stopPropagation(); focus(r.code); };
       return b;
     };
-    line.append(nameBtn(mv.out, "out", myMult(mv.out).v),
-                el("span", "arw", "→"),
+    const arw = el("span", "arw");
+    arw.appendChild(icon("chevron-right"));
+    arw.setAttribute("aria-label", "out, in");
+    line.append(nameBtn(mv.out, "out", myMult(mv.out).v), arw,
                 nameBtn(mv.inn, "in", mv.m));
     cell.appendChild(line);
     const wo = whoLine(mv.out, myMult(mv.out).v), wi = whoLine(mv.inn, mv.m);
@@ -439,8 +448,11 @@ export function renderTools(host, ctx) {
        LOWER/HIGHER word beside them said the same thing a third time. */
     const flat = Math.abs(mv.d) < 0.005;
     if (flat) dc.append(el("span", "mag", "0.00"), el("span", "w", "no change"));
-    else dc.append(el("span", "arrow", mv.d > 0 ? "▲" : "▼"),
-                   el("span", "mag", Math.abs(mv.d).toFixed(2)));
+    else {
+      const arrow = el("span", "arrow");
+      arrow.appendChild(icon(pickIcon(mv.d > 0)));
+      dc.append(arrow, el("span", "mag", Math.abs(mv.d).toFixed(2)));
+    }
     dc.title =
       `${sgn2(mv.d)} tracking exposure. Letting ${dName(mv.out)} go is ` +
       `${sgn2(sellTerm(mv.out))} on its own; taking ${dName(mv.inn)} in at ` +
@@ -548,7 +560,7 @@ export function renderTools(host, ctx) {
     row2.appendChild(q);
     if (inCode != null) {
       const r = uni.get(inCode);
-      const chip = el("button", "chip s1", `✓ ${dName(r)} · EO ${pct(eoOf(r))}`);
+      const chip = el("button", "chip s1", `in: ${dName(r)} · EO ${pct(eoOf(r))}`);
       chip.title = "clear";
       chip.onclick = () => { inCode = null; renderPickers(); renderResult(); };
       row2.appendChild(chip);
@@ -561,7 +573,7 @@ export function renderTools(host, ctx) {
     row2.appendChild(reset);
     manTop.appendChild(row2);
 
-    // role for the incoming player — a choice, never a silent assumption
+    // role for the incoming player, a choice, never a silent assumption
     const row3 = el("div", "toolbar");
     row3.appendChild(el("span", "tlabel", "He comes in as"));
     const seg = el("span", "seg");
@@ -609,7 +621,7 @@ export function renderTools(host, ctx) {
       const grid = el("div", "ttcands");
       for (const r of list.slice(0, 12)) {
         const b = el("button", "ttcand");
-        b.appendChild(faceImg(r.code, "avatar"));
+        b.appendChild(avatarEl(r.code, dName(r)));
         const d = el("div");
         d.appendChild(el("div", "n", dName(r)));
         d.appendChild(el("div", "sub",
@@ -682,7 +694,7 @@ export function renderTools(host, ctx) {
     const v = eoOf(r), m = opts.mine === undefined ? myMult(r).v : opts.mine;
     const t = (v == null || m == null) ? null : m - v / 100;
     const row = el("div", "ttrow");
-    row.appendChild(faceImg(r.code, "avatar" + (r.in_squad === true ? " mine" : "")));
+    row.appendChild(avatarEl(r.code, dName(r), { mine: r.in_squad === true }));
 
     const id = el("div", "ttid");
     const nm = el("div", "ttname");
@@ -782,8 +794,8 @@ export function renderTools(host, ctx) {
   /* THE PANEL IS THE AUTHORITY ON WHAT MAY BE RECOMPUTED HERE. Where the
      payload publishes `whatif.safe_to_recompute` / `not_safe_to_recompute`,
      those sentences are rendered verbatim rather than paraphrased. The things
-     the panel cannot know — that this card refuses to multiply a term by
-     points, and that it never checked a squad's legality — are the view's own
+     the panel cannot know, that this card refuses to multiply a term by
+     points, and that it never checked a squad's legality, are the view's own
      to declare. This is the only rail left on the page. */
   const rail = el("details", "ttrail");
   rail.appendChild(el("summary", null, "What these numbers do not cover"));

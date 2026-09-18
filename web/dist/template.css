@@ -7,8 +7,8 @@
  * [data-theme="dark"]. Aliasing rather than hard-coding is what keeps the
  * "readable in one theme only" bug out of this file.
  *
- * THE DIVERGING PAIR. The gap (field − game) is genuinely diverging around
- * zero, so it gets two hues and a NEUTRAL GRAY midpoint — never a hue in the
+ * THE DIVERGING PAIR. The gap (field − game) diverges around
+ * zero, so it gets two hues and a NEUTRAL GRAY midpoint, never a hue in the
  * middle, never two cool hues. --s2 (warm) is the crowded pole, --s1 (cool) is
  * the lonely one; --faint is the nothing-to-see midpoint. The pair was checked
  * with the dataviz validator in both modes (all-pairs): worst ΔE 24.7 protan /
@@ -25,11 +25,11 @@
 /* ---- the identity, now only inside the drawer --------------------------- */
 
 .identity { display: flex; flex-wrap: wrap; align-items: center; gap: 7px;
-            font-size: 14px; }
-.identity.small { font-size: 15px; margin: 6px 0 2px; }
+            font-size: var(--t-body); }
+.identity.small { font-size: var(--t-figure); margin: 6px 0 2px; }
 .eq-lead { color: var(--muted); }
 .eq-op { color: var(--faint); font-family: var(--mono); }
-.eq-sum { color: var(--muted); font-size: 18px; font-family: var(--mono); }
+.eq-sum { color: var(--muted); font-size: var(--t-title); font-family: var(--mono); }
 .eq-term { padding: 3px 10px; border-radius: 7px; font-weight: 600;
            color: var(--ink); border: 1px solid var(--line); }
 .eq-term.mine   { background: color-mix(in oklab, var(--accent) 22%, var(--surface)); }
@@ -40,9 +40,9 @@
 .eq-res.neg { background: color-mix(in oklab, var(--tpl-heavy) 20%, var(--surface)); }
 
 .zonekey { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-top: 12px; }
-.zone { display: flex; align-items: center; gap: 8px; font-size: 12px;
+.zone { display: flex; align-items: center; gap: 8px; font-size: var(--t-cell);
         color: var(--muted); }
-.zone b { color: var(--ink); font-size: 12px; }
+.zone b { color: var(--ink); font-size: var(--t-cell); }
 .zone .sw { width: 22px; height: 9px; border-radius: 3px; flex: none; }
 .zone.heavy .sw { background: var(--tpl-heavy); }
 .zone.mid   .sw { background: var(--tpl-mid); }
@@ -50,7 +50,7 @@
 
 /* ---- toolbars ----------------------------------------------------------- */
 
-.chip .cnt { margin-left: 6px; font-family: var(--mono); font-size: 10.5px;
+.chip .cnt { margin-left: 6px; font-family: var(--mono); font-size: var(--t-micro);
              color: var(--faint); }
 .chip.src.on .cnt { color: inherit; opacity: .85; }
 /* A set with no measurable manager: the count is still printed, as "0 of 20
@@ -66,18 +66,18 @@ svg.fieldmap { width: 100%; height: auto; display: block;
 
 svg.fieldmap .grid { stroke: var(--line); stroke-width: 1; }
 svg.fieldmap .diag { stroke: var(--muted); stroke-width: 1; opacity: .6; }
-svg.fieldmap .tick { fill: var(--faint); font-size: 10px; text-anchor: middle;
+svg.fieldmap .tick { fill: var(--faint); font-size: var(--t-micro); text-anchor: middle;
                      font-family: var(--mono); }
 svg.fieldmap .tick.end, svg.fieldmap .plabel.end,
 svg.fieldmap .diaglabel.end, svg.fieldmap .zonelabel.end { text-anchor: end; }
-svg.fieldmap .axis { fill: var(--muted); font-size: 11px; text-anchor: middle;
+svg.fieldmap .axis { fill: var(--muted); font-size: var(--t-label); text-anchor: middle;
                      letter-spacing: .02em; }
-svg.fieldmap .diaglabel { fill: var(--muted); font-size: 10.5px;
+svg.fieldmap .diaglabel { fill: var(--muted); font-size: var(--t-micro);
                           letter-spacing: .04em; }
-svg.fieldmap .zonelabel { fill: var(--faint); font-size: 10.5px;
+svg.fieldmap .zonelabel { fill: var(--faint); font-size: var(--t-micro);
                           letter-spacing: .12em; text-transform: uppercase; }
 /* Text wears text tokens; the mark beside it carries the identity. */
-svg.fieldmap .plabel { fill: var(--muted); font-size: 11px; }
+svg.fieldmap .plabel { fill: var(--muted); font-size: var(--t-label); }
 svg.fieldmap .plabel.mine { fill: var(--ink); font-weight: 600; }
 
 /* Owned = filled, not owned = hollow. Shape carries squad membership so the
@@ -91,10 +91,10 @@ svg.fieldmap .mark:hover { stroke: var(--ink); }
            transition: opacity .09s ease; min-width: 168px;
            background: var(--raised); border: 1px solid var(--line);
            border-radius: 9px; padding: 8px 10px; box-shadow: var(--shadow);
-           font-size: 12px; z-index: 5; }
+           font-size: var(--t-cell); z-index: 5; }
 .chartip.on { opacity: 1; }
-.chartip b { color: var(--ink); font-size: 13px; }
-.chartip .sub { color: var(--faint); font-size: 11px; margin-bottom: 5px; }
+.chartip b { color: var(--ink); font-size: var(--t-body); }
+.chartip .sub { color: var(--faint); font-size: var(--t-label); margin-bottom: 5px; }
 .chartip .tl { display: flex; justify-content: space-between; gap: 14px;
                line-height: 1.6; }
 .chartip .tk { color: var(--muted); }
@@ -104,7 +104,7 @@ svg.fieldmap .mark:hover { stroke: var(--ink); }
 
 .maplegend { display: flex; align-items: center; flex-wrap: wrap; gap: 8px;
              margin: 2px 0 6px; }
-.maplegend .sub { color: var(--faint); font-size: 11px;
+.maplegend .sub { color: var(--faint); font-size: var(--t-label);
                   font-family: var(--mono); }
 .ramp { display: flex; height: 10px; border-radius: 3px; overflow: hidden; }
 .ramp span { width: 15px; }
@@ -121,7 +121,7 @@ svg.fieldmap .mark:hover { stroke: var(--ink); }
    headings are unnecessary. Colour follows the same diverging pair as every
    other gap on the page. */
 
-.means { color: var(--ink); font-size: 13px; line-height: 1.6;
+.means { color: var(--ink); font-size: var(--t-body); line-height: 1.6;
          max-width: 74ch; margin: 6px 0 2px;
          padding: 9px 12px; border-radius: 9px;
          background: var(--raised);
@@ -132,7 +132,7 @@ svg.fieldmap .mark:hover { stroke: var(--ink); }
 .chipnote { max-width: 74ch; margin: 6px 0 2px; padding: 8px 12px;
             border-radius: 9px; background: var(--raised);
             border-left: 3px solid var(--warn); line-height: 1.55; }
-.coverlink { display: inline-block; margin: 0 0 10px; font-size: 11.5px;
+.coverlink { display: inline-block; margin: 0 0 10px; font-size: var(--t-label);
              color: var(--s1); text-decoration: none; }
 .coverlink:hover { text-decoration: underline; }
 
@@ -142,7 +142,7 @@ svg.fieldmap .mark:hover { stroke: var(--ink); }
         padding: 2px 4px; border-radius: 7px; cursor: pointer; }
 .xrow:hover, .xrow:focus-visible { background: var(--raised); outline: none; }
 .xrow:focus-visible { box-shadow: inset 0 0 0 1.5px var(--s1); }
-.xnm { color: var(--ink); font-size: 12.5px; font-weight: 600;
+.xnm { color: var(--ink); font-size: var(--t-cell); font-weight: 600;
        white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* The track is two equal halves with the zero rule between them. */
 .xtrack { position: relative; height: 9px; border-radius: 999px;
@@ -152,7 +152,7 @@ svg.fieldmap .mark:hover { stroke: var(--ink); }
 .xfill { position: absolute; top: 0; bottom: 0; border-radius: 999px; }
 .xfill.neg { right: 50%; background: var(--tpl-heavy); }
 .xfill.pos { left: 50%; background: var(--tpl-light); }
-.xval { font: 600 12.5px/1 var(--mono); font-variant-numeric: tabular-nums;
+.xval { font: 600 var(--t-cell)/1 var(--mono); font-variant-numeric: tabular-nums;
         text-align: right; }
 .xval.neg { color: var(--tpl-heavy); }
 .xval.pos { color: var(--tpl-light); }
@@ -169,10 +169,10 @@ table.eotable td { vertical-align: middle; }
 .gv { font-variant-numeric: tabular-nums; }
 td.held { white-space: nowrap; }
 td.held .frac { font-family: var(--mono); color: var(--muted);
-                margin-right: 6px; font-size: 11.5px; }
-td.held .chip { font-size: 10px; padding: 1px 5px; }
+                margin-right: 6px; font-size: var(--t-label); }
+td.held .chip { font-size: var(--t-micro); padding: 1px 5px; }
 td.held .frac { margin-right: 4px; }
-.expo { margin-left: 7px; font-family: var(--mono); font-size: 11px;
+.expo { margin-left: 7px; font-family: var(--mono); font-size: var(--t-label);
         color: var(--muted); font-variant-numeric: tabular-nums; }
 
 /* ---- the segment selector ----------------------------------------------
@@ -190,7 +190,7 @@ td.held .frac { margin-right: 4px; }
 .chip.seg .segbox { display: inline-flex; align-items: center;
                     justify-content: center; width: 13px; height: 13px;
                     border-radius: 4px; border: 1px solid var(--line);
-                    background: var(--raised); font-size: 9px; line-height: 1;
+                    background: var(--raised); font-size: var(--t-micro); line-height: 1;
                     color: var(--muted); }
 .chip.seg.on { background: color-mix(in oklab, var(--s1) 14%, var(--surface));
                border-color: var(--s1); color: var(--ink); }
@@ -203,21 +203,21 @@ td.held .frac { margin-right: 4px; }
 .chip.seg.danger.on { background: color-mix(in oklab, var(--bad) 15%, var(--surface));
                       border-color: var(--bad); }
 .chip.seg.danger.on .segbox { background: var(--bad); border-color: var(--bad); }
-.chip.seg .segwarn { margin-left: 3px; font: 700 10px/1 var(--mono);
+.chip.seg .segwarn { margin-left: 3px; font: 700 var(--t-micro)/1 var(--mono);
                      color: var(--warn); }
 .chip.seg.danger .segwarn { color: var(--bad); }
 /* A set that is honest but needs a sentence beside it. Quiet on purpose: the
    loud state is reserved for the set that must not be used, and an alarm that
    fires on everything stops being read. */
 .chip.seg.caveated { border-style: dashed; }
-.chip.seg .segcav { margin-left: 3px; font: 700 11px/1 var(--mono);
+.chip.seg .segcav { margin-left: 3px; font: 700 var(--t-label)/1 var(--mono);
                     color: var(--faint); }
 .chip.seg.on .segcav { color: var(--muted); }
 .chip.seg.ghost { color: var(--faint); border-style: dashed; }
 .chip.seg:disabled { cursor: default; opacity: .72; }
 .chip.seg.on:disabled { opacity: .9; }
 
-.segstatus { flex: 1 1 100%; color: var(--muted); font-size: 12px;
+.segstatus { flex: 1 1 100%; color: var(--muted); font-size: var(--t-cell);
              line-height: 1.5; max-width: 100ch; }
 .segstatus b { color: var(--ink); }
 .segstatus.warn { color: var(--warn); }
@@ -235,7 +235,7 @@ td.held .frac { margin-right: 4px; }
    ~480px measure and the sentence wrapped every four words. The chip is an
    inline lead-in and the text flows past it. */
 .segnote { flex: 1 1 100%; box-sizing: border-box; color: var(--muted);
-           font-size: 11.5px; line-height: 1.55; max-width: 104ch;
+           font-size: var(--t-label); line-height: 1.55; max-width: 104ch;
            padding: 7px 10px; border-radius: 8px;
            background: color-mix(in oklab, var(--warn) 9%, var(--surface));
            border: 1px solid color-mix(in oklab, var(--warn) 28%, var(--line)); }
@@ -250,10 +250,10 @@ td.held .frac { margin-right: 4px; }
 .segcaveats { flex: 1 1 100%; box-sizing: border-box; max-width: 104ch;
               border-left: 2px solid var(--line); padding: 2px 0 2px 11px;
               display: flex; flex-direction: column; gap: 4px; }
-.segcaveats .cav { color: var(--muted); font-size: 11.5px; line-height: 1.55; }
+.segcaveats .cav { color: var(--muted); font-size: var(--t-label); line-height: 1.55; }
 .segcaveats .cav b { color: var(--ink); font-weight: 600; }
 
-/* Hold the previous render while the panel recomputes — never a skeleton
+/* Hold the previous render while the panel recomputes, never a skeleton
    flash, never a layout jump. */
 .refetching .card { opacity: .55; transition: opacity .12s ease; }
 .refetching .toolbar.segrow { opacity: 1; }
@@ -263,7 +263,7 @@ td.held .frac { margin-right: 4px; }
 }
 
 /* A caveat that has to be read, not a decoration. */
-.warnline { color: var(--warn); font-size: 12px; line-height: 1.55;
+.warnline { color: var(--warn); font-size: var(--t-cell); line-height: 1.55;
             max-width: 88ch; margin: 8px 0; padding: 7px 10px;
             border-radius: 8px;
             background: color-mix(in oklab, var(--warn) 8%, var(--surface));
@@ -286,14 +286,14 @@ svg.fieldmap .dbar { stroke-width: 3; stroke-linecap: round; }
 svg.fieldmap .dend { stroke-width: 2; }
 svg.fieldmap .dend.a { stroke: var(--surface); }
 svg.fieldmap .dend.b { fill: var(--surface); stroke: var(--muted); }
-svg.fieldmap .dname { fill: var(--muted); font-size: 12px; }
+svg.fieldmap .dname { fill: var(--muted); font-size: var(--t-cell); }
 svg.fieldmap .dname.mine { fill: var(--ink); font-weight: 600; }
-svg.fieldmap .dnum { fill: var(--muted); font: 11px/1 var(--mono);
+svg.fieldmap .dnum { fill: var(--muted); font: var(--t-label)/1 var(--mono);
                      font-variant-numeric: tabular-nums; }
 svg.fieldmap .dnum.strong { fill: var(--ink); font-weight: 600; }
-svg.fieldmap .dhead { fill: var(--faint); font-size: 10px;
+svg.fieldmap .dhead { fill: var(--faint); font-size: var(--t-micro);
                       letter-spacing: .08em; text-transform: uppercase; }
-svg.fieldmap .dkey { fill: var(--faint); font-size: 10px;
+svg.fieldmap .dkey { fill: var(--faint); font-size: var(--t-micro);
                      letter-spacing: .04em; }
 svg.fieldmap .rowhit { fill: transparent; cursor: pointer; }
 svg.fieldmap .rowhit:hover { fill: color-mix(in oklab, var(--ink) 6%, transparent); }
@@ -301,7 +301,7 @@ svg.fieldmap .rowhit:hover { fill: color-mix(in oklab, var(--ink) 6%, transparen
 .legkey.b-key { background: var(--surface); border: 2px solid var(--muted); }
 
 /* ---- the armband swing -------------------------------------------------
-   Two bars per player, one per gameweek, on ONE shared scale — the same
+   Two bars per player, one per gameweek, on ONE shared scale, the same
    population measured twice, never two fields sharing an axis. The delta
    carries its own sign and its own colour, so neither channel is alone. */
 
@@ -311,7 +311,7 @@ svg.fieldmap .rowhit:hover { fill: color-mix(in oklab, var(--ink) 6%, transparen
         padding: 3px 4px; border-radius: 7px; }
 .srow:hover, .srow:focus-visible { background: var(--raised); outline: none; }
 .srow:focus-visible { box-shadow: inset 0 0 0 1.5px var(--s1); }
-.snm { color: var(--ink); font-size: 12.5px; font-weight: 600;
+.snm { color: var(--ink); font-size: var(--t-cell); font-weight: 600;
        white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sbars { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .sbar { display: grid; align-items: center; gap: 7px;
@@ -320,10 +320,10 @@ svg.fieldmap .rowhit:hover { fill: color-mix(in oklab, var(--ink) 6%, transparen
                             background: color-mix(in oklab, var(--muted) 42%,
                                                   var(--surface)); }
 .sbar.now > span:nth-child(2) { background: var(--s2); }
-.sgw { color: var(--faint); font: 10.5px/1 var(--mono); }
-.sv { color: var(--muted); font: 10.5px/1 var(--mono);
+.sgw { color: var(--faint); font: var(--t-micro)/1 var(--mono); }
+.sv { color: var(--muted); font: var(--t-micro)/1 var(--mono);
       font-variant-numeric: tabular-nums; text-align: right; }
-.sd { font: 600 13px/1 var(--mono); font-variant-numeric: tabular-nums;
+.sd { font: 600 var(--t-body)/1 var(--mono); font-variant-numeric: tabular-nums;
       text-align: right; }
 .sd.neg { color: var(--tpl-heavy); }
 .sd.pos { color: var(--tpl-light); }
@@ -331,13 +331,13 @@ svg.fieldmap .rowhit:hover { fill: color-mix(in oklab, var(--ink) 6%, transparen
 /* ---- narrow screens ----------------------------------------------------- */
 /* The charts are viewBox-scaled, so they shrink rather than clip; below this
    width their type would drop under ~8px, so they scroll at a readable size
-   inside their own container instead — the page body never scrolls sideways. */
+   inside their own container instead, the page body never scrolls sideways. */
 @media (max-width: 620px) {
   .chartwrap { overflow-x: auto; }
   .chartwrap > svg.fieldmap { min-width: 560px; }
   .chartwrap > svg.fieldmap.dumbbell { min-width: 640px; }
   .toolbar.cmp select { max-width: 100%; }
-  .segstatus, .segnote { font-size: 11.5px; }
+  .segstatus, .segnote { font-size: var(--t-label); }
 }
 
 /* ---- drawer ------------------------------------------------------------- */
@@ -348,10 +348,10 @@ svg.fieldmap .rowhit:hover { fill: color-mix(in oklab, var(--ink) 6%, transparen
 .drawer h2 { margin-top: 16px; }
 
 /* ---- availability chip (R3 blocker) -------------------------------------
-   A status dot + the WORD, separated from the name — never a bare letter
+   A status dot + the WORD, separated from the name, never a bare letter
    glued to a surname. Both colours are status tokens, both themes. */
 .avail { display: inline-flex; align-items: center; gap: 5px; margin-left: 8px;
-         padding: 1px 8px; border-radius: 999px; font-size: 10.5px;
+         padding: 1px 8px; border-radius: 999px; font-size: var(--t-micro);
          border: 1px solid var(--line); color: var(--muted);
          vertical-align: middle; white-space: nowrap; }
 .avail .adot { width: 7px; height: 7px; border-radius: 50%; flex: none;
@@ -372,28 +372,34 @@ details.fieldsel > summary { cursor: pointer; display: flex; flex-wrap: wrap;
                              list-style: none; }
 details.fieldsel > summary::-webkit-details-marker { display: none; }
 details.fieldsel > summary::after { content: "▾"; color: var(--faint);
-                                    font-size: 11px; }
+                                    font-size: var(--t-label); }
 details.fieldsel[open] > summary::after { content: "▴"; }
 details.fieldsel > summary:hover .fnow { color: var(--s1); }
-.fnow { color: var(--ink); font-size: 14px; font-weight: 650; }
-.hstamp { color: var(--muted); font: 11.5px/1.5 var(--mono);
+.fnow { color: var(--ink); font-size: var(--t-body); font-weight: 600; }
+.hstamp { color: var(--muted); font: var(--t-label)/1.5 var(--mono);
           font-variant-numeric: tabular-nums; }
 .hstamp.dl { color: var(--faint); }
 
-.fgroup { color: var(--faint); font-size: 10.5px; letter-spacing: .09em;
-          text-transform: uppercase; font-weight: 650; margin: 10px 0 2px; }
+.fgroup { color: var(--faint); font-size: var(--t-micro); letter-spacing: .09em;
+          text-transform: uppercase; font-weight: 600; margin: 10px 0 2px; }
 .frow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .frow.on { background: color-mix(in oklab, var(--s1) 8%, transparent);
            border-radius: 8px; }
 .fpick { display: flex; align-items: center; gap: 8px; width: 100%;
          text-align: left; background: transparent; border: 1px solid transparent;
          border-radius: 8px; padding: 5px 8px; cursor: pointer;
-         color: var(--muted); font: inherit; font-size: 12.5px; }
+         color: var(--muted); font: inherit; font-size: var(--t-cell); }
 .fpick:hover:not(:disabled) { border-color: var(--line); color: var(--ink); }
 .fpick:focus-visible { outline: 2px solid var(--s1); outline-offset: -2px; }
-.fmark { color: var(--s1); font-size: 11px; width: 10px; flex: none; }
+/* the radio mark, drawn rather than typed: a ring that fills when the field
+   is the selected one. The control carries role=radio and aria-checked, so
+   the mark is decoration and the state is in the markup. */
+.fmark { width: 9px; height: 9px; border-radius: 50%; flex: none;
+         border: 1.5px solid var(--faint); background: transparent; }
+.fpick[aria-checked="true"] .fmark { border-color: var(--s1);
+         background: var(--s1); box-shadow: inset 0 0 0 1.5px var(--surface); }
 .fnm { color: var(--ink); font-weight: 600; min-width: 8.5em; }
-.fstamp { color: var(--faint); font: 11px/1.4 var(--mono);
+.fstamp { color: var(--faint); font: var(--t-label)/1.4 var(--mono);
           font-variant-numeric: tabular-nums; }
 .fstamp.bad { color: var(--bad); }
 .fpick.lown { opacity: .6; cursor: default; }
@@ -401,26 +407,26 @@ details.fieldsel > summary:hover .fnow { color: var(--s1); }
 
 details.composer { flex: 1 1 100%; margin: 0 0 6px 26px; }
 details.composer > summary { cursor: pointer; color: var(--s1);
-                             font-size: 11.5px; }
+                             font-size: var(--t-label); }
 details.composer > summary::after { content: " ▸"; color: var(--faint); }
 details.composer[open] > summary::after { content: " ▾"; }
 details.composer > summary:hover { text-decoration: underline; }
 .cbody { border-left: 2px solid var(--line); padding: 4px 0 4px 10px;
          margin-top: 4px; display: flex; flex-direction: column; gap: 2px; }
-.cbody .glyphkey { color: var(--faint); font-size: 11px; margin: 4px 0 0; }
+.cbody .glyphkey { color: var(--faint); font-size: var(--t-label); margin: 4px 0 0; }
 
 /* ---- low-n guard (tri-consensus) ---------------------------------------- */
 .chip .cnt.bad { color: var(--bad); }
 .chip .cnt.ml { color: var(--warn); }
 svg.fieldmap .lownwm { fill: var(--warn); opacity: .32;
-                       font: 700 36px/1 var(--mono); letter-spacing: .06em; }
+                       font: 700 var(--t-title)/1 var(--mono); letter-spacing: .06em; }
 option.lown { color: var(--faint); }
 
 /* ---- caption tiering (R1+R3) -------------------------------------------- */
 .capline { color: var(--muted); }
 details.howto { margin: 2px 0 8px; }
 details.howto > summary { cursor: pointer; color: var(--faint);
-                          font-size: 11.5px; letter-spacing: .02em; }
+                          font-size: var(--t-label); letter-spacing: .02em; }
 details.howto > summary:hover { color: var(--muted); }
 details.howto p.sub { margin: 6px 0 0 14px; max-width: 88ch; }
 
@@ -428,22 +434,22 @@ details.howto p.sub { margin: 6px 0 0 14px; max-width: 88ch; }
    Each summary states the card's own finding, so the fold costs the reader the
    picture and never the conclusion. */
 details.card.fold > summary { cursor: pointer; color: var(--ink);
-                              font-size: 14px; font-weight: 650;
+                              font-size: var(--t-body); font-weight: 600;
                               line-height: 1.5; padding: 2px 0;
                               list-style: none; display: flex; gap: 8px;
                               align-items: baseline; }
 details.card.fold > summary::-webkit-details-marker { display: none; }
 details.card.fold > summary::before { content: "▸"; color: var(--faint);
-                                      font-size: 11px; }
+                                      font-size: var(--t-label); }
 details.card.fold[open] > summary::before { content: "▾"; }
 details.card.fold > summary:hover { color: var(--s1); }
 
 /* ---- table craft --------------------------------------------------------- */
 /* Persistent sort affordance: the sorted column carries its direction, every
-   other sortable header a quiet ⇅ — the promise is visible before the click. */
+   other sortable header a quiet ⇅, the promise is visible before the click. */
 table.eotable th.sorted::after { content: " " attr(data-dir); color: var(--s1); }
 table.eotable th.sortable::after { content: " " attr(data-dir);
-                                   color: var(--faint); font-size: 9px; }
+                                   color: var(--faint); font-size: var(--t-micro); }
 table.eotable th.sortable:hover::after { color: var(--muted); }
 table.eotable th:focus-visible { outline: 2px solid var(--s1);
                                  outline-offset: -2px; }
@@ -455,7 +461,7 @@ svg.fieldmap .mark:focus-visible { outline: none; stroke: var(--ink);
 
 /* ---- the template XV ----------------------------------------------------
    The pitch, the cards, the bench and the captain ring are app.css's own
-   (.pitch / .pcard / .bench / .pcard.cap) unmodified — this page adds only the
+   (.pitch / .pcard / .bench / .pcard.cap) unmodified, this page adds only the
    three ownership states and the exposure pill.
 
    COLOUR ENCODES THE STATE, NOT THE SIZE. The number on the pill carries its
@@ -480,13 +486,13 @@ svg.fieldmap .mark:focus-visible { outline: none; stroke: var(--ink);
                                      0 0 0 4px var(--good), var(--shadow); }
 
 .pcard .term { display: block; margin: 2px 4px 0; border-radius: 5px;
-               font: 700 11px/1.6 var(--mono);
+               font: 700 var(--t-label)/1.6 var(--mono);
                font-variant-numeric: tabular-nums; }
 .pcard .term.neg { color: var(--bad);
                    background: color-mix(in oklab, var(--bad) 15%, var(--surface)); }
 .pcard .term.pos { color: var(--good);
                    background: color-mix(in oklab, var(--good) 15%, var(--surface)); }
-.pcard .avail { margin: 2px 4px 0; font-size: 9.5px; }
+.pcard .avail { margin: 2px 4px 0; font-size: var(--t-micro); }
 
 .tmpl-xv + .bench { align-items: center; }
 .bench .tlabel { min-width: 0; }
@@ -496,7 +502,7 @@ svg.fieldmap .mark:focus-visible { outline: none; stroke: var(--ink);
 .shelf .pcard { width: 74px; flex: none; cursor: pointer; }
 .shelf .pcard .face { height: 52px; }
 .shelf .dcap { display: block; margin: 2px 4px 0; border-radius: 5px;
-               font: 700 10px/1.6 var(--mono); }
+               font: 700 var(--t-micro)/1.6 var(--mono); }
 .shelf .dcap.neg { color: var(--tpl-heavy);
                    background: color-mix(in oklab, var(--tpl-heavy) 15%, var(--surface)); }
 .shelf .dcap.pos { color: var(--tpl-light);
