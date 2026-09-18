@@ -83,6 +83,6 @@
 .acct-entry-form button:disabled { opacity: .6; cursor: default; }
 .acct-entry-input { width: 12ch; padding: 6px 8px; border-radius: 7px;
                     border: 1px solid var(--line); background: var(--bg);
-                    color: var(--ink); font: 13px/1.4 var(--mono); }
+                    color: var(--ink); font: var(--t-body)/1.4 var(--mono); }
 .acct-entry-input:focus-visible { outline: 2px solid var(--s1);
                                   outline-offset: 1px; }
