@@ -203,14 +203,22 @@ def warehouse_briefing(
     season: str = "2026-27",
     entry_id: int | None = None,
 ) -> str:
-    """The briefing string. Reads a live copy; safe alongside the writer."""
+    """The briefing string. Reads a live copy; safe alongside the writer.
+
+    ``entry_id`` named the owner's team as a literal in two places below. It
+    now comes from the user context, so a briefing built for somebody else
+    describes their squad and not the operator's.
+    """
+    from fpl_edge.platform.users import owner_context
+
+    if entry_id is None:
+        entry_id = owner_context().entry_id
     now = dt.datetime.now(UTC)
     wh = Warehouse.read_copy(db_path) if db_path else Warehouse.read_copy()
     try:
         macro_lines = _macro_lines(wh, now)
         coverage = _coverage_lines(wh, now, season)
-        squad = _squad_lines(wh, now, season,
-                             entry_id if entry_id is not None else 4490171)
+        squad = _squad_lines(wh, now, season, int(entry_id))
         try:
             nxt = wh.sql(
                 "SELECT gw, deadline_utc FROM (SELECT *, row_number() OVER "
@@ -225,7 +233,7 @@ def warehouse_briefing(
         wh.close()
 
     rules_line = _rules_lines()
-    entry = entry_id if entry_id is not None else 4490171
+    entry = int(entry_id)
 
     parts = [
         f"# Warehouse briefing (generated {now:%Y-%m-%d %H:%M}Z, season {season})",

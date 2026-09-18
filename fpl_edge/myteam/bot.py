@@ -32,7 +32,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from fpl_edge.config import USER
 from fpl_edge.myteam.manual import build_draft, reconcile, split_fragments
 from fpl_edge.myteam.sources import PublicEntryClient
 from fpl_edge.myteam.state import PlayerIndex, reconstruct
@@ -73,12 +72,20 @@ class MyTeamCommands:
     """
 
     warehouse: Any
-    entry_id: int = USER.entry_id
+    #: Whose squad the bot answers about. None means the operator, which is
+    #: who runs this bot; the ``USER`` default is gone so the singleton can be.
+    entry_id: int | None = None
     season: str = "2026-27"
     store_root: Path = DEFAULT_ROOT
     client_factory: Callable[[], PublicEntryClient] = PublicEntryClient
     #: Injected in tests so a fixed instant produces a fixed answer.
     now: Callable[[], dt.datetime] = lambda: dt.datetime.now(UTC)
+
+    def __post_init__(self) -> None:
+        if self.entry_id is None:
+            from fpl_edge.platform.users import owner_context
+
+            object.__setattr__(self, "entry_id", owner_context().entry_id)
 
     @property
     def store(self) -> MyTeamStore:

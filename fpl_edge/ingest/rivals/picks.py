@@ -6,7 +6,7 @@ Availability, stated plainly because it drives every design choice below
 gameweek's deadline passes**, and 200 forever afterwards. Verified against the
 live API on 2026-08-18, before the 2026-27 GW1 deadline of 2026-08-21T17:30Z::
 
-    entry/4490171/event/38/picks/  ->  404  {"detail": "Not found."}
+    entry/{entry_id}/event/38/picks/  ->  404  {"detail": "Not found."}
     entry/200/transfers/           ->  200  []
 
 That is not an error condition to be handled defensively; it is the schedule

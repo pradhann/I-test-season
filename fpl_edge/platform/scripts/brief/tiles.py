@@ -29,6 +29,7 @@ from fpl_edge.platform.scripts.fixtures import fixture_board
 from fpl_edge.platform.scripts.ownership import ownership_eo
 from fpl_edge.platform.scripts.prices import price_radar
 from fpl_edge.platform.scripts.squad import _SOURCE_LABEL, squad_overview
+from fpl_edge.platform.users import PLANS_DIR, UserContext
 
 
 def _iso(v: Any) -> str | None:
@@ -123,6 +124,9 @@ class BriefCtx:
     season: str
     now: dt.datetime
     eid: int
+    #: Whose brief this is. ``eid`` is this user's entry id, kept as its own
+    #: field because every block reads it and none of them needs the rest.
+    user: UserContext
     sources_as_of: dict[str, str | None]
     alerts: list[dict[str, Any]]
     tiles: list[tuple[float, dict[str, Any]]]
@@ -190,7 +194,7 @@ def _source_panels(ctx: BriefCtx) -> tuple[
             sources_as_of[name] = _iso(res.get("as_of"))
         return res
 
-    sq = call("squad_overview", squad_overview, entry_id=eid)
+    sq = call("squad_overview", squad_overview, ctx=ctx.user)
     pr = call("price_radar", price_radar, limit=200)
     own = call("ownership_eo", ownership_eo)
     return sq, pr, own
@@ -464,7 +468,9 @@ def _price_flow(
     # AND the source of the price radar's solver-named targets (the chosen
     # buys plus every alternative's buys).
     tplan_named: set[int] = set()
-    tplan_path = Path(source_dir(wh)) / TRANSFER_PLAN_NAME
+    tplan_path = ctx.user.artefact(
+        PLANS_DIR, TRANSFER_PLAN_NAME,
+        legacy=Path(source_dir(wh)) / TRANSFER_PLAN_NAME)
     tplan: dict[str, Any] | None = None
     if tplan_path.exists():
         try:

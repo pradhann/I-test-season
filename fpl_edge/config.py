@@ -197,3 +197,58 @@ BRIEFING_MODEL = _model_pin("FPL_EDGE_BRIEFING_MODEL", "claude-sonnet-5")
 #: where the per-turn cost is dwarfed by the cost of a wrong answer. Was
 #: ``model="opus"``, a moving alias; pinned to the id that alias resolved to.
 CHAT_MODEL = _model_pin("FPL_EDGE_CHAT_MODEL", "claude-opus-5")
+
+
+# ------------------------------------------------------------- owner entry id
+
+#: The deployment variable that names the owner's FPL team. Listed in
+#: railway.toml and DEPLOYMENT.md, and until now read by nothing: the id was
+#: the literal on ``UserConfig.entry_id``, so a deployment that set this
+#: variable ran against the wrong team and said nothing about it.
+OWNER_ENTRY_ID_ENV = "FPL_ENTRY_ID"
+
+
+def owner_entry_id() -> int:
+    """The owner's FPL entry id: ``FPL_ENTRY_ID`` if set, else ``USER``.
+
+    A function rather than a constant because the environment can change
+    between import and the first request (the boot sequence reads the volume,
+    a test sets the variable), and because one function is greppable. Its
+    callers are ``fpl_edge/platform/users.py``, which is the only module that
+    decides whose team a request is about, and the price radar's squad filter
+    in ``fpl_edge/pipelines/tasks.py``, which is an owner-run task and must
+    not import the platform layer to learn one number.
+
+    A value that is not a positive integer raises here rather than being
+    ignored. Falling back to the committed default would run the whole engine
+    against the wrong team and print the right-looking number everywhere.
+    """
+    raw = (os.environ.get(OWNER_ENTRY_ID_ENV)
+           or load_env().get(OWNER_ENTRY_ID_ENV) or "").strip()
+    if not raw:
+        return int(USER.entry_id)
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"{OWNER_ENTRY_ID_ENV}={raw!r} is not an FPL entry id. The id is "
+            f"the number in the URL when the manager views their own points "
+            f"page."
+        ) from exc
+    if value <= 0:
+        raise RuntimeError(
+            f"{OWNER_ENTRY_ID_ENV}={raw!r} is not a positive integer, so no "
+            f"FPL team has it."
+        )
+    return value
+
+
+def owner_team_name() -> str | None:
+    """The owner's FPL team name, which is a label and never an identifier.
+
+    Beside :func:`owner_entry_id` so the two facts the owner context carries
+    are read from one place. The squad card prints this; nothing joins on it,
+    which is why a configuration without one is None rather than an error.
+    """
+    name = getattr(USER, "team_name", None)
+    return str(name) if name else None

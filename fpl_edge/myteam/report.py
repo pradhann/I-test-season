@@ -29,7 +29,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import Callable
 
-from fpl_edge.config import USER
+from fpl_edge.config import ENV_PATH
 from fpl_edge.interfaces.report import register_section
 from fpl_edge.myteam.forecast import PointsForecastUnavailableError
 from fpl_edge.myteam.recommend import NoSquadError, recommend
@@ -103,9 +103,17 @@ def current_state(
     store: MyTeamStore | None = None,
 ) -> MyTeamState:
     """Reconstruct the manager's state, falling back to the manual squad."""
-    entry_id = int(entry_id if entry_id is not None else USER.entry_id)
+    from fpl_edge.myteam.store import DEFAULT_ROOT
+    from fpl_edge.platform.users import owner_context
+
+    # The weekly report runs from the CLI and from the settlement chain,
+    # neither of which has a request, so a caller that names no entry is the
+    # operator and reads the operator's own squad store.
+    user = owner_context()
+    entry_id = int(entry_id if entry_id is not None else user.entry_id)
     snapshot = wh.snapshot_at(as_of)
-    store = store or MyTeamStore(entry_id)
+    store = store or MyTeamStore(
+        entry_id, root=user.artefact("myteam", legacy=DEFAULT_ROOT))
     manual = store.confirmed(season=season)
     from fpl_edge.myteam.sources import PublicEntryClient
 
@@ -119,7 +127,7 @@ def current_state(
 
             if not PrivateTeamClient.disabled_by_env():
                 pc = PrivateTeamClient()
-                if pc.configured or TokenManager().configured:
+                if pc.configured or TokenManager(env_path=ENV_PATH).configured:
                     try:
                         private = pc.fetch(entry_id)
                     except StaleSessionError:

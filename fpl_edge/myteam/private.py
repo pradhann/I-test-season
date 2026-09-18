@@ -143,7 +143,10 @@ class PrivateTeamClient:
         )
 
         url = f"{self._base}/my-team/{int(entry_id)}/"
-        manager = self._tokens if self._tokens is not None else TokenManager()
+        from fpl_edge.config import ENV_PATH
+
+        manager = (self._tokens if self._tokens is not None
+                   else TokenManager(env_path=ENV_PATH))
         bearer_reason = ""
 
         if manager.configured:

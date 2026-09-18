@@ -25,7 +25,14 @@ import re
 from dataclasses import dataclass, field
 from typing import Callable
 
-from fpl_edge.config import USER
+from fpl_edge.platform.users import (
+    GW1_PLAN_NAME,
+    PLANS_DIR,
+    Identity,
+    UserContext,
+    context_for,
+    owner_context,
+)
 
 SEASON_DEFAULT = "2026-27"
 
@@ -55,10 +62,28 @@ class QuestionRouter:
     """Ordered intent table. First match wins; no match returns None."""
 
     def __init__(self, wh, *, season: str = SEASON_DEFAULT,
-                 entry_id: int = USER.entry_id) -> None:
+                 entry_id: int | None = None,
+                 user: UserContext | None = None) -> None:
+        """``user`` is whose team this is; ``entry_id`` defaults to theirs.
+
+        The ``USER.entry_id`` default this signature carried is gone. A caller
+        that names an entry id and no user gets a context that owns that id and
+        cannot read a private endpoint unless the id is the owner's, so an id
+        arriving from a request can no longer be paired with the operator's
+        bearer token. A caller that names neither is the operator on their own
+        machine: the CLI, the Telegram bot and the scheduled jobs.
+        """
+        if user is None:
+            owner = owner_context()
+            if entry_id is None or int(entry_id) == int(owner.entry_id):
+                user = owner
+            else:
+                user = context_for(Identity(user_id="guest",
+                                            entry_id=int(entry_id)))
         self.wh = wh
         self.season = season
-        self.entry_id = entry_id
+        self.user = user
+        self.entry_id = int(entry_id) if entry_id is not None else int(user.entry_id)
         self.intents: list[Intent] = [
             Intent("review_team",
                    re.compile(r"\b(review|show|rate|check)\b.{0,20}\b(my\s+)?(team|squad)\b|"
@@ -188,20 +213,31 @@ class QuestionRouter:
     def _team_state(self):
         from fpl_edge.myteam.sources import PublicEntryClient
         from fpl_edge.myteam.state import reconstruct
+        from fpl_edge.myteam.store import DEFAULT_ROOT as MYTEAM_ROOT
         from fpl_edge.myteam.store import MyTeamStore
 
         private = None
-        try:
-            from fpl_edge.myteam.private import PrivateTeamClient
+        # The private read happens only for a user who has a stored FPL login
+        # of their own, and only for their own team. This is the one line in
+        # the repo that constructs a private client for a panel, so the check
+        # belongs here rather than in each of the four callers: a token and an
+        # entry id can no longer come from two different people.
+        if self.user.can_read_private and int(self.user.entry_id) == int(self.entry_id):
+            try:
+                from fpl_edge.myteam.private import PrivateTeamClient
+                from fpl_edge.myteam.tokens import TokenManager
 
-            pc = PrivateTeamClient()
-            if not PrivateTeamClient.disabled_by_env():
-                private = pc.fetch(self.entry_id)
-        except Exception:  # noqa: BLE001 - fall back to public/manual
-            private = None
+                if not PrivateTeamClient.disabled_by_env():
+                    pc = PrivateTeamClient(
+                        tokens=TokenManager(env_path=self.user.token_env_path()))
+                    private = pc.fetch(self.entry_id)
+            except Exception:  # noqa: BLE001 - fall back to public/manual
+                private = None
         client = PublicEntryClient()
         try:
-            store = MyTeamStore(self.entry_id)
+            store = MyTeamStore(
+                self.entry_id,
+                root=self.user.artefact("myteam", legacy=MYTEAM_ROOT))
             return reconstruct(
                 self._snapshot(), entry_id=self.entry_id, season=self.season,
                 client=client, manual=store.confirmed(season=self.season),
@@ -273,7 +309,8 @@ class QuestionRouter:
                 )
         png = squad_pitch_png(
             starters, bench,
-            title=f"{USER.team_name} — {self.season} GW{state.gw}",
+            title=f"{self.user.display_name or 'entry ' + str(self.entry_id)}"
+                  f" — {self.season} GW{state.gw}",
             subtitle=f"bank {bank} · source: {src}",
         )
         return Answer("\n".join(lines), images=[("team.png", png)])
@@ -290,7 +327,9 @@ class QuestionRouter:
         import json
         from pathlib import Path
 
-        plan_p = Path("data/warehouse/gw1_plan.json")
+        plan_p = self.user.artefact(
+            PLANS_DIR, GW1_PLAN_NAME,
+            legacy=Path("data/warehouse") / GW1_PLAN_NAME)
         if not plan_p.exists():
             return Answer("No solved plan cached. Run `make solve` and ask again.")
         plan = json.loads(plan_p.read_text())

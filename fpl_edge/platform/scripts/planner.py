@@ -27,8 +27,8 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any
 
-from fpl_edge.config import USER
 from fpl_edge.platform.registry import register_script
+from fpl_edge.platform.users import PRIVATE_GAP, UserContext, owner_context
 from fpl_edge.platform.scripts.common import (
     POSITION_NAME,
     UTC,
@@ -42,13 +42,15 @@ from fpl_edge.rules import rules
 
 CANDIDATE_LIMIT = 1200   # sanity ceiling; the pool is ALL players
 
+#: ``entry_id`` is NOT a param, for the reason given on ``squad_overview``'s:
+#: the id and the FPL login always come from the same object, the request's
+#: user context, so neither can name a team the other does not own.
 PARAMS: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "properties": {
         "season": season_param(),
         "horizon": {"type": "integer", "minimum": 1, "maximum": 10, "default": 5},
-        "entry_id": {"type": ["integer", "null"], "default": None},
     },
 }
 
@@ -153,7 +155,7 @@ def planner_grid(
     *,
     season: str,
     horizon: int = 5,
-    entry_id: int | None = None,
+    ctx: UserContext | None = None,
 ) -> dict[str, Any]:
     """Your 15, candidate ins, and per-GW consensus xPts for the planner grid.
 
@@ -162,7 +164,8 @@ def planner_grid(
     spread, and the transfer rules (FTs entering, banking cap, hit cost) so
     the grid's arithmetic mirrors the verified rule registry.
     """
-    eid = int(entry_id) if entry_id is not None else int(USER.entry_id)
+    ctx = ctx if ctx is not None else owner_context()
+    eid = int(ctx.entry_id)
     now = dt.datetime.now(UTC)
 
     players = q(
@@ -212,14 +215,21 @@ def planner_grid(
     try:
         from fpl_edge.interfaces.qa import QuestionRouter
 
-        router = QuestionRouter(wh, season=season, entry_id=eid)
+        router = QuestionRouter(wh, season=season, entry_id=eid, user=ctx)
         state = router._team_state()
     except Exception as exc:  # noqa: BLE001 - a panel reports, it does not crash
+        if not ctx.can_read_private:
+            return empty(
+                f"Could not read squad for entry {eid}: "
+                f"{type(exc).__name__}: {exc}. {PRIVATE_GAP}"
+            )
         return empty(
             f"Could not read squad for entry {eid}: {type(exc).__name__}: {exc}. "
             f"Run `fpl myteam auth` once, or text /setsquad with your 15."
         )
     if state is None or state.picks is None:
+        if not ctx.can_read_private:
+            return empty(f"No squad visible for entry {eid} yet: {PRIVATE_GAP}")
         return empty(
             f"No squad visible for entry {eid} yet. FPL publishes picks only "
             f"after a deadline passes; until then run `fpl myteam auth` or "

@@ -485,7 +485,8 @@ def test_the_plan_route_refuses_a_plan_solved_against_another_squad(
     assert body["state"] in ("fresh", "aging")
 
     # With a squad that disagrees, the route refuses in the same words.
-    monkeypatch.setattr(app_mod, "_held_squad", lambda wh, season: [11, 44])
+    monkeypatch.setattr(app_mod, "_held_squad",
+                            lambda wh, season, user=None: [11, 44])
     plan_path.write_text(_json.dumps({**base, "squad_before": [11, 33]}))
     body = client.get("/api/solve/transfer-plan").json()
     assert body["superseded"] is True

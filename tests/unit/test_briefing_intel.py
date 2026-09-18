@@ -315,7 +315,7 @@ def fake_panels(monkeypatch):
         },
     }
     monkeypatch.setattr(bi, "collect_panels",
-                        lambda wh, season, panels=bi.INPUT_PANELS: results)
+                        lambda wh, season, panels=bi.INPUT_PANELS, ctx=None: results)
     return results
 
 
@@ -392,7 +392,7 @@ def test_generate_zero_valid_items_raises_and_writes_nothing(db, monkeypatch):
 def test_generate_refuses_an_all_empty_panel_set(db, monkeypatch):
     monkeypatch.setattr(
         bi, "collect_panels",
-        lambda wh, season, panels=bi.INPUT_PANELS: {
+        lambda wh, season, panels=bi.INPUT_PANELS, ctx=None: {
             "squad_overview": {"empty": True, "reason": "no squad"}})
     with pytest.raises(bi.BriefingIntelError, match="nothing to synthesise"):
         bi.generate(db, season="2026-27",

@@ -10,7 +10,7 @@ uvicorn import that was already there, so the edge never exists at import time.
 from __future__ import annotations
 
 import datetime as dt
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -117,7 +117,31 @@ class Deps:
 
     app: FastAPI
     db_path: Path
+    #: The owner's agent, rooted where the operator's transcripts already are.
     chat_agent: Any
+    #: user_id -> that user's agent. One root per user, so a conversation id
+    #: from another user's directory simply does not exist and the store's own
+    #: UnknownConversation is the correct answer without an ownership check.
+    _chat_agents: dict[str, Any] = field(default_factory=dict)
+
+    def agent_for(self, user: Any) -> Any:
+        """The chat agent whose transcripts belong to ``user``.
+
+        The owner keeps the agent built at app construction, which is the one
+        a test points at a temp root. Everybody else gets an agent rooted at
+        their own directory, built once and cached for the process.
+        """
+        if user is None or getattr(user, "is_owner", True):
+            return self.chat_agent
+        user_id = str(user.user_id)
+        agent = self._chat_agents.get(user_id)
+        if agent is None:
+            from fpl_edge.platform.chat_agent import ChatAgent
+            from fpl_edge.platform.users import CHAT_DIR
+
+            agent = ChatAgent(root=user.path(CHAT_DIR))
+            self._chat_agents[user_id] = agent
+        return agent
 
 
 

@@ -19,7 +19,7 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
-from fpl_edge.config import USER
+from fpl_edge.config import ENV_PATH, USER
 from fpl_edge.myteam.forecast import PointsForecastUnavailableError, TablePointsForecast
 from fpl_edge.myteam.manual import build_draft, reconcile
 from fpl_edge.myteam.recommend import NoSquadError, recommend
@@ -97,7 +97,7 @@ def _try_private(entry_id: int):
     client = PrivateTeamClient()
     from fpl_edge.myteam.tokens import TokenManager
 
-    if not client.configured and not TokenManager().configured:
+    if not client.configured and not TokenManager(env_path=ENV_PATH).configured:
         return None
     try:
         return client.fetch(entry_id)
@@ -556,7 +556,7 @@ def auth(
     from fpl_edge.myteam import account
     from fpl_edge.myteam.tokens import TokenManager
 
-    manager = TokenManager()
+    manager = TokenManager(env_path=ENV_PATH)
     if paste_cookie or from_file is not None:
         try:
             pasted = _read_cookie_input(from_file)

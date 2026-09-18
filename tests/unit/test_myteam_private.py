@@ -272,7 +272,7 @@ def test_a_plain_cookie_setup_still_gets_the_simple_cookie_message(monkeypatch) 
     assert "Bearer auth failed first" not in message
 
 
-def test_status_never_calls_an_unexpired_refresh_token_valid() -> None:
+def test_status_never_calls_an_unexpired_refresh_token_valid(tmp_path) -> None:
     """Rotating tokens can be revoked long before `exp`.
 
     Saying "valid" from `exp` alone sent a manager chasing the wrong fix while
@@ -291,7 +291,10 @@ def test_status_never_calls_an_unexpired_refresh_token_valid() -> None:
         ).decode().rstrip("=")
         return f"x.{payload}.y"
 
-    manager = TokenManager()
+    # A path is now required: TokenManager() with none raises, so no caller
+    # can read the operator's .env by omission. This one reads nothing from
+    # disk, because _read is replaced on the next line.
+    manager = TokenManager(env_path=tmp_path / ".env")
     manager._read = lambda: {  # type: ignore[method-assign]
         "FPL_ACCESS_TOKEN": token(1),
         "FPL_REFRESH_TOKEN": token(177),

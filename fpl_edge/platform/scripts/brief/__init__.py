@@ -62,7 +62,7 @@ from __future__ import annotations
 
 # Importing build is what registers the panel, exactly as importing the single
 # brief.py module used to.
-from fpl_edge.platform.scripts.brief.build import USER, dashboard_brief
+from fpl_edge.platform.scripts.brief.build import dashboard_brief
 from fpl_edge.platform.scripts.brief.schema import (
     PARAMS,
     PRECEDENCE,
@@ -76,9 +76,6 @@ from fpl_edge.platform.scripts.brief.tiles import best_legal_xi
 #:   THRESHOLDS      fpl_edge/platform/app/helpers.py:280
 #:   PRECEDENCE      tests/unit/test_dashboard_brief.py:501
 #:   best_legal_xi   tests/unit/test_dashboard_brief.py:1188,1217
-#:   USER            tests/unit/test_dashboard_brief.py:1255 (read for the
-#:                   entry id a fixture seeds; never patched here, so a
-#:                   re-export cannot go inert)
 #:   RESULT          tests/unit/test_dashboard_brief.py:1438
 #: PARAMS and TRANSFER_PLAN_NAME are the panel's other two public constants.
 #: No block builder is re-exported: they are private to the assembler.
@@ -88,7 +85,6 @@ __all__ = [
     "RESULT",
     "THRESHOLDS",
     "TRANSFER_PLAN_NAME",
-    "USER",
     "best_legal_xi",
     "dashboard_brief",
 ]

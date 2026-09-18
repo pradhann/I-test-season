@@ -558,6 +558,7 @@ def _selectable_sets(
     sel_n: int | None,
     sel_slot: dict[str, Any] | None,
     squad_meta: dict[str, Any],
+    user=None,
     unknown: list[str],
 ) -> tuple[list[dict[str, Any]], dict[str, Any], bool | None, str]:
     """The segments on offer as first-class descriptors, and what the choice resolved to."""
@@ -599,9 +600,7 @@ def _selectable_sets(
     sum_of_sets = sum((s["n"] or 0) for s in segment_rows if s["selected"]) or None
     overlap = (sum_of_sets - sel_n) if (sum_of_sets and sel_n is not None) else None
     try:
-        from fpl_edge.config import USER
-
-        my_entry = int(USER.entry_id)
+        my_entry = int(user.entry_id) if user is not None else None
     except Exception:  # noqa: BLE001 — a panel reports, it does not crash
         my_entry = None
     includes_you = _selection_includes(wh, resolved, my_entry)

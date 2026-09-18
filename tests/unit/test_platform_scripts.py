@@ -310,3 +310,30 @@ def test_market_watch_with_no_derivation_says_how_to_produce_one(empty_db) -> No
     run = run_script("market_watch", {}, db=empty_db)
     assert run.result.get("empty")
     assert "ingest_odds_extras" in run.result["reason"]
+
+
+def test_the_squad_panel_takes_no_entry_id_param(empty_db):
+    """Whose 15 this is comes from the request's user context. A body that
+    could name an entry id, on a server holding that user's bearer token, is
+    one bad line away from reading somebody else's team."""
+    from fpl_edge.platform.registry import ParamsInvalid, script
+
+    assert "entry_id" not in (
+        script("squad_overview").params_schema.get("properties") or {})
+    with pytest.raises(ParamsInvalid):
+        run_script("squad_overview", {"entry_id": 7}, db=empty_db)
+
+
+def test_the_squad_panel_reports_the_context_entry_id(empty_db):
+    from fpl_edge.platform.users import Identity, context_for, owner_context
+
+    owner = run_script("squad_overview", {}, db=empty_db)
+    assert owner.provenance["params"] == {"season": "2026-27"}, (
+        "the user is not a param and must not ride into provenance")
+    assert owner_context().entry_id != 4242
+
+    other = context_for(Identity(user_id="abc123", entry_id=4242))
+    res = run_script("squad_overview", {}, db=empty_db, ctx=other).result
+    # An empty warehouse is an empty panel for everybody; what matters is that
+    # the run carried the caller's id rather than the owner's.
+    assert res.get("empty") is True

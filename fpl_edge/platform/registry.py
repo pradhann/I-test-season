@@ -293,16 +293,39 @@ def warehouse_is_unseeded(wh) -> bool:
         return True
 
 
+def accepts_ctx(fn: Callable[..., Any]) -> bool:
+    """True when a script declares a ``ctx`` parameter.
+
+    The context is passed by inspection rather than to every script, so a
+    script that reads only shared warehouse state cannot receive a user and
+    cannot start depending on one by accident.
+    """
+    import inspect
+
+    try:
+        return "ctx" in inspect.signature(fn).parameters
+    except (TypeError, ValueError):  # pragma: no cover - builtins and C callables
+        return False
+
+
 def run_script(
     name: str,
     params: dict[str, Any] | None = None,
     *,
     db: Path | str | None = None,
+    ctx: Any | None = None,
 ) -> ScriptRun:
     """Validate, execute against a fresh read copy, validate, stamp provenance.
 
     ``db`` overrides the warehouse path, which is what the tests use to point at
     a temporary file. Production passes nothing and gets ``DEFAULT_DB``.
+
+    ``ctx`` is the requesting user (:class:`fpl_edge.platform.users.UserContext`)
+    and reaches only the scripts that declare a ``ctx`` parameter. It is NOT a
+    param: params are echoed back in the run record and in every panel's
+    provenance, so a user id in there would ride into every screenshot and
+    every log line. A caller that passes none gets the owner, which is what the
+    scheduled jobs, the CLI and the test suite are.
     """
     from fpl_edge.platform.query import read_copy
     from fpl_edge.store.warehouse import DEFAULT_DB
@@ -310,6 +333,11 @@ def run_script(
     script_obj = script(name)
     clean = validate_params(script_obj, params)
     path = Path(db) if db is not None else DEFAULT_DB
+    call_kwargs = dict(clean)
+    if accepts_ctx(script_obj.fn):
+        from fpl_edge.platform.users import owner_context
+
+        call_kwargs["ctx"] = ctx if ctx is not None else owner_context()
 
     started = time.monotonic()
     generated_at = dt.datetime.now(UTC)
@@ -327,7 +355,7 @@ def run_script(
             # Without this the handle knows only about the scratch directory.
             wh.source_path = Path(path)
             try:
-                result = script_obj.fn(wh, **clean)
+                result = script_obj.fn(wh, **call_kwargs)
             except Exception as exc:  # noqa: BLE001 - re-raised unless unseeded
                 # The one central place a fresh deployment's empty warehouse
                 # becomes a structured gap instead of a 500 (DEPLOYMENT.md

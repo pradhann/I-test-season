@@ -256,6 +256,7 @@ def _squad_coverage(
     sel_by_code: dict[int, dict],
     sel_n: int | None,
     xp: dict[int, tuple],
+    ctx=None,
 ) -> tuple[
     list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], str,
     set | None, dict[str, Any], str | None]:
@@ -263,7 +264,7 @@ def _squad_coverage(
     # -- squad coverage: codes AND the multiplier behind each one --
     roles: dict[int, dict] | None = None
     if coverage:
-        roles, squad_meta = _squad_state(wh, season)
+        roles, squad_meta = _squad_state(wh, season, ctx)
     else:
         squad_meta = {"readable": False, "has_multipliers": False,
                       "note": "coverage disabled by caller"}

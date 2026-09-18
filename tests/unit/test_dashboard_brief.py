@@ -1252,12 +1252,13 @@ def test_squad_source_names_the_public_read_and_its_one_fix(db):
 def _seed_standing(db, rows, *, averages=True):
     """The manager's own crawled gameweeks, plus FPL's published averages."""
     from fpl_edge.ingest.rivals.schema import migrate as rivals_migrate
-    from fpl_edge.platform.scripts.brief import USER
+    from fpl_edge.platform.users import owner_context
 
     with Warehouse(db) as wh:
         rivals_migrate(wh)
         wh.append("fact_manager_gw", pd.DataFrame([
-            {"entry_id": int(USER.entry_id), "season": SEASON, "gw": r["gw"],
+            {"entry_id": int(owner_context().entry_id), "season": SEASON,
+             "gw": r["gw"],
              "points": r["points"], "points_on_bench": r.get("bench", 0),
              "event_transfers": 0, "event_transfers_cost": r.get("hit", 0),
              "overall_rank": r["rank"], "as_of": T0}
@@ -1461,3 +1462,22 @@ def test_the_seeded_brief_serves_three_alerts_and_three_tiles_and_no_moves(db):
     assert len(res["tiles"]) == 3
     assert len(res["moves"]) == 0
     assert res["moves_suppressed"] == 0
+
+
+def test_the_brief_takes_no_entry_id_param_but_still_reports_one(db):
+    """The id leaves the params and stays in the result: the payload has to
+    say whose team it describes, and the 31-key contract keeps it."""
+    from fpl_edge.platform.registry import ParamsInvalid, script
+    from fpl_edge.platform.users import Identity, context_for, owner_context
+
+    assert "entry_id" not in (
+        script("dashboard_brief").params_schema.get("properties") or {})
+    with pytest.raises(ParamsInvalid):
+        run_script("dashboard_brief", {"entry_id": 7}, db=db)
+
+    res = run_script("dashboard_brief", {}, db=db).result
+    assert res["entry_id"] == owner_context().entry_id
+
+    other = context_for(Identity(user_id="abc123", entry_id=4242))
+    mine = run_script("dashboard_brief", {}, db=db, ctx=other).result
+    assert mine.get("entry_id") == 4242 or mine.get("empty") is True

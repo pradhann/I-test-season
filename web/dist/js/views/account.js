@@ -7,13 +7,22 @@
    browser session can mint one. This view cannot remove that step. It makes
    everything after it one paste.
 
-   DATA PATH. Three routes, all loopback-only, none of which ever returns a
+   DATA PATH. Five routes, all loopback-only, none of which ever returns a
    token value:
      GET  /api/account/status
      POST /api/account/connect   {cookie}
      POST /api/account/verify
+     GET  /api/account/entry
+     POST /api/account/entry     {entry_id}
    The connect route runs the exact code `fpl myteam auth --paste-cookie`
    runs, so success and failure read the same here and in the terminal.
+
+   The team id comes first on the card because it is what every panel reads,
+   and because the server checks it against the public entry endpoint before
+   it saves: an id that no team has is refused with the place to find the
+   right one, and an id that could not be checked is neither saved nor called
+   wrong. The card prints the id the server says it is using, never the one
+   typed into the box.
 
    The textarea is cleared after every submit, success or not: the paste is a
    credential and the page has no business holding it once the server has
@@ -66,6 +75,62 @@ const REPASTE = "Log in again at fantasy.premierleague.com, copy a fresh "
   + "The stored token was left as is.";
 
 function failureText(cls) { return FAILURE[cls] || "the check failed"; }
+
+/* ------------------------------------------------------------- team id */
+
+/* postJSON throws `path: HTTP 404 {"detail": "..."}`. The detail is the
+   server's sentence, with the remediation in it; the status line and the URL
+   are not something to show a manager. Returns "" when the failure carries no
+   server sentence, which is how the caller knows to use the error box. */
+export function serverDetail(err) {
+  const msg = String((err && err.message) || err || "");
+  const at = msg.indexOf("{");
+  if (at < 0) return "";
+  try {
+    const body = JSON.parse(msg.slice(at));
+    return typeof body.detail === "string" ? body.detail : "";
+  } catch {
+    return "";
+  }
+}
+
+/* What GET /api/account/entry says, rendered. `saved` is the difference
+   between a team the manager chose and the server's own default, and the line
+   says which one it is, in the server's words. */
+export function renderEntry(host, info) {
+  host.textContent = "";
+  const box = el("div", "acct-entry-state");
+  const head = el("div", "acct-line");
+  head.append(el("span", "acct-k", "reading team "),
+              el("b", null, String(info.entry_id ?? "unknown")));
+  if (info.team_name) head.append(` (${info.team_name})`);
+  box.appendChild(head);
+  box.appendChild(el("div", "sub", info.source || ""));
+  host.appendChild(box);
+}
+
+/* The outcome of a save. A refusal prints the server's own detail, which
+   carries the remediation, so the page invents no wording of its own. */
+export function renderEntryResult(host, out) {
+  host.textContent = "";
+  if (!out) return;
+  if (out.ok) {
+    const ok = el("div", "acct-result ok");
+    ok.setAttribute("role", "status");
+    const who = out.team_name
+      ? `Saved team ${out.entry_id} (${out.team_name})`
+      : `Saved team ${out.entry_id}`;
+    ok.appendChild(el("b", null, who));
+    if (out.note) ok.appendChild(el("div", "sub", out.note));
+    host.appendChild(ok);
+    return;
+  }
+  const bad = el("div", "acct-result bad");
+  bad.setAttribute("role", "alert");
+  bad.appendChild(el("b", null, "Team id not saved"));
+  bad.appendChild(el("p", "acct-msg", out.detail || "The save did not complete."));
+  host.appendChild(bad);
+}
 
 /* ---------------------------------------------------------------- format */
 
@@ -226,6 +291,33 @@ export default async function account(host) {
   statusHost.setAttribute("aria-live", "polite");
   card.appendChild(statusHost);
 
+  /* Team id first: it is the one setting that changes what every panel
+     reads, and it works before any credential is pasted. */
+  const entryBlock = el("div", "acct-entry");
+  entryBlock.appendChild(el("h3", null, "Your team id"));
+  const entryHost = el("div", "acct-entry-host");
+  entryHost.setAttribute("aria-live", "polite");
+  entryBlock.appendChild(entryHost);
+  const entryForm = el("form", "acct-entry-form");
+  entryForm.setAttribute("autocomplete", "off");
+  const entryLabel = el("label", "acct-label", "Team id");
+  entryLabel.htmlFor = "acct-entry-id";
+  const entryInput = el("input", "acct-entry-input");
+  entryInput.id = "acct-entry-id";
+  entryInput.type = "text";
+  entryInput.inputMode = "numeric";
+  entryInput.placeholder = "1234567";
+  entryInput.setAttribute("aria-describedby", "acct-entry-help");
+  const entryHelp = el("div", "sub", "");
+  entryHelp.id = "acct-entry-help";
+  const entrySave = el("button", "primary", "Save team id");
+  entrySave.type = "submit";
+  entryForm.append(entryLabel, entryInput, entryHelp, entrySave);
+  entryBlock.appendChild(entryForm);
+  const entryResultHost = el("div", "acct-entry-result");
+  entryBlock.appendChild(entryResultHost);
+  card.appendChild(entryBlock);
+
   const why = el("p", "acct-why");
   card.appendChild(why);
 
@@ -294,6 +386,45 @@ export default async function account(host) {
       generated_at: new Date().toISOString(),
     }));
   }
+
+  async function refreshEntry() {
+    try {
+      const info = await getJSON("/api/account/entry");
+      renderEntry(entryHost, info);
+      entryHelp.textContent = info.where_is_my_id || "";
+      if (info.entry_id != null) entryInput.value = String(info.entry_id);
+      return info;
+    } catch (e) {
+      entryHost.textContent = "";
+      entryHost.appendChild(errBox(e));
+      return null;
+    }
+  }
+
+  entryForm.onsubmit = async (ev) => {
+    ev.preventDefault();
+    const typed = entryInput.value.trim();
+    entrySave.disabled = true;
+    entrySave.textContent = "Checking...";
+    try {
+      const out = await postJSON("/api/account/entry", { entry_id: typed });
+      renderEntryResult(entryResultHost, out);
+      await refreshEntry();
+      await refresh();
+    } catch (e) {
+      /* The server's refusals carry the remediation in `detail`; anything
+         else is a transport failure and gets the shared error box. */
+      const detail = serverDetail(e);
+      if (detail) renderEntryResult(entryResultHost, { ok: false, detail });
+      else {
+        entryResultHost.textContent = "";
+        entryResultHost.appendChild(errBox(e));
+      }
+    } finally {
+      entrySave.disabled = false;
+      entrySave.textContent = "Save team id";
+    }
+  };
 
   async function refresh() {
     try {
@@ -368,5 +499,6 @@ export default async function account(host) {
     setTimeout(() => { copy.textContent = prev; }, 1800);
   };
 
+  await refreshEntry();
   await refresh();
 }

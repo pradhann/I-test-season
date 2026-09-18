@@ -113,8 +113,19 @@ class BriefingIntelError(RuntimeError):
     """The pass could not produce an honest artefact. Nothing was written."""
 
 
-def artefact_path(db_path: Path | str) -> Path:
-    return Path(db_path).parent / ARTEFACT_NAME
+def artefact_path(db_path: Path | str, ctx=None) -> Path:
+    """Where this user's briefing artefact lives.
+
+    The artefact is one manager's: it is built from ``squad_overview`` and
+    ``dashboard_brief``, both of which describe a single squad. It sits beside
+    the warehouse for the owner, which is where the pipeline has always
+    written it, and under the user's own directory for anybody else.
+    """
+    from fpl_edge.platform.users import BRIEFING_INTEL_NAME, owner_context
+
+    ctx = ctx if ctx is not None else owner_context()
+    return ctx.artefact(BRIEFING_INTEL_NAME,
+                        legacy=Path(db_path).parent / ARTEFACT_NAME)
 
 
 # --------------------------------------------------------------------------
@@ -123,7 +134,8 @@ def artefact_path(db_path: Path | str) -> Path:
 
 
 def collect_panels(wh, *, season: str,
-                   panels: tuple[str, ...] = INPUT_PANELS) -> dict[str, dict[str, Any]]:
+                   panels: tuple[str, ...] = INPUT_PANELS,
+                   ctx=None) -> dict[str, dict[str, Any]]:
     """Call each registered panel script in-process, the way brief.py does.
 
     One shared read handle, declared param defaults filled from each script's
@@ -135,6 +147,12 @@ def collect_panels(wh, *, season: str,
     # panel into "no panel script named ..." on the 07:40 firing.
     import fpl_edge.platform.scripts  # noqa: F401 - imported for side effect
     from fpl_edge.platform import registry as panel_registry
+    from fpl_edge.platform.users import owner_context
+
+    # Two of these panels describe one manager's squad, so they take the same
+    # user context a request would hand them. A pipeline run has no request,
+    # and the pipeline is the operator's, so that context is the owner's.
+    ctx = ctx if ctx is not None else owner_context()
 
     out: dict[str, dict[str, Any]] = {}
     for name in panels:
@@ -143,6 +161,8 @@ def collect_panels(wh, *, season: str,
             props = script_obj.params_schema.get("properties") or {}
             params = panel_registry.validate_params(
                 script_obj, {"season": season} if "season" in props else {})
+            if panel_registry.accepts_ctx(script_obj.fn):
+                params["ctx"] = ctx
             res = script_obj.fn(wh, **params)
             if not isinstance(res, dict):
                 res = {"empty": True,
@@ -840,7 +860,8 @@ def freshness(artefact: dict[str, Any], *, now: dt.datetime,
 
 def briefing_response(db_path: Path | str,
                       *, now: dt.datetime | None = None,
-                      current: dict[str, Any] | None = None) -> dict[str, Any]:
+                      current: dict[str, Any] | None = None,
+                      ctx=None) -> dict[str, Any]:
     """The GET /api/briefing payload: artefact + freshness, or an honest gap.
 
     A missing artefact is 404-shaped JSON, never an exception:
@@ -850,7 +871,7 @@ def briefing_response(db_path: Path | str,
     None reads it via :func:`current_inputs`.
     """
     now = (now or dt.datetime.now(UTC)).astimezone(UTC)
-    path = artefact_path(db_path)
+    path = artefact_path(db_path, ctx)
     if not path.exists():
         return {"empty": True,
                 "reason": f"no briefing artefact at {path.name}; run the "
@@ -884,6 +905,7 @@ def generate(
     season: str,
     now: dt.datetime | None = None,
     run_model=None,
+    ctx=None,
 ) -> dict[str, Any]:
     """Assemble, ask once, validate, write atomically. Raises on any failure
     path (nothing is written), so the pipeline ledger records the reason.
@@ -904,7 +926,7 @@ def generate(
         # Artefact-reading panels (the solve plan, the projection parquet)
         # resolve against the ORIGINAL directory, exactly as run_script stamps.
         wh.source_path = db_path
-        results = collect_panels(wh, season=season)
+        results = collect_panels(wh, season=season, ctx=ctx)
 
     if all(res.get("empty") for res in results.values()):
         raise BriefingIntelError(
@@ -954,7 +976,7 @@ def generate(
     }
     if dropped:
         artefact["dropped_panels"] = dropped
-    write_artefact(artefact_path(db_path), artefact)
+    write_artefact(artefact_path(db_path, ctx), artefact)
     return artefact
 
 

@@ -190,6 +190,12 @@ def build() -> str:
         if ideas else "none yet — text @fplpradhannbot"
     )
 
+    # Whose retro this is, from the user context rather than a literal in the
+    # subtitle. A scheduled job has no request, so this is the owner.
+    from fpl_edge.platform.users import owner_context
+
+    entry_id = owner_context().entry_id
+
     return f"""<title>FPL Edge Retro</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700&family=Source+Sans+3:wght@400;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
@@ -250,7 +256,7 @@ td.num {{ font-family: "IBM Plex Mono", monospace; font-variant-numeric: tabular
 </style>
 <main>
 <h1>FPL Edge Retro</h1>
-<p class="sub">Season 2026-27 · entry 4490171 · generated {now:%Y-%m-%d %H:%M}Z ·
+<p class="sub">Season 2026-27 · entry {entry_id} · generated {now:%Y-%m-%d %H:%M}Z ·
 regenerated nightly by the settlement job</p>
 
 <div class="tiles">{stat_tiles}</div>

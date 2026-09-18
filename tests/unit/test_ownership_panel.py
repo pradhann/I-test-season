@@ -273,7 +273,7 @@ def test_picks_without_a_manager_row_are_labelled_not_dropped(seeded_db):
 
 def test_squad_coverage_marks_owned_and_missing(seeded_db, monkeypatch):
     class FakeRouter:
-        def __init__(self, wh, *, season, entry_id):
+        def __init__(self, wh, *, season, entry_id, user=None):
             pass
 
         def _team_state(self):
@@ -433,7 +433,7 @@ def test_your_multiplier_is_read_from_the_squad_never_inferred(seeded_db, monkey
     the squad read actually carried one — a manually entered 15 has no armband,
     and a silent 1x there would be a fabricated number in a subtraction."""
     class RichRouter:
-        def __init__(self, wh, *, season, entry_id):
+        def __init__(self, wh, *, season, entry_id, user=None):
             pass
 
         def _team_state(self):
@@ -457,7 +457,7 @@ def test_your_multiplier_is_read_from_the_squad_never_inferred(seeded_db, monkey
 
 def test_a_squad_read_without_multipliers_says_so(seeded_db, monkeypatch):
     class BareRouter:
-        def __init__(self, wh, *, season, entry_id):
+        def __init__(self, wh, *, season, entry_id, user=None):
             pass
 
         def _team_state(self):
@@ -899,7 +899,7 @@ def test_the_whole_pool_selected_equals_the_elite_cohort(segmented_db):
 class _RichRouter:
     """A squad read that carries real FPL multipliers."""
 
-    def __init__(self, wh, *, season, entry_id):
+    def __init__(self, wh, *, season, entry_id, user=None):
         pass
 
     def _team_state(self):
@@ -967,7 +967,7 @@ def test_a_squad_read_without_multipliers_keeps_the_own_gap_and_nulls_the_eo(
     EO cannot, and a silent 1x there would be a fabricated number inside a
     subtraction."""
     class BareRouter:
-        def __init__(self, wh, *, season, entry_id):
+        def __init__(self, wh, *, season, entry_id, user=None):
             pass
 
         def _team_state(self):
