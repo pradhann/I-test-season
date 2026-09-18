@@ -362,7 +362,10 @@ def test_root_explains_itself_when_no_bundle_is_built(tmp_path, monkeypatch, db)
     once a bundle exists the mount takes over, and a test that asserted the
     explanation from repo state started failing the moment the UI shipped.
     """
-    import fpl_edge.platform.app as app_module
+    # WEB_DIST and create_app now live in app/factory.py; the package
+    # __init__ re-exports create_app but not WEB_DIST, so the patch has to
+    # name factory or it would set an attribute the index route never reads.
+    import fpl_edge.platform.app.factory as app_module
 
     monkeypatch.setattr(app_module, "WEB_DIST", tmp_path / "absent")
     bare = TestClient(app_module.create_app(db=db))
@@ -373,7 +376,7 @@ def test_root_explains_itself_when_no_bundle_is_built(tmp_path, monkeypatch, db)
 
 def test_root_serves_the_bundle_when_one_is_built(tmp_path, monkeypatch, db):
     """And when a bundle IS present, / serves it."""
-    import fpl_edge.platform.app as app_module
+    import fpl_edge.platform.app.factory as app_module  # WEB_DIST's new home
 
     dist = tmp_path / "dist"
     dist.mkdir()
@@ -412,7 +415,9 @@ def test_bad_solve_options_are_a_400_and_spawn_nothing(client, monkeypatch):
 
 def test_transfer_plan_route_resolves_names_and_judges_freshness(client, tmp_path, monkeypatch):
     import json as _json
-    from fpl_edge.platform import app as app_mod
+    # _TRANSFER_PLAN_PATH moved with _transfer_plan into app/routes_solve.py;
+    # patching it on the package would patch a name nothing reads.
+    from fpl_edge.platform.app import routes_solve as app_mod
     # the fixture db has no dim_player rows: names fall back to codes, never invented
     plan_path = tmp_path / "transfer_plan.json"
     monkeypatch.setattr(app_mod, "_TRANSFER_PLAN_PATH", plan_path)
@@ -457,7 +462,7 @@ def test_the_plan_route_refuses_a_plan_solved_against_another_squad(
     """
     import json as _json
 
-    from fpl_edge.platform import app as app_mod
+    from fpl_edge.platform.app import routes_solve as app_mod  # its new home
 
     plan_path = tmp_path / "transfer_plan.json"
     monkeypatch.setattr(app_mod, "_TRANSFER_PLAN_PATH", plan_path)
