@@ -585,6 +585,20 @@ fpl_edge/
         schema.py, load.py, fields.py, tools.py, panel.py
       projections/         (SPLIT, 3)
         schema.py, artefact.py, gw.py
+  mcp/                   NEW (workstream M): the MCP toolbelt, rewritten as a
+                         second consumer of the panels. Sits in the same tier
+                         as jobs/: it imports platform and interfaces and
+                         nothing below imports it.
+    __init__.py          empty, so `import fpl_edge.mcp` costs nothing
+    __main__.py          guarded main(): --help, --list-tools, --check, stdio
+    server.py            the one FastMCP instance, named fpl-server
+    context.py           the user context, the db path, the as_of parser
+    adapter.py           run_script to the envelope. No tool bypasses it
+    render.py            the pure helpers fpl_mcp/tools/chat_core.py held
+    prompts.py           one prompt, derived from what registered
+    tools/               (12) analysis, creators, dossier, fixtures, ideas,
+                         manager, ownership, pipelines, projections, solve,
+                         squad, watchlist
   rank/, rules/, sim/, store/, theses/                  (unchanged, 6+2+10+3+9)
 ```
 
@@ -592,12 +606,22 @@ Import direction after the seven cycle-breaking moves, top to bottom, no edge
 upward:
 
 ```
-jobs  ->  pipelines  ->  platform  ->  interfaces  ->  ingest  ->  models/sim/opt/rank  ->  store, rules
-                              \______  pipelines.contracts (leaf)
+jobs, mcp  ->  pipelines  ->  platform  ->  interfaces  ->  ingest  ->  models/sim/opt/rank  ->  store, rules
+                                   \______  pipelines.contracts (leaf)
 ```
 
 `platform.scripts.pipelines_panel -> pipelines` and
 `platform.scripts.ownership -> interfaces.qa` both survive and both run one way.
+
+One edge runs the other way and is allowed by name. `platform/chat_agent.py`
+imports `fpl_edge.mcp.server` inside `list_mcp_tools` and `toolbelt_instance`,
+which is `platform -> mcp -> platform` at package granularity. Both imports are
+function-local, `fpl_edge/mcp/__init__.py` is empty so importing the package
+pulls in nothing, and `tests/unit/test_mcp_tool_contract.py` fails on a
+module-scope import of `fpl_edge.mcp` from anywhere outside the package. The
+2026-08-27 fold-in commit chose the sibling `fpl_mcp/` layout to avoid this
+edge; the owner's instruction for the MCP rewrite reverses that call, so the
+mitigation is the import test rather than the layout.
 
 ---
 

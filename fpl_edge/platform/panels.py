@@ -230,6 +230,16 @@ PANELS: tuple[Panel, ...] = (
             "ledger's run_id. Mounted inside the Pipelines drawer."
         ),
     ),
+    # The five scripts the MCP rewrite added -- player_form, player_dossier,
+    # player_intel, manager_lookup and idea_review -- are REGISTERED but
+    # declared no Panel here yet, for the same reason price_radar,
+    # market_watch and idea_registry lost theirs above: no view in
+    # web/dist/js/views/ renders them, and tests/unit/test_web_contract.py
+    # pins both directions of that (a declared Panel nobody renders fails, and
+    # a view calling an unregistered script fails). Today their one consumer
+    # is fpl_edge/mcp/, which reads the SCRIPT through run_script and never
+    # looks at a Panel. Each becomes four lines here in the same commit as the
+    # view that renders it.
     Panel(
         id="player_profile",
         title="Player profile (Understat)",
