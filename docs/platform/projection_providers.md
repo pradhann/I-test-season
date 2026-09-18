@@ -21,11 +21,14 @@ The machine-readable version of this table is
 `fpl_edge/ingest/projections/providers.py`; it and this document are two
 renderings of one registry, and the registry is the one that runs.
 
-**24 candidates evaluated. 9 ingested, 2 on the watchlist, 3 paywalled, 1
-blocked by obfuscation, 6 forbidden by a crawl policy or a licence, 3 dead.**
+**24 candidates evaluated. 9 ingested, 1 retired, 2 on the watchlist, 3
+paywalled, 6 forbidden by a crawl policy or a licence, 3 dead.**
 (Counts updated 2026-08-24: AIrsenal-via-fpl-apex and FPL-Core-Insights
 ingested; ClubElo measured dead. Their statuses were observed 2026-08-24;
-everything else 2026-08-19/20.)
+everything else 2026-08-19/20. Updated again 2026-09-18: gh_blueladd retired
+on measured accuracy, and FPLReview moved from blocked to ingested, not by
+defeating the obfuscation but by the owner exporting from his paid account
+by hand. See section 9.)
 
 ---
 
@@ -180,13 +183,14 @@ Why this order:
 - **Recovering the data URLs would mean deobfuscating a bundle that was
   obfuscated on purpose, and reaching them would mean holding an account
   session. Both are circumvention. We stopped.**
-- **Integration instruction:** take it by hand. Sign up, use the free planner
-  as a human, export, and drop the CSV in. Land it as
-  `(provider='fplreview', season, gw, code, xp, fetched_at)` through
-  `ProjectionStore.append("fact_projection", …)` with `fetched_at` set to the
-  moment *you* exported it, never to the deadline. Expected schema, from the
-  planner UI: one row per player per gameweek with a points column and an
-  `xMins` column.
+- **Taken by hand instead, and now ingested.** The owner holds a paid account
+  and exports the CSV himself. Section 9 is the lane:
+  `fpl_edge/ingest/projections/local_csv.py` reads it out of
+  `data/projections/fplreview/` and lands
+  `(provider='fplreview', season, gw, code, xp, xmins, as_of)` through the
+  same `ProjectionStore.append("fact_projection", ...)` every other provider
+  writes through, with `as_of` set to the instant of the export and never to
+  the deadline. Nothing in this repo fetches the site.
 
 **Fantasy Football Hub** — `/` 200 (84,419 B) advertising the predictions;
 `/pricing` 404; predictions require an account. No price is quoted on any page
@@ -493,8 +497,7 @@ n_obs floor, idempotent rescoring, weight normalisation, zero-fill, and every
    an opinion the publisher never stated. If it is ever added, it must be a
    *separate provider key*, so the copied claim and the derived one are scored
    apart.
-3. **A hand-exported FPL Review lane.** The one high-value source we cannot
-   take automatically, and the ingest path already accepts a CSV from disk.
+3. ~~**A hand-exported FPL Review lane.**~~ Built. See section 9.
 4. **Backfill blueladd's archive.** `out/archive/` holds pre-deadline snapshots
    with their timestamps in git history. That is the only free feed whose track
    record can be reconstructed *backwards* instead of accumulated forwards, and
@@ -508,3 +511,96 @@ n_obs floor, idempotent rescoring, weight normalisation, zero-fill, and every
 6. **FPL-Core-Insights' other tournaments.** Cups and friendlies (GW0) ship in
    the same layout the Premier League ingest already parses; pre-season
    minutes are the cheapest xMins prior that exists in August.
+
+## 9. Hand-dropped paid exports
+
+Some sources have no API, no usable free tier and a client bundle that was
+obfuscated on purpose. FPLReview is the example, and section 2 records the
+measurement that closed the automated route. The lane that replaces it is the
+owner exporting the CSV from the account he pays for and dropping it on disk.
+`fpl_edge/ingest/projections/local_csv.py` reads it.
+
+**The drop folder.** `data/projections/<provider>/`, gitignored, one directory
+per provider. FPLReview's is `data/projections/fplreview/`. The directory is
+absent in a fresh clone and in every agent worktree, which is intended: the
+data is paid and it is not in git.
+
+**The filename rule.** `<provider>_<unix_epoch>.csv`, for example
+`fplreview_1789744594.csv`. The epoch is the export instant in seconds, and it
+is the only provenance a hand export carries, so it becomes `as_of` for every
+row in the file. A filename with no parseable epoch is refused by name with
+the rule quoted back, and so is an epoch that resolves outside 2020 to 2040
+(a millisecond stamp lands there). Nothing is ever stamped with the ingest
+time: that would move a Tuesday export onto Friday's deadline and leak a later
+opinion backwards into an earlier decision.
+
+**What happens on ingest.** The projections `ingest` command runs a step per
+provider in `local_csv.DROPS` alongside every other provider, so the nightly
+and the T-30h runs pick up a new drop with no separate task.
+
+1. List the directory once. A missing or empty directory is a `no_source`
+   ledger row with the reason, never an error: a week the owner did not export
+   is a fact about the week, and failing the run over it would train everyone
+   to ignore the run.
+2. Read the drop ledger once. `raw_fetch` is the ledger, keyed
+   `(source='projections_fplreview', endpoint=<filename>, sha256)`. A file
+   already there with the same hash is skipped. A file already there whose
+   bytes have changed is refused: one epoch names one instant, so a corrected
+   export needs a new epoch rather than an edit in place.
+3. Map the wide export to long rows. FPLReview publishes two columns per
+   gameweek (`5_xMins,5_Pts, ... 14_xMins,14_Pts`); the gameweek numbers are
+   read off the header rather than assumed. `Pts` is appearance-weighted
+   expected points and lands in `xp`; `xMins` is expected minutes and lands in
+   `xmins`. `p_appear` and `xp_if_appears` stay NULL, because the export does
+   not publish them and deriving either would be inventing a claim.
+4. Resolve `ID`, the per-season element id, through `dim_player` **as the
+   roster stood at the export epoch**, not as it stands today. An id that does
+   not resolve is dropped and counted with its name in the run report. It is
+   never fuzzy-matched onto a name.
+5. Append through `ProjectionStore.append("fact_projection", ...)`, which
+   anti-joins on `(provider, season, gw, code, as_of)`. Ingesting the same
+   file twice writes nothing, with or without the ledger.
+6. Store `Elite%` in `fact_external_ownership` under metric `own_elite`,
+   provider `fplreview`, at the first gameweek the export projects. LiveFPL
+   writes the same metric for its own elite cohort; the cohorts are told apart
+   by `provider`, which is where that provenance belongs. `BV` and `SV` are
+   not stored: `fact_projection` has no price column and FPL's own price is
+   already read first-hand into `fact_player_state`.
+7. Record one `fetch_run` row per provider per run, with `rows_written` and
+   the filenames in the note, and the trigger from
+   `fetch_ledger.trigger_from_env()`.
+
+**Licence stance.** Paid, private to the owner, never republished. The bytes
+stay in this warehouse and on the owner's disk: no surface serves them, no
+report reproduces them, nothing is redistributed to a third party. The export
+is manual, so the cadence is whatever the owner does, and the provider goes
+stale between drops like any other source. No request is made to the site,
+and `providers.py` carries no probe URL for it.
+
+**Freshness.** A hand drop shows its file's epoch as its `as_of`, through the
+same `source_meta` block the Projections panel builds from
+`sem_projections(now)`. It ages on the same clock as every other provider:
+`FRESH_H = 36` and `STALE_H = 72` in `web/dist/js/views/xpoints.js`. No new
+drop means no new rows and no moving `as_of`, which is the honest reading of a
+provider nobody exported this week. The ingest CLI runs every provider with
+write-on-change, so a fresh export whose numbers are identical to the last one
+writes nothing and leaves `as_of` where it was; the `fetch_run` row is what
+records that the drop was read. That is the same split every other provider
+has, and `fetch_ledger` states it: when the value last changed and when we
+last looked are two questions.
+
+**Weight.** A new provider starts at zero. `projection_weight` is written only
+by `fpl_edge/eval/projection_scoring.py` after a gameweek settles, and a
+provider earns a nonzero weight only at `N_OBS_FLOOR = 200` player-gameweek
+observations, roughly one full gameweek of coverage. Below the floor the row
+says `earned = FALSE, weight = 0` with the count in `holdout`, and
+`sem_projection_consensus_weighted` renormalises over the providers that do
+carry weight. No weight is invented for a source with no track record.
+
+**Adding a second provider, for example Solio Analytics.** The module
+docstring in `local_csv.py` has the five steps. In short: a mapping function
+from the wide export to `key, gw, xp, xmins`, a `LocalDrop` entry naming the
+directory, the filename regex and the key column, a `providers.py` entry with
+the licence stance, and a synthetic fixture in the tests. No entry is added
+on a description of a file. It is added when a sample export is on disk and
+its columns have been read.

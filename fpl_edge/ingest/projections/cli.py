@@ -43,6 +43,7 @@ from fpl_edge.ingest.projections import (
     fplform,
     github_csv,
     livefpl,
+    local_csv,
     premierinjuries,
     rotowire,
 )
@@ -69,6 +70,15 @@ class StepResult:
     unresolved: int = 0
     detail: str = ""
     error: str = ""
+    #: Free text for this provider's fetch_run row, when the step has
+    #: something the counts do not carry (which files a hand drop read, why a
+    #: directory was empty). Empty leaves the ledger note NULL, as before.
+    note: str = ""
+    #: A fetch_ledger status other than "ok" for a step that completed
+    #: without raising and without fetching: "no_source" when the source is
+    #: simply not there, "refused" when it was there and unusable. An empty
+    #: string leaves record_run to write "ok".
+    status: str = ""
 
     def line(self) -> str:
         if not self.ok:
@@ -141,6 +151,10 @@ def ingest(season: str = SEASON, *, first_gw: int = 1, last_gw: int = 8,
         ("premierinjuries", _ingest_premierinjuries),
     ]
     steps += [(f.key, _github_step(f.key)) for f in github_csv.live_feeds()]
+    # Hand-dropped paid exports. One step per provider, in the same run as
+    # every other provider, so the nightly and the T-30h runs pick up a new
+    # drop with no separate task to remember.
+    steps += [(d.key, _local_drop_step(d.key)) for d in local_csv.live_drops()]
     if only:
         steps = [s for s in steps if s[0] in only]
         missing = set(only) - {s[0] for s in steps}
@@ -182,6 +196,8 @@ def ingest(season: str = SEASON, *, first_gw: int = 1, last_gw: int = 8,
                     results[name] = step(warehouse, store, season,
                                          first_gw=first_gw, last_gw=last_gw)
                     rec.add(results[name].rows, store.unchanged_acc)
+                    rec.status = results[name].status or rec.status
+                    rec.note = results[name].note or rec.note
                     if not results[name].ok:
                         rec.status = "error"
                         rec.note = results[name].error
@@ -403,6 +419,39 @@ def _github_step(key: str):
     return step
 
 
+def _local_drop_step(key: str):
+    """Build the ingest step for one hand-dropped paid export.
+
+    The drop directory is read on every run. Files already in the ledger cost
+    one directory listing and one query, so wiring this into the main ingest
+    is cheaper than a task that has to be remembered separately.
+    """
+
+    def step(warehouse: Warehouse, store: ProjectionStore, season: str,
+             *, first_gw: int, last_gw: int) -> StepResult:
+        drop = local_csv.BY_KEY[key]
+        got = local_csv.ingest_drop(warehouse, store, drop, season=season)
+        if got.refused:
+            for name, why in got.refused:
+                print(f"  {drop.key} refused {name}: {why.splitlines()[0]}")
+        if got.unresolved_names:
+            print(f"  {drop.key} unresolved ids, first five by name:",
+                  got.unresolved_names[:5])
+        stamps = ", ".join(f"{a:%Y-%m-%dT%H:%M:%SZ}" for a in got.as_ofs)
+        detail = (f"{len(got.ingested)} new, {len(got.skipped)} in ledger, "
+                  f"{len(got.refused)} refused"
+                  + (f", as_of {stamps}" if stamps else "")
+                  + (f", {got.ownership_rows:,} ownership rows"
+                     if got.ownership_rows else ""))
+        return StepResult(
+            provider=drop.key, ok=True, rows=got.rows, parsed=got.parsed,
+            unresolved=got.unresolved, detail=detail,
+            note=got.note(), status=got.status,
+        )
+
+    return step
+
+
 def _next_gw(warehouse: Warehouse, season: str, as_of: dt.datetime) -> int:
     """The first gameweek whose deadline is still ahead of ``as_of``."""
     frame = warehouse.sql(
@@ -509,7 +558,13 @@ def main(argv: list[str] | None = None) -> int:
         # A provider failing is a reported fact, not a non-zero exit: the run
         # succeeded at the thing it exists to do, which is landing whatever was
         # reachable. Only a total wipe-out is worth failing a cron job over.
-        if results and not any(r.ok for r in results.values()):
+        #
+        # A provider with no source at all is left out of that count. A hand
+        # drop the owner has not exported this week reports ok with status
+        # "no_source", and counting it as a success would hide the wipe-out
+        # it was never part of.
+        attempted = [r for r in results.values() if r.status != "no_source"]
+        if attempted and not any(r.ok for r in attempted):
             return 1
     return 0
 
