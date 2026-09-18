@@ -14,6 +14,7 @@
  * never read as an instruction.
  */
 
+import { icon } from "/js/components/icons.js";
 import { el, fmtAge } from "/js/app.js";
 
 /* --------------------------------------------------------------- helpers */
@@ -523,7 +524,7 @@ export function mountIngestLink(host) {
     const a = el("a", "cx-job-url", job.url);
     a.href = job.url; a.target = "_blank"; a.rel = "noopener noreferrer";
     hd.appendChild(a);
-    const x = el("button", "cx-x", "✕");
+    const x = el("button", "cx-x", icon("close"));
     x.title = "remove this row (the server keeps whatever it is doing)";
     x.onclick = () => {
       stopJob(job);
