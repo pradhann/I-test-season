@@ -8,6 +8,7 @@ contain a token.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -147,3 +148,52 @@ class UserConfig:
 
 
 USER = UserConfig()
+
+
+# ---------------------------------------------------------------- model pins
+
+#: A bare Anthropic model id: ``claude-`` followed by hyphen-separated
+#: lowercase alphanumeric segments (``claude-opus-5``, ``claude-sonnet-5``,
+#: ``claude-opus-4-5-20251101``). Nothing else. Backend labels, plan names and
+#: session ids are not model ids and never pass this.
+MODEL_ID_RE = re.compile(r"^claude-[a-z0-9]+(?:-[a-z0-9]+)*$")
+
+
+def _model_pin(env_name: str, default: str) -> str:
+    """One model id, from the environment or the committed default.
+
+    Not a secret, so it goes through the same ``.env`` reader without the
+    secret machinery. An id that is not a bare model id fails here, at import,
+    rather than after a night of runs stamped with something unjoinable.
+    """
+    value = (os.environ.get(env_name) or load_env().get(env_name) or "").strip()
+    chosen = value or default
+    if not MODEL_ID_RE.match(chosen):
+        raise RuntimeError(
+            f"{env_name}={chosen!r} is not a bare Anthropic model id such as "
+            f"{default!r}. Aliases ('opus'), plan names and session ids do not "
+            f"belong in a model pin: the id is written into content_analysis "
+            f"and into the fetch ledger, where it has to stay joinable."
+        )
+    return chosen
+
+
+#: Claim extraction over stored transcripts and articles
+#: (``fpl_edge/ingest/content/analyze.py``). The highest-volume spender in the
+#: repo: 799 stored analyses, one model call each. Sonnet because the work is
+#: structured extraction against a JSON schema over text the model is handed
+#: in full, which is the workload Sonnet is priced for; the prompt does the
+#: judgement, not the tier.
+ANALYSIS_MODEL = _model_pin("FPL_EDGE_ANALYSIS_MODEL", "claude-sonnet-5")
+
+#: The briefing salience pass (``fpl_edge/platform/briefing_intel.py``): one
+#: shot, no tools, ranking items that panels already computed. Same shape as
+#: the analysis pass, so the same tier.
+BRIEFING_MODEL = _model_pin("FPL_EDGE_BRIEFING_MODEL", "claude-sonnet-5")
+
+#: The chat agent (``fpl_edge/platform/chat_agent.py``): an interactive,
+#: tool-using agent over the whole toolbelt, a handful of turns a day. Opus,
+#: because this is the surface the owner reasons with and it is the one place
+#: where the per-turn cost is dwarfed by the cost of a wrong answer. Was
+#: ``model="opus"``, a moving alias; pinned to the id that alias resolved to.
+CHAT_MODEL = _model_pin("FPL_EDGE_CHAT_MODEL", "claude-opus-5")

@@ -338,6 +338,15 @@ def main(argv: list[str] | None = None) -> int:
                         "content_analysis_skip")
     p.add_argument("--dry-run", action="store_true",
                    help="print the queue and its ordering; spend nothing")
+    p.add_argument("--token-budget", type=int, default=0,
+                   help="stop starting new model calls once the reported "
+                        "tokens for this run reach N (0 = no token ceiling)")
+    p.add_argument("--analyse-notes", action="store_true",
+                   help="also analyse items whose only text is a description; "
+                        "off by default because such a call can produce "
+                        "neither a claim nor an insight")
+    p.add_argument("--summary-json", default=None,
+                   help="write this run's measured totals to this path")
     p.set_defaults(func=cmd_analyze)
 
     p = sub.add_parser("transcribe",

@@ -157,7 +157,9 @@ def ingest(season: str = SEASON, *, first_gw: int = 1, last_gw: int = 8,
         # the gate, so failures always retry.
         if skip_if_fresh_h and fetch_ledger.checked_within(
                 warehouse, "ingest_projections", skip_if_fresh_h):
-            with fetch_ledger.record_run(warehouse, "ingest_projections") as rec:
+            with fetch_ledger.record_run(
+                    warehouse, "ingest_projections",
+                    trigger=fetch_ledger.trigger_from_env()) as rec:
                 rec.status = "skipped_fresh"
                 rec.note = f"last ok run younger than {skip_if_fresh_h}h"
             print(f"skipped: providers checked within {skip_if_fresh_h}h")
@@ -175,7 +177,8 @@ def ingest(season: str = SEASON, *, first_gw: int = 1, last_gw: int = 8,
             store.unchanged_acc = 0
             try:
                 with fetch_ledger.record_run(
-                        warehouse, "ingest_projections", name) as rec:
+                        warehouse, "ingest_projections", name,
+                        trigger=fetch_ledger.trigger_from_env()) as rec:
                     results[name] = step(warehouse, store, season,
                                          first_gw=first_gw, last_gw=last_gw)
                     rec.add(results[name].rows, store.unchanged_acc)

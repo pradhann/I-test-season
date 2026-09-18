@@ -63,6 +63,7 @@ from claude_agent_sdk import (
     UserMessage,
 )
 
+from fpl_edge.config import CHAT_MODEL
 from fpl_edge.platform.prose_style import STYLE_RULES
 
 UTC = dt.UTC
@@ -720,14 +721,17 @@ class ChatAgent:
           toolbelt is the agent's only hands. ``disallowed_tools`` stays as
           belt-and-braces so the posture survives even if a future SDK
           version grows the built-in set behind a preset.
-        - ``model="opus"`` -- the owner's decision is Opus always; the alias
-          tracks the CLI's newest Opus rather than pinning a dated id.
+        - ``model=CHAT_MODEL`` -- the owner's decision is Opus for the chat,
+          and the pin lives in :mod:`fpl_edge.config` with the other two. It
+          was the bare alias "opus", which names whichever Opus the CLI
+          currently calls newest, so the model behind an answer changed with
+          a CLI upgrade and nothing recorded that it had.
         - The system prompt APPENDS to the claude_code preset, matching the
           old ``--append-system-prompt`` exactly.
         """
         return ClaudeAgentOptions(
             cwd=str(self.cwd),
-            model="opus",
+            model=CHAT_MODEL,
             # The old engine preferred ~/.local/bin/claude over PATH because
             # an nvm shim's Node 18 crashes cli.js. The SDK does its own
             # discovery, but an explicit binary from the caller still wins.

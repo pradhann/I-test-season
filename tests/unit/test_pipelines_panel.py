@@ -46,11 +46,10 @@ def db(tmp_path):
 
 def _ledger_row(wh, pipeline, *, status="ok", age_h=0.0, credits=0.0,
                 duration_s=1.0, trigger="scheduler", note=None):
-    rec = fetch_ledger.RunRecord(pipeline)
+    rec = fetch_ledger.RunRecord(pipeline, trigger=trigger)
     rec.started = dt.datetime.now(UTC) - dt.timedelta(hours=age_h)
     rec.finished = rec.started + dt.timedelta(seconds=duration_s)
     rec.credits = credits
-    rec.trigger = trigger
     fetch_ledger.record_finished(wh, rec, status=status, note=note)
     return rec.run_id
 

@@ -53,14 +53,14 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from fpl_edge.config import secret
+from fpl_edge.config import ANALYSIS_MODEL, MODEL_ID_RE, secret
+from fpl_edge.store.fetch_ledger import CallUsage
 
-MODEL = "claude-opus-5"
-
-#: A bare Anthropic model id: ``claude-`` followed by hyphen-separated
-#: lowercase alphanumeric segments (``claude-opus-5``, ``claude-sonnet-4-6``,
-#: ``claude-opus-4-5-20251101``). Nothing else.
-_MODEL_ID_RE = re.compile(r"^claude-[a-z0-9]+(?:-[a-z0-9]+)*$")
+#: The model this module REQUESTS. One pin, in :mod:`fpl_edge.config`, so the
+#: id cannot drift between the CLI flag, the SDK argument and the column the
+#: row is keyed on. What the backend says it actually ran is a separate fact
+#: and is recorded separately; see :class:`CallUsage`.
+MODEL = ANALYSIS_MODEL
 
 #: Conviction bands written into content_claim.confidence. The scoreboard
 #: tests these as calibration targets per creator.
@@ -121,6 +121,25 @@ def depth_for(text_source: str | None) -> str:
 def is_thin(text_source: str | None) -> bool:
     """True when the source is show notes rather than the thing itself."""
     return depth_for(text_source) in THIN_DEPTHS
+
+
+def has_body(text_source: str | None) -> bool:
+    """True when the stored text is the thing itself, not the blurb for it.
+
+    The waste gate. Measured on the live warehouse on 2026-09-18: of 799
+    stored analyses, 410 were run on items whose only text was a description
+    (303 podcast, 107 YouTube). Every one of those 410 was a model call that
+    could not, by this module's own rules, produce a single claim or insight:
+    :func:`is_scoreable` and :func:`insights_permitted` both refuse show
+    notes, so the call bought a summary of sponsor copy and nothing else. 354
+    of them ended with zero claims for exactly that reason.
+
+    Articles keep their body and are still analysed. :func:`is_scoreable`
+    answers a different question, whether a stored analysis may vote; this one
+    answers whether to spend at all, and it is answered before the call rather
+    than after it.
+    """
+    return depth_for(text_source) in ("transcript", "article")
 
 
 def is_scoreable(text_source: str | None) -> bool:
@@ -414,6 +433,82 @@ def _user_prompt(*, title: str, creator: str, body: str,
     return (f"{head}Creator: {creator}\nTitle: {title}\n\n{label}:\n{body}")
 
 
+@dataclass(frozen=True)
+class MeasuredAnalysis:
+    """One analysis and the measured cost of getting it."""
+
+    analysis: TranscriptAnalysis
+    usage: CallUsage
+
+
+#: The input-token fields a ``claude -p`` envelope reports. Summed into
+#: ``tokens_in``: all three are tokens the model read, and a budget that
+#: counted only the fresh ones would under-report a cached call by an order of
+#: magnitude (measured: 2 fresh against 31,199 cached on a two-word prompt).
+_CLI_INPUT_KEYS = ("input_tokens", "cache_creation_input_tokens",
+                   "cache_read_input_tokens")
+
+
+def _int_or_none(value: object) -> int | None:
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+def usage_from_cli(envelope: dict) -> CallUsage:
+    """Read what ``claude -p --output-format json`` says the call cost.
+
+    ``modelUsage`` is keyed by model id and each entry repeats it as
+    ``canonicalModel``; that key is the measurement. More than one key means
+    more than one model ran (a subagent), and the one that produced the most
+    output is the one that did this job, so that is the id recorded -- with
+    the token totals still summed across all of them, because all of them
+    were paid for.
+    """
+    usage = envelope.get("usage")
+    usage = usage if isinstance(usage, dict) else {}
+    per_model = envelope.get("modelUsage")
+    per_model = per_model if isinstance(per_model, dict) else {}
+
+    reported: str | None = None
+    best = -1
+    for key, entry in per_model.items():
+        entry = entry if isinstance(entry, dict) else {}
+        canonical = entry.get("canonicalModel") or key
+        out = _int_or_none(entry.get("outputTokens")) or 0
+        if isinstance(canonical, str) and MODEL_ID_RE.match(canonical) and out > best:
+            reported, best = canonical, out
+
+    parts = [_int_or_none(usage.get(k)) for k in _CLI_INPUT_KEYS]
+    tokens_in = (None if all(p is None for p in parts)
+                 else sum(p or 0 for p in parts))
+    return CallUsage(model_reported=reported, tokens_in=tokens_in,
+                     tokens_out=_int_or_none(usage.get("output_tokens")))
+
+
+def usage_from_sdk(response: object) -> CallUsage:
+    """The same three facts off an Anthropic SDK response.
+
+    Defensive by design: this function also runs against the fake clients the
+    tests inject, which carry no usage at all, and an absent field has to read
+    as unknown rather than raise.
+    """
+    usage = getattr(response, "usage", None)
+    model = getattr(response, "model", None)
+    reported = (model if isinstance(model, str) and MODEL_ID_RE.match(model)
+                else None)
+    if usage is None:
+        return CallUsage(model_reported=reported)
+    parts = [_int_or_none(getattr(usage, k, None)) for k in _CLI_INPUT_KEYS]
+    tokens_in = (None if all(p is None for p in parts)
+                 else sum(p or 0 for p in parts))
+    return CallUsage(
+        model_reported=reported, tokens_in=tokens_in,
+        tokens_out=_int_or_none(getattr(usage, "output_tokens", None)),
+    )
+
+
 def _find_claude_cli() -> str | None:
     """The working Claude Code binary, if any.
 
@@ -432,13 +527,18 @@ def _find_claude_cli() -> str | None:
 
 def _analyze_via_cli(cli: str, *, title: str, creator: str, body: str,
                      text_source: str = "transcript",
-                     timeout_s: int = 600) -> TranscriptAnalysis:
+                     model: str = MODEL,
+                     timeout_s: int = 600) -> MeasuredAnalysis:
     """Structured analysis through headless Claude Code -- the Max plan.
 
     ``claude -p`` cannot run nested inside a Claude Code session, so the
     guard env vars are scrubbed; under launchd (the bot, the nightly job)
     they are absent anyway. The prompt travels on stdin: a 25k-token
     transcript does not belong in argv.
+
+    ``--model`` is passed explicitly. Without it the CLI runs whatever its
+    own default is, which for weeks was the most expensive model on the
+    account, while every row written here claimed a different id.
     """
     import json as _json
     import os
@@ -455,7 +555,7 @@ def _analyze_via_cli(cli: str, *, title: str, creator: str, body: str,
     env = {k: v for k, v in os.environ.items()
            if k not in ("CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT")}
     proc = subprocess.run(
-        [cli, "-p", "--output-format", "json"],
+        [cli, "-p", "--output-format", "json", "--model", model],
         input=prompt, capture_output=True, text=True,
         timeout=timeout_s, env=env,
     )
@@ -475,18 +575,27 @@ def _analyze_via_cli(cli: str, *, title: str, creator: str, body: str,
         raw = raw.strip("`\n")
         raw = raw[raw.find("{"):]
     raw = raw[raw.find("{"): raw.rfind("}") + 1]
-    return TranscriptAnalysis.model_validate_json(raw)
+    return MeasuredAnalysis(
+        analysis=TranscriptAnalysis.model_validate_json(raw),
+        usage=usage_from_cli(envelope),
+    )
 
 
-def analyze_transcript(
+def analyze_transcript_measured(
     *,
     title: str,
     creator: str,
     text: str,
     text_source: str = "transcript",
+    model: str = MODEL,
     client: object | None = None,
-) -> TranscriptAnalysis:
-    """One structured read of ONE item. Deterministic schema, quoted evidence.
+) -> MeasuredAnalysis:
+    """One structured read of ONE item, with what the backend says it cost.
+
+    The same call :func:`analyze_transcript` makes; this one keeps the usage
+    the backend reported instead of discarding it. Bulk callers use this so
+    that every stored row carries its measured model and token counts, and so
+    that a token budget has something real to count.
 
     ``text_source`` is the item's own ``content_item.text_source``. It changes
     the prompt (see :data:`_NOTES_PREAMBLE`) because reading show notes and
@@ -509,7 +618,8 @@ def analyze_transcript(
         if cli:
             try:
                 return _analyze_via_cli(cli, title=title, creator=creator,
-                                        body=body, text_source=text_source)
+                                        body=body, text_source=text_source,
+                                        model=model)
             except AnalysisUnavailable as exc:
                 cli_error = str(exc)
         if not secret("ANTHROPIC_API_KEY", required=False):
@@ -522,7 +632,7 @@ def analyze_transcript(
         client = anthropic.Anthropic(api_key=secret("ANTHROPIC_API_KEY"))
 
     response = client.messages.parse(  # type: ignore[attr-defined]
-        model=MODEL,
+        model=model,
         max_tokens=16000,
         system=_system_prompt(),
         messages=[{
@@ -532,7 +642,32 @@ def analyze_transcript(
         }],
         output_format=TranscriptAnalysis,
     )
-    return response.parsed_output  # type: ignore[attr-defined]
+    return MeasuredAnalysis(
+        analysis=response.parsed_output,  # type: ignore[attr-defined]
+        usage=usage_from_sdk(response),
+    )
+
+
+def analyze_transcript(
+    *,
+    title: str,
+    creator: str,
+    text: str,
+    text_source: str = "transcript",
+    model: str = MODEL,
+    client: object | None = None,
+) -> TranscriptAnalysis:
+    """The analysis alone, for callers with nothing to record it against.
+
+    The single-link path in :mod:`fpl_edge.interfaces.creators` stores one
+    analysis interactively and has no ledger row to put a token count in.
+    Bulk callers use :func:`analyze_transcript_measured`, which keeps the
+    usage instead of dropping it.
+    """
+    return analyze_transcript_measured(
+        title=title, creator=creator, text=text, text_source=text_source,
+        model=model, client=client,
+    ).analysis
 
 
 def validate_model_id(model: str) -> str:
@@ -550,7 +685,7 @@ def validate_model_id(model: str) -> str:
     error, and it fails here rather than becoming a permanent second row that
     nothing can join to.
     """
-    if not isinstance(model, str) or not _MODEL_ID_RE.match(model):
+    if not isinstance(model, str) or not MODEL_ID_RE.match(model):
         raise ValueError(
             f"content_analysis.model must be a bare Anthropic model id such as "
             f"{MODEL!r}, not {model!r}. Backends, plans and session ids do not "
@@ -591,12 +726,19 @@ def evidence_block(*, text_source: str | None, chars: int | None = None,
 def store_analysis(wh, item_id: str, analysis: TranscriptAnalysis,
                    *, model: str = MODEL, text_source: str | None = None,
                    chars: int | None = None,
-                   substantive_chars: int | None = None) -> None:
+                   substantive_chars: int | None = None,
+                   usage: CallUsage | None = None) -> None:
     """Persist one analysis, with the provenance of the text it read.
 
     ``text_source`` is optional only so the single-link path in
     :mod:`fpl_edge.interfaces.creators` keeps working unchanged; every bulk
     write supplies it.
+
+    ``usage`` is what the backend reported (see :class:`CallUsage`). Omitted,
+    the three measurement columns land NULL, which is what an unmeasured write
+    is. ``model`` remains the REQUESTED id and half the primary key; the
+    reported id goes in ``model_reported`` beside it, so a backend that ran
+    something else is visible rather than silently renamed.
     """
     payload = analysis.model_dump()
     if text_source is not None:
@@ -622,10 +764,17 @@ def store_analysis(wh, item_id: str, analysis: TranscriptAnalysis,
     model_id = validate_model_id(model)
     wh.sql("DELETE FROM content_analysis WHERE item_id = ? AND model = ?",
            [item_id, model_id])
+    # Named columns, not positional. content_007 appends three measurement
+    # columns and a positional INSERT would have started writing the model id
+    # into model_reported the moment the migration applied.
+    measured = usage or CallUsage()
     wh.sql(
-        "INSERT INTO content_analysis VALUES (?, ?, ?, ?)",
+        "INSERT INTO content_analysis "
+        "(item_id, model, created_utc, analysis_json, model_reported, "
+        " tokens_in, tokens_out) VALUES (?, ?, ?, ?, ?, ?, ?)",
         [item_id, model_id, dt.datetime.now(dt.timezone.utc),
-         json.dumps(payload)],
+         json.dumps(payload), measured.model_reported,
+         measured.tokens_in, measured.tokens_out],
     )
 
 

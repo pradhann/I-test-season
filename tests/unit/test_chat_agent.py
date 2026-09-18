@@ -270,7 +270,12 @@ def test_options_pin_the_tool_posture_and_the_model(tmp_path):
     assert "Bash" in opts.disallowed_tools and "Write" in opts.disallowed_tools
     assert opts.allowed_tools, "the toolbelt must be allowlisted"
     assert all(n.startswith("mcp__fpl-server__") for n in opts.allowed_tools)
-    assert opts.model == "opus"
+    # Was the bare alias "opus", which names whichever Opus the CLI currently
+    # calls newest. The pin is a model id now, and it comes from the one
+    # module that holds all three.
+    from fpl_edge.config import CHAT_MODEL
+
+    assert opts.model == CHAT_MODEL
     assert opts.strict_mcp_config is True
     # In-process: the toolbelt is served over the SDK's memory transport,
     # never a spawned process. A regression to a stdio config would still
