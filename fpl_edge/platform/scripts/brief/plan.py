@@ -388,10 +388,10 @@ def _solve_block(
             solve["state"] = "stale"
             solve["reason"] = (
                 f"transfer plan generated {gen.date().isoformat()} for "
-                f"GW{h_gws[0] if h_gws else '?'}\u2013"
-                f"{h_gws[-1] if h_gws else '?'}; a deadline has passed since "
-                f",  its moves were priced against a squad you no longer "
-                f"have."
+                f"GW{h_gws[0] if h_gws else '?'} to "
+                f"GW{h_gws[-1] if h_gws else '?'}; a deadline has passed "
+                f"since, so its moves were priced against a squad you no "
+                f"longer have."
             )
             alerts.append({
                 "rule": "solve_stale", "kind": "SOLVER", "priority": 0,

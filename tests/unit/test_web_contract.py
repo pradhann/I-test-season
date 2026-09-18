@@ -592,6 +592,16 @@ def test_haul_odds_are_gated_on_the_simulation_date() -> None:
 
 
 def test_the_gaps_strip_is_payload_derived_and_names_every_fix() -> None:
+    """The blockers strip, and with it the squad-source line it renders above
+    the four answers.
+
+    Two reads left this assertion with the model briefing. `intelOutdated()`
+    and `generateBtn("Regenerate")` were the briefing's own gap row and its
+    own fix; the briefing is no longer on this page, so a gap row about it
+    cannot be. Everything else the strip must read is unchanged, including
+    the rule that the squad fix is the payload's command and never a literal
+    typed into the view.
+    """
     src = _strip_comments(VIEWS["home"])
     body = _nested_fn_body(src, "renderGaps")
     assert "Before you read this" in body
@@ -599,22 +609,33 @@ def test_the_gaps_strip_is_payload_derived_and_names_every_fix() -> None:
     assert "squadSource.fix" in body
     assert "myteam auth" not in src, "the fix command comes from the payload"
     # every gap kind reads its own source
-    for read in ("squadSource.live", "S.state", "solveStatus", "intelOutdated()",
+    for read in ("squadSource.live", "S.state", "solveStatus",
                  "xpts_as_of", "haulFresh"):
         assert read in body, f"the gaps strip must read {read}"
     # the wired fixes
-    assert "rerunButton(" in body and 'generateBtn("Regenerate")' in body
+    assert "rerunButton(" in body
     # nothing renders when there is no gap
     assert "gapStrip.hidden = true" in body
 
 
-def test_an_outdated_briefing_folds_and_never_renders_items_as_current() -> None:
+def test_the_model_briefing_does_not_render_on_the_decision_page() -> None:
+    """The replacement for `an_outdated_briefing_folds_and_never_renders_
+    items_as_current`.
+
+    That test pinned the fold an outdated model briefing rendered into on
+    this page. The briefing is a second voice with its own age and its own
+    failure mode, and it produced one of the four gap rows by being out of
+    date; it now lives behind `/api/briefing` and the Chat tab, so the rule
+    it needed (never render its items as current) is satisfied by the
+    briefing not being here at all. Pinned in that direction so the fold
+    cannot come back without this assertion being read again.
+    """
     src = _strip_comments(VIEWS["home"])
-    body = _nested_fn_body(src, "renderIntel")
-    assert "intelOutdated()" in body and "ib-outdated" in body
-    assert "Briefing outdated (written" in src
-    # the items go into the fold (body), not the card, when outdated
-    assert re.search(r"body\.appendChild\(\s*intelItem", body)
+    for gone in ("/api/briefing", "renderIntel", "intelOutdated",
+                 "briefingDupes", "ib-outdated", "Briefing outdated (written"):
+        assert gone not in src, (
+            f"the model briefing is back on the decision page: {gone!r}"
+        )
 
 
 def test_no_em_dashes_in_dashboard_strings() -> None:

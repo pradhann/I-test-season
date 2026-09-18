@@ -1414,6 +1414,11 @@ BRIEF_KEYS: dict[str, type | tuple[type, ...]] = {
     "season": str,
     "solve": dict,
     "sources_as_of": dict,
+    # The fifteen the brief computed over, serialised from squad_overview's
+    # own rows. Added as the thirty-second key, additive and optional in the
+    # schema, so the dashboard stops joining its primary object in the
+    # browser against a second panel's response.
+    "squad": list,
     "squad_projection": list,
     "squad_source": dict,
     "standing": dict,
