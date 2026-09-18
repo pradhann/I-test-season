@@ -337,9 +337,14 @@ def test_post_gw_cli_and_registry_run_the_same_step_list(tmp_path, monkeypatch):
     assert names[0] == "ingest_live"
     assert names.index("settle_results") < names.index("score_projections")
     assert names.index("settle_results") < names.index("crawl_elite")
-    # The panel crawl is a settlement step too, after the cohort crawls
-    # whose coincidental coverage it exists to replace.
-    assert names.index("crawl_elite_named") < names.index("crawl_panel")
+    # The panel crawl is NOT a settlement step. It ran here and again as the
+    # standalone panel_picks_crawl task 42 minutes later over the same 43
+    # people, so the chain's copy was deleted and the scheduled task kept
+    # (ARCHITECTURE_REVIEW.md Section 4 row 13, PIPELINES_AUDIT.md pair A/B).
+    # The task is the one with its own ledger row and its own red state in the
+    # Pipelines panel; the step was invisible in the ledger.
+    assert "crawl_panel" not in names
+    assert any(t.id == "panel_picks_crawl" for t in registry.TASKS)
     assert names[-3:] == ["intel", "retro_report", "weekly_idea_report"]
 
     monkeypatch.setenv("FPL_EDGE_DISABLE_NETWORK_INGEST", "0")

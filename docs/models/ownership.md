@@ -476,7 +476,7 @@ per `rules.deadlines.offset_before_first_kickoff_minutes`.
 ## 7. Reproducing
 
 ```bash
-uv run python -m fpl_edge.models.ownership.fit       # refits, rewrites params.json and measured.json
+uv run python -m fpl_edge.models.ownership.backtest  # refits, rewrites params.json and measured.json
 uv run python -m fpl_edge.models.ownership.evaluate  # strict walk-forward + sign audit
 uv run pytest tests/unit/test_ownership_eo.py tests/unit/test_ownership_forecast.py \
               tests/unit/test_ownership_backtest.py tests/unit/test_ownership_walk_forward.py -q

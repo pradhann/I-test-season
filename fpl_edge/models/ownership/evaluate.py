@@ -57,6 +57,7 @@ from fpl_edge.models.ownership.drift import (
     fit_inseason,
     inseason_predict,
 )
+from fpl_edge.models.ownership.metrics import mae_pp
 
 DOCS_DIR = Path(__file__).resolve().parents[3] / "docs" / "models"
 
@@ -67,11 +68,6 @@ REPORTED_COVERAGE = 0.80
 #: Minimum training rows before a fold is scored. Below this the fit is noise
 #: and reporting it as an out-of-sample number would flatter the baselines.
 MIN_TRAIN_ROWS = 2_000
-
-
-def mae_pp(truth: np.ndarray, pred: np.ndarray) -> float:
-    """Mean absolute error in percentage points of ownership share."""
-    return float(100.0 * np.mean(np.abs(np.asarray(truth) - np.asarray(pred))))
 
 
 @dataclass(frozen=True)
