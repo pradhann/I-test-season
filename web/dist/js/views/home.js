@@ -35,10 +35,15 @@
    Re-solve costs minutes and says so beside the button. Nothing else on this
    page writes.
 
-   AGES ARE WHOLE DAYS, one helper, `fmtAgeDays`. No Nh, no Nd Nh, no bare
-   hour count. The exact instant stays one hover away in a title. The
-   deadline countdown is the shell topbar's and keeps its minutes, because it
-   looks forward at a deadline rather than back at data.
+   AGES ARE WHOLE DAYS, through app.js's `fmtAgeDays` and `agePhrase`. No
+   Nh, no Nd Nh, no bare hour count. The exact instant stays one hover away
+   in a title. The deadline countdown is the shell topbar's and keeps its
+   minutes, because it looks forward at a deadline rather than back at data.
+
+   THE SOLVER'S OPTIONS live in the transfer row's working block, folded
+   under the plan they re-ask for: the Planner tab's grid is retired and its
+   tab links out to fplreview, so the rail that drove `fpl recommend` moved
+   to the decision it serves.
 
    COLOUR LAW: the lineup card's OPPONENT chip reuses the fixtures tab's fx-
    ramp on fixture_board's opponent_only ease, attack ease for MID/FWD,
@@ -53,127 +58,51 @@
    Every zone degrades alone (tryPanel memo + named gaps); the page never
    blanks. */
 
-import { runPanel, getJSON, postJSON, el, errBox, provenance,
+import { getJSON, postJSON, el, errBox, provenance, avatarEl, gapBox,
+         cardEl, citeChip, tryPanel, noDash, or, pick, when, parseTs,
+         sortableTh,
+         fmtAgeDays, agePhrase, daysFromHours, hoursWindow, localClock,
+         shortDate, fmtRank, fmtSigned, workList, workRow,
          fmtPrice, fmt1, fmt2 } from "/js/app.js";
 import { attachPlayerDrawer, showPlayerDetail } from "/js/components/playerdrawer.js";
+import { icon } from "/js/components/icons.js";
 
 const PHOTO = c =>
   `https://resources.premierleague.com/premierleague/photos/players/110x140/p${c}.png`;
 
+/* EVERY HELPER THIS FILE ONCE CARRIED IS NOW IMPORTED. The three branch
+   shapes, the age vocabulary, the gap state, the citation chip, the
+   404-memoising panel call, the card, the working list and the em-dash guard
+   were all written here and in three other views; app.js owns one copy of
+   each. What is left below is wording and geometry this page alone needs. */
+
 // ---------------------------------------------------------------- utils
 
-// A value with a stated fallback, a branch written as a call, and a string
-// present only when a condition holds. The house rule forbids the rhetorical
-// question mark, and a chain of ternaries is a wall of them.
-function or(v, fallback) {
-  if (v == null) return fallback;
-  return v;
-}
-function pick(cond, a, b) {
-  if (cond) return a;
-  return b;
-}
-function when(cond, text) {
-  if (cond) return text;
-  return "";
+// The mark between the player leaving and the player arriving. One of the
+// eleven shared icons, not one of the three arrow families the audit found
+// doing this job in three places (R39, R41).
+function moveArrow() {
+  const wrap = el("span", "sv-arrow");
+  wrap.appendChild(icon("chevron-right"));
+  return wrap;
 }
 
-function parseTs(s) {
-  if (!s) return null;
-  const d = new Date(String(s).replace(" ", "T").replace(/\+00:00$/, "Z"));
-  if (isNaN(d)) return null;
-  return d;
+// A span the payload serves in hours, in the shared vocabulary, with the
+// word this page puts beside it: "10 days old", and the two words where
+// "old" would be wrong.
+function oldPhrase(h) {
+  const word = daysFromHours(h);
+  if (word === "today" || word === "yesterday") return word;
+  return `${word} old`;
 }
-
-// THE age vocabulary for this page: whole days, never hours. A local helper
-// until app.js grows the shared `fmtAgeDays` beside `fmtAge`; the Creators
-// tab keeps its own `ageDays` for the same reason.
-function fmtAgeDays(iso) {
-  const d = parseTs(iso);
-  if (!d) return "age unknown";
-  const h = (Date.now() - d.getTime()) / 3.6e6;
-  if (h < 0) return "dated ahead of now";
-  if (h < 24) return "today";
-  if (h < 48) return "yesterday";
-  return `${Math.floor(h / 24)} days`;
-}
-// The same age inside a sentence: "today", "yesterday", "5 days ago".
-function agoPhrase(iso) {
-  const a = fmtAgeDays(iso);
-  if (a === "today" || a === "yesterday") return a;
-  return `${a} ago`;
-}
-// The same vocabulary for a span the payload serves in hours, so
-// solve.age_hours of 254 reads "10 days" and never "254h".
-function daysFromHours(h) {
-  if (h == null || !isFinite(h)) return "age unknown";
-  if (h < 24) return "today";
-  if (h < 48) return "yesterday";
-  return `${Math.floor(h / 24)} days`;
-}
-// A window LENGTH is not an age: it is the measurement's own span, and it is
-// spelled out so no reader mistakes it for one.
-function hoursWindow(h) {
-  if (h == null) return "window length unknown";
-  return `${fmt2(h)} hour window`;
-}
-function localClock(iso) {
-  const d = parseTs(iso);
-  if (!d) return "an unrecorded time";
-  return d.toTimeString().slice(0, 5);
-}
-/** An FPL rank with thousands separators. Ranks are large and read wrong
- *  without them: 769533 and 76953 are one glance apart. */
-function fmtRank(v) {
-  if (v == null || !Number.isFinite(Number(v))) return "unknown";
-  return Number(v).toLocaleString("en-GB");
-}
-
-function fmtSigned(v, digits = 0) {
-  if (v == null) return "–";
-  const s = Math.abs(v).toLocaleString(undefined,
-    { minimumFractionDigits: digits, maximumFractionDigits: digits });
-  return pick(v >= 0, "+", "−") + s;
-}
-
-// A section with no data says WHICH data and WHY, never whitespace.
-function namedGap(title, body) {
-  const d = el("div", "fx-gap");
-  d.appendChild(el("b", null, title));
-  if (body instanceof Node) d.appendChild(body);
-  else d.appendChild(document.createTextNode(body));
-  return d;
-}
-
-// Panel call that reports failure as data (fixtures idiom, memoised 404s).
-const MISSING = new Map();
-async function tryPanel(script, params = {}) {
-  const gone = MISSING.get(script);
-  if (gone) return { ok: false, error: gone, script, missing: true, cached: true };
-  try {
-    const { result, provenance: prov } = await runPanel(script, params);
-    return { ok: true, result, prov, script };
-  } catch (e) {
-    const missing = /HTTP 404|no panel script named/.test(String(e.message || e));
-    if (missing) MISSING.set(script, e);
-    return { ok: false, error: e, script, missing };
-  }
-}
-
-function card(title, sub) {
-  const c = el("section", "card");
-  if (title) c.appendChild(el("h2", null, title));
-  if (sub) c.appendChild(el("p", "sub", sub));
-  return c;
-}
-
-function citeChip(panel, asOf) {
-  const b = el("button", "cite");
-  b.type = "button";
-  b.textContent = pick(asOf, `${panel} · ${fmtAgeDays(asOf)}`, String(panel));
-  b.title = pick(asOf, `as of ${asOf}`, `${panel}: no as-of instant served`);
-  return b;
-}
+// The shared age vocabulary, with this page's word for a stamp that cannot
+// be read. Every call site here interpolates the result into a sentence, and
+// the shared helper returns null so its own callers can branch.
+const ageDays = iso => or(fmtAgeDays(iso), "age unknown");
+// The same age inside a sentence: "today", "yesterday", "5 days ago". The
+// shared agePhrase takes the verb; this page's call sites carry their own
+// lead-in, so they ask for the bare fragment.
+const agoPhrase = iso => or(agePhrase(iso, ""), "age unknown");
 
 /* FPL's five FDR steps, easiest to hardest. Same classes and the same
    thresholds the Fixtures board uses, so one colour vocabulary. */
@@ -189,23 +118,6 @@ const CHIP_SHORT = { wildcard: "WC", freehit: "FH", bboost: "BB", "3xc": "TC" };
    says that it did. The most expensive decision wins the visible tag; the
    loser renders as a counted mark that names the row it came from. */
 const DECISION_ORDER = ["transfer", "captain", "bench", "chip"];
-
-function shortDate(iso) {
-  // UTC: a 06:48Z artefact is that day's, not the evening before in the
-  // browser's own zone
-  const d = parseTs(iso);
-  if (!d) return null;
-  return d.toLocaleDateString("en-GB",
-    { day: "numeric", month: "short", timeZone: "UTC" });
-}
-/* Payload prose from other panels may carry em-dash asides; this page prints
-   none (prose_style.py's rule), so they are rewritten at the point of print.
-   alerts[].news is FPL's own copy and intel text is model authored, so this
-   is the last guard between a supplier's punctuation and the page. */
-function noDash(s) {
-  if (s == null) return s;
-  return String(s).replace(/\s+\u2014\s+/g, "; ").replace(/\u2014/g, ", ");
-}
 
 // Name the currency a plan's gain is priced in: "consensus forecast" (what
 // every other surface shows) or "engine forecast" (the engine's own model),
@@ -225,7 +137,7 @@ export default async function home(host) {
 
   // ONE card above the fold. Everything in it is an answer or the reason an
   // answer is weaker than it looks.
-  const ledgerCard = card(null, null);
+  const ledgerCard = cardEl(null, null);
   ledgerCard.classList.add("db-ledger");
   const ledgerHead = el("div", "dl-head");
   const sourceBlock = el("div", "db-source");
@@ -238,15 +150,15 @@ export default async function home(host) {
   const verdictCard = el("div", "db-verdict");
   ledgerCard.append(ledgerHead, sourceBlock, gapStrip, verdictCard);
 
-  const pitchCard = card("The lineup", null);
+  const pitchCard = cardEl("The lineup", null);
   const pitchBody = el("div");
   pitchCard.appendChild(pitchBody);
-  const tilesCard = card("Signals",
+  const tilesCard = cardEl("Signals",
     "deterministic gates over the panels, each with the gate it cleared and "
     + "the panel it came from");
   const tilesBody = el("div");
   tilesCard.appendChild(tilesBody);
-  const watchCard = card(null, null);
+  const watchCard = cardEl(null, null);
   const watchBody = el("div");
   watchCard.appendChild(watchBody);
   const standingStrip = el("section", "card db-standing");
@@ -394,12 +306,12 @@ export default async function home(host) {
     if (drill.tab) { location.hash = "#" + drill.tab; }
   }
 
+  /* The 24px table-row face, through the shared avatar: one box CSS sizes
+     before the load, and a 404 flips one class to the monogram instead of
+     hiding an image and leaving a hole (R35, R37). The name comes from the
+     page's own player index, which is what the monogram is drawn from. */
   function tinyFace(code) {
-    const img = el("img", "avatar");
-    img.loading = "lazy"; img.alt = "";
-    img.src = PHOTO(code);
-    img.onerror = () => { img.onerror = null; img.style.visibility = "hidden"; };
-    return img;
+    return avatarEl(code, or(playerIndex.get(code)?.name, ""));
   }
 
   // ------------------------------------------------- the ledger header
@@ -423,7 +335,7 @@ export default async function home(host) {
     ledgerHead.appendChild(left);
 
     const right = el("div", "dl-headright");
-    const age = el("span", "dl-read", `read ${fmtAgeDays(brief?.as_of)}`);
+    const age = el("span", "dl-read", `read ${ageDays(brief?.as_of)}`);
     age.title = `the oldest load-bearing clock behind this page: ${or(brief?.as_of, "none served")}`;
     right.appendChild(age);
     right.appendChild(refreshButton());
@@ -458,7 +370,7 @@ export default async function home(host) {
       if (moved.length) {
         refreshNote.textContent = `${moved.join(", ")} moved`;
       } else {
-        refreshNote.textContent = `nothing moved, still ${fmtAgeDays(wasAsOf)}`;
+        refreshNote.textContent = `nothing moved, still ${ageDays(wasAsOf)}`;
       }
       refreshNote.title = "a re-read moves a number only when a pipeline has "
         + "written since the last read; this compares the panels' own as-of "
@@ -502,7 +414,7 @@ export default async function home(host) {
     }
     if (d.voice === "solver") {
       return `solver ${String(d.rule).replace("solve_", "")}`
-        + when(n.age_hours != null, ` · ${daysFromHours(n.age_hours)} old`);
+        + when(n.age_hours != null, ` · ${oldPhrase(n.age_hours)}`);
     }
     return String(d.voice);
   }
@@ -527,15 +439,11 @@ export default async function home(host) {
     w.append(el("b", null, lead), document.createTextNode(rest));
     return w;
   }
+  /* The same avatar beside an answer. A line with no player served still
+     returns an element, so the flex row's geometry does not change. */
   function verdictFace(ref) {
-    const wrap = el("span", "vd-face");
-    if (ref?.code == null) return wrap;
-    const img = el("img", "avatar");
-    img.alt = ""; img.loading = "lazy";
-    img.src = PHOTO(ref.code);
-    img.onerror = () => { img.onerror = null; img.style.visibility = "hidden"; };
-    wrap.appendChild(img);
-    return wrap;
+    if (ref?.code == null) return el("span", "vd-face");
+    return avatarEl(ref.code, or(ref.name, ""));
   }
 
   /* The confidence word and the field that decided it. Four words over
@@ -548,7 +456,7 @@ export default async function home(host) {
     // itself in sources_as_of, and an unclocked row reads as unknowable
     if (asOf == null && ln.source_panel === "dashboard_brief")
       asOf = or(brief?.as_of, null);
-    const cite = `${ln.source_panel} ${fmtAgeDays(asOf)}`;
+    const cite = `${ln.source_panel} ${ageDays(asOf)}`;
     if (String(ln.rule).startsWith("no_")) {
       return { word: "none", fields: [ln.rule, cite] };
     }
@@ -593,7 +501,7 @@ export default async function home(host) {
           const strip = el("span", "vd-movestrip");
           strip.append(verdictFace(mv.out),
                        el("s", "vd-out", mv.out.name),
-                       el("span", "sv-arrow", "→"),
+                       moveArrow(),
                        verdictFace(mv.in),
                        el("b", null, mv.in.name));
           main.appendChild(strip);
@@ -603,7 +511,7 @@ export default async function home(host) {
             + `, ${fcName(brief?.solve?.plan)}`);
         if (n.optimality_gap_pct != null)
           numBits.push(`${fmt1(n.optimality_gap_pct)}% gap`);
-        if (n.age_hours != null) numBits.push(`${daysFromHours(n.age_hours)} old`);
+        if (n.age_hours != null) numBits.push(oldPhrase(n.age_hours));
         if (n.hits) numBits.push(`${n.hits} hit(s)`);
         // The balance the plan leaves. A negative one cannot be executed, and
         // the page used to print each price change without the net or the
@@ -629,7 +537,7 @@ export default async function home(host) {
           numBits.push(`${n.free_transfers} FT carried forward`);
         if (n.optimality_gap_pct != null)
           numBits.push(`${fmt1(n.optimality_gap_pct)}% gap`);
-        if (n.age_hours != null) numBits.push(`${daysFromHours(n.age_hours)} old`);
+        if (n.age_hours != null) numBits.push(oldPhrase(n.age_hours));
         break;
       case "rule_moves_solver_stale":
       case "rule_moves_solver_missing": {
@@ -637,7 +545,7 @@ export default async function home(host) {
           const strip = el("span", "vd-movestrip");
           strip.append(verdictFace(mv.out),
                        el("s", "vd-out", mv.out.name),
-                       el("span", "sv-arrow", "→"),
+                       moveArrow(),
                        verdictFace(mv.in),
                        el("b", null, mv.in.name));
           main.appendChild(strip);
@@ -818,15 +726,6 @@ export default async function home(host) {
 
   // ---------------------------------------------- the four working blocks
 
-  function workRow(host2, term, body) {
-    const dt = el("dt", null, term);
-    const dd = el("dd");
-    if (body instanceof Node) dd.appendChild(body);
-    else dd.appendChild(document.createTextNode(String(body)));
-    host2.append(dt, dd);
-  }
-  function workList() { return el("dl", "dl-worklist"); }
-
   const solverBox = el("div", "sv-box");
 
   function workFor(ln, box) {
@@ -857,6 +756,7 @@ export default async function home(host) {
       box.appendChild(dl2);
       box.appendChild(solverBox);
       renderSolver();
+      box.appendChild(solverRail());
       renderRuleMoves(box);
       return;
     }
@@ -884,14 +784,14 @@ export default async function home(host) {
         const txt = dissentText(d);
         if (txt == null) continue;
         workRow(dl2, "dissent", `${txt}. ${d.source_panel}, `
-          + `${fmtAgeDays(d.source_as_of)}. Its own measure, printed, never `
+          + `${ageDays(d.source_as_of)}. Its own measure, printed, never `
           + `summed into the pick.`);
       }
       // the exact instant stays in the title; an ISO stamp in body text is
       // the thing the age vocabulary exists to replace
       const xsrc = el("span", null,
         `${or(noDash(brief?.xpts_source), "not served")}`
-        + when(brief?.xpts_as_of, `. Read ${fmtAgeDays(brief?.xpts_as_of)}.`));
+        + when(brief?.xpts_as_of, `. Read ${ageDays(brief?.xpts_as_of)}.`));
       xsrc.title = `projection_table as of ${or(brief?.xpts_as_of, "unknown")}`;
       workRow(dl2, "xPts source", xsrc);
       if (!haulFresh)
@@ -925,8 +825,8 @@ export default async function home(host) {
       if (sq && sq.projected_xi_xpts != null) {
         const xi = el("span", null,
           `Σ ${fmt1(sq.projected_xi_xpts)} xPts over your locked XI`);
-        xi.title = "the captain is counted once here; the Planner grid "
-          + "doubles the armband and lands higher";
+        xi.title = "the captain is counted once here; a grid that doubles "
+          + "the armband lands higher";
         workRow(dl2, "your XI", xi);
       }
       if (median != null)
@@ -1009,13 +909,13 @@ export default async function home(host) {
     verdictCard.textContent = "";
     rowByQuestion.clear();
     if (!brief) {
-      verdictCard.appendChild(namedGap("No answers to assemble.",
+      verdictCard.appendChild(gapBox("No answers to assemble.",
         "dashboard_brief is unavailable; every row on this page rides in it."));
       return;
     }
     const V = brief.verdict;
     if (!V || !or(V.lines, []).length) {
-      verdictCard.appendChild(namedGap("No verdict served.",
+      verdictCard.appendChild(gapBox("No verdict served.",
         "the brief carries no verdict block; a backend gap, not a "
         + "quiet day."));
       return;
@@ -1179,7 +1079,10 @@ export default async function home(host) {
     const drop = dropByCode.get(p.code);
     if (drop) {
       // price-fall risk: the own_price_fall alert's numbers, on the card
-      const dEl = el("span", "pp-drop" + when(risk, " shift"), "↓");
+      // the down mark from the one icon set, not one of the three arrow
+      // families the audit found doing this job (R39, R41)
+      const dEl = el("span", "pp-drop" + when(risk, " shift"));
+      dEl.appendChild(icon("chevron-down"));
       dEl.title = `price-fall risk: net ${fmtSigned(drop.net)} in the `
         + `${hoursWindow(drop.window_h)} (${fmtSigned(drop.net_per_hour)}/hr)`
         + `; observed flow, not a predicted change`;
@@ -1243,6 +1146,8 @@ export default async function home(host) {
     if (!tf.next) return "(blank GW)";
     return `${tf.next.opponent} (${pick(tf.next.is_home, "H", "A")})`;
   }
+  // the candidate table's sort, kept across repaints of the block
+  let capSort = { key: "xpts", dir: -1 };
   function captainBlock(lockedCap) {
     // the top three of the best XI by consensus xPts, each with its number
     // AND its opponent; a lead under the served gate is a close call
@@ -1265,34 +1170,66 @@ export default async function home(host) {
     }
     box.appendChild(lead);
     const tbl = el("table", "data db-captbl");
-    const hd = el("tr");
-    hd.append(el("th", null, "candidate"), el("th", "num", "consensus xPts"),
-              el("th", null, "opponent"));
-    if (haulFresh) {
-      const haulTh = el("th", "num", "haul odds");
-      haulTh.title = or(brief?.p_haul_source, "engine simulation")
-        + when(shortDate(brief?.p_haul_generated),
-               `, simulated ${shortDate(brief?.p_haul_generated)}`);
-      hd.appendChild(haulTh);
-    }
-    const thd = el("thead"); thd.appendChild(hd); tbl.appendChild(thd);
+    const thd = el("thead");
     const tb = el("tbody");
-    for (const c of cands) {
-      const tr = el("tr");
-      const who = el("td");
-      who.appendChild(tinyFace(c.player.code));
-      who.appendChild(document.createTextNode(c.player.name
-        + when(lockedCap && lockedCap.code === c.player.code,
-               " (your locked armband)")));
-      tr.appendChild(who);
-      tr.appendChild(el("td", "num", pick(c.xpts != null, fmt1(c.xpts), "–")));
-      tr.appendChild(el("td", null, oppText(c.player.team_code)));
-      if (haulFresh)
-        tr.appendChild(el("td", "num",
-          pick(c.p_haul != null, `${Math.round(c.p_haul * 100)}%`, "–")));
-      tb.appendChild(tr);
-    }
-    tbl.appendChild(tb);
+    tbl.append(thd, tb);
+    /* Three candidates is still a table, and a table's headers sort (R11).
+       The shared header carries the role, the keys and the mark; the
+       comparator is one block because every column is a served field. */
+    const value = (c, key) => {
+      if (key === "candidate") return c.player.name;
+      if (key === "xpts") return c.xpts;
+      if (key === "opponent") return oppText(c.player.team_code);
+      return c.p_haul;
+    };
+    const paint = () => {
+      thd.textContent = "";
+      const hd = el("tr");
+      const cols = [["candidate", "candidate", false],
+                    ["xpts", "consensus xPts", true],
+                    ["opponent", "opponent", false]];
+      if (haulFresh) cols.push(["haul", "haul odds", true]);
+      for (const [key, label, numeric] of cols) {
+        hd.appendChild(sortableTh(label, {
+          active: capSort.key === key,
+          dir: pick(capSort.key === key, capSort.dir, null),
+          num: numeric,
+          title: pick(key === "haul",
+            or(brief?.p_haul_source, "engine simulation")
+              + when(shortDate(brief?.p_haul_generated),
+                     `, simulated ${shortDate(brief?.p_haul_generated)}`),
+            null),
+          onSort: dir => { capSort = { key, dir }; paint(); },
+        }));
+      }
+      thd.appendChild(hd);
+      tb.textContent = "";
+      const rows = [...cands].sort((a, b) => {
+        const va = value(a, capSort.key), vb = value(b, capSort.key);
+        if (typeof va === "string" || typeof vb === "string")
+          return String(va).localeCompare(String(vb)) * capSort.dir;
+        if (va == null && vb == null) return 0;
+        if (va == null) return 1;
+        if (vb == null) return -1;
+        return (va - vb) * capSort.dir;
+      });
+      for (const c of rows) {
+        const tr = el("tr");
+        const who = el("td");
+        who.appendChild(tinyFace(c.player.code));
+        who.appendChild(document.createTextNode(c.player.name
+          + when(lockedCap && lockedCap.code === c.player.code,
+                 " (your locked armband)")));
+        tr.appendChild(who);
+        tr.appendChild(el("td", "num", pick(c.xpts != null, fmt1(c.xpts), "–")));
+        tr.appendChild(el("td", null, oppText(c.player.team_code)));
+        if (haulFresh)
+          tr.appendChild(el("td", "num",
+            pick(c.p_haul != null, `${Math.round(c.p_haul * 100)}%`, "–")));
+        tb.appendChild(tr);
+      }
+    };
+    paint();
     box.appendChild(tbl);
     return box;
   }
@@ -1338,7 +1275,7 @@ export default async function home(host) {
       let why = "empty";
       if (sqR.ok) why = String(or(sqR.result.reason, "empty"));
       else why = String(or(sqR.error && sqR.error.message, sqR.error));
-      pitchBody.appendChild(namedGap("No squad to draw.", why));
+      pitchBody.appendChild(gapBox("No squad to draw.", why));
       return;
     }
     const byCode = new Map(squad15.map(x => [x.code, x]));
@@ -1432,7 +1369,8 @@ export default async function home(host) {
       + when(median != null, ` · XI median ${fmt2(median)} xPts per starter`)
       + when(easeDom != null,
              ` · opponent chip colour = fixture ease, the fixtures tab's ramp`)
-      + `. Badges: C captain, ↓ price-fall risk from observed transfer flow, `
+      + `. Badges: C captain, a down mark for price-fall risk from observed `
+      + `transfer flow, `
       + `a letter for an FPL availability flag. Hover any badge for its `
       + `numbers.`;
     pitchBody.appendChild(footLine);
@@ -1486,7 +1424,7 @@ export default async function home(host) {
     const box = el("div", "db-move");
     const strip = el("span", "sv-strip");
     strip.append(moveFace(mv.out, "out"),
-                 el("span", "sv-arrow", "→"),
+                 moveArrow(),
                  moveFace(mv.in, "in"));
     box.appendChild(strip);
     box.appendChild(el("p", "db-movewhy", moveSentence(mv)));
@@ -1525,6 +1463,219 @@ export default async function home(host) {
   let solveTickerEl = null;
   let tplanPromise = null;   // /api/solve/transfer-plan, fetched once per view
 
+  /* ---------------------------------------------------- THE SOLVER RAIL
+     The options the Planner tab used to host. The Planner grid is gone (the
+     owner reads a grid at fplreview, and the tab links there), but the
+     optimiser's own controls belong to the transfer decision, so they moved
+     into the row that makes it.
+
+     The defaults mirror solve_runner.TRANSFER_DEFAULTS, the settings that
+     solved the GW4-8 problem; the server re-validates every field and
+     rejects a key it does not know, so the rail can never widen the API by
+     accident. The choices are remembered per browser, which is a
+     convenience and not state this app reads back.
+
+     MUST KEEP AND BAN ARE OVER THE FIFTEEN YOU HOLD, not over the whole
+     candidate universe the grid used to carry. This page serves no candidate
+     list, and inventing one in the browser would be the join rule 9 forbids.
+     A ban on a player you hold is the useful half anyway: the optimiser
+     sells him in the first gameweek of the horizon. */
+  const RAIL_KEY = "itest-solve-rail-v1";
+  const RAIL_DEFAULTS = { horizon: 5, max_hits: 0, chips: [], must_keep: [],
+                          ban: [], seconds: 150, max_candidates: 20 };
+  const CHIP_KEYS = ["wildcard", "freehit", "bboost", "3xc"];
+  const HIT_CHOICES = [[0, "0 hits"], [1, "up to 1 hit"], [2, "up to 2 hits"],
+                       [-1, "unconstrained"]];
+  const rail = { ...RAIL_DEFAULTS };
+  try {
+    Object.assign(rail, JSON.parse(localStorage.getItem(RAIL_KEY)) || {});
+  } catch { /* a per-browser convenience; the defaults stand without it */ }
+  rail.chips = or(rail.chips, []).filter(c => CHIP_KEYS.includes(c));
+  function persistRail() {
+    try { localStorage.setItem(RAIL_KEY, JSON.stringify(rail)); }
+    catch { /* same */ }
+  }
+  function solveOptions() {
+    return {
+      horizon: Number(rail.horizon), max_hits: Number(rail.max_hits),
+      chips: [...rail.chips], must_keep: [...rail.must_keep], ban: [...rail.ban],
+      seconds: Number(rail.seconds), max_candidates: Number(rail.max_candidates),
+    };
+  }
+  /* One line naming what the next Solve will ask for, on the fold's own
+     summary, so the settings never hide behind a closed disclosure while a
+     plan solved under different ones sits above it. */
+  function railSummaryText() {
+    const o = solveOptions();
+    let hits = `hits ≤ ${o.max_hits}`;
+    if (o.max_hits < 0) hits = "hits unconstrained";
+    let chips = "chips off";
+    if (o.chips.length) chips = `chips ${o.chips.map(chipWord).join("/")}`;
+    return `solver settings: ${o.horizon} GW horizon, ${hits}, ${chips}, `
+      + `keep ${o.must_keep.length}, ban ${o.ban.length}, ${o.seconds}s per `
+      + `solve, ${o.max_candidates} candidates per position`;
+  }
+  function chipWord(key) {
+    return or(CHIP_NAME[key], String(key));
+  }
+  function railField(labelText, control, hint) {
+    const f = el("div", "sv-field");
+    const lab = el("label", null, labelText);
+    if (control && control.id) lab.htmlFor = control.id;
+    f.append(lab, control);
+    if (hint) f.appendChild(el("div", "sv-hint", hint));
+    return f;
+  }
+  /* The fifteen as two exclusive toggle sets. A name can be locked or
+     banned, never both, so pressing one releases the other. */
+  function squadToggles(listName, other, hint) {
+    const box = el("div", "sv-toggles");
+    const note = el("div", "sv-hint");
+    const held = squad15.map(p => p.code);
+    rail[listName] = or(rail[listName], []).filter(c => held.includes(c));
+    rail[other] = or(rail[other], []).filter(c => held.includes(c));
+    const say = () => {
+      const n = rail[listName].length;
+      box.classList.toggle("sv-none", n === 0);
+      note.textContent = `${n} of ${squad15.length} ${hint}`;
+    };
+    for (const p of squad15) {
+      const b = el("button", "sv-toggle", p.name);
+      b.type = "button";
+      b.title = `${or(p.pos, "position unknown")} ${fmtPrice(p.price)}`;
+      b.setAttribute("aria-pressed", pick(rail[listName].includes(p.code),
+                                          "true", "false"));
+      b.onclick = () => {
+        const on = b.getAttribute("aria-pressed") === "true";
+        if (on) rail[listName] = rail[listName].filter(c => c !== p.code);
+        else rail[listName] = [...rail[listName], p.code];
+        rail[other] = rail[other].filter(c => c !== p.code);
+        b.setAttribute("aria-pressed", pick(on, "false", "true"));
+        persistRail(); say();
+      };
+      box.appendChild(b);
+    }
+    say();
+    const wrap = el("div");
+    wrap.append(box, note);
+    return wrap;
+  }
+  function solverRail() {
+    const det = el("details", "sv-rail");
+    const sum = el("summary", null, railSummaryText());
+    det.appendChild(sum);
+    const refreshSummary = () => { sum.textContent = railSummaryText(); };
+
+    const hz = el("select");
+    hz.id = "sv-horizon";
+    for (let h = 1; h <= 8; h++) {
+      const o = el("option", null, `${h} GW` + when(h > 1, "s"));
+      o.value = h;
+      if (h === Number(rail.horizon)) o.selected = true;
+      hz.appendChild(o);
+    }
+    hz.onchange = () => {
+      rail.horizon = Number(hz.value); persistRail(); refreshSummary();
+    };
+    det.appendChild(railField("horizon", hz,
+      "the gameweeks the objective sums over"));
+
+    const hits = el("select");
+    hits.id = "sv-hits";
+    for (const [v, lbl] of HIT_CHOICES) {
+      const o = el("option", null, lbl);
+      o.value = v;
+      if (Number(rail.max_hits) === v) o.selected = true;
+      hits.appendChild(o);
+    }
+    hits.onchange = () => {
+      rail.max_hits = Number(hits.value); persistRail(); refreshSummary();
+    };
+    det.appendChild(railField("hits for the headline", hits,
+      "hit-taking moves are still solved and reported as the unconstrained "
+      + "best"));
+
+    const chipBox = el("div", "sv-checks");
+    for (const key of CHIP_KEYS) {
+      const lab = el("label", "sv-check");
+      const cb = el("input");
+      cb.type = "checkbox";
+      cb.value = key;
+      cb.checked = rail.chips.includes(key);
+      cb.onchange = () => {
+        rail.chips = CHIP_KEYS.filter(k => {
+          if (k === key) return cb.checked;
+          return rail.chips.includes(k);
+        });
+        persistRail(); refreshSummary();
+      };
+      lab.append(cb, document.createTextNode(" " + chipWord(key)));
+      chipBox.appendChild(lab);
+    }
+    det.appendChild(railField("chips the optimiser may play", chipBox,
+      "off by default: a chip is your decision, not the objective's. A plan "
+      + "that spends one says so on the chip row above."));
+
+    if (squad15.length) {
+      det.appendChild(railField("must keep",
+        squadToggles("must_keep", "ban",
+          "locked in every gameweek of the horizon (OptimizerConfig.locked); "
+          + "the rest can be sold")));
+      det.appendChild(railField("ban",
+        squadToggles("ban", "must_keep",
+          "banned, so the optimiser sells them in the first gameweek "
+          + "(OptimizerConfig.banned)"),
+        "the fifteen you hold, which is the squad this page serves. A ban "
+        + "over the wider candidate universe needs a candidate list no panel "
+        + "on this page carries."));
+    } else {
+      det.appendChild(gapBox("must keep and ban",
+        "no squad was read, so there are no names to lock or ban.",
+        "connect your FPL account on the Account tab"));
+    }
+
+    const adv = el("details", "sv-adv");
+    adv.appendChild(el("summary", null, "advanced: time and candidate caps"));
+    const sec = el("input");
+    sec.type = "number"; sec.min = 10; sec.max = 900; sec.step = 10;
+    sec.value = rail.seconds; sec.id = "sv-seconds";
+    sec.onchange = () => {
+      rail.seconds = or(Number(sec.value), RAIL_DEFAULTS.seconds);
+      persistRail(); refreshSummary();
+    };
+    adv.appendChild(railField("seconds per MILP", sec,
+      "150s by 20 solved the GW4-8 problem in 219 to 238 seconds; 60s found "
+      + "no incumbent"));
+    const mc = el("input");
+    mc.type = "number"; mc.min = 5; mc.max = 80; mc.step = 5;
+    mc.value = rail.max_candidates; mc.id = "sv-cands";
+    mc.onchange = () => {
+      rail.max_candidates = or(Number(mc.value), RAIL_DEFAULTS.max_candidates);
+      persistRail(); refreshSummary();
+    };
+    adv.appendChild(railField("candidates per position", mc,
+      "the universe cap for every MILP; a capped solve is best-found, not a "
+      + "proven optimum"));
+    const reset = el("button", "chip", "reset to defaults");
+    reset.type = "button";
+    reset.onclick = () => {
+      // the plan above is untouched: these settings describe the NEXT run,
+      // so only the fold is rebuilt
+      Object.assign(rail, JSON.parse(JSON.stringify(RAIL_DEFAULTS)));
+      persistRail();
+      const fresh = solverRail();
+      fresh.open = true;
+      det.replaceWith(fresh);
+    };
+    adv.appendChild(reset);
+    det.appendChild(adv);
+    det.appendChild(el("p", "db-quiet",
+      "Solve runs `fpl recommend` as its own process, one at a time, minutes "
+      + "rather than seconds. The objective is expected_points, a surrogate "
+      + "the plan's own notes name. The Solve control is on the plan above."));
+    return det;
+  }
+
   /* The optimiser's top move when the hit cap displaced it, one line beside
      the headline. Read from the artefact itself via /api/solve/transfer-plan
      (the brief's plan block carries no field for it); fetched once, appended
@@ -1542,12 +1693,13 @@ export default async function home(host) {
       const line = el("p", "sv-lines sv-uncon");
       line.appendChild(document.createTextNode(
         `if hits were free: ${u.n_transfers} changes, ${u.hits} hits, `
-        + `${fmtSigned(u.gain_over_roll, 1)} xPts vs rolling, ${fcName(plan)}; `));
-      const a = el("a", null, "see Planner");
-      a.href = "#planner";
+        + `${fmtSigned(u.gain_over_roll, 1)} xPts vs rolling, ${fcName(plan)}. `));
+      const a = el("button", "chip", "raise the hit cap and re-solve");
+      a.type = "button";
+      a.onclick = () => { openRow("transfer"); scrollToCard(solverBox); };
       line.appendChild(a);
       line.title = "the optimiser's top move when the headline was held to the "
-        + "hit cap; the Planner tab draws it into the grid with one click";
+        + "hit cap; the solver settings below this plan carry the cap";
       target.appendChild(line);
     });
   }
@@ -1582,18 +1734,21 @@ export default async function home(host) {
       renderAll();
     }, 5000);
   }
+  /* THE ONE SOLVE CONTROL. It posts the rail's options, so the settings the
+     fold shows are the settings the run uses; the server re-validates every
+     one and rejects a key it does not know. */
   function rerunButton(prominent) {
     const b = el("button", "chip" + when(prominent, " sv-rerun"),
       "Re-run solve");
     b.type = "button";
-    b.title = "runs a fresh solve against your current 15 and commits a new "
-      + "plan. It costs 2 to 5 minutes of compute, which is why it is not the "
-      + "Refresh control.";
+    b.title = "runs a fresh solve against your current 15, with the solver "
+      + "settings in the fold below, and commits a new plan. It costs 2 to 5 "
+      + "minutes of compute, which is why it is not the Refresh control.";
     b.onclick = async () => {
       b.disabled = true;
       b.textContent = "starting";
       try {
-        await postJSON("/api/solve", { mode: "transfers" });
+        await postJSON("/api/solve", { mode: "transfers", options: solveOptions() });
         solveKicked = true;
         solveStatus = { state: "running",
                         started_utc: new Date().toISOString(), log_tail: [] };
@@ -1642,7 +1797,7 @@ export default async function home(host) {
       if (S.state === "aging") cls = " warn";
       const chip = el("span", "chip" + cls,
         S.state + when(S.age_hours != null,
-                       ` · ${daysFromHours(S.age_hours)} old`));
+                       ` · ${oldPhrase(S.age_hours)}`));
       chip.title = pick(S.generated_at,
         `plan generated ${S.generated_at}`, "no generated_at on the plan");
       head.appendChild(chip);
@@ -1650,10 +1805,10 @@ export default async function home(host) {
     solverBox.appendChild(head);
 
     if (!brief) {
-      solverBox.appendChild(namedGap("Solve state unknowable.",
+      solverBox.appendChild(gapBox("Solve state unknowable.",
         "dashboard_brief unavailable; the solve block rides in it."));
     } else if (S.state === "missing") {
-      solverBox.appendChild(namedGap("No transfer plan artefact.",
+      solverBox.appendChild(gapBox("No transfer plan artefact.",
         or(S.reason, "no stored solve for this season.")));
     } else if (S.state === "stale" || S.state === "superseded") {
       // honest: a stale plan's moves were priced against a squad you no
@@ -1664,7 +1819,7 @@ export default async function home(host) {
                ` Written ${shortDate(S.generated_at)}, `
                + `${agoPhrase(S.generated_at)}.`)));
     } else if (!plan) {
-      solverBox.appendChild(namedGap("Plan body absent.",
+      solverBox.appendChild(gapBox("Plan body absent.",
         `solve state is "${S.state}" but the brief served no plan payload; `
         + `a backend gap, not a quiet day.`));
     } else {
@@ -1688,7 +1843,7 @@ export default async function home(host) {
           const row = el("div", "sv-moverow");
           const strip = el("span", "sv-strip");
           strip.append(moveFace(mv.out, "out"),
-                       el("span", "sv-arrow", "→"),
+                       moveArrow(),
                        moveFace(mv.in, "in"));
           row.appendChild(strip);
           const bits = [];
@@ -1711,7 +1866,8 @@ export default async function home(host) {
         solverBox.appendChild(box);
       } else {
         solverBox.appendChild(el("p", "sub",
-          "the plan names no paired moves; the Planner tab has the raw sets."));
+          "the plan names no paired moves; the solver notes below carry the "
+          + "raw sets."));
       }
 
       // the gain, in the solver's own currency, labelled as such, with the
@@ -1729,7 +1885,7 @@ export default async function home(host) {
         line.appendChild(el("span", "sv-gapline",
           " · " + gapTxt
           + when(plan.age_hours != null,
-                 ` · ${daysFromHours(plan.age_hours)} old`)
+                 ` · ${oldPhrase(plan.age_hours)}`)
           + when(plan.solve_seconds != null,
                  ` · solved in ${Math.round(plan.solve_seconds)}s`)
           + when(plan.free_transfers != null,
@@ -1841,9 +1997,10 @@ export default async function home(host) {
           + or(shortDate(or(solveStatus.finished_utc, solveStatus.started_utc)),
                "")
           + " failed: " + noDash(or(lastLogLine(), "no log tail served"))));
-      const a = el("a", "chip", "full detail in the Planner tab");
-      a.href = "#planner";
-      controls.appendChild(a);
+      // the solver's options ride in the fold under this plan, which is
+      // where the Planner tab's rail moved when its grid was retired
+      controls.appendChild(el("span", "db-quiet",
+        "the solver settings are in the fold below"));
     }
     solverBox.appendChild(controls);
     // no accept button: the dashboard argues; the owner decides.
@@ -1862,34 +2019,34 @@ export default async function home(host) {
         return {
           claim: `${name} projects ${fmt1(t.number.value)} over the window; `
             + `${ctx.weakest_starter} holds ${fmt1(ctx.weakest_starter_sum)}.`,
-          imp: "→ a same-position upgrade path clears the printed margin.",
+          imp: "a same-position upgrade path clears the printed margin.",
         };
       case "template_gap":
         return {
           claim: `${name} is owned by ${fmt1(t.number.value)}% of the game; `
             + `not by you.`,
-          imp: "→ an unowned near-universal player is your largest "
+          imp: "an unowned near-universal player is your largest "
             + "single-GW rank risk.",
         };
       case "differential":
         return {
           claim: `${name}: ${fmt1(t.number.value)} xPts next GW at `
             + `${fmt1(ctx.own_pct)}% owned.`,
-          imp: `→ clears your XI median (${fmt2(ctx.xi_median)}) with the `
+          imp: `clears your XI median (${fmt2(ctx.xi_median)}) with the `
             + `field absent; two chips, two sources.`,
         };
       case "fixture_turn":
         return {
           claim: `${t.team}: ${String(or(ctx.axis, "")).replace("_", " ")} `
             + `moves ${ctx.rank_near} to ${ctx.rank_far} between windows.`,
-          imp: "→ the run turns; timing context for moves involving "
+          imp: "the run turns; timing context for moves involving "
             + `${t.team}.`,
         };
       case "price_rise_target":
         return {
           claim: `${name} net ${fmtSigned(t.number.value)}/hr inflow in the `
             + `${hoursWindow(t.number.window_h)}.`,
-          imp: "→ a named target's flow is against waiting; flow, not a "
+          imp: "a named target's flow is against waiting; flow, not a "
             + "prediction.",
         };
       default:
@@ -1937,7 +2094,7 @@ export default async function home(host) {
   function renderTiles() {
     tilesBody.textContent = "";
     if (!brief) {
-      tilesBody.appendChild(namedGap("dashboard_brief unavailable.",
+      tilesBody.appendChild(gapBox("dashboard_brief unavailable.",
         "No gates were checked; this is a gap, not a quiet day."));
       return;
     }
@@ -1971,7 +2128,7 @@ export default async function home(host) {
   function renderWatch() {
     watchBody.textContent = "";
     if (!brief) {
-      watchBody.appendChild(namedGap("The watch did not stand.",
+      watchBody.appendChild(gapBox("The watch did not stand.",
         "dashboard_brief unavailable; no check ran, which is different "
         + "from every check coming back clear."));
       return;
@@ -2011,7 +2168,7 @@ export default async function home(host) {
       tr.appendChild(st);
       tr.appendChild(el("td", "w-detail", w.detail));
       tr.appendChild(el("td", "w-src", w.source_panel));
-      const ts = el("td", "w-asof num", fmtAgeDays(w.as_of));
+      const ts = el("td", "w-asof num", ageDays(w.as_of));
       if (w.as_of) ts.title = w.as_of;
       tr.appendChild(ts);
       tb.appendChild(tr);
@@ -2084,7 +2241,7 @@ export default async function home(host) {
       sourceBlock.classList.toggle("warn", !live);
       body.textContent = `${squadSource.label}`
         + when(squadSource.picks_gw != null, `, GW${squadSource.picks_gw} picks`)
-        + `, read ${fmtAgeDays(squadSource.as_of)}. `
+        + `, read ${ageDays(squadSource.as_of)}. `
         + pick(live,
                `Every answer below is computed on the team you hold.`,
                `Transfers made since are not in this 15, and the captain, `
@@ -2095,7 +2252,7 @@ export default async function home(host) {
     } else if (sq) {
       sourceBlock.classList.add("warn");
       body.textContent = `GW${or(sq.gw, "unknown")} picks from `
-        + `${sq.provenance_source}, read ${fmtAgeDays(sq.as_of)}. The brief `
+        + `${sq.provenance_source}, read ${ageDays(sq.as_of)}. The brief `
         + `served no squad_source block, so the fix command is not known here.`;
       srcLine.appendChild(body);
     } else {
@@ -2144,7 +2301,7 @@ export default async function home(host) {
       a.href = "#pipelines";
       kinds.push("consensus");
       rows.push(gapRow("consensus",
-        `Consensus xPts are ${fmtAgeDays(brief.xpts_as_of)} old, from before `
+        `Consensus xPts are ${ageDays(brief.xpts_as_of)} old, from before `
         + `the last deadline (${shortDate(S?.last_deadline_utc)}); every xPts `
         + `on this page is that vintage. `
         + `${or(noDash(brief.xpts_source), "")}`, a));
@@ -2168,7 +2325,7 @@ export default async function home(host) {
       if (a.rule !== "availability") continue;
       kinds.push("availability");
       rows.push(gapRow("availability", claimFor(a), null,
-        `${a.source_panel}, ${fmtAgeDays(a.source_as_of)}`));
+        `${a.source_panel}, ${ageDays(a.source_as_of)}`));
     }
     // 5. a gate could not be evaluated at all
     for (const e of or(brief && brief.empty_kinds, [])) {
@@ -2206,7 +2363,7 @@ export default async function home(host) {
     standingStrip.hidden = false;
     const rows = or(st.gws, []).filter(g => g.points != null);
     if (!rows.length) {
-      standingStrip.appendChild(namedGap("Season standing unknown.",
+      standingStrip.appendChild(gapBox("Season standing unknown.",
         or(st.reason, "no crawled gameweek for this entry yet.")));
       return;
     }
@@ -2270,7 +2427,7 @@ export default async function home(host) {
     if (brR.ok && brR.prov) foot.appendChild(provenance(brR.prov));
     if (!brief) return;
     const clocks = Object.entries(or(brief.sources_as_of, {}))
-      .map(([k, v]) => `${k} ${fmtAgeDays(v)}`).join(" · ");
+      .map(([k, v]) => `${k} ${ageDays(v)}`).join(" · ");
     if (clocks) {
       const line = el("div", "provenance", "source clocks: " + clocks);
       line.title = Object.entries(or(brief.sources_as_of, {}))

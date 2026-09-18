@@ -104,14 +104,13 @@ PANELS: tuple[Panel, ...] = (
     # SCRIPTS stay registered, because they are dashboard_brief's sources
     # and the contract test reads them. A Panel nobody renders is dead weight
     # wearing a schema, so their Panel declarations are retired with them.
-    Panel(
-        id="planner",
-        title="Transfer planner",
-        script="planner_grid",
-        default_params={"horizon": 5},
-        layout="planner",
-        description="Plan moves across the horizon; xPts and cost update live.",
-    ),
+    # planner_grid lost its tab in the UI sweep's second phase. The owner
+    # plans transfers at fplreview, which draws the grid better than this app
+    # did, so the Planner entry is an external link and the solver's own
+    # controls moved into the dashboard's transfer row. The SCRIPT stays
+    # registered, because fpl_mcp's transfer_plan tool and dashboard_brief
+    # read it; only the Panel goes, for the same reason price_radar's did
+    # above. A Panel nobody renders is dead weight wearing a schema.
     Panel(
         id="ownership",
         title="EliteFPL",

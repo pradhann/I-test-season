@@ -35,22 +35,22 @@
 /* The panel's own words, drawn as a QUOTATION so it reads as an aside: a rule
    down the left rather than eight lines of the faintest grey on the page,
    which is what a bare paragraph gave it. */
-.cx-note { color: var(--muted); font-size: 12px; max-width: 78ch;
-           line-height: 1.6; margin: 0 0 8px;
-           border-left: 2px solid var(--line); padding: 1px 0 1px 11px; }
-.cx-honest { color: var(--muted); font-size: 12px; line-height: 1.6;
-             max-width: 78ch; margin: 4px 0 8px; }
-.cx-honest.warn { border-left: 2px solid var(--warn); padding-left: 10px; }
-.cx-why { color: var(--ink); font-size: 12.5px; line-height: 1.6;
-          max-width: 78ch; margin: 4px 0 8px; }
-.cx-tiny { color: var(--faint); font-size: 11px; line-height: 1.5; }
+.cx-note { color: var(--muted); font-size: var(--t-cell); max-width: 78ch;
+           line-height: 1.6; margin: 0 0 var(--sp2);
+           border-left: 2px solid var(--line); padding: 1px 0 1px var(--sp3); }
+.cx-honest { color: var(--muted); font-size: var(--t-cell); line-height: 1.6;
+             max-width: 78ch; margin: var(--sp1) 0 var(--sp2); }
+.cx-honest.warn { border-left: 2px solid var(--warn); padding-left: var(--sp2); }
+.cx-why { color: var(--ink); font-size: var(--t-cell); line-height: 1.6;
+          max-width: 78ch; margin: var(--sp1) 0 var(--sp2); }
+.cx-tiny { color: var(--faint); font-size: var(--t-label); line-height: 1.5; }
 .cx-thin { max-width: 78ch; line-height: 1.6; }
 
 /* a disclosure, never a tab: the deeper layer lives one click away */
-.cx-disclose { margin: 8px 0; }
-.cx-disclose > summary { cursor: pointer; color: var(--muted); font-size: 12px;
-                         list-style: none; display: inline-flex; gap: 8px;
-                         align-items: center; padding: 4px 0; }
+.cx-disclose { margin: var(--sp2) 0; }
+.cx-disclose > summary { cursor: pointer; color: var(--muted); font-size: var(--t-cell);
+                         list-style: none; display: inline-flex; gap: var(--sp2);
+                         align-items: center; padding: var(--sp1) 0; }
 .cx-disclose > summary::-webkit-details-marker { display: none; }
 .cx-disclose > summary::before { content: "\25b8"; color: var(--faint); }
 .cx-disclose[open] > summary::before { content: "\25be"; }
@@ -60,12 +60,12 @@
 .cx-disclose > summary:focus-visible { outline: 2px solid var(--s1);
   outline-offset: 3px; border-radius: 4px; color: var(--ink); }
 .cx-disclose > p, .cx-disclose > .sub { max-width: 78ch; line-height: 1.6;
-                                        color: var(--muted); font-size: 12px; }
+                                        color: var(--muted); font-size: var(--t-cell); }
 
 /* a failed panel body, folded rather than interpolated into a sentence */
-.cx-raw { margin: 4px 0 0; padding: 8px; max-height: 240px; overflow: auto;
+.cx-raw { margin: var(--sp1) 0 0; padding: var(--sp2); max-height: 240px; overflow: auto;
           background: var(--surface); border: 1px solid var(--line);
-          border-radius: 6px; font-family: var(--mono); font-size: 11px;
+          border-radius: 6px; font-family: var(--mono); font-size: var(--t-label);
           white-space: pre-wrap; word-break: break-word; color: var(--muted); }
 
 /* ====================================================== level 1, the board */
@@ -73,23 +73,19 @@
 /* The name is the click, on every level. A button drawn as text, so the row
    reads as a row and the keyboard still finds it. */
 .cx-show { background: none; border: 0; padding: 0; margin: 0; font: inherit;
-           font-size: 12.5px; color: var(--ink); text-align: left;
+           font-size: var(--t-cell); color: var(--ink); text-align: left;
            cursor: pointer; max-width: 30ch; overflow: hidden;
            text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
 .cx-show:hover { text-decoration: underline; }
 
-/* The sortable column head, the Fixtures idiom: the header is a button, the
-   active one carries an arrow as well as aria-sort. */
-.cx-th { background: none; border: 0; padding: 0; margin: 0; font: inherit;
-         color: inherit; cursor: pointer; display: inline-flex; gap: 4px;
-         align-items: center; }
-.cx-th.on { color: var(--ink); }
-.cx-th .arr { font-size: 8px; color: var(--s1); }
+/* The sortable column head is app.js's `sortableTh` and app.css's
+   `th.sortable`; the button, the arrow glyph and the active class this file
+   drew are gone with it. */
 
 /* Which rung of the latest-line ladder this row is on. The tag names the
    served key the text came from and is never a judgment about the text. */
-.cx-rung { font-size: 11px; font-family: var(--mono); color: var(--faint);
-           margin-right: 8px; text-transform: uppercase; letter-spacing: .04em; }
+.cx-rung { font-size: var(--t-label); font-family: var(--mono); color: var(--faint);
+           margin-right: var(--sp2); text-transform: uppercase; letter-spacing: .04em; }
 
 /* The table has to fit its 1,019 px container without an internal drag: a
    column that sizes itself to "Ignore the Template (anonymous host)" takes
@@ -99,33 +95,33 @@ table.cx-l1 td.line { white-space: nowrap; overflow: hidden;
                       text-overflow: ellipsis; max-width: 27ch; }
 table.cx-l1 td.team { color: var(--muted); max-width: 14ch; overflow: hidden;
                       text-overflow: ellipsis; }
-table.cx-l1 th, table.cx-l1 td { padding: 5px 8px; }
+table.cx-l1 th, table.cx-l1 td { padding: var(--sp1) var(--sp2); }
 table.cx-l1 td.show, table.cx-l1 th:first-child { min-width: 168px;
                                                   max-width: 168px; }
 
 /* the shows with nothing on file, folded rather than sorted to the bottom */
-.cx-quiet { display: flex; flex-direction: column; gap: 4px; margin: 4px 0 0; }
-.cx-quietrow { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline;
-               font-size: 12px; }
-.cx-quietrow .sub { color: var(--faint); font-size: 12px; max-width: 70ch; }
+.cx-quiet { display: flex; flex-direction: column; gap: var(--sp1); margin: var(--sp1) 0 0; }
+.cx-quietrow { display: flex; flex-wrap: wrap; gap: var(--sp2); align-items: baseline;
+               font-size: var(--t-cell); }
+.cx-quietrow .sub { color: var(--faint); font-size: var(--t-cell); max-width: 70ch; }
 
 table.cx-cons td { vertical-align: baseline; }
-table.cx-cons .sub { color: var(--faint); font-size: 11px; }
+table.cx-cons .sub { color: var(--faint); font-size: var(--t-label); }
 
 /* ====================================================== the drawer, levels 2 and 3 */
 
 /* 30 KB of level 3 does not fit in 524 px of content: 19 transfer calls, 4
    captain calls and 20 players each carrying its own quotes. */
-.cx-drawer { width: min(920px, 96vw); }
-.cx-drawer h2 { margin: 16px 0 4px; font-size: 12px; letter-spacing: .06em;
+/* the aside's width is app.css's one width (R20); this file's own 920px
+   was one of the three the audit counted. */
+.cx-drawer h2 { margin: var(--sp4) 0 var(--sp1); font-size: var(--t-cell); letter-spacing: .06em;
                 text-transform: uppercase; color: var(--muted); }
-.cx-drawer h3 { margin: 12px 0 4px; font-size: 11px; letter-spacing: .06em;
+.cx-drawer h3 { margin: var(--sp3) 0 var(--sp1); font-size: var(--t-label); letter-spacing: .06em;
                 text-transform: uppercase; color: var(--faint); font-weight: 700; }
-.cx-drawer .sub { color: var(--faint); font-size: 12px; line-height: 1.55;
+.cx-drawer .sub { color: var(--faint); font-size: var(--t-cell); line-height: 1.55;
                   max-width: 78ch; }
-.cx-backbar { margin-bottom: 8px; }
 .cx-back { background: none; border: 0; padding: 0; font: inherit;
-           font-size: 12px; color: var(--muted); cursor: pointer; }
+           font-size: var(--t-cell); color: var(--muted); cursor: pointer; }
 .cx-back:hover { color: var(--ink); text-decoration: underline; }
 
 /* The archive table lives inside 884 px of drawer. The title is the only
@@ -134,44 +130,44 @@ table.cx-cons .sub { color: var(--faint); font-size: 11px; }
 table.cx-l2 td.title { white-space: nowrap; max-width: 26ch; overflow: hidden;
                        text-overflow: ellipsis; }
 table.cx-l2 td.title .cx-show { max-width: 22ch; }
-table.cx-l2 th, table.cx-l2 td { padding: 5px 8px; }
+table.cx-l2 th, table.cx-l2 td { padding: var(--sp1) var(--sp2); }
 table.cx-l2 tr.thin td { color: var(--muted); }
 /* one recording, two stored rows: the mark opens the other copy */
 .cx-sib { background: none; border: 1px solid var(--line); border-radius: 4px;
-          padding: 0 4px; margin-left: 6px; font: inherit; font-size: 11px;
+          padding: 0 var(--sp1); margin-left: var(--sp1); font: inherit; font-size: var(--t-label);
           color: var(--faint); cursor: pointer; }
 .cx-sib:hover { color: var(--ink); border-color: var(--muted); }
 
 /* the episode head: state, where, when, how much text, and the way out */
-.cx-ephead { display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
-             font-size: 12px; color: var(--muted); margin: 4px 0; }
+.cx-ephead { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp2);
+             font-size: var(--t-cell); color: var(--muted); margin: var(--sp1) 0; }
 
 /* ============================================ the stored summary and calls */
 
-.cx-bullets { display: flex; flex-direction: column; gap: 4px; margin: 4px 0 8px; }
-.cx-bullet { margin: 0; color: var(--ink); font-size: 12.5px; line-height: 1.6;
-             max-width: 84ch; padding-left: 12px; position: relative; }
+.cx-bullets { display: flex; flex-direction: column; gap: var(--sp1); margin: var(--sp1) 0 var(--sp2); }
+.cx-bullet { margin: 0; color: var(--ink); font-size: var(--t-cell); line-height: 1.6;
+             max-width: 84ch; padding-left: var(--sp3); position: relative; }
 .cx-bullet::before { content: "\2022"; position: absolute; left: 0;
                      color: var(--faint); }
 
-.cx-calls { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 8px; }
-.cx-call { border-left: 2px solid var(--line); padding-left: 12px; }
-.cx-callhead { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline;
-               font-size: 12.5px; }
+.cx-calls { display: flex; flex-direction: column; gap: var(--sp2); margin: var(--sp1) 0 var(--sp2); }
+.cx-call { border-left: 2px solid var(--line); padding-left: var(--sp3); }
+.cx-callhead { display: flex; flex-wrap: wrap; gap: var(--sp2); align-items: baseline;
+               font-size: var(--t-cell); }
 .cx-callhead b { color: var(--ink); }
-.cx-player > summary { font-size: 12.5px; }
-.cx-player > summary .sub { color: var(--faint); font-size: 12px; }
+.cx-player > summary { font-size: var(--t-cell); }
+.cx-player > summary .sub { color: var(--faint); font-size: var(--t-cell); }
 
 /* ============================================================== quotes */
 
-.cx-quote { margin: 4px 0 0; padding: 8px 12px; border-left: 2px solid var(--line);
+.cx-quote { margin: var(--sp1) 0 0; padding: var(--sp2) var(--sp3); border-left: 2px solid var(--line);
             background: var(--surface); border-radius: 0 8px 8px 0;
-            color: var(--ink); font-size: 12.5px; line-height: 1.6; }
+            color: var(--ink); font-size: var(--t-cell); line-height: 1.6; }
 .cx-qmark { color: var(--faint); }
-.cx-qfoot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
-            margin-top: 8px; }
-.cx-tier { font-size: 11px; font-weight: 700; letter-spacing: .06em;
-           text-transform: uppercase; padding: 1px 8px; border-radius: 999px;
+.cx-qfoot { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp2);
+            margin-top: var(--sp2); }
+.cx-tier { font-size: var(--t-label); font-weight: 700; letter-spacing: .06em;
+           text-transform: uppercase; padding: 1px var(--sp2); border-radius: 999px;
            border: 1px solid var(--line); color: var(--muted);
            background: var(--raised); white-space: nowrap; }
 /* "method not recorded" is an ABSENCE, and it repeats on every row in a
@@ -187,7 +183,7 @@ table.cx-l2 tr.thin td { color: var(--muted); }
   repeating-linear-gradient(135deg, var(--raised) 0 3px,
                             var(--surface) 3px 6px); }
 .cx-tier.call { color: var(--muted); }
-.cx-conv { color: var(--faint); font-size: 11px;
+.cx-conv { color: var(--faint); font-size: var(--t-label);
            font-variant-numeric: tabular-nums; white-space: nowrap; }
 .cx-conv.warn { color: var(--warn); }
 
@@ -195,16 +191,16 @@ table.cx-l2 tr.thin td { color: var(--muted); }
    moment, which today is YouTube. Everywhere else the offset is stored and
    the episode link opens at the start, so the mark is drawn as text and says
    so in its tooltip rather than pretending to be a link. */
-a.cx-at { color: var(--accent-ink); font-size: 11px; text-decoration: none;
+a.cx-at { color: var(--accent-ink); font-size: var(--t-label); text-decoration: none;
           margin-left: auto; white-space: nowrap; }
 a.cx-at:hover { text-decoration: underline; }
-.cx-at.flat { color: var(--faint); font-size: 11px; margin-left: auto;
+.cx-at.flat { color: var(--faint); font-size: var(--t-label); margin-left: auto;
               white-space: nowrap; border-bottom: 1px dotted var(--line); }
 
 /* ==================================== the transcription state, four values */
 
-.cx-state { display: inline-flex; align-items: center; gap: 8px;
-            color: var(--muted); font-size: 12px; white-space: nowrap; }
+.cx-state { display: inline-flex; align-items: center; gap: var(--sp2);
+            color: var(--muted); font-size: var(--t-cell); white-space: nowrap; }
 .cx-statedot { content: ""; display: inline-block; width: 8px; height: 8px;
                border-radius: 50%; background: var(--faint); flex: none; }
 .cx-state.good .cx-statedot { background: var(--good); }
@@ -215,20 +211,20 @@ a.cx-at:hover { text-decoration: underline; }
 
 /* ============================================== the report card, as a chip */
 
-.cx-rc { display: inline-flex; align-items: center; gap: 8px;
-         padding: 3px 9px 3px 8px; border-radius: 999px;
+.cx-rc { display: inline-flex; align-items: center; gap: var(--sp2);
+         padding: var(--sp1) var(--sp2) var(--sp1) var(--sp2); border-radius: 999px;
          border: 1px solid var(--line); background: var(--surface);
-         font: inherit; font-size: 11px; color: var(--muted); cursor: pointer; }
+         font: inherit; font-size: var(--t-label); color: var(--muted); cursor: pointer; }
 .cx-rc:hover { border-color: var(--muted); color: var(--ink); }
 .cx-rc b { color: var(--ink); font-weight: 600; }
-.cx-rcdir { font-family: var(--mono); font-size: 11px; letter-spacing: .04em;
+.cx-rcdir { font-family: var(--mono); font-size: var(--t-label); letter-spacing: .04em;
             color: var(--faint); }
-.cx-rc .cx-rcstat { margin: 0; font-size: 11px; font-variant-numeric: tabular-nums; }
+.cx-rc .cx-rcstat { margin: 0; font-size: var(--t-label); font-variant-numeric: tabular-nums; }
 .cx-rc.below .cx-rcstat { color: var(--bad); }
 .cx-rc.above .cx-rcstat { color: var(--good); }
 
 /* the verdict without a name: the drawer's record line */
-.cx-rctag { display: inline-block; font-size: 11px; padding: 1px 8px;
+.cx-rctag { display: inline-block; font-size: var(--t-label); padding: 1px var(--sp2);
             border-radius: 999px; border: 1px solid var(--line);
             color: var(--muted); background: var(--surface);
             font-variant-numeric: tabular-nums; white-space: nowrap;
@@ -237,11 +233,11 @@ a.cx-at:hover { text-decoration: underline; }
   border-color: color-mix(in oklab, var(--good) 45%, var(--line)); }
 .cx-rctag.below { color: var(--bad);
   border-color: color-mix(in oklab, var(--bad) 45%, var(--line)); }
-.cx-rctag.big { font-size: 12.5px; padding: 3px 12px; font-weight: 600; }
+.cx-rctag.big { font-size: var(--t-cell); padding: var(--sp1) var(--sp3); font-weight: 600; }
 .cx-recline { display: flex; flex-wrap: wrap; align-items: center;
-              gap: 8px 12px; margin: 4px 0 8px; font-size: 12px;
+              gap: var(--sp2) var(--sp3); margin: var(--sp1) 0 var(--sp2); font-size: var(--t-cell);
               color: var(--muted); }
-.cx-recteam { font-size: 12px; color: var(--muted); }
+.cx-recteam { font-size: var(--t-cell); color: var(--muted); }
 
 /* ============================================ under the floor, drawn faint
  *
@@ -264,18 +260,21 @@ a.cx-at:hover { text-decoration: underline; }
 /* ================================================== the record, once open */
 
 /* the Wilson interval as a range on a 0-100 track; the tick is the coin flip */
-.cx-range { position: relative; height: 8px; margin-top: 8px; border-radius: 4px;
+.cx-range { position: relative; height: 8px; margin-top: var(--sp2); border-radius: 4px;
             background: var(--surface); border: 1px solid var(--line); }
-.cx-range.big { height: 16px; margin: 8px 0 4px; }
+.cx-range.big { height: 16px; margin: var(--sp2) 0 var(--sp1); }
 .cx-range-mid { position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px;
                 background: var(--muted); }
 .cx-range-band { position: absolute; top: 1px; bottom: 1px; border-radius: 4px;
                  background: color-mix(in oklab, var(--muted) 45%, var(--surface)); }
+/* the point marker is 3px wide and `left` puts its LEFT edge on the value,
+   so it is pulled back half its own width to sit centred on it. Geometry
+   against the mark's own size, not a spacing step. */
 .cx-range-pt { position: absolute; top: -2px; width: 3px; height: calc(100% + 4px);
                margin-left: -1.5px; background: var(--ink); border-radius: 2px; }
 /* per-gameweek hit rate: small columns on a 22px track, dashed line at 50% */
-.cx-gwbars { display: flex; gap: 4px; align-items: flex-end; height: 34px;
-             margin-top: 8px; position: relative; }
+.cx-gwbars { display: flex; gap: var(--sp1); align-items: flex-end; height: 34px;
+             margin-top: var(--sp2); position: relative; }
 .cx-gwbars::before { content: ""; position: absolute; left: 0; right: 0; bottom: 23px;
                      border-top: 1px dashed var(--line); }
 .cx-gwbar { display: flex; flex-direction: column; align-items: center;
@@ -283,50 +282,35 @@ a.cx-at:hover { text-decoration: underline; }
 .cx-gwfill { display: block; width: 14px; background: var(--muted);
              border-radius: 2px 2px 0 0; }
 .cx-gwbar.thin .cx-gwfill { opacity: .5; }
-.cx-gwlab { font-size: 11px; color: var(--faint); font-family: var(--mono);
+.cx-gwlab { font-size: var(--t-label); color: var(--faint); font-family: var(--mono);
             line-height: 12px; }
 .cx-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr);
-            gap: 4px 12px; margin: 8px 0; font-size: 12.5px; }
-.cx-facts dt { color: var(--faint); font-size: 11px; letter-spacing: .06em;
+            gap: var(--sp1) var(--sp3); margin: var(--sp2) 0; font-size: var(--t-cell); }
+.cx-facts dt { color: var(--faint); font-size: var(--t-label); letter-spacing: .06em;
                text-transform: uppercase; padding-top: 2px; }
 .cx-facts dd { margin: 0; color: var(--ink); }
-table.cx-byaction { font-size: 12px; margin-top: 4px; }
+table.cx-byaction { font-size: var(--t-cell); margin-top: var(--sp1); }
 table.cx-byaction tr.thin td { color: var(--faint); }
-.cx-teamrow { margin-top: 8px; border-left: 2px solid var(--line); padding-left: 12px; }
-.cx-teamhead { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
-a.cx-cross { color: var(--accent-ink); font-size: 11px; text-decoration: none; }
+.cx-teamrow { margin-top: var(--sp2); border-left: 2px solid var(--line); padding-left: var(--sp3); }
+.cx-teamhead { display: flex; gap: var(--sp2); align-items: baseline; flex-wrap: wrap; }
+a.cx-cross { color: var(--accent-ink); font-size: var(--t-label); text-decoration: none; }
 a.cx-cross:hover { text-decoration: underline; }
 /* the same FPL entry attached to more than one card */
-.cx-samewho { font-size: 11px; letter-spacing: .04em; color: var(--warn);
+.cx-samewho { font-size: var(--t-label); letter-spacing: .04em; color: var(--warn);
               border: 1px dashed color-mix(in oklab, var(--warn) 45%, var(--line));
-              border-radius: 4px; padding: 0 5px; white-space: nowrap; }
+              border-radius: 4px; padding: 0 var(--sp1); white-space: nowrap; }
 
 /* the folds at the bottom of level 2: the arithmetic, the squad, the console */
-.cx-method { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 8px; }
-.cx-methodbody { padding: 4px 0 0; }
-.cx-inkhost { padding: 4px 0 0; }
-table.cx-squad { font-size: 12px; margin-top: 4px; }
+.cx-method { margin-top: var(--sp4); border-top: 1px solid var(--line); padding-top: var(--sp2); }
+.cx-methodbody { padding: var(--sp1) 0 0; }
+.cx-inkhost { padding: var(--sp1) 0 0; }
+table.cx-squad { font-size: var(--t-cell); margin-top: var(--sp1); }
 
 /* ---- skeleton loading ---------------------------------------------------
-   The panel build is measured at 2.5 to 4s; a shape that says "loading"
-   replaces the bare text line. Tokens only, both themes; motion respects
-   prefers-reduced-motion. */
-.cx-skel { display: flex; flex-direction: column; gap: 12px; margin: 12px 0; }
-.cx-skelrow, .cx-skelblock, .cx-skelcard {
-  border-radius: 8px;
-  background: linear-gradient(100deg,
-    var(--raised) 40%,
-    color-mix(in oklab, var(--ink) 7%, var(--raised)) 50%,
-    var(--raised) 60%);
-  background-size: 200% 100%;
-  animation: cx-shimmer 1.2s linear infinite; }
-.cx-skelrow { height: 14px; width: 38%; }
-.cx-skelblock { height: 72px; }
-.cx-skelcard { height: 96px; }
-@keyframes cx-shimmer { to { background-position: -200% 0; } }
-@media (prefers-reduced-motion: reduce) {
-  .cx-skelrow, .cx-skelblock, .cx-skelcard { animation: none; }
-}
+   The panel build is measured at 2.5 to 4s. The shape itself is app.css's
+   one `.skel` table, at the row count and row height the data will take;
+   this rule only gives it the margin the level it stands in wants. */
+.cx-skel { margin: var(--sp3) 0; }
 
 /* ============================================================ narrow
  *
@@ -344,16 +328,16 @@ table.cx-squad { font-size: 12px; margin-top: 4px; }
      what gets clipped, not the page */
   table.cx-l1 { width: 100%; max-width: 100%; }
   table.cx-l1 tr { max-width: 100%; overflow: hidden; }
-  table.cx-l1 tr { padding: 3px 0 4px; border-bottom: 1px solid var(--line);
+  table.cx-l1 tr { padding: var(--sp1) 0 var(--sp1); border-bottom: 1px solid var(--line);
                    line-height: 1.3; }
   table.cx-l1 td.show, table.cx-l1 td.line { line-height: 1.3; }
   table.cx-l1 tr:hover td { background: none; }
   table.cx-l1 td { border: 0; padding: 0; white-space: normal; display: inline;
-                   font-size: 11px; line-height: 1.3; margin-right: 9px; }
+                   font-size: var(--t-label); line-height: 1.3; margin-right: var(--sp2); }
   table.cx-l1 td.show, table.cx-l1 td.line { display: block; margin-right: 0;
     width: 100%; max-width: 100%; }
   table.cx-l1 td[data-k]::before { content: attr(data-k) " ";
-    color: var(--faint); font-size: 11px; letter-spacing: .04em; }
+    color: var(--faint); font-size: var(--t-label); letter-spacing: .04em; }
   /* five columns on a phone: the name, how old the latest item is, how much
      they published and how much of it was read, and the record. The feed
      kinds, the archive total and the people behind the show all answer
@@ -363,40 +347,40 @@ table.cx-squad { font-size: 12px; margin-top: 4px; }
   table.cx-l1 td.line { max-width: none; white-space: nowrap; overflow: hidden;
                         text-overflow: ellipsis; line-height: 1.3; }
   table.cx-l1 .cx-show { max-width: none; white-space: nowrap; overflow: hidden;
-                         text-overflow: ellipsis; font-size: 12px;
+                         text-overflow: ellipsis; font-size: var(--t-cell);
                          font-weight: 600; line-height: 1.3; }
-  table.cx-l1 .cx-rung { margin-right: 6px; }
+  table.cx-l1 .cx-rung { margin-right: var(--sp1); }
   /* sticky-first pins a 170 px first column, which is the whole width here */
   table.cx-l1 td:first-child, table.cx-l1 th:first-child { position: static;
     min-width: 0; max-width: none; box-shadow: none; }
   .cx-note { max-width: none; }
-  section.cx.card { padding: 10px 12px; margin-bottom: 10px; }
-  .cx-drawer { width: 100vw; padding: 12px; }
+  section.cx.card { padding: var(--sp2) var(--sp3); margin-bottom: var(--sp2); }
+  .cx-drawer { padding: var(--sp3); }
   table.cx-l2 td.title, table.cx-l2 td.title .cx-show { max-width: 18ch; }
   .cx-facts { grid-template-columns: minmax(0, 1fr); gap: 1px; }
-  .cx-callhead { gap: 4px 8px; }
+  .cx-callhead { gap: var(--sp1) var(--sp2); }
 }
 
 /* ======================================================== the link bar */
 
 input.cx-url { flex: 1 1 320px; min-width: 200px; background: var(--raised);
                color: var(--ink); border: 1px solid var(--line);
-               border-radius: 7px; padding: 6px 10px; font: inherit; }
+               border-radius: 7px; padding: var(--sp1) var(--sp2); font: inherit; }
 .cx-fail { border: 1px solid color-mix(in oklab, var(--warn) 32%, var(--line));
            background: color-mix(in oklab, var(--warn) 7%, var(--surface));
-           border-radius: 8px; padding: 9px 12px; margin: 6px 0; }
-.cx-fail b { color: var(--ink); display: block; margin-bottom: 3px; }
-.cx-fail .sub { color: var(--muted); font-size: 12.5px; line-height: 1.6;
+           border-radius: 8px; padding: var(--sp2) var(--sp3); margin: var(--sp1) 0; }
+.cx-fail b { color: var(--ink); display: block; margin-bottom: var(--sp1); }
+.cx-fail .sub { color: var(--muted); font-size: var(--t-cell); line-height: 1.6;
                 max-width: 82ch; }
 .cx-fail.stop { border-color: color-mix(in oklab, var(--bad) 38%, var(--line));
                 background: color-mix(in oklab, var(--bad) 7%, var(--surface)); }
 
-.cx-jobs { display: flex; flex-direction: column; gap: 8px; }
+.cx-jobs { display: flex; flex-direction: column; gap: var(--sp2); }
 .cx-job { border: 1px solid var(--line); border-radius: 9px;
-          background: var(--raised); padding: 10px 12px; }
-.cx-job-head { display: flex; align-items: center; gap: 9px; }
-.cx-job-state { font-size: 10px; font-weight: 700; letter-spacing: .08em;
-                padding: 2px 8px; border-radius: 999px; color: var(--muted);
+          background: var(--raised); padding: var(--sp2) var(--sp3); }
+.cx-job-head { display: flex; align-items: center; gap: var(--sp2); }
+.cx-job-state { font-size: var(--t-micro); font-weight: 700; letter-spacing: .08em;
+                padding: 2px var(--sp2); border-radius: 999px; color: var(--muted);
                 background: var(--surface); border: 1px solid var(--line);
                 white-space: nowrap; }
 .cx-job-state.running, .cx-job-state.posting { color: var(--s1);
@@ -408,30 +392,30 @@ input.cx-url { flex: 1 1 320px; min-width: 200px; background: var(--raised);
 .cx-job-state.down, .cx-job-state.duplicate, .cx-job-state.nomedia,
 .cx-job-state.notepisode { color: var(--warn);
   border-color: color-mix(in oklab, var(--warn) 45%, var(--line)); }
-a.cx-job-url { color: var(--muted); font-size: 12px; text-decoration: none;
+a.cx-job-url { color: var(--muted); font-size: var(--t-cell); text-decoration: none;
                overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
                min-width: 0; }
 a.cx-job-url:hover { color: var(--ink); text-decoration: underline; }
-.cx-x { margin-left: auto; padding: 2px 8px; font-size: 12px; }
+.cx-x { margin-left: auto; padding: 2px var(--sp2); font-size: var(--t-cell); }
 
-.cx-job-path { color: var(--ink); font-size: 12.5px; margin: 8px 0 2px; }
-.cx-stages { display: flex; flex-direction: column; gap: 3px; margin: 6px 0 4px; }
-.cx-stage { display: flex; align-items: center; gap: 8px; font-size: 12px;
+.cx-job-path { color: var(--ink); font-size: var(--t-cell); margin: var(--sp2) 0 2px; }
+.cx-stages { display: flex; flex-direction: column; gap: var(--sp1); margin: var(--sp1) 0 var(--sp1); }
+.cx-stage { display: flex; align-items: center; gap: var(--sp2); font-size: var(--t-cell);
             color: var(--faint); }
 .cx-stage.done { color: var(--muted); }
 .cx-stage.now { color: var(--ink); }
 .cx-stage-mark { width: 12px; font-family: var(--mono); }
 .cx-stage.done .cx-stage-mark { color: var(--good); }
-.cx-stage-name { min-width: 84px; font-family: var(--mono); font-size: 11.5px; }
+.cx-stage-name { min-width: 84px; font-family: var(--mono); font-size: var(--t-label); }
 .cx-stage-bar { flex: 0 1 200px; height: 6px; border-radius: 3px;
                 background: var(--surface); border: 1px solid var(--line);
                 overflow: hidden; }
 .cx-stage-fill { display: block; height: 100%; background: var(--s1); }
-.cx-stage-pct, .cx-stage-eta { font-family: var(--mono); font-size: 11px;
+.cx-stage-pct, .cx-stage-eta { font-family: var(--mono); font-size: var(--t-label);
                                font-variant-numeric: tabular-nums; }
-.cx-job-ok { font-size: 12.5px; color: var(--muted); margin-top: 6px; }
+.cx-job-ok { font-size: var(--t-cell); color: var(--muted); margin-top: var(--sp1); }
 .cx-job-ok b { color: var(--good); }
-.cx-job .sub { color: var(--faint); font-size: 11.5px; margin-top: 6px;
+.cx-job .sub { color: var(--faint); font-size: var(--t-label); margin-top: var(--sp1);
                max-width: 78ch; line-height: 1.55; }
 
 /* ---- the preview halt --------------------------------------------------
@@ -462,93 +446,93 @@ a.cx-job-url:hover { color: var(--ink); text-decoration: underline; }
 .cx-job-state.cancelled { color: var(--bad);
   border-color: color-mix(in oklab, var(--bad) 45%, var(--line)); }
 
-.cx-pv { margin: 10px 0 4px; }
-.cx-pv-title { font-size: 15.5px; line-height: 1.35; font-weight: 650;
-               color: var(--ink); margin: 0 0 6px; max-width: 62ch;
+.cx-pv { margin: var(--sp2) 0 var(--sp1); }
+.cx-pv-title { font-size: var(--t-figure); line-height: 1.35; font-weight: 650;
+               color: var(--ink); margin: 0 0 var(--sp1); max-width: 62ch;
                overflow-wrap: anywhere; }
-.cx-pv-who { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px;
-             font-size: 13.5px; color: var(--ink); }
+.cx-pv-who { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp1) var(--sp2);
+             font-size: var(--t-body); color: var(--ink); }
 .cx-pv-who b { font-weight: 650; overflow-wrap: anywhere; }
-.cx-pv-chan { color: var(--faint); font-size: 11.5px; }
+.cx-pv-chan { color: var(--faint); font-size: var(--t-label); }
 /* Every payload reason lands in this one shape, so "why the page believes
    this" always looks the same wherever it appears. */
-.cx-pv-why { color: var(--faint); font-size: 11.5px; line-height: 1.55;
-             max-width: 78ch; margin-top: 3px; overflow-wrap: anywhere; }
+.cx-pv-why { color: var(--faint); font-size: var(--t-label); line-height: 1.55;
+             max-width: 78ch; margin-top: var(--sp1); overflow-wrap: anywhere; }
 
 .cx-pv-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr);
-               gap: 6px 14px; margin: 10px 0 0; align-items: baseline; }
-.cx-pv-facts dt { color: var(--faint); font-size: 10.5px; letter-spacing: .06em;
+               gap: var(--sp1) var(--sp3); margin: var(--sp2) 0 0; align-items: baseline; }
+.cx-pv-facts dt { color: var(--faint); font-size: var(--t-micro); letter-spacing: .06em;
                   text-transform: uppercase; }
-.cx-pv-facts dd { margin: 0; min-width: 0; font-size: 13px; color: var(--ink); }
-.cx-pv-facts dd .chip { margin-left: 7px; vertical-align: 1px; }
+.cx-pv-facts dd { margin: 0; min-width: 0; font-size: var(--t-body); color: var(--ink); }
+.cx-pv-facts dd .chip { margin-left: var(--sp2); vertical-align: 1px; }
 .cx-pv-v { font-variant-numeric: tabular-nums; }
 
-.cx-pv-desc { color: var(--muted); font-size: 12.5px; line-height: 1.6;
-              max-width: 80ch; margin: 10px 0 0; white-space: pre-line;
+.cx-pv-desc { color: var(--muted); font-size: var(--t-cell); line-height: 1.6;
+              max-width: 80ch; margin: var(--sp2) 0 0; white-space: pre-line;
               overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical;
               -webkit-line-clamp: 4; overflow: hidden; }
 .cx-pv-desc.open { -webkit-line-clamp: none; display: block; overflow: visible; }
 .cx-pv-desc.empty-note { color: var(--faint); font-style: italic; }
 .cx-link-btn { background: none; border: none; padding: 2px 0; margin-top: 2px;
-               color: var(--s1); font-size: 11.5px; text-decoration: underline; }
+               color: var(--s1); font-size: var(--t-label); text-decoration: underline; }
 .cx-link-btn:hover { color: var(--ink); }
 
 /* The cost, in the same unit both paths are quoted in, so 4 seconds and 105
    seconds are visibly different decisions rather than two adjectives. */
-.cx-pv-cost { margin-top: 12px; padding: 9px 12px; border-radius: 8px;
+.cx-pv-cost { margin-top: var(--sp3); padding: var(--sp2) var(--sp3); border-radius: 8px;
               border: 1px solid var(--line); background: var(--surface); }
-.cx-pv-costline { font-size: 13px; color: var(--muted); line-height: 1.55; }
+.cx-pv-costline { font-size: var(--t-body); color: var(--muted); line-height: 1.55; }
 .cx-pv-costline b { color: var(--ink); font-weight: 650; }
 
-.cx-pv-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
-              margin-top: 12px; }
-.cx-pv-acts button { padding: 7px 14px; }
+.cx-pv-acts { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp2);
+              margin-top: var(--sp3); }
+.cx-pv-acts button { padding: var(--sp2) var(--sp3); }
 .cx-pv-acts button:disabled { opacity: .55; cursor: default; }
 .cx-pv-acts button:disabled:hover { border-color: var(--line); }
 button.cx-no { color: var(--muted); }
 button.cx-no:hover { color: var(--ink); }
-.cx-pv-freeline { color: var(--faint); font-size: 11.5px; line-height: 1.55;
-                  max-width: 78ch; margin-top: 6px; }
-.cx-pv-exp { color: var(--muted); font-size: 11.5px; line-height: 1.55;
-             max-width: 78ch; margin-top: 10px; padding-top: 8px;
+.cx-pv-freeline { color: var(--faint); font-size: var(--t-label); line-height: 1.55;
+                  max-width: 78ch; margin-top: var(--sp1); }
+.cx-pv-exp { color: var(--muted); font-size: var(--t-label); line-height: 1.55;
+             max-width: 78ch; margin-top: var(--sp2); padding-top: var(--sp2);
              border-top: 1px solid var(--line); }
 .cx-pv-exp b { color: var(--ink); font-variant-numeric: tabular-nums; }
 
-.cx-ledger-cap { color: var(--faint); font-size: 10.5px; letter-spacing: .06em;
-                 text-transform: uppercase; margin: 12px 0 2px; }
+.cx-ledger-cap { color: var(--faint); font-size: var(--t-micro); letter-spacing: .06em;
+                 text-transform: uppercase; margin: var(--sp3) 0 2px; }
 .cx-stage.halt { color: var(--s1); }
 .cx-stage.halt .cx-stage-mark { color: var(--s1); }
-.cx-stage-note { color: var(--faint); font-size: 11px; }
+.cx-stage-note { color: var(--faint); font-size: var(--t-label); }
 
-.cx-job-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
-               margin-top: 8px; }
+.cx-job-acts { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp2);
+               margin-top: var(--sp2); }
 .cx-job-acts .sub { flex: 1 1 260px; min-width: 0; margin-top: 0; }
 
 /* A decline is not a failure and must not be drawn as one: nothing went
    wrong, the owner made the call the halt exists to let them make. */
 .cx-pass { border: 1px solid var(--line); background: var(--surface);
-           border-radius: 8px; padding: 9px 12px; margin: 8px 0 0; }
-.cx-pass b { color: var(--ink); display: block; margin-bottom: 3px; }
-.cx-pass .sub { color: var(--muted); font-size: 12.5px; line-height: 1.6;
+           border-radius: 8px; padding: var(--sp2) var(--sp3); margin: var(--sp2) 0 0; }
+.cx-pass b { color: var(--ink); display: block; margin-bottom: var(--sp1); }
+.cx-pass .sub { color: var(--muted); font-size: var(--t-cell); line-height: 1.6;
                 max-width: 82ch; margin-top: 0; }
 
-.cx-verbatim { color: var(--muted); font-size: 12px; line-height: 1.55;
-               max-width: 82ch; margin-top: 6px; overflow-wrap: anywhere; }
+.cx-verbatim { color: var(--muted); font-size: var(--t-cell); line-height: 1.55;
+               max-width: 82ch; margin-top: var(--sp1); overflow-wrap: anywhere; }
 
-.cx-take { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
-.cx-take-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 8px;
-               font-size: 12.5px; color: var(--ink); margin-top: 4px; }
-.cx-take-k { color: var(--faint); font-size: 10.5px; letter-spacing: .06em;
+.cx-take { margin-top: var(--sp2); padding-top: var(--sp2); border-top: 1px solid var(--line); }
+.cx-take-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp1) var(--sp2);
+               font-size: var(--t-cell); color: var(--ink); margin-top: var(--sp1); }
+.cx-take-k { color: var(--faint); font-size: var(--t-micro); letter-spacing: .06em;
              text-transform: uppercase; min-width: 68px; }
-.cx-take-b { color: var(--muted); font-size: 12.5px; line-height: 1.6;
-             max-width: 80ch; margin-top: 6px; padding-left: 10px;
+.cx-take-b { color: var(--muted); font-size: var(--t-cell); line-height: 1.6;
+             max-width: 80ch; margin-top: var(--sp1); padding-left: var(--sp2);
              border-left: 2px solid var(--line); overflow-wrap: anywhere; }
 
 /* 375px: the two-column fact list becomes one column rather than squeezing a
    value into a gutter, and the actions stack full width. */
 @media (max-width: 430px) {
   .cx-pv-facts { grid-template-columns: minmax(0, 1fr); gap: 2px; }
-  .cx-pv-facts dt { margin-top: 8px; }
+  .cx-pv-facts dt { margin-top: var(--sp2); }
   .cx-pv-acts button { flex: 1 1 140px; }
   .cx-take-k { min-width: 0; }
 }

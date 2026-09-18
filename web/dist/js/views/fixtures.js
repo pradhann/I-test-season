@@ -39,9 +39,10 @@
    fixtures.css, which owns them.
 */
 
-import { runPanel, el, emptyBox, provenance, fmt1, fmt2, fmtSpan, fmtAge }
-  from "/js/app.js";
+import { runPanel, el, emptyBox, provenance, fmt1, fmt2, daysFromHours,
+         fmtAgeDays, makeDrawer, drawerHead, sortableTh } from "/js/app.js";
 import { crest } from "/js/components/clubmark.js";
+import { icon, sortIcon } from "/js/components/icons.js";
 
 /* FPL's five FDR steps, easiest -> hardest, so a colour here means what the
    same colour means on the FPL site. Defined in CSS (un-themed on purpose);
@@ -90,7 +91,11 @@ const PROMO_NOTE = "promoted this season: few Premier League matches in the fit,
 const tierRun = r => (r == null ? null : r <= 5 ? "easy" : r <= 10 ? "fair"
   : r <= 15 ? "tough" : "hard");
 const cap = s => (s ? s[0].toUpperCase() + s.slice(1) : s);
-const ruleText = h => (h >= 48 ? `${Math.round(h / 24)}d` : `${Math.round(h)}h`);
+/* A BUDGET, not an age: the length of the window a source is allowed to go
+   stale in. It is spelled in days above two of them and in hours below, and
+   it is the one number on this page that may still say hours, because it is
+   a rule the panel serves rather than a measured age (R23, R24). */
+const ruleText = h => (h >= 48 ? `${Math.round(h / 24)} day` : `${Math.round(h)} hour`);
 
 /* Skeleton shells while the board call is in flight: a rail column and six
    cell columns as grey blocks, so the page has its shape before its numbers. */
@@ -116,9 +121,22 @@ function ageHours(s) {
   const d = parseTs(s);
   return d ? (Date.now() - d.getTime()) / 3.6e6 : null;
 }
-/* Ages read through the shared vocabulary in app.js (fmtSpan, fmtAge), so a
-   span reads the same here as on every other tab. This file used to round its
-   own way and printed "5d old" where the rest of the app printed "4d 16h". */
+/* AGES ARE WHOLE DAYS (R23), through app.js's `daysFromHours` for a span the
+   payload serves in hours and `fmtAgeDays` for a stamp. These two wrap them
+   in the word this page puts beside them, because "today old" is not a
+   sentence and "4 days old" is. The hours-and-minutes span this file used to
+   print is the deadline countdown's alone (R24). */
+function oldPhrase(h) {
+  const word = daysFromHours(h);
+  if (word === "today" || word === "yesterday") return word;
+  return `${word} old`;
+}
+function oldStamp(iso) {
+  const word = fmtAgeDays(iso);
+  if (word == null) return null;
+  if (word === "today" || word === "yesterday") return word;
+  return `${word} old`;
+}
 function kickoffText(s) {
   const d = parseTs(s);
   if (!d) return null;
@@ -340,7 +358,7 @@ function domainFor(values, floor) {
 }
 const cls = (ease, dom) => { const b = bucket(ease, dom); return b == null ? null : CLASSES[b]; };
 
-/* --------------------------------------------------- payload → view model */
+/* ------------------------------------------------ payload into view model */
 
 /* Reads whichever shape the panel actually returned. Prefers goal rates with
    published anchors (the honest unit), then split 0–1 difficulties, then the
@@ -614,7 +632,7 @@ function buildModel(res) {
 
   /* Tornness has exactly one owner: the served `divergent[]` list. The panel
      applied its rank-gap rule once, over the same population it ranked, and
-     every torn mark on the page — the cell seam, the rail's ⇄, the torn card,
+     every torn mark on the page: the cell seam, the rail's tag, the torn card,
      the verdict tear row — joins that list by (fixture_id, team_code). The
      client-side bucket-gap rule that used to live here was a second
      definition of "torn" on the same screen, disagreeing quietly with the
@@ -732,29 +750,29 @@ function formChipEl(form, terse) {
 /* ------------------------------------------------------------------ view */
 
 export default async function fixtures(host) {
-  /* One drawer per visit — re-entering the view must not stack a second one
-     on the body, and the previous visit's key handler must stop listening. */
-  document.querySelectorAll("aside.fx-drawer").forEach(n => n.remove());
-  const drawer = el("aside", "drawer fx-drawer");
-  document.body.appendChild(drawer);
-  const closeDrawer = () => { drawer.classList.remove("open"); clearInputSel(); };
-  const onKey = e => {
-    if (!drawer.isConnected) { removeEventListener("keydown", onKey); return; }
-    if (e.key === "Escape") closeDrawer();
+  /* THE ONE DRAWER (R20). app.js's `makeDrawer` owns the aside, the width,
+     the focus trap, Escape, the click outside and the teardown on leaving
+     the view; this file supplies only the selection it has to clear when the
+     drawer closes. The hand-rolled aside this file built was one of the four
+     the audit counted, at one of the three widths.
+
+     The hover card is this view's own and still has to be destroyed when the
+     view is left, so it keeps a hashchange listener of its own. */
+  const dw = makeDrawer("fixtures", "fixture detail");
+  const drawer = dw.drawer;
+  drawer.classList.add("fx-drawer");
+  const closeDrawer = () => dw.close();
+  /* Every open re-arms the one thing this view has to undo on close: the
+     rail input the drawer was opened from stays selected while it is open. */
+  const openDrawer = () => {
+    dw.setHandles([{ cancel: () => clearInputSel() }]);
+    dw.open();
   };
-  addEventListener("keydown", onKey);
-  /* The drawer lives on <body>, so leaving the view would otherwise leave it
-     hanging over whatever loads next — the cross-links at the bottom of the
-     drawer make that a one-click accident. */
   const hover = makeHoverCard();
   const onHash = () => {
-    closeDrawer();
-    if ((location.hash || "").slice(1).split("?")[0] !== "fixtures") {
-      drawer.remove();
-      hover.destroy();
-      removeEventListener("hashchange", onHash);
-      removeEventListener("keydown", onKey);
-    }
+    if ((location.hash || "").slice(1).split("?")[0] === "fixtures") return;
+    hover.destroy();
+    removeEventListener("hashchange", onHash);
   };
   addEventListener("hashchange", onHash);
 
@@ -1130,7 +1148,7 @@ export default async function fixtures(host) {
         }
         row.appendChild(el("span", "what", what));
         row.appendChild(el("span", "age",
-          h == null ? "age unknown" : `${fmtSpan(h)} old`));
+          h == null ? "age unknown" : oldPhrase(h)));
         row.appendChild(el("span", "rule",
           broken ? (served || "no data")
           : thr == null ? "no staleness rule"
@@ -1165,7 +1183,7 @@ export default async function fixtures(host) {
     chip.appendChild(el("span", "freshdot " + (h == null ? "bad" : h > 72 ? "bad" : h > 36 ? "warn" : "good")));
     chip.appendChild(el("b", null, "fixture list"));
     chip.appendChild(el("span", "age",
-      h == null ? "age unknown" : `${fmtSpan(h)} old`));
+      h == null ? "age unknown" : oldPhrase(h)));
     chip.title = `fact_fixture as of ${res.as_of || "unknown"}`;
     freshRow.appendChild(chip);
 
@@ -1227,8 +1245,7 @@ export default async function fixtures(host) {
   }
   function openInput(i, key) {
     drawer.textContent = "";
-    drawer.classList.add("open");
-    drawer.scrollTop = 0;
+    openDrawer();
     drawer.appendChild(masthead(null, String(i.name || "input"),
       i.source ? String(i.source) : null, null));
 
@@ -1244,7 +1261,7 @@ export default async function fixtures(host) {
     const thr = num(i.stale_after_hours);
     const kv = el("div", "fx-kv");
     const add = (k, v) => { kv.appendChild(el("span", "k", k)); kv.appendChild(el("span", "v", v)); };
-    add("age", h == null ? "unknown" : `${fmtSpan(h)} old`);
+    add("age", h == null ? "unknown" : oldPhrase(h));
     if (i.as_of) add("as of", String(i.as_of));
     if (i.state) add("state", String(i.state));
     if (i.rows != null) add("rows", Number(i.rows).toLocaleString());
@@ -1257,10 +1274,10 @@ export default async function fixtures(host) {
       const fill = el("div", "fill" + (frac >= 0.75 ? " warn" : ""));
       fill.style.width = `${(frac * 100).toFixed(1)}%`;
       bar.appendChild(fill);
-      bar.title = `${fmtSpan(h)} of a ${Math.round(thr)}h budget`;
+      bar.title = `${oldPhrase(h)}, against a ${ruleText(thr)} budget`;
       drawer.appendChild(bar);
       drawer.appendChild(el("p", "sub",
-        `${fmtSpan(h)} of a ${ruleText(thr)} staleness budget`
+        `${oldPhrase(h)}, against a ${ruleText(thr)} staleness budget`
         + (h > thr ? "; over budget" : "")));
     } else if (thr == null) {
       drawer.appendChild(el("p", "sub",
@@ -1290,11 +1307,15 @@ export default async function fixtures(host) {
       horizonRow.appendChild(b);
     }
     const nav = el("span", "fx-nav");
-    const back = el("button", null, "◀");
+    const back = el("button");
+    back.appendChild(icon("chevron-left"));
+    back.setAttribute("aria-label", "shift the window one gameweek earlier");
     back.title = "shift the window one gameweek earlier";
     back.onclick = () => { fromGw = (M.gws[0] ?? 1) - 1; if (fromGw < 1) fromGw = 1; load(); };
     back.disabled = (M.gws[0] ?? 1) <= 1;
-    const fwd = el("button", null, "▶");
+    const fwd = el("button");
+    fwd.appendChild(icon("chevron-right"));
+    fwd.setAttribute("aria-label", "shift the window one gameweek later");
     fwd.title = "shift the window one gameweek later";
     fwd.onclick = () => { fromGw = (M.gws[0] ?? 1) + 1; load(); };
     nav.append(back, fwd);
@@ -1698,7 +1719,7 @@ export default async function fixtures(host) {
   }
 
   /* ---------------------------------------------- the next-GW strip ---
-     One compact row: THIS week's fixtures, hardest → easiest through the
+     One compact row: THIS week's fixtures, hardest to easiest through the
      attack lens, kickoff printed — the captain sanity check (the official
      app's plain fixture list is faster than a 6-GW matrix for this one
      question). Every number is the board's own; each side's swatch is that
@@ -1735,7 +1756,7 @@ export default async function fixtures(host) {
 
     stripEl.hidden = false;
     const lab = el("span", "vlab",
-      `GW${gw0} · hardest → easiest · kickoffs UTC`);
+      `GW${gw0} · hardest to easiest · kickoffs UTC`);
     lab.title = "this week's fixtures through the attack lens; the captain "
       + "sanity check; each club's swatch is its own attack-lens colour";
     stripEl.appendChild(lab);
@@ -1841,7 +1862,9 @@ export default async function fixtures(host) {
       const on = (rowSort || (lens === "defence" ? "def" : "att")) === key;
       const b = el("button", "fx-rhsort" + (on ? " on" : ""));
       b.appendChild(el("span", null, label));
-      b.appendChild(el("span", "arr", on ? "▲" : ""));
+      // the pressed state is the mark; the shared sort-up icon says which
+      // direction the pressed one is in
+      if (on) b.appendChild(sortIcon("ascending"));
       b.title = `sort by how easy this run is for a club's ${what}; `
         + `1 = easiest of ${M.teams.length} clubs over ${
           `GW${M.gws[0]}–GW${M.gws[M.gws.length - 1]}`}`;
@@ -1946,7 +1969,7 @@ export default async function fixtures(host) {
       nm.appendChild(ownPip(held));
     }
     if (t.tornRows && t.tornRows.length) {
-      const z = el("i", "fx-torn2", "⇄");
+      const z = el("i", "fx-torn2", "torn");
       z.setAttribute("aria-label", `${t.tornRows.length} torn fixture${t.tornRows.length === 1 ? "" : "s"}`);
       nm.appendChild(z);
     }
@@ -2103,7 +2126,7 @@ export default async function fixtures(host) {
       c.marketState
         ? `market: ${c.marketState}`
           + (c.nBooks != null ? ` · ${c.nBooks} books` : "")
-          + (c.marketAgeH != null ? ` · ${fmtSpan(c.marketAgeH)} old` : "")
+          + (c.marketAgeH != null ? ` · ${oldPhrase(c.marketAgeH)}` : "")
         : null,
       ownedNames(t.code)
         ? `you hold ${ownedNames(t.code).length} at ${t.short}` : null,
@@ -2250,25 +2273,19 @@ export default async function fixtures(host) {
       if (key === "cs") return team.csSum;
       return gwVal(team, Number(key.slice(3)));       // "gw:<n>"
     };
-    const th = (key, label, numeric) => {
-      const cell = el("th", numeric ? "num" : null);
-      const on = tsort && tsort.key === key;
-      cell.setAttribute("aria-sort",
-        on ? (tsort.dir > 0 ? "ascending" : "descending") : "none");
-      const b = el("button", "fx-th" + (on ? " on" : ""));
-      b.appendChild(el("span", null, label));
-      b.appendChild(el("span", "arr", on ? (tsort.dir > 0 ? "▲" : "▼") : ""));
-      b.title = numeric
+    /* app.js's one sortable header (R11, R12): the role, the tabindex, the
+       keys and the sort mark, with the first direction declared per column
+       (a schedule column opens easiest first, the club column A to Z). */
+    const th = (key, label, numeric) => sortableTh(label, {
+      active: !!(tsort && tsort.key === key),
+      dir: tsort && tsort.key === key ? tsort.dir : null,
+      num: numeric,
+      first: numeric ? -1 : 1,              // numeric: easiest first
+      title: numeric
         ? `sort by ${label}; first click puts the easiest schedule on top`
-        : "sort by club name";
-      b.onclick = () => {
-        if (on) tsort = { key, dir: -tsort.dir };
-        else tsort = { key, dir: numeric ? -1 : 1 };  // numeric: easiest first
-        renderBody();
-      };
-      cell.appendChild(b);
-      return cell;
-    };
+        : "sort by club name",
+      onSort: dir => { tsort = { key, dir }; renderBody(); },
+    });
     hr.appendChild(th("club", "club", false));
     for (const g of M.gws) hr.appendChild(th(`gw:${g}`, `GW${g}`, true));
     hr.appendChild(th("att", M.anySplit ? "Σ att" : "Σ schedule", true));
@@ -2541,9 +2558,9 @@ export default async function fixtures(host) {
     q(W - P - 4, H - P - 6, "end", "STRONG ATTACK · LEAKY");
     q(P + 4, H - P - 6, "start", "BLUNT · LEAKY");
     svg.appendChild(mk("text", { class: "axlab", x: W - P, y: H - 6,
-      "text-anchor": "end" }, "stronger attack →"));
+      "text-anchor": "end" }, "attack strengthens to the right"));
     svg.appendChild(mk("text", { class: "axlab", x: 6, y: P - 8 },
-      "↑ tighter defence"));
+      "defence tightens upward"));
 
     const wrap = el("div", "fx-shape");
     wrap.appendChild(svg);
@@ -2609,21 +2626,19 @@ export default async function fixtures(host) {
   }
 
   /* Masthead: identity, then age ABOVE the numbers, as everywhere else on
-     the page. `right` is the second 34px crest for a fixture, or null for
-     the club drawer. */
+     the page, through app.js's one `drawerHead`. The "✕" this file drew is
+     the shared Close control now (R41). `rightCrest` is the second 34px
+     crest for a fixture, or null for the club drawer; the shared head has no
+     slot for it, so it is inserted beside the title rather than forking the
+     component. */
   function masthead(leftCrest, title, sub, rightCrest) {
-    const head = el("div", "fx-dh");
-    const mh = el("div", "fx-mast");
-    if (leftCrest) mh.appendChild(leftCrest);
-    const mid = el("div", "mid");
-    mid.appendChild(el("div", "dname", title));
-    if (sub) mid.appendChild(el("div", "sub", sub));
-    mh.appendChild(mid);
-    if (rightCrest) mh.appendChild(rightCrest);
-    head.appendChild(mh);
-    const close = el("button", null, "✕");
-    close.onclick = closeDrawer;
-    head.appendChild(close);
+    const head = drawerHead(title, sub,
+      { face: leftCrest, onClose: closeDrawer });
+    head.classList.add("fx-dh");
+    if (rightCrest) {
+      const dh = head.querySelector(".dhead");
+      dh.insertBefore(rightCrest, dh.lastElementChild);
+    }
     return head;
   }
 
@@ -2666,8 +2681,7 @@ export default async function fixtures(host) {
   async function openFixture(t, slot, c) {
     clearInputSel();
     drawer.textContent = "";
-    drawer.classList.add("open");
-    drawer.scrollTop = 0;
+    openDrawer();
 
     drawer.appendChild(masthead(
       crest(t.code, t.short, "s34"),
@@ -2682,7 +2696,7 @@ export default async function fixtures(host) {
       const h = num(ratings.age_hours) ?? ageHours(ratings.as_of);
       const fd = parseTs(ratings.as_of);
       fresh.appendChild(mastFreshChip("ratings",
-        (h == null ? "age unknown" : `${fmtSpan(h)} old`)
+        (h == null ? "age unknown" : oldPhrase(h))
         + (fd ? ` · fit includes matches through ${fd.toLocaleDateString(undefined,
               { day: "numeric", month: "short" })}` : ""),
         false, String(ratings.detail || "")));
@@ -2690,7 +2704,7 @@ export default async function fixtures(host) {
     fresh.appendChild(mastFreshChip("market",
       c.marketState !== "priced"
         ? (c.marketState || "absent")
-        : [c.marketAgeH != null ? `${fmtSpan(c.marketAgeH)} old` : "age unknown",
+        : [c.marketAgeH != null ? oldPhrase(c.marketAgeH) : "age unknown",
            c.nBooks != null ? `${c.nBooks} books` : null].filter(Boolean).join(" · "),
       c.marketState !== "priced",
       "the market is never blended into any difficulty; see the Market act"));
@@ -2856,7 +2870,7 @@ export default async function fixtures(host) {
       kvm.appendChild(el("span", "k", "market"));
       kvm.appendChild(el("span", "v",
         `${c.nBooks != null ? c.nBooks + " books, " : ""}`
-        + `${c.marketAgeH != null ? fmtSpan(c.marketAgeH) + " old" : "age unknown"}`));
+        + `${c.marketAgeH != null ? oldPhrase(c.marketAgeH) : "age unknown"}`));
       A2.appendChild(kvm);
       A2.appendChild(kvNote(
         "Priced, and deliberately not blended into the colour.",
@@ -2881,7 +2895,7 @@ export default async function fixtures(host) {
     } else if (c.marketWeight === 0) {
       A2.appendChild(namedGap("Market weight 0.00.", gapText(
         c.marketAgeH != null
-          ? `The newest quote behind this fixture is ${fmtSpan(c.marketAgeH)} old, past the cutoff, `
+          ? `The newest quote behind this fixture is ${oldPhrase(c.marketAgeH)}, past the cutoff, `
           : "No usable quote covers this fixture, ",
         "so the market contributes nothing to the colour. The number above is "
         + "the fitted model alone.")));
@@ -2889,7 +2903,7 @@ export default async function fixtures(host) {
       const kvm = el("div", "fx-kv");
       const addM = (k, v) => { kvm.appendChild(el("span", "k", k)); kvm.appendChild(el("span", "v", v)); };
       addM("market weight", fmt2(c.marketWeight));
-      if (c.marketAgeH != null) addM("newest quote", `${fmtSpan(c.marketAgeH)} old`);
+      if (c.marketAgeH != null) addM("newest quote", oldPhrase(c.marketAgeH));
       if (c.nBooks != null) addM("books", String(c.nBooks));
       if (c.marketResidual != null) addM("refit residual", fmt2(c.marketResidual));
       A2.appendChild(kvm);
@@ -2974,7 +2988,7 @@ export default async function fixtures(host) {
         kv.appendChild(el("span", "k", String(i.name || "–")));
         const h = num(i.age_hours) ?? ageHours(i.as_of);
         kv.appendChild(el("span", "v",
-          [h == null ? "age unknown" : `${fmtSpan(h)} old`,
+          [h == null ? "age unknown" : oldPhrase(h),
            i.detail ? String(i.detail) : null].filter(Boolean).join(" · ")));
       }
       A.A5.appendChild(kv);
@@ -3001,7 +3015,7 @@ export default async function fixtures(host) {
       const meta = [
         mk.state ? `state ${mk.state}` : null,
         mk.n_books != null ? `${mk.n_books} books` : null,
-        num(mk.age_hours) != null ? `${fmtSpan(num(mk.age_hours))} old` : null,
+        num(mk.age_hours) != null ? oldPhrase(num(mk.age_hours)) : null,
         mk.devig_method ? `devig ${mk.devig_method}` : null,
         num(mk.overround_h2h) != null ? `overround ${fmt2(mk.overround_h2h)}` : null,
       ].filter(Boolean).join(" · ");
@@ -3031,7 +3045,7 @@ export default async function fixtures(host) {
       const dk = el("i", "market");
       dk.title = `market ${(k * 100).toFixed(1)}%`
         + (num(d.market_age_hours) != null
-            ? ` · ${fmtSpan(num(d.market_age_hours))} old` : "");
+            ? ` · ${oldPhrase(num(d.market_age_hours))}` : "");
       db.append(dm, dk);
       row.appendChild(db);
       const gp = num(d.gap_pp);
@@ -3147,7 +3161,7 @@ export default async function fixtures(host) {
         row.appendChild(el("b", null, n.player || "–"));
         if (n.chance != null) row.appendChild(el("span", "chance", `${n.chance}%`));
         const meta = [n.status_text || null,
-          fmtAge(n.as_of) ? `${fmtAge(n.as_of)} old` : null].filter(Boolean).join(" · ");
+          oldStamp(n.as_of)].filter(Boolean).join(" · ");
         if (meta) row.appendChild(el("span", "meta", meta));
         box.appendChild(row);
       }
@@ -3255,7 +3269,7 @@ export default async function fixtures(host) {
         if (q.topic)
           head.appendChild(el("span", "tag", String(q.topic).replace(/_/g, " ")));
         const meta = [q.creator,
-                      fmtAge(q.published_at) ? `${fmtAge(q.published_at)} old` : null]
+                      oldStamp(q.published_at)]
           .filter(Boolean).join(" · ");
         if (meta) head.appendChild(el("span", "who", meta));
         row.appendChild(head);
@@ -3280,7 +3294,7 @@ export default async function fixtures(host) {
                             a.style.textDecoration = "none"; }
         line.appendChild(a);
         if (q.age_hours != null)
-          line.appendChild(document.createTextNode(` · ${fmtSpan(q.age_hours)} old`));
+          line.appendChild(document.createTextNode(` · ${oldPhrase(q.age_hours)}`));
         if (q.confidence) line.appendChild(document.createTextNode(` · ${q.confidence}`));
         box.appendChild(line);
       }
@@ -3319,8 +3333,7 @@ export default async function fixtures(host) {
   async function openClub(t) {
     clearInputSel();
     drawer.textContent = "";
-    drawer.classList.add("open");
-    drawer.scrollTop = 0;
+    openDrawer();
     const n = M.teams.length;
     const rt = t.rating || {};
     const range = `GW${M.gws[0]}–GW${M.gws[M.gws.length - 1]}`;
@@ -3472,7 +3485,7 @@ export default async function fixtures(host) {
         `The fit: scores ${gp(sc)} · concedes ${gp(cd)} goals a game`
         + (lg != null ? ` · league ${gp(lg)}` : "")
         + (num(rt.matches_seen) != null ? ` · ${rt.matches_seen} matches` : "")
-        + (fh != null ? ` · fitted ${fmtSpan(fh)} old` : "")
+        + (fh != null ? ` · fitted ${oldPhrase(fh)}` : "")
         + (fd ? `, on results to ${fd.toLocaleDateString(undefined, { day: "numeric", month: "short" })}` : "")));
       const kv = el("div", "fx-kv");
       const add = (a, b) => { kv.appendChild(el("span", "k", a)); kv.appendChild(el("span", "v", b)); };

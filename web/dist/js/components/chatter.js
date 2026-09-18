@@ -29,7 +29,7 @@
  * Every colour is a token from app.css, so both themes come for free.
  */
 
-import { runPanel, getJSON, el } from "/js/app.js";
+import { runPanel, getJSON, el, or, agePhrase } from "/js/app.js";
 import { icon } from "/js/components/icons.js";
 
 /* ---------------- the gameweek axis ----------------
@@ -128,14 +128,12 @@ export function prefetchChatter(codes, days = 30) {
 export function clearChatterCache() { cache.clear(); }
 
 /* ---------------- small helpers ---------------- */
-const T = iso => new Date(String(iso).replace(" ", "T"));
+/* An age, in whole days, through app.js's one vocabulary (R23). The hour
+   branch this carried was the last hour age in the swept layer; a reader
+   deciding what a creator said about a player does not read it by the hour,
+   and "18h ago" beside "4 days ago" made neither readable. */
 function ago(iso) {
-  if (!iso) return "";
-  const h = (Date.now() - T(iso)) / 3.6e6;
-  if (!isFinite(h)) return "";
-  if (h < 1) return "just now";
-  if (h < 36) return `${Math.round(h)}h ago`;
-  return `${Math.round(h / 24)}d ago`;
+  return or(agePhrase(iso, ""), "");
 }
 function hms(s) {
   const t = Math.max(0, Math.round(Number(s) || 0));

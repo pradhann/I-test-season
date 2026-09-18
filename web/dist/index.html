@@ -6,14 +6,17 @@
 <title>i-test</title>
 <link rel="stylesheet" href="/app.css">
 <!-- Per-view stylesheets. Zero-build, so an extra <link> costs nothing and
-     keeps a big view's CSS out of app.css, which every view shares. -->
+     keeps a big view's CSS out of app.css, which every view shares. They
+     stay in the shell rather than loading beside their view: several are
+     read across tabs (the dashboard's opponent chip uses the fixtures FDR
+     ramp, three views mount the chatter strip), so unlinking one would
+     unstyle another. The JS below is what R48's budget is about. -->
 <link rel="stylesheet" href="/template.css">
 <link rel="stylesheet" href="/creators.css">
 <link rel="stylesheet" href="/template-tools.css">
 <link rel="stylesheet" href="/fixtures.css">
 <link rel="stylesheet" href="/pipelines.css">
 <link rel="stylesheet" href="/dashboard.css">
-<link rel="stylesheet" href="/planner.css">
 <link rel="stylesheet" href="/account.css">
 <!-- shared component, mounted from several views, so it links once here -->
 <link rel="stylesheet" href="/chatter.css">
@@ -24,7 +27,17 @@
   <nav class="rail">
     <div class="brand">i<b>-test</b></div>
     <a href="#home">Dashboard</a>
-    <a href="#planner">Planner</a>
+    <!-- The planner grid is retired. The owner plans transfers at fplreview,
+         which does the grid better than this app did, so the entry is an
+         external link and says so with the shared external mark. The
+         solver's own controls moved to the dashboard's transfer row, beside
+         the plan they re-ask for. -->
+    <a href="https://fplreview.com/team-planner/" target="_blank"
+       rel="noopener noreferrer" class="ext">Planner<svg class="ic" width="16"
+       height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+       stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+       aria-hidden="true" focusable="false"><path
+       d="M9 3h4v4M13 3 7.5 8.5M11 9.5V13H3V5h3.5"/></svg></a>
     <a href="#xpoints">Projections</a>
     <a href="#template">EliteFPL</a>
     <a href="#creators">Creators</a>
@@ -46,26 +59,18 @@
 </div>
 <script type="module">
 import { register, start } from "/js/app.js";
-import home from "/js/views/home.js";
-import account from "/js/views/account.js";
-import planner from "/js/views/planner.js";
-import xpoints from "/js/views/xpoints.js";
-import template from "/js/views/template.js";
-import fixtures from "/js/views/fixtures.js";
-import pipelines from "/js/views/pipelines.js";
-import chat from "/js/views/chat.js";
-import creators from "/js/views/creators.js";
-
-register("home", "Dashboard", home);
-
-register("account", "Account", account);
-register("planner", "Planner", planner);
-register("xpoints", "Projections", xpoints);
-register("template", "EliteFPL", template);
-register("fixtures", "Fixtures", fixtures);
-register("pipelines", "Pipelines", pipelines);
-register("creators", "Creators", creators);
-register("chat", "Chat", chat);
+/* R48: a tab's module is fetched when that tab is first opened. Importing
+   all nine here shipped every view to a reader who opened one. */
+const view = (name, title, path) => register(name, title,
+  host => import(path).then(m => m.default(host)));
+view("home", "Dashboard", "/js/views/home.js");
+view("account", "Account", "/js/views/account.js");
+view("xpoints", "Projections", "/js/views/xpoints.js");
+view("template", "EliteFPL", "/js/views/template.js");
+view("fixtures", "Fixtures", "/js/views/fixtures.js");
+view("pipelines", "Pipelines", "/js/views/pipelines.js");
+view("creators", "Creators", "/js/views/creators.js");
+view("chat", "Chat", "/js/views/chat.js");
 start();
 </script>
 </body>

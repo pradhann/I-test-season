@@ -41,26 +41,14 @@
  * `or` are the three shapes that replace them.
  */
 
-import { runPanel, el, emptyBox, provenance, fmtAge } from "/js/app.js";
+import { runPanel, el, emptyBox, provenance, or, pick, when, noDash,
+         sortableTh, rowLink, rowCount, skeleton, makeDrawer, drawerHead,
+         parseTs, fmtAgeDays, agePhrase } from "/js/app.js";
+import { icon } from "/js/components/icons.js";
 import { mountIngestLink } from "/js/components/ingest_link.js";
 import { attachPlayerDrawer, showPlayerDetail } from "/js/components/playerdrawer.js";
 
 /* ------------------------------------------------------------------ utils */
-
-/* A value with a stated fallback, a branch written as a call, and a string
-   present only when a condition holds. */
-function or(v, fallback) {
-  if (v == null) return fallback;
-  return v;
-}
-function pick(cond, a, b) {
-  if (cond) return a;
-  return b;
-}
-function when(cond, text) {
-  if (cond) return text;
-  return "";
-}
 
 /* A count and its noun. Returns NULL when there is no count: the report card
    sends `n_total: null` for a creator whose claims were never scoreable, and
@@ -76,42 +64,35 @@ function plural(n, one, many) {
   return `${n} ${or(many, one + "s")}`;
 }
 
-function parseTs(iso) {
-  if (!iso) return null;
-  return new Date(String(iso).replace(" ", "T"));
-}
-
-/* THE AGE OF A STAMP THIS APP WROTE, in the app's words. The span itself
-   comes from the shared `fmtAge` so this tab says "3h 12m ago" exactly as
-   every other tab does; only the freshness class is local. One caller: the
-   record line's `as_of`. Everything a creator published goes through
-   `ageDays` instead. */
+/* THE AGE OF A STAMP THIS APP WROTE, in the app's words. Days, through the
+   shared `agePhrase`, the same as every other tab: the hour-and-minute span
+   this used to print was the arithmetic R23 removed. One caller, the record
+   line's `as_of`. */
 function relAge(iso) {
-  const span = fmtAge(iso);
-  const d = parseTs(iso);
-  if (span == null || !d || isNaN(d)) return { text: "date unknown", cls: "bad" };
-  const h = (Date.now() - d) / 3.6e6;
-  if (h < 72) return { text: `${span} ago`, cls: "good" };
-  if (h < 336) return { text: `${span} ago`, cls: "warn" };
-  return { text: `${span} ago`, cls: "bad" };
+  const text = agePhrase(iso, "read");
+  if (text == null) return "read at a date this payload does not carry";
+  return text;
 }
 
-/* THE AGE OF A PUBLICATION, in whole days. A podcast that went out at 08:41
-   is not "9h 13m old" to anyone deciding what to watch tonight; it is from
-   today. The boundary is one sentence: a date on a thing the creator
-   published is days, a stamp on a thing this app did is the shared span. */
+/* THE AGE OF A PUBLICATION, as a NUMBER of whole days, because the board
+   sorts on it. The word for that number is `fmtAgeDays`, which is app.js's
+   and is what every cell prints. */
 function ageDays(iso) {
   const d = parseTs(iso);
   if (!d || isNaN(d)) return null;
   return Math.max(0, Math.floor((Date.now() - d.getTime()) / 86400000));
 }
-/* The same number as a word. Split from `ageDays` so every caller that needs
-   both the number and the word reads the number itself and does not parse a
-   string back out of a label. */
-function daysWord(n) {
-  if (n == null) return "never";
-  if (n === 0) return "today";
-  return `${n}d`;
+/* The same age as a WORD, through app.js's one vocabulary: "today",
+   "yesterday", "4 days". The "4d" this file used to print was a fifth
+   spelling of an age across the app (R23). Split from `ageDays` so a caller
+   that needs both reads the number itself rather than parsing a label. */
+function ageWord(iso) {
+  return or(fmtAgeDays(iso), "never");
+}
+/* The same age inside a sentence: "4 days ago", and no "ago" on the two
+   words where it would be wrong. */
+function agoWord(iso) {
+  return or(agePhrase(iso, ""), "at a date not on file");
 }
 /* The publication date itself, UTC, so a 23:40Z upload is not yesterday in
    the reader's zone. */
@@ -119,16 +100,6 @@ function pubDate(iso) {
   const d = parseTs(iso);
   if (!d || isNaN(d)) return "not stated";
   return d.toISOString().slice(0, 10);
-}
-
-/* Payload prose written by a model carries em dashes; this app prints none
-   (prose_style.py's rule), so they are rewritten at the point of print, the
-   same way `home.js` does it. Nothing else about the words changes, and the
-   payload is not touched. */
-function noDash(s) {
-  if (s == null) return s;
-  const EM = String.fromCharCode(8212);
-  return String(s).split(" " + EM + " ").join("; ").split(EM).join(", ");
 }
 
 function clock(s) {
@@ -320,38 +291,29 @@ function sortRows(rows, spec, valueOf) {
   return out;
 }
 
-/* A sortable header cell, the Fixtures idiom: the header is a button, the
-   active one carries `aria-sort` and a persistent arrow. */
+/* A sortable header cell, through app.js's one implementation (R11, R12).
+   The three glyph families this file drew itself are the shared sort icons
+   now, the `th` carries the role, the tabindex and the keys, and a magnitude
+   column opens descending while a name column opens ascending.
+
+   Sorting rebuilds the head, so the cell that was clicked is replaced by an
+   identical one and a keyboard user loses their place. The key is unique
+   across both tables, so the new cell is findable and takes the focus back. */
 function sortHead(spec, key, label, numeric, onSort) {
-  const cell = el("th", when(numeric, "num"));
-  const on = spec && spec.key === key;
-  let ariaSort = "none";
-  if (on && spec.dir > 0) ariaSort = "ascending";
-  if (on && spec.dir < 0) ariaSort = "descending";
-  cell.setAttribute("aria-sort", ariaSort);
-  const b = el("button", "cx-th" + when(on, " on"));
-  b.appendChild(el("span", null, label));
-  let arrow = "";
-  if (on && spec.dir > 0) arrow = "▲";
-  if (on && spec.dir < 0) arrow = "▼";
-  b.appendChild(el("span", "arr", arrow));
-  b.title = `sort by ${label}`;
-  b.dataset.sortKey = key;
-  /* Sorting rebuilds the head, so the button that was clicked is replaced by
-     an identical one and a keyboard user loses their place. The key is unique
-     across both tables, so the new button is findable and takes the focus
-     back. */
-  const restore = () => {
-    const again = document.querySelector(`[data-sort-key="${key}"]`);
-    if (again && again !== b) again.focus();
-  };
-  b.onclick = () => {
-    if (on) onSort({ key, dir: -spec.dir });
-    else onSort({ key, dir: pick(numeric, -1, 1) });
-    restore();
-  };
-  cell.appendChild(b);
-  return cell;
+  const on = !!(spec && spec.key === key);
+  const th = sortableTh(label, {
+    active: on,
+    dir: or(spec && spec.dir, null),
+    num: numeric,
+    title: `sort by ${label}`,
+    onSort: dir => {
+      onSort({ key, dir });
+      const again = document.querySelector(`th[data-sort-key="${key}"]`);
+      if (again && again !== th) again.focus();
+    },
+  });
+  th.dataset.sortKey = key;
+  return th;
 }
 
 /* ------------------------------------------------------- the hash, parsed
@@ -426,33 +388,40 @@ export default async function creators(host) {
   const mainCard = el("section", "card cx");
   host.append(mainCard);
 
-  /* One drawer per visit: a re-entered view must not stack a second one on
-     the body, and the previous visit's key handler must stop listening. */
-  document.querySelectorAll("aside.cx-drawer").forEach(n => n.remove());
-  const drawer = el("aside", "drawer cx-drawer");
-  drawer.setAttribute("role", "dialog");
-  drawer.setAttribute("aria-modal", "true");
-  drawer.setAttribute("aria-label", "creator detail");
-  document.body.appendChild(drawer);
+  /* THE ONE DRAWER (R20). app.js's `makeDrawer` owns the aside, the width,
+     the focus trap, Escape, the click outside and the teardown on leaving
+     the view; this file supplies only the two things that are its own: the
+     paste-a-link console it has to stop, and the hash levels it has to walk
+     back up when the drawer closes. */
+  const dw = makeDrawer("creators", "creator detail");
+  const drawer = dw.drawer;
+  drawer.classList.add("cx-drawer");
   let inkHandle = null;                 // the paste-a-link console, when open
   let pdHandle = null;                  // the shared player drawer, when used
 
-  const closeDrawer = () => {
-    drawer.classList.remove("open");
+  /* Closing walks the hash back to the board, so the address and the screen
+     never disagree. It runs for Escape and for a click outside too, which
+     the hand-rolled drawer did not offer.
+
+     The guard is the address itself. Walking DOWN a level also closes this
+     drawer, because the shell tears the view down on every hashchange and
+     the new level builds a new one; a walk-back on that close would cancel
+     the navigation that caused it. So the hash the drawer opened at is
+     remembered, and the walk-back happens only when it has not moved. */
+  let openedAt = null;
+  const onClosed = () => {
     try { inkHandle?.stop(); } catch { /* the console may be mid-build */ }
     inkHandle = null;
+    if (location.hash !== openedAt) return;
     if (readHash().level > 1) goto1();
   };
-  const onKey = e => {
-    if (!drawer.isConnected) { removeEventListener("keydown", onKey); return; }
-    if (e.key === "Escape" && drawer.classList.contains("open")) closeDrawer();
-  };
-  addEventListener("keydown", onKey);
+  const closeDrawer = () => dw.close();
 
   const openDrawer = () => {
     drawer.textContent = "";
-    drawer.classList.add("open");
-    drawer.scrollTop = 0;
+    openedAt = location.hash;
+    dw.setHandles([{ cancel: onClosed }]);
+    dw.open();
   };
 
   /* ---- state ---------------------------------------------------------- */
@@ -470,15 +439,17 @@ export default async function creators(host) {
   const cardsByEntry = new Map();
   const LEGACY = new Set(["user-shared"]);   // a pseudo-source, not a creator
 
-  /* Skeleton shells for the panel build. */
-  function skeleton(cards) {
-    const sk = el("div", "cx-skel");
-    sk.setAttribute("role", "status");
-    sk.setAttribute("aria-label", "loading");
-    sk.appendChild(el("div", "cx-skelrow"));
-    sk.appendChild(el("div", "cx-skelblock"));
-    for (let i = 0; i < or(cards, 3); i++) sk.appendChild(el("div", "cx-skelcard"));
-    return sk;
+  /* THE LOADING SURFACE (R30), through app.js's one skeleton: a table at the
+     row count and row height the data will take, so its arrival moves
+     nothing under it. The counts are the shapes each level actually draws:
+     the board's shows against its ten columns, an archive page against its
+     six, and an episode's blocks. */
+  function skelBox(rows, cols) {
+    const box = el("div", "cx-skel");
+    box.setAttribute("role", "status");
+    box.setAttribute("aria-label", "loading");
+    box.appendChild(skeleton(rows, cols));
+    return box;
   }
 
   /* ================================================== level 1, the board */
@@ -568,7 +539,7 @@ export default async function creators(host) {
         list.appendChild(el("div", null,
           `${r.source_key}: ${plural(r.unread, "item")} queued`
           + when(r.newest_unread,
-                  `, newest ${daysWord(ageDays(r.newest_unread))} old`)));
+                  `, newest queued ${ageWord(r.newest_unread)}`)));
       }
       d.appendChild(list);
       p.appendChild(d);
@@ -611,9 +582,9 @@ export default async function creators(host) {
   const L1COLS = [
     { key: "creator", label: "show", numeric: false },
     { key: "feeds", label: "feeds", numeric: false },
-    { key: "latest", label: "latest (d)", numeric: true },
-    { key: "items", label: "items 30d", numeric: true },
-    { key: "claims", label: "claims 30d", numeric: true },
+    { key: "latest", label: "latest", numeric: true },
+    { key: "items", label: "items", numeric: true },
+    { key: "claims", label: "claims", numeric: true },
     { key: "arch", label: "archive", numeric: true },
     { key: "hit", label: "hit", numeric: true },
     { key: "n", label: "n", numeric: true },
@@ -657,8 +628,13 @@ export default async function creators(host) {
     tr.append(hit, n);
   }
 
+  /* ONE affordance across the whole row (R18): the pointer, the hover
+     background, a focus ring, a tab stop and Enter or Space, all through
+     app.js's `rowLink`. The name stays a button so a reader who tabs into
+     the cell still reads what the click does. */
   function l1Row(c) {
     const tr = el("tr");
+    rowLink(tr, () => goto2(c.creator), `open ${c.creator}`);
 
     const show = el("td", "show");
     const b = el("button", "cx-show", c.creator);
@@ -672,7 +648,7 @@ export default async function creators(host) {
     feeds.setAttribute("data-k", "feeds");
     tr.appendChild(feeds);
 
-    const age = el("td", "num", daysWord(ageDays(c.last_item_at)));
+    const age = el("td", "num", ageWord(c.last_item_at));
     age.title = `latest item ${pubDate(c.last_item_at)}`;
     age.setAttribute("data-k", "latest");
     tr.appendChild(age);
@@ -821,7 +797,7 @@ export default async function creators(host) {
     mainCard.textContent = "";
     mainCard.appendChild(el("h2", null, "Creators"));
     if (!res) {
-      mainCard.appendChild(skeleton(4));
+      mainCard.appendChild(skelBox(25, 10));
       return;
     }
     const sc = scopeLine();
@@ -855,17 +831,25 @@ export default async function creators(host) {
 
   /* ============================================ level 2, one show's archive */
 
-  function drawerHead(title, sub) {
-    const head = el("div", "dhead");
-    const id = el("div");
-    id.appendChild(el("div", "dname", title));
-    if (sub) id.appendChild(el("div", "sub", sub));
-    head.appendChild(id);
-    const close = el("button", null, "✕");
-    close.title = "close";
-    close.onclick = closeDrawer;
-    head.appendChild(close);
-    return head;
+  /* The drawer masthead, through app.js's one `drawerHead` (R20, R21): the
+     title, the sub-line, the breadcrumb of the levels above it and one Close
+     control. The "✕" this file drew is gone with the rest of the geometric
+     glyphs (R41). `crumb` is [{label, go}]; the last segment is where you
+     are and carries no handler. */
+  function head2(title, sub, crumb) {
+    return drawerHead(title, sub, { crumb, onClose: closeDrawer });
+  }
+  /* THE FRACTAL PATH (R21). Creators / one show / one episode, every segment
+     but the last a button back to that level in the same drawer, so the
+     depth of the path is the depth of the click. */
+  function crumb2(creator) {
+    return [{ label: "Creators", go: goto1 }, { label: creator }];
+  }
+  function crumb3(creator, title) {
+    const path = [{ label: "Creators", go: goto1 }];
+    if (creator) path.push({ label: creator, go: () => goto2(creator) });
+    path.push({ label: title });
+    return path;
   }
 
   /* The board's own sentence about why a show has nothing on file. It is on
@@ -895,7 +879,7 @@ export default async function creators(host) {
 
   const L2COLS = [
     { key: "published", label: "published", numeric: false },
-    { key: "age", label: "age (d)", numeric: true },
+    { key: "age", label: "age", numeric: true },
     { key: "title", label: "title", numeric: false },
     { key: "where", label: "where", numeric: false },
     { key: "text", label: "transcript", numeric: false },
@@ -925,12 +909,13 @@ export default async function creators(host) {
     const tr = el("tr");
     const readable = e.analysis_present || e.claim_count > 0;
     if (!readable) tr.className = "thin";
+    rowLink(tr, () => goto3(e.item_id), `open ${noDash(e.title)}`);
 
     const pub = el("td", null, pubDate(e.published_at));
     pub.setAttribute("data-k", "published");
     tr.appendChild(pub);
 
-    const age = el("td", "num", daysWord(ageDays(e.published_at)));
+    const age = el("td", "num", ageWord(e.published_at));
     age.setAttribute("data-k", "age");
     tr.appendChild(age);
 
@@ -940,12 +925,16 @@ export default async function creators(host) {
     b.onclick = () => goto3(e.item_id);
     title.appendChild(b);
     if (e.source_url) {
-      const a = el("a", "cx-at", "↗");
+      const a = el("a", "cx-at");
+      a.appendChild(icon("external"));
       a.href = e.source_url;
       a.target = "_blank";
       a.rel = "noopener noreferrer";
       a.title = `open the episode at ${e.source_url}`;
       a.setAttribute("aria-label", "open the episode at its source");
+      // the row opens the stored summary; this one control leaves the app,
+      // so it stops the row's own handler rather than doing both
+      a.onclick = ev => ev.stopPropagation();
       title.appendChild(a);
     }
     tr.appendChild(title);
@@ -1028,21 +1017,22 @@ export default async function creators(host) {
 
   async function renderLevel2(creator) {
     openDrawer();
-    drawer.appendChild(drawerHead(creator, "reading the archive…"));
-    drawer.appendChild(skeleton(3));
+    drawer.appendChild(head2(creator, "reading the archive…", crumb2(creator)));
+    drawer.appendChild(skelBox(20, 6));
     let r;
     try {
       r = await episodesFor(creator);
     } catch (e) {
       drawer.textContent = "";
-      drawer.appendChild(drawerHead(creator, "the archive could not be read"));
+      drawer.appendChild(head2(creator, "the archive could not be read",
+        crumb2(creator)));
       drawer.appendChild(failFold(e, "creator_episodes failed:"));
       return;
     }
     const d = r.result;
     if (!d || !d.episodes) {
       drawer.textContent = "";
-      drawer.appendChild(drawerHead(creator, "nothing on file"));
+      drawer.appendChild(head2(creator, "nothing on file", crumb2(creator)));
       drawer.appendChild(emptyBox(or(d && d.reason, "The panel returned no episodes."),
         "The panel says what it read; nothing is inferred here."));
       return;
@@ -1050,7 +1040,7 @@ export default async function creators(host) {
     let filter = "all";
     const paint = () => {
       drawer.textContent = "";
-      drawer.appendChild(drawerHead(d.creator, peopleWord(d)));
+      drawer.appendChild(head2(d.creator, peopleWord(d), crumb2(d.creator)));
       drawer.appendChild(el("p", "cx-note", recordSentence(d.record)));
       drawer.appendChild(el("p", "cx-note",
         `${plural(d.counts.episodes_total, "publication")}, `
@@ -1090,13 +1080,18 @@ export default async function creators(host) {
          serves the newest 200, so "200 of 200 rows" on its own would read as
          the whole archive. */
       const held = d.counts.episodes_total - rows.length;
-      let capLine = `${shown.length} of ${plural(rows.length, "row")} drawn.`;
+      // what is drawn, out of what, and the named filter that removed the
+      // rest (R16), through app.js's one row count
+      const removedBy = [];
+      if (filter !== "all") removedBy.push(`transcript state ${filter}`);
+      drawer.appendChild(rowCount(shown.length, rows.length, removedBy));
+      let capLine = "";
       if (held > 0)
-        capLine = `${shown.length} of the newest ${rows.length} publications `
-          + `drawn. The panel's ${d.limit}-row cap is holding back `
-          + `${plural(held, "older publication")}.`;
+        capLine = `Those ${rows.length} are the newest. The panel's `
+          + `${d.limit}-row cap is holding back `
+          + `${plural(held, "older publication")}. `;
       drawer.appendChild(el("p", "sub", capLine
-        + " One recording published to a podcast feed and to YouTube is two "
+        + "One recording published to a podcast feed and to YouTube is two "
         + "stored URLs and two rows. Nothing stored links them, so nothing "
         + "here joins them by title; the mark beside the kind opens the other "
         + "copy."));
@@ -1279,7 +1274,7 @@ export default async function creators(host) {
     if (s.analysis_model)
       host2.appendChild(el("p", "sub",
         `Read by ${s.analysis_model}, `
-        + `${daysWord(ageDays(s.analysed_at))} ago. The bullets are the stored `
+        + `${agoWord(s.analysed_at)}. The bullets are the stored `
         + "summary, printed as stored."));
   }
 
@@ -1437,11 +1432,12 @@ export default async function creators(host) {
     const e = s.episode;
     head.appendChild(stateChip(e.transcription_state));
     head.append(`${kindShort(e.source_kind)} · published ${pubDate(e.published_at)}, `
-                + `${daysWord(ageDays(e.published_at))} ago`);
+                + `${agoWord(e.published_at)}`);
     if (e.transcript_chars != null)
       head.append(` · ${e.transcript_chars.toLocaleString()} transcript characters`);
     if (e.source_url) {
-      const a = el("a", "cx-at", "open the episode ↗");
+      const a = el("a", "cx-at", "open the episode ");
+      a.appendChild(icon("external"));
       a.href = e.source_url;
       a.target = "_blank";
       a.rel = "noopener noreferrer";
@@ -1471,34 +1467,33 @@ export default async function creators(host) {
 
   async function renderLevel3(itemId) {
     openDrawer();
-    drawer.appendChild(drawerHead("one episode", "reading the summary…"));
-    drawer.appendChild(skeleton(2));
+    drawer.appendChild(head2("one episode", "reading the summary…",
+      crumb3(null, "one episode")));
+    drawer.appendChild(skelBox(14, 2));
     let r;
     try {
       r = await summaryFor(itemId);
     } catch (e) {
       drawer.textContent = "";
-      drawer.appendChild(drawerHead("one episode", "the summary could not be read"));
+      drawer.appendChild(head2("one episode", "the summary could not be read",
+        crumb3(null, "one episode")));
       drawer.appendChild(failFold(e, "episode_summary failed:"));
       return;
     }
     const s = r.result;
     drawer.textContent = "";
     if (!s || !s.episode) {
-      drawer.appendChild(drawerHead("one episode", "nothing on file"));
+      drawer.appendChild(head2("one episode", "nothing on file",
+        crumb3(null, "one episode")));
       drawer.appendChild(emptyBox(or(s && s.reason, "The panel returned no episode."),
         "The item id in the address does not resolve to a stored publication."));
       return;
     }
     /* The breadcrumb reads the creator off this payload, so a cold load at
-       this address costs one call and not two. */
-    const back = el("button", "cx-back", `← ${s.creator}`);
-    back.title = "back to this show's episodes";
-    back.onclick = () => goto2(s.creator);
-    const bar = el("div", "cx-backbar");
-    bar.appendChild(back);
-    drawer.appendChild(bar);
-    drawer.appendChild(drawerHead(noDash(s.episode.title), s.creator));
+       this address costs one call and not two. The hand-rolled back bar and
+       its arrow glyph are the shared `.crumb` inside the masthead now. */
+    drawer.appendChild(head2(noDash(s.episode.title), s.creator,
+      crumb3(s.creator, noDash(s.episode.title))));
     drawer.appendChild(episodeHead(s));
     summarySection(s, drawer);
     transfersSection(s, drawer);
@@ -1601,7 +1596,7 @@ export default async function creators(host) {
       line.appendChild(t);
     }
     line.appendChild(el("span", "cx-tiny",
-      `source creator_report_card, read ${relAge(rc.as_of).text}`));
+      `source creator_report_card, ${relAge(rc.as_of)}`));
     return line;
   }
 
@@ -1682,8 +1677,8 @@ export default async function creators(host) {
         + pick(cl.earned, "earned", "not earned")
         + ` (floor ${cl.min_scored_claims})`);
       if (cl.first_claim_utc)
-        fact("span", `${daysWord(ageDays(cl.first_claim_utc))} ago to `
-          + `${daysWord(ageDays(cl.last_claim_utc))} ago`);
+        fact("span", `${agoWord(cl.first_claim_utc)} to `
+          + `${agoWord(cl.last_claim_utc)}`);
       host2.appendChild(facts);
       if (or(cl.by_gw, []).length) {
         host2.appendChild(el("h2", null, "By gameweek"));
@@ -1721,7 +1716,8 @@ export default async function creators(host) {
         const t = el("div", "cx-teamhead");
         t.appendChild(el("b", null, p.person));
         if (p.entry_id != null) {
-          const a = el("a", "cx-cross", `entry ${p.entry_id} ↗`);
+          const a = el("a", "cx-cross", `entry ${p.entry_id} `);
+          a.appendChild(icon("external"));
           a.href = `https://fantasy.premierleague.com/entry/${p.entry_id}/history`;
           a.target = "_blank";
           a.rel = "noopener noreferrer";

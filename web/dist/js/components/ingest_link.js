@@ -15,26 +15,13 @@
  */
 
 import { icon } from "/js/components/icons.js";
-import { el, fmtAge } from "/js/app.js";
+import { el, or, pick, when, parseTs, agePhrase,
+         writeHeaders } from "/js/app.js";
 
 /* --------------------------------------------------------------- helpers */
 
-/* A value with a stated fallback, a branch written as a call, and a string
-   that is present only when a condition holds. The house rule is that a
-   chain of nested conditionals is not something a reader can read aloud, so
-   this file spells its branches out. */
-function or(v, fallback) {
-  if (v == null) return fallback;
-  return v;
-}
-function pick(cond, a, b) {
-  if (cond) return a;
-  return b;
-}
-function when(cond, text) {
-  if (cond) return text;
-  return "";
-}
+/* The three branch shapes, `or`, `pick` and `when`, are app.js's: four
+   files wrote them independently and the shared layer owns one copy now. */
 
 const plural = (n, one, many) => {
   if (n == null) return null;
@@ -42,21 +29,17 @@ const plural = (n, one, many) => {
   return `${n} ${or(many, one + "s")}`;
 };
 
-const parseTs = iso => {
-  if (!iso) return null;
-  return new Date(String(iso).replace(" ", "T"));
-};
-
-/* Age of a stamp, in the app's words. The span comes from the shared
-   `fmtAge`; only the freshness class is local. */
+/* Age of a stamp, in whole days (R23), through the shared `agePhrase`; only
+   the freshness class is local. The hours-and-minutes span this printed is
+   the deadline countdown's alone (R24). */
 function relAge(iso) {
-  const span = fmtAge(iso);
+  const text = agePhrase(iso, "");
   const d = parseTs(iso);
-  if (span == null || !d || isNaN(d)) return { text: "date unknown", cls: "bad" };
-  const h = (Date.now() - d) / 3.6e6;
-  if (h < 72) return { text: `${span} ago`, cls: "good" };
-  if (h < 336) return { text: `${span} ago`, cls: "warn" };
-  return { text: `${span} ago`, cls: "bad" };
+  if (text == null || !d) return { text: "date unknown", cls: "bad" };
+  const h = (Date.now() - d.getTime()) / 3.6e6;
+  if (h < 72) return { text, cls: "good" };
+  if (h < 336) return { text, cls: "warn" };
+  return { text, cls: "bad" };
 }
 
 function clock(s) {
@@ -234,13 +217,14 @@ export function mountIngestLink(host) {
                   dupes: [], note: null, p: null };
     jobs.unshift(job);
     renderJobs();
-    /* Raw fetch, not postJSON: the STATUS CODE is the thing that tells a
-       not-deployed endpoint apart from a rejected link, and postJSON throws
-       it away into a message string. */
+    /* Raw fetch, not sendJSON: the STATUS CODE is the thing that tells a
+       not-deployed endpoint apart from a rejected link, and a thrown message
+       loses it. The CSRF header still comes from app.js, so this file names
+       no header of its own. */
     let r;
     try {
       r = await fetch("/api/ingest/link", {
-        method: "POST", headers: { "Content-Type": "application/json" },
+        method: "POST", headers: writeHeaders(true),
         body: JSON.stringify({ url }),
       });
     } catch (e) {
@@ -443,7 +427,7 @@ export function mountIngestLink(host) {
     try {
       r = await fetch(
         `/api/ingest/link/${encodeURIComponent(job.job_id)}/${verb}`,
-        { method: "POST", headers: { "Content-Type": "application/json" },
+        { method: "POST", headers: writeHeaders(true),
           body: JSON.stringify({ reason: "" }) });
       p = await r.json();
     } catch (e) {
@@ -476,7 +460,7 @@ export function mountIngestLink(host) {
     let r, p = null;
     try {
       r = await fetch(`/api/ingest/link/${encodeURIComponent(job.job_id)}`,
-                      { method: "DELETE" });
+                      { method: "DELETE", headers: writeHeaders() });
       p = await r.json();
     } catch (e) {
       job.busy = null; job.aborting = false;

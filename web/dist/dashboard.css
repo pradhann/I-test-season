@@ -4,19 +4,11 @@
    risk/availability channel.
 
    TYPE AND SPACING. DESIGN_PRINCIPLES.md R1 names six type sizes app-wide
-   and R8 names five spacing steps. app.css does not declare them yet, so
-   they are declared here as tokens with those exact names and values, and
-   every rule in this sheet uses one of them. When app.css grows the tokens,
-   this block is deleted and nothing else in the file changes. */
+   and R8 names five spacing steps. app.css declares both sets now, so the
+   local copies this sheet carried are gone and every rule below reads the
+   shared token. */
 
 :root {
-  --t-title: 19px;      /* the page title, owned by the topbar */
-  --t-figure: 17px;     /* the one number a card exists to show */
-  --t-body: 13px;       /* body text */
-  --t-cell: 12.5px;     /* every table and grid cell */
-  --t-label: 11px;      /* column headers, chips, provenance, eyebrows */
-  --t-micro: 10.5px;    /* stat keys and row labels */
-  --sp1: 4px; --sp2: 8px; --sp3: 12px; --sp4: 16px; --sp5: 24px;
   /* the ledger's three fixed columns: the alignment argument is geometry,
      so the widths are named rather than guessed per row */
   --ledger-q: 104px;    /* TRANSFER at --t-micro with .09em tracking, + --sp4 */
@@ -28,10 +20,6 @@
 /* ---- shared small parts ---- */
 .db-quiet { color: var(--muted); font-size: var(--t-cell); margin: var(--sp1) 0; }
 .db-foot { display: flex; flex-direction: column; gap: 2px; margin-top: var(--sp1); }
-.cite { border: 0; cursor: pointer; font: var(--t-micro) var(--mono);
-        color: var(--faint); background: var(--raised);
-        border-radius: 999px; padding: 2px var(--sp2); }
-.cite:hover { color: var(--ink); }
 .db-chiplbl { font: var(--t-micro) var(--mono); color: var(--faint);
               text-transform: uppercase; letter-spacing: .08em; }
 /* an omitted measure keeps a hover target so the reason is one hover away */
@@ -124,7 +112,7 @@
 .dl-sum:hover { background: var(--raised); border-radius: var(--sp2); }
 .dl-sum:focus-visible { outline: 2px solid var(--s1); outline-offset: 1px; }
 .dl-q { color: var(--faint); font-size: var(--t-micro); letter-spacing: .09em;
-        text-transform: uppercase; font-weight: 650; padding-top: 3px;
+        text-transform: uppercase; font-weight: 650; padding-top: var(--sp1);
         padding-left: var(--sp2); }
 .dl-answer { min-width: 0; display: flex; align-items: center;
              gap: var(--sp1) var(--sp3); flex-wrap: wrap;
@@ -170,13 +158,6 @@
    it belongs to rather than starting a second layout */
 .dl-work { padding: 0 var(--sp2) var(--sp4) var(--ledger-q);
            border-top: 1px dashed var(--line); }
-.dl-worklist { display: grid;
-               grid-template-columns: max-content minmax(0, 1fr);
-               gap: var(--sp1) var(--sp3); margin: var(--sp3) 0 0; }
-.dl-worklist dt { color: var(--faint); font: var(--t-micro) var(--mono);
-                  text-transform: uppercase; letter-spacing: .06em;
-                  padding-top: 2px; }
-.dl-worklist dd { margin: 0; font-size: var(--t-cell); min-width: 0; }
 .vd-how { margin-top: var(--sp2); }
 .vd-how summary { cursor: pointer; color: var(--faint);
                   font-size: var(--t-label); }
@@ -259,9 +240,9 @@
   color: var(--club-ink, var(--ink));
   background: var(--club, var(--raised)); }  /* clubmark.css colour map */
 .pp-nm { display: block; font-weight: 650; font-size: var(--t-label);
-         padding: 3px var(--sp1) 0; white-space: nowrap; overflow: hidden;
+         padding: var(--sp1) var(--sp1) 0; white-space: nowrap; overflow: hidden;
          text-overflow: ellipsis; }
-.pp-chip { display: block; margin: 3px var(--sp1) 0; padding: 2px 0;
+.pp-chip { display: block; margin: var(--sp1) var(--sp1) 0; padding: 2px 0;
            border-radius: var(--sp1); font: 700 var(--t-label) var(--mono);
            font-variant-numeric: tabular-nums;
            background: var(--raised); color: var(--ink); }
@@ -271,21 +252,21 @@
    i/s filled red; d filled amber. One badge, worst severity wins. */
 .pp-risk { position: absolute; top: 3px; left: 3px; z-index: 2; width: var(--sp4);
            height: var(--sp4); border-radius: 50%;
-           font: 700 var(--t-micro)/16px var(--mono);
+           font: 700 var(--t-micro)/var(--t-figure) var(--mono);
            color: #fff; text-align: center; }
 .pp-risk.d { background: var(--warn); }
 .pp-risk.i, .pp-risk.s { background: var(--bad); }
 .pp .ribbon { position: absolute; top: 3px; right: 3px; width: 17px;
               height: 17px; border-radius: 50%;
-              font: 700 var(--t-micro)/17px var(--mono);
+              font: 700 var(--t-micro)/var(--t-figure) var(--mono);
               color: #fff; background: var(--warn); }
 .pp .ribbon.v { background: var(--faint); }
 .pp.cap { box-shadow: 0 0 0 2px var(--warn), var(--shadow); }
 /* own-player price-fall risk rides ON the card */
 .pp-drop { position: absolute; top: 3px; left: 3px; z-index: 2; width: var(--sp4);
-           height: var(--sp4); border-radius: 50%;
-           font: 700 var(--t-label)/15px var(--mono);
-           color: #fff; background: var(--bad); text-align: center; }
+           height: var(--sp4); border-radius: 50%; display: grid;
+           place-items: center; color: #fff; background: var(--bad); }
+.pp-drop .ic { width: 12px; height: 12px; }
 .pp-drop.shift { left: 22px; }
 /* the decision tag: the word of the ledger row that named this player, and a
    count of the rows that named them and lost the precedence */
@@ -300,7 +281,7 @@
 /* card = photo, name plate, ONE info row of three chips
    [xPts] [OPPONENT on the fixtures tab's fx- ramp, CAPS home, lower away]
    [MINUTES: xmins when served, else the appearance probability, labelled] */
-.pp-row { display: flex; gap: 2px; margin: 3px 3px 0; }
+.pp-row { display: flex; gap: 2px; margin: var(--sp1) var(--sp1) 0; }
 .pp-row .pp-chip { flex: 1 1 0; min-width: 0; margin: 0; padding: 2px 0 1px;
                    font: 700 var(--t-micro) var(--mono);
                    border-radius: var(--sp1); overflow: hidden; }
@@ -333,6 +314,9 @@
     transparent calc(50% - 1px), rgb(255 255 255 / .16) calc(50% - 1px),
     rgb(255 255 255 / .16) calc(50% + .5px), transparent calc(50% + .5px));
   pointer-events: none; }
+/* the centre circle is 120px and is placed by its top-left corner, so it is
+   pulled back half its own width and height to centre on the pitch. Geometry
+   against the circle's own size, not a spacing step. */
 .pitch.db-pitch2::after { content: ""; position: absolute; left: 50%;
   top: 50%; width: 120px; height: 120px; margin: -60px 0 0 -60px;
   border: 1.5px solid rgb(255 255 255 / .15); border-radius: 50%;
@@ -415,7 +399,7 @@
   .sv-spin { animation: sv-rot .9s linear infinite; }
   @keyframes sv-rot { to { transform: rotate(360deg); } }
 }
-.sv-ticker { margin: 3px 0 0; font: var(--t-label) var(--mono);
+.sv-ticker { margin: var(--sp1) 0 0; font: var(--t-label) var(--mono);
              color: var(--faint); white-space: nowrap; overflow: hidden;
              text-overflow: ellipsis; max-width: 100%; }
 .sv-fail { color: var(--bad); white-space: normal; }
@@ -456,6 +440,39 @@
                     font-size: var(--t-cell); }
 .sv-notes p.mono { font: var(--t-label) var(--mono); color: var(--faint);
                    white-space: pre-wrap; margin: var(--sp2) 0 0; }
+
+/* ---- the solver rail, folded under the plan it re-asks for ----
+   The options the Planner tab's left rail carried. One column at every
+   width: it sits inside a disclosure inside a table row's working block,
+   which is not a place for a second grid. */
+.sv-rail { margin-top: var(--sp3); border-top: 1px dashed var(--line);
+           padding-top: var(--sp2); }
+.sv-rail > summary { cursor: pointer; color: var(--muted);
+                     font: var(--t-label) var(--mono); }
+.sv-rail > summary:hover { color: var(--ink); }
+.sv-field { display: flex; flex-direction: column; gap: var(--sp1);
+            margin-top: var(--sp3); max-width: 520px; }
+.sv-field > label { color: var(--faint); font: var(--t-micro) var(--mono);
+                    text-transform: uppercase; letter-spacing: .06em; }
+.sv-hint { color: var(--muted); font-size: var(--t-label); }
+.sv-checks { display: flex; flex-wrap: wrap; gap: var(--sp1) var(--sp3); }
+.sv-check { display: inline-flex; align-items: center; gap: var(--sp1);
+            font-size: var(--t-cell); }
+.sv-toggles { display: flex; flex-wrap: wrap; gap: var(--sp1);
+              margin-bottom: var(--sp1); }
+/* nothing pressed is a different state from everything pressed, and a
+   pressed toggle differs from an unpressed one only by its background */
+.sv-toggles.sv-none { opacity: .72; }
+.sv-toggle { font-size: var(--t-label); padding: 2px var(--sp2);
+             border-radius: 999px; cursor: pointer;
+             border: 1px solid var(--line); background: var(--raised);
+             color: var(--muted); }
+.sv-toggle[aria-pressed="true"] { background: var(--accent); color: #fff;
+                                  border-color: var(--accent); }
+.sv-adv { margin-top: var(--sp3); }
+.sv-adv > summary { cursor: pointer; color: var(--faint);
+                    font-size: var(--t-label); }
+.sv-adv .chip { cursor: pointer; margin-top: var(--sp3); }
 
 /* ---- signal tiles ---- */
 .tiles { display: grid; gap: var(--sp2);
