@@ -560,56 +560,54 @@ token in `.env`.
 
 ## The MCP tools
 
-The `fpl-server` toolbelt lives in this repo at `fpl_mcp/` (folded in from the
-former sibling `FPL-MCP` repository on 2026-08-27, at that repo's commit
-`c5054a8`; the old checkout is a dead archive). It is a sibling package of
-`fpl_edge/` and runs on the same interpreter, so the toolbelt cannot drift from
-the engine it serves. Start it with `uv run python -m fpl_mcp`.
-`fpl_mcp/tools/edge_tools.py` adds six tools alongside `query_fpl_players`,
-`get_team_picks` and the rest:
+The `fpl-server` toolbelt is `fpl_edge/mcp/`, a subpackage of the engine, so it
+runs on the same interpreter and cannot drift from the engine it serves. It was
+a separate `FPL-MCP` repository until 2026-08-27, then a sibling package in this
+one, and it became a subpackage when the tools were rewritten as adapters over
+the registered panels.
+
+Run it, and read the Claude desktop entry, from `fpl_edge/mcp/README.md`:
+
+```bash
+uv run fpl-mcp --list-tools     # the registered names, without serving
+uv run python -m fpl_edge.mcp   # stdio, what the desktop client launches
+```
+
+35 tools. `docs/platform/MCP.md` section 3.2 maps each one to the panel or the
+store it adapts. Four of them close the loop this document is about, taking a
+chat from "who is in form?" to "log that I like him and tell me if I am wrong"
+without leaving the conversation:
 
 | Tool | Does |
 | --- | --- |
 | `submit_idea` | log an idea, get a verdict; asks if the player is ambiguous |
-| `review_ideas` | the full review with the bias probes |
-| `track_ideas` | settle ideas whose gameweeks have finalised |
-| `weekly_decision_report` | the decision report for a gameweek |
+| `idea_review` | the full review with the bias probes |
+| `ideas` | every logged idea with its verdict and how it actually went |
 | `mark_idea_acted` | record that you actually did it |
-| `engine_status` | is the engine reachable, and what does it hold |
-
-This means a chat can go from "who is in form?" (`query_fpl_players`) to "log
-that I like him and tell me if I'm wrong" (`submit_idea`) without leaving the
-conversation.
 
 ### Setup
 
-The engine must be importable by the interpreter that runs the MCP server. On
-this machine that is `~/.pyenv/versions/3.11.2/bin/python`, per
-`claude_desktop_config.json`:
-
-```bash
-~/.pyenv/versions/3.11.2/bin/python -m pip install -e /path/to/i-test-season
-```
+`fpl_edge` must be importable by the interpreter that runs the server. The
+desktop entry names the project venv's own python, which has it installed
+editable, so nothing has to be installed anywhere else.
 
 Two optional environment variables override the defaults:
 
-- `FPL_EDGE_HOME` — the engine checkout. Defaults to a sibling directory named
-  `i-test-season`.
-- `FPL_EDGE_DB` — the warehouse. Defaults to
+- `FPL_EDGE_HOME`: the engine checkout. Defaults to the checkout the package
+  lives in.
+- `FPL_EDGE_DB`: the warehouse. Defaults to
   `$FPL_EDGE_HOME/data/warehouse/fpl.duckdb`.
 
-The import is guarded: a missing or broken engine makes the six tools return an
-explanatory string, rather than raising at import time and taking the whole
-server — including every existing tool — down with it. Call `engine_status`
-first if anything looks wrong; it reports which paths were searched.
+A missing warehouse is a reason, not a crash: every tool reports the path it
+looked at. `pipelines` says what the engine holds and when each feed last ran.
 
 ### One writer
 
 DuckDB permits a single writer process. If the Telegram bot is long-polling
-against the same file, `submit_idea` and `track_ideas` will find it locked and
-say so in plain language. The read-only tools (`review_ideas`,
-`weekly_decision_report`, `engine_status`) open with `read_only=True` and work
+against the same file, `submit_idea` and the other writes will find it locked
+and say so in plain language. The read tools open a read copy and work
 regardless.
+
 
 ---
 

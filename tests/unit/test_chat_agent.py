@@ -305,8 +305,30 @@ def test_family_prompt_is_derived_from_registered_reality():
     assert full.count("**") == 0, "no tools registered -> no family lines"
 
 
+def test_families_prompt_names_no_tool_the_server_does_not_register():
+    """The guidance and the toolbelt are one list, checked against each other.
+
+    INTENT_TOOLS carried ``get_player_history`` for a year, and the players
+    family advertised it, while no toolbelt ever registered it. The allowlist
+    intersects intent with reality so it allowed nothing, but the system
+    prompt still offered it, which is how an agent ends up calling a tool that
+    does not exist. Both lists are pinned against the server's own registry.
+    """
+    from fpl_edge.mcp.server import tool_names
+    from fpl_edge.platform.chat_agent import INTENT_TOOLS, TOOL_FAMILIES
+
+    registered = set(tool_names())
+    familied = {name for _, names in TOOL_FAMILIES.values() for name in names}
+
+    assert not familied - registered, sorted(familied - registered)
+    assert not set(INTENT_TOOLS) - registered, sorted(set(INTENT_TOOLS) - registered)
+    assert not familied - set(INTENT_TOOLS), (
+        "a family names a tool the allowlist would never allow"
+    )
+
+
 def test_toolbelt_enumeration_is_in_process():
-    """36 tools, no subprocess: the enumeration is an import + registry
+    """35 tools, no subprocess: the enumeration is an import + registry
     read, and its failure mode is None (fall back to intent), never a
     crash."""
     from fpl_edge.platform.chat_agent import list_mcp_tools

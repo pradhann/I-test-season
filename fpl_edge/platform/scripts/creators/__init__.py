@@ -36,11 +36,12 @@ observed to produce a plausible-looking lie:
 4. **Point in time, claims *and* weights.** Claims come through
    :meth:`ContentStore.claims_visible_at`, the one sanctioned read, which
    filters ``published_at < as_of``. Creator weights come from ``creator_score``
-   bounded by ``as_of <= moment`` -- the same discipline as
-   ``fpl_mcp.tools.content_tools._scores_as_of``, and reintroducing the
-   unbounded read (weighting a past question with today's track record) is a
-   leak whose only symptom is a backtest that beats live. Manager facts come
-   through ``sem_manager_*(as_of)``.
+   bounded by ``as_of <= moment``, in ``identity._weights_as_of`` and nowhere
+   else. Reintroducing the unbounded read (weighting a past question with
+   today's track record) is a leak whose only symptom is a backtest that
+   beats live, and ``tests/unit/test_content_weights_pit.py`` fails the
+   moment a second read appears. Manager facts come through
+   ``sem_manager_*(as_of)``.
 
 Untrusted text. ``summary``, ``quote``, ``rationale``, ``title`` are verbatim
 third-party prose from podcasts, videos and blogs. They are data to be

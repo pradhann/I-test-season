@@ -5,19 +5,19 @@ an identity from: the process is started by one desktop client on behalf of one
 person. The context is therefore resolved once at startup and handed to every
 tool that needs an entry id, a data root or a display name.
 
-THE ONE SEAM, AND HOW IT MOVES
+THE ONE SEAM
 
-``user_context()`` is the only function in this package that decides where a
-context comes from. Agent D2 is building ``fpl_edge/platform/user_context.py``
-with ``UserContext`` and ``owner_context()`` (docs/platform/MULTI_USER.md
-section 2). Until that module exists, :func:`user_context` falls back to the
-local :class:`OwnerContext`, which reads the same two facts out of
-``fpl_edge.config.USER`` that the engine reads today.
+:func:`user_context` is the only function in this package that decides where a
+context comes from, and it asks ``fpl_edge.platform.users.owner_context`` for
+one. That function is the single place in the repo that resolves the operator's
+entry id, from the id saved on the Account tab, then ``FPL_ENTRY_ID``, then the
+committed default. This package holds no second answer and no copy of the
+config singleton, so a stdio session and an HTTP request read the same
+``UserContext``.
 
-Switching to D2's module is a one-line change: delete the ``except
-ImportError`` arm of :func:`_platform_owner_context` once the import resolves.
-Nothing else in ``fpl_edge/mcp/`` imports ``fpl_edge.config``, and nothing else
-constructs a context.
+When workstream E lands sessions, an MCP session that carries an identity
+resolves through ``users.context_for`` instead, and this is the one function
+that changes.
 
 WHAT DOES NOT COME FROM THE CALLER
 
@@ -40,10 +40,12 @@ from __future__ import annotations
 
 import datetime as dt
 import os
-from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # the runtime import is function-local, inside user_context
+    from fpl_edge.platform.users import UserContext
 
 UTC = dt.UTC
 
@@ -71,72 +73,21 @@ def db_path() -> Path:
     return engine_home() / "data" / "warehouse" / "fpl.duckdb"
 
 
-@dataclass(frozen=True, slots=True)
-class OwnerContext:
-    """The local stand-in for D2's ``UserContext``, same five fields.
-
-    Field for field what ``docs/platform/MULTI_USER.md`` section 2 declares,
-    minus the store handle and the token manager, which a stdio session has no
-    way to populate and no tool here reads. When D2's module lands this class
-    stops being constructed; :func:`user_context` returns theirs instead.
-    """
-
-    user_id: str
-    entry_id: int
-    display_name: str | None
-    data_root: Path
-    is_owner: bool
-
-    def describe(self) -> dict[str, Any]:
-        """What the server may say about the user. Never a secret."""
-        return {
-            "user_id": self.user_id,
-            "entry_id": self.entry_id,
-            "display_name": self.display_name,
-            "is_owner": self.is_owner,
-        }
-
-
-def _platform_owner_context() -> Any | None:
-    """D2's ``owner_context()``, or None while that module is still landing.
-
-    THE SEAM. When ``fpl_edge/platform/user_context.py`` exists, this returns
-    its context and the fallback below is dead code to be deleted.
-    """
-    try:
-        from fpl_edge.platform.user_context import owner_context
-    except ImportError:
-        return None
-    return owner_context()
-
-
-def _fallback_owner_context() -> OwnerContext:
-    """The owner, read from the engine's own config.
-
-    ``fpl_edge.config.USER`` is the singleton the multi-user migration
-    replaces. It is read here and nowhere else in this package, so there is
-    one line to change rather than a search.
-    """
-    from fpl_edge.config import USER
-
-    return OwnerContext(
-        user_id="owner",
-        entry_id=int(USER.entry_id),
-        display_name=str(USER.team_name) or None,
-        data_root=engine_home() / "data",
-        is_owner=True,
-    )
-
-
 @lru_cache(maxsize=1)
-def user_context() -> Any:
+def user_context() -> UserContext:
     """The context this process answers for, resolved once at startup.
+
+    THE SEAM. The import is function-local because ``fpl_edge.platform`` sits
+    below this package and a module-scope edge back into it would close the
+    cycle that ``tests/unit/test_mcp_tool_contract.py`` guards.
 
     Cached because a stdio session has one user for its whole life, and
     because resolving it twice would let two tool calls in one session
     disagree about whose team they are reading.
     """
-    return _platform_owner_context() or _fallback_owner_context()
+    from fpl_edge.platform.users import owner_context
+
+    return owner_context()
 
 
 def reset_context_cache() -> None:

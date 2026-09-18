@@ -1,19 +1,24 @@
 """Contracts of the chat toolbelt's engine-side pieces.
 
-The MCP toolbelt now lives in this repo at ``fpl_mcp/``; what is tested here
-is everything it leans on that must not silently change shape:
+The toolbelt is ``fpl_edge/mcp/``; what is tested here is everything it leans
+on that must not silently change shape:
 
-* the watchlist store (``fpl_edge.interfaces.watchlist``) — append/resolve
-  semantics, one open row per player, the digest section, and graceful
-  behaviour on a warehouse that has never seen a watchlist;
-* the analysis helpers in ``fpl_mcp/tools/chat_core.py`` — the 10-second
-  budget (a slow SUCCESS is also a failure, per Argus's contract), ``$param``
-  substitution that binds rather than interpolates, and the capped summary
-  rendering with its omitted-count marker.
+* the watchlist store (``fpl_edge.interfaces.watchlist``), for append and
+  resolve semantics, one open row per player, the digest section, and
+  graceful behaviour on a warehouse that has never seen a watchlist;
+* the presentation helpers in ``fpl_edge.mcp.render``: the 10-second budget
+  (a slow SUCCESS is also a failure, per Argus's contract) and the capped
+  summary rendering with its omitted-count marker.
 
-chat_core is imported as an ordinary in-repo module. It used to be pulled from
-a sibling checkout behind a skip; that skip could hide a broken toolbelt, and
-with the fold there is no longer a checkout that can be absent.
+``$param`` substitution is no longer here. It moved into the saved-analysis
+store as ``fpl_edge.interfaces.analyses.bind``, and its three assertions live
+in ``tests/unit/test_analyses_store.py`` as ``test_bind_replaces_in_order_and
+_never_interpolates``, ``test_bind_keeps_a_value_out_of_the_statement_text``
+and ``test_bind_reports_a_missing_value_rather_than_guessing``.
+
+Both modules are imported as ordinary in-repo modules. They used to be pulled
+from a sibling checkout behind a skip; that skip could hide a broken toolbelt,
+and there is no longer a checkout that can be absent.
 """
 
 from __future__ import annotations
@@ -33,9 +38,9 @@ UTC = dt.timezone.utc
 T0 = dt.datetime(2026, 8, 18, 22, 50, tzinfo=UTC)
 
 def _chat_core():
-    from fpl_mcp.tools import chat_core  # noqa: PLC0415
+    from fpl_edge.mcp import render  # noqa: PLC0415
 
-    return chat_core
+    return render
 
 
 @pytest.fixture()
@@ -126,8 +131,8 @@ def test_budget_rejects_a_slow_call_with_the_contract_text() -> None:
     result, err = core.run_with_budget(lambda: time.sleep(1.0) or 42, budget_s=0.2)
     assert result is None
     assert err == core.BUDGET_ERROR
-    assert "push filtering and aggregation into SQL" in err
-    assert "if it genuinely cannot fit, say so" in err
+    assert "Push filtering and aggregation into SQL" in err
+    assert "if it cannot fit, say so" in err
 
 
 def test_budget_rejects_a_slow_success_too() -> None:
@@ -152,36 +157,6 @@ def test_budget_propagates_the_functions_own_error() -> None:
                              budget_s=5.0)
 
 
-# -- $param substitution ------------------------------------------------------
-
-
-def test_substitute_params_binds_in_order_and_repeats() -> None:
-    core = _chat_core()
-    sql, binds, missing = core.substitute_params(
-        "SELECT * FROM t WHERE season = $season AND gw = $gw OR gw = $gw",
-        {"season": "2026-27", "gw": 3},
-    )
-    assert sql == "SELECT * FROM t WHERE season = ? AND gw = ? OR gw = ?"
-    assert binds == ["2026-27", 3, 3]
-    assert missing == []
-
-
-def test_substitute_params_never_interpolates() -> None:
-    core = _chat_core()
-    hostile = "'; DROP TABLE idea; --"
-    sql, binds, _ = core.substitute_params("SELECT $x", {"x": hostile})
-    assert hostile not in sql  # the value travels as a bind, not as SQL text
-    assert binds == [hostile]
-
-
-def test_substitute_params_reports_missing_instead_of_guessing() -> None:
-    core = _chat_core()
-    sql, binds, missing = core.substitute_params("SELECT $a, $b", {"a": 1})
-    assert missing == ["b"]
-    assert "$b" in sql  # left in place so the error can quote it
-    assert binds == [1]
-
-
 # -- capped rendering ---------------------------------------------------------
 
 
@@ -189,7 +164,7 @@ def test_render_rows_marks_omitted_count() -> None:
     core = _chat_core()
     rows = [{"n": i} for i in range(300)]
     out = core.render_rows(["n"], rows, max_rows=200)
-    assert "...100 more rows omitted — aggregate or filter in SQL" in out
+    assert "...100 more rows omitted. Aggregate or filter in SQL" in out
     assert out.count("\n") <= 204
 
 

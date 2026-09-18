@@ -7,9 +7,9 @@ Three modules::
     render.py    build, and the CLI / Telegram / MCP views of the result
 
 This file re-exports the surface the single ``dossier.py`` module had, so
-``fpl_edge/cli/main.py``, ``fpl_edge/interfaces/telegram.py``,
-``fpl_mcp/tools/dossier_tools.py`` and ``tests/unit/test_dossier.py`` import
-unchanged (ARCHITECTURE_REVIEW.md Section 4 row 18).
+``fpl_edge/cli/main.py``, ``fpl_edge/interfaces/telegram.py``, the
+``player_dossier`` panel and ``tests/unit/test_dossier.py`` import unchanged
+(ARCHITECTURE_REVIEW.md Section 4 row 18).
 """
 
 from fpl_edge.interfaces.dossier.load import (

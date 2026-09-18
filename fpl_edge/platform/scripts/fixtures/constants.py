@@ -15,9 +15,10 @@ import pandas as pd
 # ---------------------------------------------------------------------------
 
 #: Written by build.py from the same fit as the split below. The legacy blended
-#: number; kept for back-compatibility and always labelled deprecated. Its two
-#: readers are fixture_board's per-cell ``legacy_difficulty`` and the MCP tool
-#: at fpl_mcp/tools/semantic_tools.py:425.
+#: number; kept for back-compatibility and always labelled deprecated. It has
+#: exactly one reader, fixture_board's per-cell ``legacy_difficulty``. The MCP
+#: tool that was the second one now reads the split artefact through the board
+#: itself, so nothing else asks for this file by name.
 DIFFICULTY_NAME = "fixture_difficulty.parquet"
 
 #: Written by ``--build`` below: the fitted split, one row per club.

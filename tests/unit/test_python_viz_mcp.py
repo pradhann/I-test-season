@@ -1,10 +1,9 @@
-"""python_viz on the new path: the sandbox, the theme, the honest failures.
+"""python_viz: the sandbox, the theme, the honest failures.
 
-``tests/unit/test_python_viz.py`` pins the same behaviour on ``fpl_mcp``.
-Both are green while both packages exist; this one survives the deletion.
-Every assertion is the same assertion, because it is the same sandbox: the
-preamble, the fence text and the save signature were carried over byte for
-byte, so an agent that learned the old error messages reads the same ones.
+These assertions came over from the old toolbelt's own test unchanged,
+because it is the same sandbox: the preamble, the fence text and the save
+signature were carried across byte for byte, so an agent that learned the
+old error messages reads the same ones.
 
 These run the real sandbox subprocess, a couple of seconds each, with no
 dataset so no warehouse is touched. The one test that needs a dataset fakes

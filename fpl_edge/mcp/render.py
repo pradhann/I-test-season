@@ -5,8 +5,7 @@ exercise the rendering caps, the ``$param`` substitution and the analysis
 budget without constructing a FastMCP instance. ``tools/analysis.py`` wraps
 these in tool registrations.
 
-This is ``fpl_mcp/tools/chat_core.py`` under a name that says what it does.
-The ``$param`` substitution and the name validation moved on again, into
+The ``$param`` substitution and the name validation live in
 ``fpl_edge/interfaces/analyses.py``, because they belong to the saved-analysis
 store rather than to rendering; they are re-exported here so one import keeps
 working for callers that want both.

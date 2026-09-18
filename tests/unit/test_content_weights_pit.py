@@ -5,23 +5,32 @@ a decision taken at it. That is only half the guarantee, because a consensus is
 a weighted sum and the leak can enter through either factor.
 
 The multiplication is ``claim x creator_weight``. The claims were filtered at
-the deadline. The weights were not: ``_weights()`` took the newest
+the deadline. The weights were not: the helper took the newest
 ``creator_score`` row outright, which is the track record measured TODAY, after
-every gameweek the deadline had not yet seen. So the tools filtered the past
+every gameweek the deadline had not yet seen. So the surfaces filtered the past
 correctly and then weighted it with the future, in a payload that echoes
-``as_of`` back to the caller and whose docstring says "pass the deadline you are
-deciding at".
+``as_of`` back to the caller.
 
 That combination is worse than an obvious leak. There is no symptom: the
 response looks point-in-time, the claim list IS point-in-time, and the only
 tell is a backtest that beats live for no reason anyone can name. On the live
-warehouse, ``_weights()`` returned a top creator with 52 scored claims and 24
-hits at a GW1 deadline where the same creator had zero of each.
+warehouse, the unbounded read returned a top creator with 52 scored claims and
+24 hits at a GW1 deadline where the same creator had zero of each.
 
 It was masked, not absent. Every earned weight is currently 0.0, so the
 mechanism multiplied by zero and produced the right number for the wrong
 reason. It fires the instant one creator earns a weight -- which is exactly the
 moment the weighted consensus starts being used for anything.
+
+WHERE THIS LIVES NOW. The helper used to live in the old toolbelt package,
+which is gone. The logic is
+``fpl_edge.platform.scripts.creators.identity._weights_as_of``, the one read of
+``creator_score`` behind every creator surface: ``creator_board`` weights its
+consensus with it, ``player_chatter`` labels each claim from it, and
+``creator_report_card`` reaches it through ``_card_scores`` rather than keeping
+a copy. Testing the helper rather than one caller is what makes the structural
+assertion at the bottom possible: the bound has one home, so a second
+unbounded read anywhere in the package is a failure.
 
 These tests fail if a weight measured after the decision instant can influence
 the answer at that instant.
@@ -30,21 +39,22 @@ the answer at that instant.
 from __future__ import annotations
 
 import datetime as dt
+import inspect
+import re
+from pathlib import Path
 
 import pandas as pd
 import pytest
 
-from fpl_edge.ingest.content.models import Action, Claim
 from fpl_edge.ingest.content.store import ContentStore
+from fpl_edge.platform.scripts.creators import identity, report_card
+from fpl_edge.platform.scripts.creators.identity import _weights_as_of
 from fpl_edge.store import Warehouse
-from fpl_edge.types import GwId, PlayerCode
-from fpl_mcp.tools import content_tools
 
 UTC = dt.UTC
 
 SEASON = "2026-27"
 CREATOR = "Measured Creator"
-PLAYER = 111
 
 #: 2026-27 GW1. The instant the decision is taken.
 DEADLINE = dt.datetime(2026, 8, 21, 17, 30, tzinfo=UTC)
@@ -77,22 +87,11 @@ def _score_row(as_of: dt.datetime, *, scored: int, hits: int, weight: float) -> 
 
 
 @pytest.fixture
-def warehouse_path(tmp_path, monkeypatch):
-    """A warehouse holding one pre-deadline claim and two track-record runs."""
+def warehouse_path(tmp_path):
+    """A warehouse holding two track-record runs, one either side of the deadline."""
     path = tmp_path / "weights.duckdb"
     with Warehouse(path) as warehouse:
         store = ContentStore(warehouse)
-        store.insert_claims([
-            Claim(
-                claim_id="c1", item_id="i1", creator=CREATOR, source_key="test",
-                player_code=PlayerCode(PLAYER), player_name="test player",
-                surface_form="Test Player", action=Action.BUY, season=SEASON,
-                gameweek=GwId(1), confidence=0.8,
-                rationale="buying the test player this week",
-                source_url="https://example.invalid/c1",
-                published_at=DEADLINE - dt.timedelta(hours=6),
-            )
-        ])
         store.insert_scores(pd.DataFrame(
             [
                 _score_row(EARLY_RUN, scored=0, hits=0, weight=0.0),
@@ -100,14 +99,12 @@ def warehouse_path(tmp_path, monkeypatch):
             ],
             columns=_SCORE_COLS,
         ))
-    monkeypatch.setenv("FPL_EDGE_DB", str(path))
     return path
 
 
-def _consensus_at(moment: dt.datetime) -> dict:
-    return content_tools.fpl_creator_consensus(
-        gameweek=1, season=SEASON, as_of=moment.isoformat()
-    )
+def _weights_at(path, moment: dt.datetime) -> dict:
+    with Warehouse(path, read_only=True) as warehouse:
+        return _weights_as_of(warehouse, moment)
 
 
 class TestWeightsAreFilteredAtTheSameInstantAsClaims:
@@ -116,21 +113,19 @@ class TestWeightsAreFilteredAtTheSameInstantAsClaims:
     ) -> None:
         """The headline guarantee, on the factor nobody was watching.
 
-        The claim is correctly visible: it was published before the deadline.
-        The weight is not: it was measured four days later, from gameweeks the
-        deadline had not seen. ``weighted_creators`` is documented as "the
-        number that matters", so a future weight landing in it is a future
-        number in a payload stamped with a past instant.
+        A claim published before the deadline is correctly visible. The weight
+        it would be multiplied by was measured four days later, from gameweeks
+        the deadline had not seen, so a future number would land in a payload
+        stamped with a past instant.
         """
-        out = _consensus_at(DEADLINE)
+        row = _weights_at(warehouse_path, DEADLINE)[CREATOR]
 
-        assert out["claims_visible"] == 1, "the claim itself should be visible"
-        assert out["creators_with_earned_weight"] == 0
-        assert [r["weighted_creators"] for r in out["consensus"]] == [0.0], (
+        assert row["weight"] == 0.0, (
             "a creator weight measured after the decision instant reached an "
             "answer dated to that instant -- claims filtered at the deadline, "
             "then multiplied by hindsight"
         )
+        assert (row["claims_scored"], row["hits"]) == (0, 0)
 
     def test_the_same_weight_does_apply_once_it_has_been_earned(
         self, warehouse_path
@@ -139,10 +134,10 @@ class TestWeightsAreFilteredAtTheSameInstantAsClaims:
 
         Without this, deleting the weighting entirely would pass the test above.
         """
-        out = _consensus_at(LATE_RUN + dt.timedelta(hours=1))
+        row = _weights_at(warehouse_path, LATE_RUN + dt.timedelta(hours=1))[CREATOR]
 
-        assert out["creators_with_earned_weight"] == 1
-        assert [r["weighted_creators"] for r in out["consensus"]] == [LATE_WEIGHT]
+        assert row["weight"] == LATE_WEIGHT
+        assert (row["claims_scored"], row["hits"]) == (40, 34)
 
     def test_the_boundary_instant_is_inclusive(self, warehouse_path) -> None:
         """``as_of <= moment``, unlike ``published_at < as_of``, and on purpose.
@@ -151,66 +146,34 @@ class TestWeightsAreFilteredAtTheSameInstantAsClaims:
         a derived table stamped with the instant it was computed. The row
         stamped exactly at the moment IS the state at that moment.
         """
-        assert _consensus_at(LATE_RUN)["consensus"][0]["weighted_creators"] == LATE_WEIGHT
+        assert _weights_at(warehouse_path, LATE_RUN)[CREATOR]["weight"] == LATE_WEIGHT
         just_before = LATE_RUN - dt.timedelta(microseconds=1)
-        assert _consensus_at(just_before)["consensus"][0]["weighted_creators"] == 0.0
+        assert _weights_at(warehouse_path, just_before)[CREATOR]["weight"] == 0.0
 
-    def test_player_claims_weights_each_claim_at_the_moment_asked_about(
-        self, warehouse_path
-    ) -> None:
-        """The per-claim ``creator_weight`` is the same multiplication.
-
-        Its own docstring reads "a creator_weight of 0.0 means that creator has
-        not demonstrated an edge" -- present tense, at the ``as_of`` being asked
-        about, not at whenever the reader happens to run the tool.
-        """
-        at_deadline = content_tools.fpl_player_claims(
-            PLAYER, as_of=DEADLINE.isoformat(), season=SEASON
-        )
-        assert at_deadline["claims_found"] == 1
-        assert at_deadline["claims"][0]["creator_weight"] == 0.0, (
-            "a claim visible at the deadline was labelled with a weight the "
-            "creator did not earn until four days after it"
-        )
-
-        later = content_tools.fpl_player_claims(
-            PLAYER, as_of=(LATE_RUN + dt.timedelta(hours=1)).isoformat(),
-            season=SEASON,
-        )
-        assert later["claims"][0]["creator_weight"] == LATE_WEIGHT
-
-    def test_the_track_record_reports_the_record_as_it_stood(
-        self, warehouse_path
-    ) -> None:
-        """Same table, same defect: the newest row is not the row in force."""
-        at_deadline = content_tools.fpl_creator_track_record(
-            min_scored=0, as_of=DEADLINE.isoformat()
-        )
-        row = at_deadline["creators"][0]
-        assert (row["claims_scored"], row["hits"], row["weight"]) == (0, 0, 0.0), (
-            "the track record 'as of' the deadline reported claims settled "
-            "after it"
-        )
-        assert at_deadline["aggregate"]["scored_claims"] == 0
-
-        later = content_tools.fpl_creator_track_record(
-            min_scored=0, as_of=(LATE_RUN + dt.timedelta(hours=1)).isoformat()
-        )
-        assert later["creators"][0]["claims_scored"] == 40
-        assert later["aggregate"]["hits"] == 34
-
-    def test_a_creator_with_no_score_row_yet_is_weightless_not_missing(
+    def test_a_creator_with_no_score_row_yet_is_absent_not_backfilled(
         self, warehouse_path
     ) -> None:
         """Before the first scoring run there is no record, so nothing is earned.
 
         Silently falling back to the newest available row would be the leak in
         its purest form: no measurement exists at this instant, so the honest
-        answer is zero weight, not tomorrow's.
+        answer is no row, which every caller renders as unmeasured, not
+        tomorrow's number.
         """
-        out = _consensus_at(EARLY_RUN - dt.timedelta(days=1))
-        assert out["creators_scored"] == 0
-        assert out["creators_with_earned_weight"] == 0
+        assert _weights_at(warehouse_path, EARLY_RUN - dt.timedelta(days=1)) == {}
+
+    def test_the_report_card_reads_the_record_through_the_same_helper(
+        self, warehouse_path
+    ) -> None:
+        """One bound, one home. A second copy is a second thing to forget.
+
+        ``creator_report_card`` is the surface that quotes a track record at a
+        reader, so a private unbounded read here would be the leak wearing the
+        most authoritative label in the package.
+        """
+        with Warehouse(warehouse_path, read_only=True) as warehouse:
+            assert (report_card._card_scores(warehouse, DEADLINE)
+                    == _weights_as_of(warehouse, DEADLINE))
 
 
 class TestWeightsHelper:
@@ -221,31 +184,35 @@ class TestWeightsHelper:
             Warehouse(warehouse_path, read_only=True) as warehouse,
             pytest.raises(TypeError),
         ):
-            content_tools._weights(warehouse)  # type: ignore[call-arg]
+            _weights_as_of(warehouse)  # type: ignore[call-arg]
 
-    def test_every_creator_score_read_in_the_module_is_filtered(self) -> None:
+    def test_every_creator_score_read_in_the_package_is_filtered(self) -> None:
         """No second, unfiltered path back into ``creator_score``.
 
-        The defect was one query in one helper while the tools around it did
-        the right thing with the claims. If a raw ``FROM creator_score`` is
-        ever reintroduced without an ``as_of`` bound, the leak comes back with
-        no other symptom.
+        The defect was one query in one helper while the code around it did the
+        right thing with the claims. If a raw ``FROM creator_score`` is ever
+        reintroduced without an ``as_of`` bound, the leak comes back with no
+        other symptom. The scan covers the whole creators package, because the
+        board, the chatter panel and the report card all read the same table
+        and only one of them is allowed to hold the query.
         """
-        import inspect
-        import re
+        package = Path(inspect.getfile(identity)).parent
+        reads: list[tuple[str, str]] = []
+        for path in sorted(package.glob("*.py")):
+            # Python string concatenation, comments and line breaks all get in
+            # the way of reading the SQL off the source, so normalise first.
+            source = re.sub(r'"\s*\n\s*"', "", path.read_text(encoding="utf-8"))
+            for match in re.finditer(r"FROM creator_score\b", source):
+                reads.append((path.name, source[match.end():match.end() + 40]))
 
-        # Python string concatenation, comments and line breaks all get in the
-        # way of reading the SQL off the source, so normalise first.
-        source = re.sub(r'"\s*\n\s*"', "", inspect.getsource(content_tools))
-        reads = [
-            m.end() for m in re.finditer(r"FROM creator_score\b", source)
-        ]
         assert len(reads) == 1, (
-            f"{len(reads)} reads of creator_score in content_tools; every one "
-            f"must be bounded by as_of, so there should be exactly one, in "
-            f"_scores_as_of"
+            f"{len(reads)} reads of creator_score in the creators package "
+            f"({[name for name, _ in reads]}); every one must be bounded by "
+            f"as_of, so there should be exactly one, in _weights_as_of"
         )
-        assert re.match(r"\s*WHERE as_of <= \?", source[reads[0]:]), (
+        name, tail = reads[0]
+        assert name == "identity.py", name
+        assert re.match(r"\s*WHERE scope = 'all' AND as_of <= \?", tail), (
             "a read of creator_score is not bounded by as_of; a decision at a "
             "past instant can be weighted by a track record measured after it"
         )
