@@ -19,8 +19,10 @@ The verdicts, in one line each
 * **LiveFPL** -- free JSON of predicted effective ownership and top-10k /elite
   ownership. Not a points projection, but the other half of a rank decision.
   Ingested.
-* **FPL Review** -- reachable, robots-permitted, but the projections live behind
-  a session and a deliberately obfuscated client bundle. Not ingested.
+* **FPLReview** -- paid, with no API and a deliberately obfuscated client
+  bundle, so nothing here fetches it. The owner exports the CSV by hand from
+  the account he pays for and drops it in ``data/projections/fplreview/``;
+  ``local_csv.py`` reads it. Ingested, private, never republished.
 * **Fantasy Football Hub**, **Fantasy Football Fix** -- subscription products.
   Not ingested.
 * **FPL Statistics** -- did not resolve to a live server at all.
@@ -202,7 +204,7 @@ PROVIDERS: tuple[Provider, ...] = (
     ),
     Provider(
         key="fplreview",
-        name="FPL Review",
+        name="FPLReview",
         home="https://fplreview.com",
         publishes=(
             "The 'Massive Data' expected-points model over a multi-gameweek "
@@ -210,48 +212,72 @@ PROVIDERS: tuple[Provider, ...] = (
             "reference xP source in the FPL optimisation community."
         ),
         interface=(
-            "React SPA. Every page -- /, /free-planner/, /massive-data-planner/, "
-            "/team-planner/, /terms/ -- returns the same 2,111-byte shell with an "
-            "empty <div id='root'>. There is no server-rendered data and no "
-            "documented API."
+            "Hand-dropped CSV at data/projections/fplreview/"
+            "fplreview_<unix_epoch>.csv, read by local_csv.py. The site "
+            "itself is a React SPA: every page -- /, /free-planner/, "
+            "/massive-data-planner/, /team-planner/, /terms/ -- returns the "
+            "same 2,111-byte shell with an empty <div id='root'>, with no "
+            "server-rendered data and no documented API, which is why the "
+            "owner exports by hand instead."
         ),
         cost=(
-            "A free tier exists behind an account; the Massive Data planner and "
-            "the solver are Patreon-supported. We did not create an account, so "
-            "we did not observe a price and do not quote one."
+            "PAID. The owner subscribes and exports from the account he pays "
+            "for. A free tier exists behind an account; the Massive Data "
+            "planner and the solver are Patreon-supported."
         ),
         licence=(
-            "robots.txt allows 'User-agent: *' at 'Allow: /', but carries an "
-            "explicit 'Disallow: /' for ClaudeBot, GPTBot, CCBot, Bytespider, "
-            "Amazonbot, Applebot-Extended, Google-Extended and "
-            "meta-externalagent, plus 'Content-Signal: search=yes,ai-train=no,"
-            "use=reference'. The letter of the file permits our honest agent; "
-            "the intent is plainly to keep automated AI consumption out."
+            "Paid, private to the owner, never republished. The bytes stay in "
+            "this warehouse and on the owner's disk: no surface serves them, "
+            "no report reproduces them, nothing is redistributed. The export "
+            "is manual, so the cadence is whatever the owner does and the "
+            "provider goes stale between drops like any other source. On the "
+            "automated side, robots.txt allows 'User-agent: *' at 'Allow: /' "
+            "but carries an explicit 'Disallow: /' for ClaudeBot, GPTBot, "
+            "CCBot, Bytespider, Amazonbot, Applebot-Extended, Google-Extended "
+            "and meta-externalagent, plus 'Content-Signal: search=yes,"
+            "ai-train=no,use=reference'. Nothing here fetches the site."
         ),
-        rate_limit="Not established.",
-        covers_2026_27=None,
-        verdict="blocked",
+        rate_limit="Not applicable. No request is made to the site.",
+        covers_2026_27=True,
+        verdict="ingested",
         reason=(
-            "The 3.48 MB client bundle at /assets/index-*.js is run through a "
+            "Ingested from a hand export, not from the site. The 3.48 MB "
+            "client bundle at /assets/index-*.js is run through a "
             "string-array obfuscator: identifiers are _0x-mangled, every URL "
             "literal is split into an indexed table, and the only readable "
             "network call is `xb+\"/session\",{credentials:...}` -- a "
             "cookie-authenticated session endpoint. Recovering the data URLs "
-            "would mean deobfuscating a bundle that was obfuscated on purpose, "
-            "and reaching them would mean holding an account session. Both are "
-            "circumvention. We stopped."
+            "would mean deobfuscating a bundle that was obfuscated on "
+            "purpose, and reaching them would mean holding an account "
+            "session. Both are circumvention, so the automated route stays "
+            "closed and the owner exports the CSV himself. "
+            "fpl_edge/ingest/projections/local_csv.py reads it from "
+            "data/projections/fplreview/fplreview_<unix_epoch>.csv; the "
+            "epoch is the export instant and becomes as_of."
         ),
-        probe_urls=("https://fplreview.com/robots.txt",
-                    "https://fplreview.com/free-planner/",
-                    "https://fplreview.com/massive-data-planner/"),
+        # No probe URLs. The data arrives by hand, so a live probe would put
+        # a request on a site this repo has decided not to fetch. The
+        # measured_status below stays as the record of what was measured on
+        # 2026-08-19, when the automated route was still being evaluated.
+        probe_urls=(),
         measured_status=(("/robots.txt", 200), ("/", 200), ("/free-planner/", 200),
                          ("/massive-data-planner/", 200), ("/team-planner/", 200),
                          ("/terms/", 200)),
         notes=(
-            "This is the single most valuable source we could not take, and the "
-            "honest recommendation is to take it by hand: sign up, use the free "
-            "planner as a human, and paste the numbers in. The ingest path in "
-            "this package accepts a CSV from disk for exactly that reason.",
+            "The recommendation this entry carried for a month is now the "
+            "implementation: take it by hand. The owner exports the CSV from "
+            "his paid account and drops it in data/projections/fplreview/, "
+            "and local_csv.py maps the wide export (two columns per gameweek, "
+            "ten gameweeks ahead) into the same long rows every other "
+            "provider writes.",
+            "The export keys on `ID`, the per-season element id, resolved "
+            "through dim_player as the roster stood at the export epoch. Ids "
+            "the export carries for players outside the live element range do "
+            "not resolve and are dropped and counted.",
+            "Elite% is stored in fact_external_ownership under metric "
+            "'own_elite' with provider 'fplreview'. LiveFPL writes the same "
+            "metric for its own elite cohort; the two cohorts are told apart "
+            "by provider, which is where that provenance belongs.",
         ),
     ),
     Provider(

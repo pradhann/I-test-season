@@ -64,6 +64,10 @@ def _run(monkeypatch, db, steps):
     monkeypatch.setattr(cli, "_ingest_rotowire", steps[3])
     monkeypatch.setattr(cli, "_ingest_premierinjuries", steps[4])
     monkeypatch.setattr(cli.github_csv, "FEEDS", ())
+    # Hand-dropped providers too: data/projections/ exists on the owner's
+    # machine, and a test that read it would ingest paid data and depend on
+    # whatever he last exported.
+    monkeypatch.setattr(cli.local_csv, "DROPS", ())
     return cli.ingest("2026-27", db=str(db))
 
 
@@ -114,6 +118,7 @@ def test_every_provider_failing_is_the_only_non_zero_exit(monkeypatch, db):
     monkeypatch.setattr(cli, "_ingest_rotowire", steps[3])
     monkeypatch.setattr(cli, "_ingest_premierinjuries", steps[4])
     monkeypatch.setattr(cli.github_csv, "FEEDS", ())
+    monkeypatch.setattr(cli.local_csv, "DROPS", ())  # see _run
     assert cli.main(["ingest", "--db", str(db)]) == 1
 
 
@@ -129,6 +134,7 @@ def test_a_partial_run_still_exits_zero(monkeypatch, db):
     monkeypatch.setattr(cli, "_ingest_rotowire", _good("rotowire", 4))
     monkeypatch.setattr(cli, "_ingest_premierinjuries", _good("premierinjuries", 5))
     monkeypatch.setattr(cli.github_csv, "FEEDS", ())
+    monkeypatch.setattr(cli.local_csv, "DROPS", ())  # see _run
     assert cli.main(["ingest", "--db", str(db)]) == 0
 
 
@@ -150,12 +156,14 @@ def test_only_filters_to_named_providers(monkeypatch, db):
     monkeypatch.setattr(cli, "_ingest_livefpl",
                         _explodes("livefpl", AssertionError("must not run")))
     monkeypatch.setattr(cli.github_csv, "FEEDS", ())
+    monkeypatch.setattr(cli.local_csv, "DROPS", ())  # see _run
     results = cli.ingest("2026-27", db=str(db), only=("fplform",))
     assert set(results) == {"fplform"}
 
 
 def test_an_unknown_provider_name_is_refused_not_ignored(monkeypatch, db):
     monkeypatch.setattr(cli.github_csv, "FEEDS", ())
+    monkeypatch.setattr(cli.local_csv, "DROPS", ())  # see _run
     with pytest.raises(SystemExit, match="nosuchsource"):
         cli.ingest("2026-27", db=str(db), only=("nosuchsource",))
 
