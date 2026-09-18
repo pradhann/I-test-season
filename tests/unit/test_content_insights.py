@@ -577,7 +577,7 @@ def test_every_writer_of_an_analysis_also_writes_its_insights() -> None:
     Not because extraction was broken -- `insights_from_analysis`,
     `store_insights` and `insights_visible_at` were all written and all tested
     -- but because nothing ever called them. The two functions that persist an
-    analysis (`pipeline.cmd_analyze` for the bulk crawl, `interfaces.creators`
+    analysis (`analyse_cmd.cmd_analyze` for the bulk crawl, `interfaces.creators`
     for a pasted link) each extracted claims and dropped the observations from
     the same reading on the floor.
 
@@ -587,10 +587,14 @@ def test_every_writer_of_an_analysis_also_writes_its_insights() -> None:
     """
     import inspect
 
-    import fpl_edge.ingest.content.pipeline as pipeline
+    # `cmd_analyze` moved out of `pipeline.py` into `analyse_cmd.py` when the
+    # 1,808-line module was split (ARCHITECTURE_REVIEW.md Section 4 row 16).
+    # This test reads SOURCE, so it has to name the file the call now lives in;
+    # pointing it at the dispatcher would make it pass over an empty string.
+    import fpl_edge.ingest.content.analyse_cmd as analyse_cmd
     from fpl_edge.interfaces import creators as creators_iface
 
-    for mod in (pipeline, creators_iface):
+    for mod in (analyse_cmd, creators_iface):
         src = inspect.getsource(mod)
         assert "store_analysis(" in src, (
             f"{mod.__name__} no longer stores analyses; this test is checking "

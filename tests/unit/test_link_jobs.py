@@ -26,6 +26,7 @@ from fastapi.testclient import TestClient
 
 from fpl_edge.ingest.content import asr
 from fpl_edge.platform import link_jobs
+from fpl_edge.platform.link_jobs import take
 from fpl_edge.platform.app import create_app
 from fpl_edge.store.warehouse import Warehouse
 
@@ -531,7 +532,9 @@ def test_a_successful_ingest_shows_the_take_with_quotes_and_timestamps(db, store
 
 
 def test_lock_contention_is_retried_with_backoff_rather_than_crashing(db, monkeypatch):
-    monkeypatch.setattr(link_jobs.time, "sleep", lambda _s: None)
+    # `ingest_with_retry` and its sleep moved to link_jobs/take.py when the
+    # 1,700-line module was split (ARCHITECTURE_REVIEW.md Section 4 row 17).
+    monkeypatch.setattr(take.time, "sleep", lambda _s: None)
     attempts = {"n": 0}
 
     def _flaky(_db, _url):
