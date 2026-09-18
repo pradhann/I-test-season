@@ -96,9 +96,29 @@ def _opt_ts(value: object) -> dt.datetime | None:
 class IdeaRegistry:
     """The thesis registry. Owns all reads and writes of idea state."""
 
-    def __init__(self, warehouse: Warehouse) -> None:
+    def __init__(self, warehouse: Warehouse, *, migrate: bool = True) -> None:
         self.wh = warehouse
-        self.migrate()
+        if migrate:
+            self.migrate()
+
+    @classmethod
+    def open_reader(cls, warehouse: Warehouse) -> tuple["IdeaRegistry", bool]:
+        """``(registry, tables_exist)`` without attempting any DDL.
+
+        Panel scripts run against a read-only private copy of the warehouse, so
+        constructing a registry the ordinary way would try to apply migrations
+        against a connection that cannot write. The boolean is returned rather
+        than raised because "no idea has ever been logged here" is a state a
+        panel must be able to report. Mirrors
+        :meth:`fpl_edge.intel.store.IntelStore.open_reader`, which exists for
+        the same reason.
+        """
+        registry = cls(warehouse, migrate=False)
+        found = registry.wh.sql(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_name = 'idea'"
+        )
+        return registry, not found.empty
 
     # -- schema --------------------------------------------------------------
 

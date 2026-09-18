@@ -45,6 +45,19 @@ def test_the_theme_file_is_where_the_sandbox_copier_looks_for_it():
     assert viz_tools._THEME_SRC.resolve() == THEME
 
 
+def test_the_second_copier_looks_in_the_same_place():
+    """The rewritten server copies it too, from its own assembled path.
+
+    ``fpl_edge/mcp/tools/analysis.py`` is the second importer, and it is
+    reached the same way: components joined into a path, so no import graph,
+    grep for the dotted name or coverage report names this file at all. The
+    two must agree, or one surface renders charts and the other does not.
+    """
+    from fpl_edge.mcp.tools import analysis
+
+    assert analysis._THEME_SRC.resolve() == THEME
+
+
 def test_the_theme_file_parses_on_its_own():
     ast.parse(THEME.read_text(), filename=str(THEME))
 
@@ -54,8 +67,9 @@ def test_the_theme_file_imports_nothing_from_fpl_edge():
     roots = _imported_roots(tree)
     assert "fpl_edge" not in roots, (
         "fpl_theme.py is copied alone into a python -I sandbox by "
-        "fpl_mcp/tools/viz_tools.py:159; an fpl_edge import here breaks every "
-        f"chart. Imported roots: {sorted(roots)}"
+        "fpl_mcp/tools/viz_tools.py:159 and by "
+        "fpl_edge/mcp/tools/analysis.py; an fpl_edge import here breaks every "
+        f"chart on both. Imported roots: {sorted(roots)}"
     )
 
 

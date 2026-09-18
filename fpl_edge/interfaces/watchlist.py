@@ -38,11 +38,24 @@ def _now(now: dt.datetime | None) -> dt.datetime:
 class Watchlist:
     """Append/resolve store over the ``watchlist`` table."""
 
-    def __init__(self, warehouse: Warehouse) -> None:
+    def __init__(self, warehouse: Warehouse, *, migrate: bool = True) -> None:
         self.wh = warehouse
         # The interface migration runner owns the DDL; running it here is what
         # makes the table exist on a warehouse that has never seen a watchlist.
-        IdeaRegistry(warehouse)
+        if migrate:
+            IdeaRegistry(warehouse)
+
+    @classmethod
+    def open_reader(cls, warehouse: Warehouse) -> "Watchlist":
+        """A read-only handle, with no DDL attempted.
+
+        A private read copy is opened read-only, so the ordinary constructor
+        would try to migrate a connection that cannot write. Reads through
+        this handle still go through :meth:`open_items`, so the SQL that
+        defines an open item stays in one place rather than being restated by
+        every reader. Mirrors :meth:`IdeaRegistry.open_reader`.
+        """
+        return cls(warehouse, migrate=False)
 
     def add(
         self,
