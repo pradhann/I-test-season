@@ -25,6 +25,7 @@ import pytest
 from fpl_edge.models.team_goals.dixon_coles import DixonColesFit
 from fpl_edge.models.team_goals.evaluate import FIXTURES_DIR
 from fpl_edge.models.team_goals.promoted import PromotedPrior
+from fpl_edge.models.team_goals.synthetic import build_warehouse, load_league
 from fpl_edge.platform.scripts.fixtures import (
     DIFFICULTY_COLUMNS,
     DIFFICULTY_NAME,
@@ -32,7 +33,6 @@ from fpl_edge.platform.scripts.fixtures import (
     opponent_difficulty,
     write_artefacts,
 )
-from fpl_edge.models.team_goals.synthetic import build_warehouse, load_league
 
 UTC = dt.UTC
 

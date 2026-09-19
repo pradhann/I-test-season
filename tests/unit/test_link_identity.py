@@ -29,19 +29,19 @@ import datetime as dt
 import pytest
 from fastapi.testclient import TestClient
 
+from fpl_edge.ingest.content import link_ledger as ledger
 from fpl_edge.ingest.content.claims import GameweekCalendar
 from fpl_edge.ingest.content.youtube import (
     Channel,
     channel_from_watch,
     creator_for_channel,
 )
-from fpl_edge.ingest.content import link_ledger as ledger
 from fpl_edge.interfaces import creators as ic
 from fpl_edge.platform import link_jobs
 from fpl_edge.platform.app import create_app
 from fpl_edge.store.warehouse import Warehouse
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 #: The fields a real watch page carries, in the shapes measured on 2026-08-27.
 RAPTOR_PAGE = (

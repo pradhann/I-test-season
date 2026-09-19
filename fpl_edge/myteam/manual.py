@@ -37,7 +37,7 @@ import datetime as dt
 import hashlib
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from fpl_edge.eval.replay import Decision, InvalidDecision, apply_decision
 from fpl_edge.eval.scoring import Chip, Pick
@@ -46,7 +46,7 @@ from fpl_edge.myteam.state import PlayerIndex
 from fpl_edge.rules import rules
 from fpl_edge.types import GwId, Money, Position
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 #: Lines that are obviously not a player name. A pasted squad carries the app's
 #: own furniture, and a header is better dropped than resolved to a player.

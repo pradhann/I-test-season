@@ -120,7 +120,7 @@ def verify(
     person* and recording their identity under our curated name would be
     exactly the silent rot this function exists to catch.
     """
-    as_of = as_of or dt.datetime.now(dt.timezone.utc)
+    as_of = as_of or dt.datetime.now(dt.UTC)
     rows: list[dict[str, Any]] = []
     managers: list[dict[str, Any]] = []
     for e in entries:
@@ -159,7 +159,7 @@ def collect(
     now: dt.datetime | None = None,
 ) -> tuple[dict[str, pd.DataFrame], dict[str, Any]]:
     """Fetch everything about the verified elite. Network only, no lock held."""
-    now = now or dt.datetime.now(dt.timezone.utc)
+    now = now or dt.datetime.now(dt.UTC)
     frames: dict[str, pd.DataFrame] = {}
     summary: dict[str, Any] = {}
 

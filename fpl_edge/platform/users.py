@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import os
 import re
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -46,17 +47,19 @@ except ImportError:  # pragma: no cover - no web server installed
 #: issued this value, because it addresses the operator's own directory.
 OWNER_USER_ID = "owner"
 
-#: Where every data directory in this repo already sits. Workstream B sets
-#: this to the Railway volume mount point, so the per-user store lands on the
-#: same volume as the warehouse and survives a redeploy.
-DATA_ROOT_ENV = "FPL_EDGE_DATA_ROOT"
+#: THE name for the data directory. Workstream B sets it to the Railway
+#: volume mount point, so the per-user store lands on the same volume as the
+#: warehouse and survives a redeploy. The boot sequence
+#: (``fpl_edge/platform/boot.py``, read at ``app/factory.py``) reads the same
+#: variable, so one value places every directory.
+DATA_DIR_ENV = "FPL_EDGE_DATA_DIR"
 
-#: The name the boot sequence uses for the same directory
-#: (``fpl_edge/platform/boot.py``, read at ``app/factory.py``). Read as a
-#: fallback so a deployment that sets one and not the other still puts the
-#: per-user store on the volume. A store off the volume looks fine until the
-#: first redeploy takes every user's plan and conversation with it.
-BOOT_DATA_DIR_ENV = "FPL_EDGE_DATA_DIR"
+#: The name this module used for the same directory until 2026-09-19.
+#: Accepted, with a warning, so a deployment that sets only the old name
+#: still puts the per-user store on the volume. A store off the volume looks
+#: fine until the first redeploy takes every user's plan and conversation
+#: with it. Remove once no environment sets it.
+DEPRECATED_DATA_ROOT_ENV = "FPL_EDGE_DATA_ROOT"
 
 #: A user id is a directory name. Lowercase alphanumerics, dashes and
 #: underscores, no separators and no dots, so an identity value cannot become
@@ -91,6 +94,33 @@ class PrivateReadDenied(PermissionError):
     """A private FPL read was attempted for a user who has no stored login."""
 
 
+#: Whether the deprecation warning has already been issued in this process.
+#: One line per boot, not one per path lookup.
+_WARNED_DEPRECATED_ROOT = [False]
+
+
+def deprecated_data_root() -> str | None:
+    """The deprecated variable's value, if a deployment still sets it.
+
+    Warns once per process. Called by the boot sequence so the line lands in
+    the server's startup log rather than in whichever request first needed a
+    user path.
+    """
+    value = os.environ.get(DEPRECATED_DATA_ROOT_ENV, "").strip()
+    if not value:
+        return None
+    if not _WARNED_DEPRECATED_ROOT[0]:
+        _WARNED_DEPRECATED_ROOT[0] = True
+        warnings.warn(
+            f"{DEPRECATED_DATA_ROOT_ENV} is deprecated and will be removed. "
+            f"Set {DATA_DIR_ENV} instead; it names the same directory and the "
+            f"boot sequence already reads it. Using "
+            f"{DEPRECATED_DATA_ROOT_ENV}={value!r} for now.",
+            DeprecationWarning, stacklevel=2,
+        )
+    return value
+
+
 def data_root() -> Path:
     """The base directory the per-user store hangs off.
 
@@ -98,13 +128,12 @@ def data_root() -> Path:
     tmp directory with ``monkeypatch.setenv`` and a boot sequence may set it
     after this module is first imported.
     """
-    return Path(os.environ.get(DATA_ROOT_ENV, "")
-                or os.environ.get(BOOT_DATA_DIR_ENV, "")
-                or "data")
+    configured = os.environ.get(DATA_DIR_ENV, "").strip()
+    return Path(configured or deprecated_data_root() or "data")
 
 
 def users_root() -> Path:
-    """``{FPL_EDGE_DATA_ROOT}/users``. The one place user paths start."""
+    """``{FPL_EDGE_DATA_DIR}/users``. The one place user paths start."""
     return data_root() / "users"
 
 
@@ -403,8 +432,8 @@ def resolve_identity(request: Request) -> Identity | None:
     user through ``app.dependency_overrides[current_user]``, which is
     FastAPI's own mechanism and ships no back door.
     """
-    from fpl_edge.platform.auth import settings as auth_settings
     from fpl_edge.platform.auth import sessions as auth_sessions
+    from fpl_edge.platform.auth import settings as auth_settings
 
     session = getattr(getattr(request, "state", None), "auth_session", None)
     if session is None and request is not None:

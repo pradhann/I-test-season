@@ -35,7 +35,7 @@ from fpl_edge.intel.items import (
 from fpl_edge.intel.store import IntelStore
 from fpl_edge.store import Warehouse
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 
 def at(day: int, hour: int = 12) -> dt.datetime:

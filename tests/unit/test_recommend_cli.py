@@ -22,7 +22,7 @@ from fpl_edge.myteam.recommend import HitVerdict, Move, TransferRecommendation
 from fpl_edge.opt import ObjectiveMode
 from fpl_edge.types import GwId, Money
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 
 def _plan(captain=120, vice=121, xi=None):
@@ -168,6 +168,7 @@ def test_the_artefact_carries_the_hit_cap_and_the_displaced_unconstrained_best()
     transfers and the optimiser's hit-taking top move rides beside it as
     `unconstrained`, with its own gain, never hidden."""
     import datetime as dt
+
     from fpl_edge.cli.recommend import serialize_recommendation
     rec = _rec()
     now = dt.datetime(2026, 9, 7, tzinfo=dt.UTC)
@@ -199,6 +200,7 @@ def test_the_artefact_records_the_constraints_it_was_solved_under():
 
 def test_parse_codes_takes_integers_only():
     import typer
+
     from fpl_edge.cli.recommend import parse_codes
     assert parse_codes("219168, 108416,,", flag="--ban") == frozenset({219168, 108416})
     assert parse_codes("", flag="--ban") == frozenset()

@@ -26,7 +26,7 @@ import pandas as pd
 from fpl_edge.interfaces.store import IdeaRegistry
 from fpl_edge.store import Warehouse
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 DEFAULT_SEASON = "2026-27"
 

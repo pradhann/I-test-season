@@ -590,4 +590,4 @@ def interpret_reply(text: str, candidates: tuple[CandidateMatch, ...]) -> Candid
 
 
 def utcnow() -> dt.datetime:
-    return dt.datetime.now(dt.timezone.utc)
+    return dt.datetime.now(dt.UTC)

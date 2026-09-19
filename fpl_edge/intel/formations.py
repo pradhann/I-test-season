@@ -46,7 +46,7 @@ from fpl_edge.intel.items import (
 from fpl_edge.store import Snapshot
 from fpl_edge.types import Position
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 #: A team-fixture with fewer starters than this did not yield a readable lineup
 #: -- usually a partially ingested gameweek. Skipped rather than reported as a

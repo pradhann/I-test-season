@@ -20,8 +20,8 @@ from fastapi.testclient import TestClient
 
 from fpl_edge.ingest.content import asr
 from fpl_edge.ingest.content.store import ContentStore
-from fpl_edge.platform.app.factory import create_app
 from fpl_edge.platform.app import routes_transcripts as rt
+from fpl_edge.platform.app.factory import create_app
 from fpl_edge.store import Warehouse
 
 UTC = dt.UTC

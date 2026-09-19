@@ -28,7 +28,6 @@ import datetime as dt
 from typing import Any
 
 from fpl_edge.platform.registry import register_script
-from fpl_edge.platform.users import PRIVATE_GAP, UserContext, owner_context
 from fpl_edge.platform.scripts.common import (
     POSITION_NAME,
     UTC,
@@ -38,6 +37,7 @@ from fpl_edge.platform.scripts.common import (
     q,
     season_param,
 )
+from fpl_edge.platform.users import PRIVATE_GAP, UserContext, owner_context
 from fpl_edge.rules import rules
 
 CANDIDATE_LIMIT = 1200   # sanity ceiling; the pool is ALL players

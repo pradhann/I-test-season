@@ -91,7 +91,7 @@ RAW_BASE = "https://raw.githubusercontent.com/vaastav/Fantasy-Premier-League/mas
 CACHE_ROOT = Path("data/raw/vaastav")
 
 UK = ZoneInfo("Europe/London")
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 #: Verified: `deadlines.offset_before_first_kickoff_minutes` in the rule registry.
 DEADLINE_OFFSET = dt.timedelta(minutes=90)

@@ -13,14 +13,16 @@ imports exactly what it imported before.
 """
 
 from __future__ import annotations
+
 import datetime as dt
 from dataclasses import dataclass
 from typing import Any
+
 import pandas as pd
-from fpl_edge.ingest.player_mapping import normalize_name
-from fpl_edge.store import Warehouse
 
 from fpl_edge.ingest.odds.football_data import FD_TEAM_ALIASES, _slugify
+from fpl_edge.ingest.player_mapping import normalize_name
+from fpl_edge.store import Warehouse
 
 
 def match_fixture_keys(wh: Warehouse, season: str, as_of: dt.datetime) -> pd.DataFrame:

@@ -29,7 +29,7 @@ from fpl_edge.ingest.projections import (
 )
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "projections"
-AS_OF = dt.datetime(2026, 8, 20, 6, 30, tzinfo=dt.timezone.utc)
+AS_OF = dt.datetime(2026, 8, 20, 6, 30, tzinfo=dt.UTC)
 
 
 def _read(name: str) -> str:
@@ -193,6 +193,52 @@ def test_rotowire_tolerates_an_unknown_player_flag():
     entries = rotowire.parse_lineups(html)
     assert any(e.certainty == "unknown:BANANA" for e in entries)
     assert sum(1 for e in entries if e.predicted_start) == 44
+
+
+def _unpublished_first_sheet(html: str) -> str:
+    """Rewrite the first team sheet the way Rotowire renders an unpredicted
+    fixture: the status carries neither is-expected nor is-confirmed, the
+    text reads "Unknown Lineup", and the XI is absent. The injury list stays,
+    which is what the archived BRE v CHE boxes look like."""
+    start = html.index('<ul class="lineup__list is-home">')
+    end = html.index("</ul>", start)
+    block = html[start:end]
+    head, _, _rest = block.partition('<li class="lineup__player">')
+    head = (head.replace("lineup__status is-expected", "lineup__status")
+                .replace("Predicted Lineup", "Unknown Lineup"))
+    injuries = block.index('<li class="lineup__title')
+    return html[:start] + head + block[injuries:] + html[end:]
+
+
+def test_rotowire_skips_a_fixture_with_no_published_xi_and_keeps_the_page():
+    """Rotowire's own "Unknown Lineup" is not a refusal.
+
+    Seven of the twelve ingest errors since 2026-09-04 were `BRE v CHE: 0
+    starters parsed`, and the archived pages show that box with an empty
+    team sheet and this status on every run from 2026-09-07 to 2026-09-12.
+    One unpublished fixture used to throw away the other nine sheets.
+    """
+    html = _unpublished_first_sheet(_read("rotowire_lineups.html"))
+    skipped: list[str] = []
+    entries = rotowire.parse_lineups(html, skipped)
+    assert skipped == ["ARS v COV"], skipped
+    # The other three sheets survive, and so does the skipped side's injury
+    # list: an OUT flag is true whether or not an XI has been published.
+    assert sum(1 for e in entries if e.predicted_start) == 33
+    assert any(e.team_abbr == "ARS" and not e.predicted_start for e in entries)
+    assert not any(e.team_abbr == "ARS" and e.predicted_start for e in entries)
+
+
+def test_rotowire_still_aborts_on_a_partial_sheet_labelled_unknown():
+    """Zero starters is "not published". One to ten is a broken page."""
+    html = _unpublished_first_sheet(_read("rotowire_lineups.html"))
+    html = html.replace('<li class="lineup__title is-middle">Injuries</li>',
+                        '<li class="lineup__player">'
+                        '<div class="lineup__pos">GK</div>'
+                        '<a href="/x" title="A Keeper">A Keeper</a></li>'
+                        '<li class="lineup__title is-middle">Injuries</li>', 1)
+    with pytest.raises(rotowire.RotowireError, match="starters parsed"):
+        rotowire.parse_lineups(html, [])
 
 
 def test_rotowire_maps_suspension_to_its_own_label():

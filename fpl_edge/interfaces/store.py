@@ -39,7 +39,7 @@ from fpl_edge.interfaces.ideas import (
 from fpl_edge.store import Warehouse
 from fpl_edge.types import GwId, PlayerCode, Season
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 

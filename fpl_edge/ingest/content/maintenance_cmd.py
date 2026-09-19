@@ -9,13 +9,13 @@ Section 3 and Section 4 row 16).
 """
 
 from __future__ import annotations
+
 import argparse
 import contextlib
-from fpl_edge.store import Warehouse
 
 from fpl_edge.ingest.content.analyse_cmd import _write_with_retry
 from fpl_edge.ingest.content.pipeline_common import _now
-
+from fpl_edge.store import Warehouse
 
 _INDEXED_TABLES: tuple[str, ...] = (
     "content_item", "content_claim", "content_analysis", "content_insight",

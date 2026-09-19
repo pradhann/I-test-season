@@ -30,7 +30,7 @@ from fpl_edge.store import Warehouse
 
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 #: Entity keys per table, excluding ``as_of``. Same shape as ``store.PIT_KEYS``
 #: but owned here.

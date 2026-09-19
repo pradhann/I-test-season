@@ -21,7 +21,7 @@ import fpl_edge.platform.scripts  # noqa: F401  (registers ownership_eo)
 from fpl_edge.platform.registry import run_script
 from fpl_edge.store.warehouse import Warehouse
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 T = pd.Timestamp("2026-08-01 12:00", tz="UTC")
 SEASON = "2026-27"
 OLD = "2025-26"

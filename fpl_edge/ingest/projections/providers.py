@@ -75,7 +75,7 @@ Verdict = Literal["ingested", "paywalled", "blocked", "dead", "forbidden",
 #: reading it anyway. It must always name the measurement that retired it.
 
 #: When the statuses recorded in this module were observed.
-MEASURED_AT = dt.datetime(2026, 8, 19, 0, 0, tzinfo=dt.timezone.utc)
+MEASURED_AT = dt.datetime(2026, 8, 19, 0, 0, tzinfo=dt.UTC)
 
 
 @dataclass(frozen=True, slots=True)

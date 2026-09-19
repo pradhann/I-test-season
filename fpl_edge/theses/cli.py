@@ -22,7 +22,7 @@ from fpl_edge.theses.resolve import resolve_theses
 from fpl_edge.theses.scoreboard import compute
 from fpl_edge.theses.store import DEFAULT_THESES_DIR, ThesesStore
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 DEFAULT_SEASON = "2026-27"
 
 theses_report.register()

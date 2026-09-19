@@ -172,8 +172,8 @@ def test_a_horizon_plan_converts_to_a_simulator_plan_with_its_hits_intact():
 
     Otherwise the validator grades a different plan from the one that was chosen.
     """
-    from fpl_edge.opt.plan import GwDecision, HorizonPlan
     from fpl_edge.opt.config import ObjectiveMode
+    from fpl_edge.opt.plan import GwDecision, HorizonPlan
     from fpl_edge.types import Money
 
     class Universe:
@@ -216,8 +216,8 @@ def test_a_horizon_plan_converts_to_a_simulator_plan_with_its_hits_intact():
 
 
 def test_a_player_outside_the_simulator_universe_is_refused():
-    from fpl_edge.opt.plan import GwDecision, HorizonPlan
     from fpl_edge.opt.config import ObjectiveMode
+    from fpl_edge.opt.plan import GwDecision, HorizonPlan
     from fpl_edge.types import Money
 
     class Universe:

@@ -15,8 +15,9 @@ import pytest
 
 from fpl_edge.interfaces.telegram import FakeTransport, TelegramConfig
 from fpl_edge.jobs import deadline_dag as dag
-from fpl_edge.pipelines import contracts, tasks as dagtasks
 from fpl_edge.jobs import outbox
+from fpl_edge.pipelines import contracts
+from fpl_edge.pipelines import tasks as dagtasks
 from fpl_edge.store import Warehouse
 
 UTC = dt.UTC

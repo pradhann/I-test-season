@@ -257,7 +257,7 @@ class PrivateTeamClient:
             free_transfers=int(limit) if limit is not None else None,
             transfers_made_this_gw=int(tr.get("made") or 0),
             chips=chips,
-            fetched_at=dt.datetime.now(dt.timezone.utc),
+            fetched_at=dt.datetime.now(dt.UTC),
         )
 
     def __repr__(self) -> str:  # never leak the cookie through debug output

@@ -24,7 +24,7 @@ import fpl_edge.ingest.rivals.schema  # noqa: F401  (import for side effect)
 from fpl_edge.ingest.projections.store import ProjectionStore
 from fpl_edge.store import Warehouse
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 
 def T(day: int, hour: int = 12) -> dt.datetime:

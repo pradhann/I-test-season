@@ -1,4 +1,4 @@
-"""The platform HTTP surface — DESIGN.md §2.1, implemented exactly.
+"""The platform HTTP surface, DESIGN.md §2.1, implemented exactly.
 
     GET  /api/panels                  registered panels + their pinned scripts
     POST /api/scripts/{name}/run      {result, provenance}, 10s soft budget

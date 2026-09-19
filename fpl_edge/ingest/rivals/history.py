@@ -38,6 +38,7 @@ import pandas as pd
 
 from fpl_edge.ingest.rivals.client import RivalsFetcher
 
+
 #: FPL's ``rank_percentage`` is a string, rounded to wildly varying precision
 #: ('0.2', '1', '13'). Parsed to float where possible and left null otherwise
 #: rather than defaulted, because it is used to estimate season field sizes and
@@ -132,7 +133,7 @@ def ingest_histories(
     answered 404 -- deleted or never-existed entries, which are dropped rather
     than retried. A 404 here is final: entry IDs are never reused.
     """
-    as_of = dt.datetime.now(dt.timezone.utc)
+    as_of = dt.datetime.now(dt.UTC)
     pasts, currents, chips_all, missing = [], [], [], []
     for eid in entry_ids:
         body = fetch_history(fetcher, eid)

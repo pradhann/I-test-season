@@ -19,7 +19,7 @@ from pathlib import Path
 
 from fpl_edge.store import Warehouse
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 #: Grain and purpose, one line each. Columns come from the live DESCRIBE so
 #: they are never stale; these purposes are the only hand-written part.

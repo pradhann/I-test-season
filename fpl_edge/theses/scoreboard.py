@@ -32,7 +32,7 @@ from pathlib import Path
 from fpl_edge.oracle.signals import SourceKind, SourceWeight
 from fpl_edge.theses.model import Thesis, ThesisOutcome, ThesisSource
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 #: Where each thesis channel lands in the oracle's signal-family taxonomy.
 SOURCE_TO_KIND: dict[ThesisSource, SourceKind] = {

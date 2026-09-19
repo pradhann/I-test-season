@@ -7,11 +7,10 @@ status text or errors.
 
 from __future__ import annotations
 
-import pathlib
-
 import base64
 import datetime as dt
 import json
+import pathlib
 
 import httpx
 import pytest
@@ -26,7 +25,7 @@ from fpl_edge.myteam.tokens import (
 
 
 def make_jwt(exp_in_s: int, **claims) -> str:
-    now = int(dt.datetime.now(dt.timezone.utc).timestamp())
+    now = int(dt.datetime.now(dt.UTC).timestamp())
     payload = {"iat": now, "exp": now + exp_in_s, **claims}
     body = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
     return f"eyJhbGciOiJSUzI1NiJ9.{body}.FAKESIG"
@@ -164,7 +163,7 @@ def test_status_reports_expiry_without_the_credential(tmp_path) -> None:
 
 def test_jwt_expiry_reads_exp() -> None:
     tok = make_jwt(3600)
-    delta = jwt_expiry(tok) - dt.datetime.now(dt.timezone.utc)
+    delta = jwt_expiry(tok) - dt.datetime.now(dt.UTC)
     assert 3500 < delta.total_seconds() <= 3600
 
 
@@ -216,7 +215,7 @@ def test_just_the_two_token_cookies_are_enough_to_configure(tmp_path) -> None:
     from fpl_edge.myteam.tokens import TokenManager
 
     def token(days: int, **extra: str) -> str:
-        exp = dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=days)
+        exp = dt.datetime.now(dt.UTC) + dt.timedelta(days=days)
         payload = base64.urlsafe_b64encode(
             json.dumps({"exp": int(exp.timestamp()), **extra}).encode()
         ).decode().rstrip("=")
@@ -278,7 +277,7 @@ def test_two_processes_refreshing_at_once_redeem_the_token_only_once(tmp_path) -
     import sys
 
     def mint(seconds: int) -> str:
-        exp = dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=seconds)
+        exp = dt.datetime.now(dt.UTC) + dt.timedelta(seconds=seconds)
         body = base64.urlsafe_b64encode(
             json.dumps({"exp": int(exp.timestamp())}).encode()
         ).decode().rstrip("=")
@@ -330,7 +329,7 @@ def test_paste_setup_proves_the_grant_instead_of_trusting_the_access_token(tmp_p
     from fpl_edge.myteam.tokens import TokenManager
 
     def mint(seconds: int) -> str:
-        exp = dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=seconds)
+        exp = dt.datetime.now(dt.UTC) + dt.timedelta(seconds=seconds)
         body = base64.urlsafe_b64encode(
             json.dumps({"exp": int(exp.timestamp())}).encode()
         ).decode().rstrip("=")

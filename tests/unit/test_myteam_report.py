@@ -22,7 +22,7 @@ from fpl_edge.myteam.state import PlayerIndex
 from fpl_edge.store import Warehouse
 from fpl_edge.types import Position
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 SEASON = "2026-27"
 T0 = dt.datetime(2026, 8, 1, 12, tzinfo=UTC)
 NOW = dt.datetime(2026, 8, 18, 12, tzinfo=UTC)

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from fpl_edge.rules import UnverifiedRuleError, RuleNotFoundError, rules
+from fpl_edge.rules import RuleNotFoundError, UnverifiedRuleError, rules
 
 RAW_DIR = Path(__file__).resolve().parents[2] / "data" / "raw" / "fpl_api"
 

@@ -37,8 +37,6 @@ import datetime as dt
 import json
 import os
 import re
-import signal
-import subprocess
 import sys
 import threading
 import time
@@ -598,6 +596,17 @@ class ChatAgent:
             return {"running": True, "since": turn.started,
                     "text": turn.text[:200]}
         return {"running": False}
+
+    def require_conversation(self, conv_id: str) -> None:
+        """Raise :class:`UnknownConversation` now, not inside a generator.
+
+        :meth:`subscribe` is lazy: building the iterator runs none of its
+        body, so a route that only constructs it returns 200 and the SSE
+        response then dies with a 500 as soon as sse-starlette pulls the
+        first item. A caller that opens a stream resolves the conversation
+        through this first, where the handler's ``except`` can still see it.
+        """
+        self._conv(conv_id)
 
     def subscribe(self, conv_id: str, after: int = -1,
                   heartbeat_s: float | None = None,

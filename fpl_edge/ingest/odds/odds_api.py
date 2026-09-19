@@ -14,21 +14,27 @@ imports exactly what it imported before.
 """
 
 from __future__ import annotations
+
 import datetime as dt
 from dataclasses import dataclass
 from typing import Any
+
 import numpy as np
 import pandas as pd
-from fpl_edge.ingest.http import Fetched, Fetcher
-from fpl_edge.ingest.player_mapping import normalize_name
-from fpl_edge.store import Warehouse
 
+from fpl_edge.ingest.http import Fetched, Fetcher
 from fpl_edge.ingest.odds.devig import devig_anytime_scorer, devig_shin
 from fpl_edge.ingest.odds.football_data import _row, natural_fixture_key
-from fpl_edge.ingest.odds.freshness import MARKET_ANYTIME_SCORER, MARKET_CLEAN_SHEET, MARKET_H2H, MARKET_TOTALS
+from fpl_edge.ingest.odds.freshness import (
+    MARKET_ANYTIME_SCORER,
+    MARKET_CLEAN_SHEET,
+    MARKET_H2H,
+    MARKET_TOTALS,
+)
 from fpl_edge.ingest.odds.matching import NameMatch, match_player_names, squad_for_fixture
 from fpl_edge.ingest.odds.prices import GoalRates, clean_sheet_probs, fit_goal_rates
-
+from fpl_edge.ingest.player_mapping import normalize_name
+from fpl_edge.store import Warehouse
 
 ODDS_API_BASE = "https://api.the-odds-api.com/v4"
 

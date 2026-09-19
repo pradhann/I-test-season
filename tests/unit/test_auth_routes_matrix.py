@@ -285,6 +285,60 @@ def test_the_flag_makes_an_unauthenticated_caller_the_operator(
         assert not refused_by_tier(r), f"{method} {path}: {r.text}"
 
 
+# -- the two payloads the tiers trim ------------------------------------------
+
+def test_anonymous_health_is_the_reduced_body(anon, monkeypatch,
+                                              tmp_path) -> None:
+    """AUTH.md row 1. The status code is the healthcheck's signal and does
+    not move; the warehouse path, boot report, migrations and scheduler
+    state describe this deployment and are operator fields."""
+    body = anon.get("/api/health").json()
+    assert set(body) == {"ok", "now"}, body
+
+
+def test_the_operator_health_keeps_every_field(monkeypatch, tmp_path) -> None:
+    auth_fixtures.configure(monkeypatch, tmp_path, anon_is_owner=True)
+    client = TestClient(create_app(db=tmp_path / "warehouse.duckdb"))
+    body = client.get("/api/health").json()
+    for field in ("repo_sha", "warehouse", "warehouse_present", "boot",
+                  "scheduler"):
+        assert field in body, field
+
+
+def test_panels_are_filtered_by_the_callers_tier(anon, app) -> None:
+    """AUTH.md 6.2 rule 2: an anonymous visitor's UI must not render a tab
+    that 401s on click, so the catalogue lists only what it may run."""
+    payload = anon.get("/api/panels").json()
+    listed = {row["name"] for row in payload["scripts"]}
+    assert listed, payload
+    for name in listed:
+        assert policy.SCRIPT_TIERS.get(name) == policy.ANONYMOUS, name
+    for name, tier in policy.SCRIPT_TIERS.items():
+        if tier != policy.ANONYMOUS:
+            assert name not in listed, name
+    for panel in payload["panels"]:
+        assert policy.SCRIPT_TIERS.get(panel["script"]) == policy.ANONYMOUS
+
+
+def test_a_signed_in_manager_sees_the_session_panels(app, monkeypatch,
+                                                     tmp_path) -> None:
+    client = TestClient(app)
+    auth_fixtures.sign_in(client)
+    listed = {row["name"] for row in client.get("/api/panels").json()["scripts"]}
+    assert "dashboard_brief" in listed
+    assert "planner_grid" in listed
+    assert "pipeline_board" not in listed
+
+
+def test_the_operator_sees_every_panel(app) -> None:
+    client = TestClient(app)
+    auth_fixtures.sign_in(client, email=auth_fixtures.OPERATOR_EMAIL,
+                          is_operator=True)
+    listed = {row["name"] for row in client.get("/api/panels").json()["scripts"]}
+    for name in policy.SCRIPT_TIERS:
+        assert name in listed, name
+
+
 def test_the_bearer_routes_keep_their_own_secret(anon) -> None:
     """Machine to machine, with no browser and therefore no session. The
     handler compares a shared secret with hmac.compare_digest, and the tier

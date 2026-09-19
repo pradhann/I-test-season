@@ -32,45 +32,11 @@ off this module are unchanged.
 """
 
 from __future__ import annotations
+
 import argparse
 import datetime as dt
-import pandas as pd
-from fpl_edge.ingest.content.analyze import MIN_SUBSTANTIVE_CHARS
-from fpl_edge.ingest.content.analyze import MODEL as ANALYSIS_MODEL
-from fpl_edge.ingest.content.calendar import load_calendar
-from fpl_edge.ingest.content.claims import ExtractionStats, extract_from_item
-from fpl_edge.ingest.content.consensus import consensus_map, deduplicate, render_consensus
-from fpl_edge.ingest.content.fetch import ContentFetcher
-from fpl_edge.ingest.content.loaders import load_source
-from fpl_edge.ingest.content.scoring import (
-    ResultIndex,
-    creator_scores,
-    score_claims,
-    weight_lookup,
-)
-from fpl_edge.ingest.content.sources import ALL_SOURCES, ProbeReport, Source, fetchable
-from fpl_edge.ingest.content.store import ContentStore
-from fpl_edge.store import Warehouse
 
-from fpl_edge.ingest.content.analyse_cmd import (
-    RELEVANCE_THRESHOLD,
-    cmd_analyze,
-    cmd_backfill_insights,
-    cmd_reextract,
-)
-from fpl_edge.ingest.content.maintenance_cmd import (
-    cmd_link_identities,
-    cmd_repair_index,
-)
-from fpl_edge.ingest.content.pipeline_common import (
-    UTC,
-    _now,
-    build_resolver,
-)
-from fpl_edge.ingest.content.transcribe_cmd import (
-    cmd_retention,
-    cmd_transcribe,
-)
+import pandas as pd
 
 # The surface this module had before the command bodies moved out. Re-exported
 # with redundant aliases so linters read them as deliberate and so every caller
@@ -81,21 +47,72 @@ from fpl_edge.ingest.content.transcribe_cmd import (
 # (RELEVANCE_THRESHOLD, relevance_score).
 from fpl_edge.ingest.content.analyse_cmd import (  # noqa: F401
     RELEVANCE_PANEL_PTS as RELEVANCE_PANEL_PTS,
+)
+from fpl_edge.ingest.content.analyse_cmd import (
     RELEVANCE_PLAYER_PTS as RELEVANCE_PLAYER_PTS,
+)
+from fpl_edge.ingest.content.analyse_cmd import (
     RELEVANCE_RECENT_DAYS as RELEVANCE_RECENT_DAYS,
+)
+from fpl_edge.ingest.content.analyse_cmd import (
     RELEVANCE_RECENT_PTS as RELEVANCE_RECENT_PTS,
+)
+from fpl_edge.ingest.content.analyse_cmd import (
     RELEVANCE_TERM_PTS as RELEVANCE_TERM_PTS,
+)
+from fpl_edge.ingest.content.analyse_cmd import (
+    RELEVANCE_THRESHOLD,
+    cmd_analyze,
+    cmd_backfill_insights,
+    cmd_reextract,
+)
+from fpl_edge.ingest.content.analyse_cmd import (
     rank_candidates as rank_candidates,
+)
+from fpl_edge.ingest.content.analyse_cmd import (
     relevance_score as relevance_score,
 )
+from fpl_edge.ingest.content.analyze import MIN_SUBSTANTIVE_CHARS
+from fpl_edge.ingest.content.analyze import MODEL as ANALYSIS_MODEL
+from fpl_edge.ingest.content.calendar import load_calendar
+from fpl_edge.ingest.content.claims import ExtractionStats, extract_from_item
+from fpl_edge.ingest.content.consensus import consensus_map, deduplicate, render_consensus
+from fpl_edge.ingest.content.fetch import ContentFetcher
+from fpl_edge.ingest.content.loaders import load_source
 from fpl_edge.ingest.content.maintenance_cmd import (  # noqa: F401
     INDEX_PROBE_KEYS as INDEX_PROBE_KEYS,
+)
+from fpl_edge.ingest.content.maintenance_cmd import (
     _index_is_healthy as _index_is_healthy,
+)
+from fpl_edge.ingest.content.maintenance_cmd import (
+    cmd_link_identities,
+    cmd_repair_index,
+)
+from fpl_edge.ingest.content.pipeline_common import (
+    UTC,
+    _now,
+    build_resolver,
 )
 from fpl_edge.ingest.content.pipeline_common import (  # noqa: F401
     UTC as UTC,
+)
+from fpl_edge.ingest.content.pipeline_common import (
     build_resolver as build_resolver,
 )
+from fpl_edge.ingest.content.scoring import (
+    ResultIndex,
+    creator_scores,
+    score_claims,
+    weight_lookup,
+)
+from fpl_edge.ingest.content.sources import ALL_SOURCES, ProbeReport, Source, fetchable
+from fpl_edge.ingest.content.store import ContentStore
+from fpl_edge.ingest.content.transcribe_cmd import (
+    cmd_retention,
+    cmd_transcribe,
+)
+from fpl_edge.store import Warehouse
 
 
 def cmd_probe(args: argparse.Namespace) -> int:

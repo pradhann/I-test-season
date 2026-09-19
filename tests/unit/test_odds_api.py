@@ -42,7 +42,7 @@ from fpl_edge.ingest.odds import (
 )
 
 FIX = Path(__file__).parents[1] / "fixtures" / "odds"
-UTC = dt.timezone.utc
+UTC = dt.UTC
 AS_OF = dt.datetime(2026, 8, 18, 23, 30, tzinfo=UTC)
 
 

@@ -52,7 +52,7 @@ def render_squad(wh: Warehouse, season: str, gw: int, as_of: dt.datetime) -> str
 
     d = plan["gw1"]
     generated = dt.datetime.fromisoformat(plan["generated_at"])
-    age_h = (dt.datetime.now(dt.timezone.utc) - generated).total_seconds() / 3600
+    age_h = (dt.datetime.now(dt.UTC) - generated).total_seconds() / 3600
 
     lines = [
         "## Recommended squad",

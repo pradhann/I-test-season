@@ -30,8 +30,7 @@ import hashlib
 
 import pytest
 
-from fpl_edge.ingest.content import asr
-from fpl_edge.ingest.content import transcribe_cmd
+from fpl_edge.ingest.content import asr, transcribe_cmd
 from fpl_edge.ingest.content.store import ContentStore
 from fpl_edge.store import Warehouse
 

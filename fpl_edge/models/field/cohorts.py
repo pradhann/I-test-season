@@ -15,7 +15,8 @@ whose squad we never fetched can contribute to neither count.
 from __future__ import annotations
 
 import datetime as dt
-from dataclasses import dataclass, field as dc_field
+from dataclasses import dataclass
+from dataclasses import field as dc_field
 from typing import Mapping
 
 import numpy as np

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 
 AS_OF = dt.datetime(2026, 9, 8, tzinfo=UTC)

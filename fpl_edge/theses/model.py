@@ -28,7 +28,7 @@ from typing import Any
 
 import yaml
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 
 class ThesisSource(enum.StrEnum):

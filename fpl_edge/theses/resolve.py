@@ -36,7 +36,7 @@ from fpl_edge.theses.grammar import grade as grade_thesis
 from fpl_edge.theses.model import ClaimType, Thesis, ThesisOutcome
 from fpl_edge.theses.store import ThesesStore
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 GIT_IDENT = ("-c", "user.name=Nripesh", "-c", "user.email=nripeshpradhan@gmail.com")
 

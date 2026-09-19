@@ -53,7 +53,7 @@ from fpl_edge.theses.store import ThesesStore
 
 log = logging.getLogger("fpl_edge.theses")
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 #: The GW1 projection the models team shipped, used to enrich the creation
 #: verdict when the thesis window starts at GW1 of the live season. A file, not

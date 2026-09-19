@@ -56,12 +56,12 @@ from pathlib import Path
 from typing import Any
 
 from fpl_edge.config import BRIEFING_MODEL
-from fpl_edge.store.fetch_ledger import CallUsage
 from fpl_edge.platform.prose_style import (
     STYLE_RULES,
     normalize_prose,
     slop_findings,
 )
+from fpl_edge.store.fetch_ledger import CallUsage
 
 UTC = dt.UTC
 
@@ -587,12 +587,6 @@ def _valid_drill(drill: Any, codes: set[int]) -> bool:
     if "tab" in drill:
         return isinstance(drill["tab"], str) and bool(drill["tab"])
     return False
-
-
-def _valid_item(item: Any, panels: set[str], codes: set[int],
-                values: dict[str, list[float]] | None = None) -> bool:
-    """True when the item is contract-clean. See :func:`item_problem`."""
-    return item_problem(item, panels, codes, values) is None
 
 
 def item_problem(item: Any, panels: set[str], codes: set[int],

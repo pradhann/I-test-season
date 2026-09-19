@@ -44,7 +44,7 @@ from fpl_edge.interfaces.ideas import Comparator, Idea, IdeaKind, Stance, Verdic
 from fpl_edge.models.contracts import ModelCard
 from fpl_edge.store import Snapshot
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 #: Below/above these, the engine is taking a side. Between them it is admitting
 #: the idea is a coin flip, which for most FPL decisions is the true answer and

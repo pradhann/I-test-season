@@ -11,15 +11,16 @@ from ``render``.
 """
 
 from __future__ import annotations
+
 import datetime as dt
 from dataclasses import dataclass
+
 import numpy as np
 import pandas as pd
-from fpl_edge.store import Warehouse
-from fpl_edge.types import Position
 
 from fpl_edge.interfaces.dossier.load import POS_NAME, UTC, _Ctx
-
+from fpl_edge.store import Warehouse
+from fpl_edge.types import Position
 
 EXPECTED: dict[str, str] = {
     "identity": "who the player is, and whether the game will let you pick him",

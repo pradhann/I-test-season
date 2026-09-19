@@ -18,8 +18,8 @@ from fpl_edge.ingest.projections.store import (
 )
 from fpl_edge.store import Warehouse
 
-AS_OF = dt.datetime(2026, 8, 20, 6, 30, tzinfo=dt.timezone.utc)
-LATER = dt.datetime(2026, 8, 20, 12, 0, tzinfo=dt.timezone.utc)
+AS_OF = dt.datetime(2026, 8, 20, 6, 30, tzinfo=dt.UTC)
+LATER = dt.datetime(2026, 8, 20, 12, 0, tzinfo=dt.UTC)
 
 
 @pytest.fixture

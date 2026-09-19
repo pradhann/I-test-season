@@ -38,8 +38,8 @@ from typing import Any
 
 import pandas as pd
 
-from fpl_edge.pipelines.contracts import SEASON
 from fpl_edge.pipelines import registry
+from fpl_edge.pipelines.contracts import SEASON
 from fpl_edge.pipelines.registry import (
     Calendar,
     DeadlineRelative,

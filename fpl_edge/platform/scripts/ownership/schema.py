@@ -13,7 +13,7 @@ from typing import Any
 
 from fpl_edge.platform.scripts.common import q, season_param
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 #: The owner's chosen default field: the CURATED elite only. Explicit in the
 #: payload (`selection.default`, `selection.is_default`) rather than implied by

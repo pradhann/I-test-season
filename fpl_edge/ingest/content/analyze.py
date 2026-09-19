@@ -772,7 +772,7 @@ def store_analysis(wh, item_id: str, analysis: TranscriptAnalysis,
         "INSERT INTO content_analysis "
         "(item_id, model, created_utc, analysis_json, model_reported, "
         " tokens_in, tokens_out) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        [item_id, model_id, dt.datetime.now(dt.timezone.utc),
+        [item_id, model_id, dt.datetime.now(dt.UTC),
          json.dumps(payload), measured.model_reported,
          measured.tokens_in, measured.tokens_out],
     )

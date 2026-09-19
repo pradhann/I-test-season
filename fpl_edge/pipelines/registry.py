@@ -49,8 +49,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from fpl_edge.pipelines import tasks
-from fpl_edge.pipelines import contracts
+from fpl_edge.pipelines import contracts, tasks
 from fpl_edge.pipelines.contracts import (
     LOOKBACK,
     NIGHTLY_LOCAL_HOUR,
@@ -393,9 +392,15 @@ _GATED = TaskResult(
 
 def _steps_detail(steps: list[Step]) -> str:
     failed = [s.name for s in steps if not s.ok]
+    quiet = [s.name for s in steps if s.quiet]
     detail = f"{len(steps) - len(failed)}/{len(steps)} steps ok"
     if failed:
         detail += "; failed: " + ",".join(failed)
+    # A step that exits 0 and prints nothing is not a failure, but it is the
+    # shape a step takes once it has stopped doing work, so the count travels
+    # to the Pipelines panel rather than disappearing into an empty cell.
+    if quiet:
+        detail += f"; {contracts.NO_OUTPUT}: " + ",".join(quiet)
     return detail
 
 
@@ -424,10 +429,15 @@ def run_post_gw_settlement(ctx: TaskContext) -> TaskResult:
     from fpl_edge.jobs import post_gw
 
     report = post_gw.JobReport(started_utc=ctx.now.astimezone(UTC).isoformat())
-    for name, argv in post_gw.settlement_steps(ctx.python):
+    # The gameweek is resolved from the warehouse rather than taken from
+    # ctx.gw: this task's due shape is Calendar, so ctx.gw is NO_GW.
+    gw = post_gw.next_gameweek(ctx.db_path, season=ctx.season, now=ctx.now)
+    for name, argv in post_gw.settlement_steps(ctx.python, ctx.db_path,
+                                               first_gw=gw):
         post_gw._run(report, name, argv)
 
-    steps = [Step(name=s.name, ok=s.ok, seconds=s.seconds, detail=s.detail)
+    steps = [Step(name=s.name, ok=s.ok, seconds=s.seconds, detail=s.detail,
+                  quiet=s.quiet)
              for s in report.steps]
     detail = _steps_detail(steps)
     if report.ok:
@@ -465,7 +475,8 @@ def run_transcribe_nightly(ctx: TaskContext) -> TaskResult:
     engine = asr.backend_status()
     budget = float(os.environ.get("FPL_EDGE_TRANSCRIBE_BUDGET_S",
                                   TRANSCRIBE_BUDGET_S))
-    argv = [ctx.python, "-m", "fpl_edge.ingest.content.pipeline", "transcribe",
+    argv = [ctx.python, "-m", "fpl_edge.ingest.content.pipeline",
+            "--db", str(ctx.db_path), "transcribe",
             "--budget-s", str(budget)]
     if not engine.ready:
         # Narrow the run to the route that works here rather than starting a
@@ -592,7 +603,8 @@ def _run_analyse(ctx: TaskContext, *, since_days: int, label: str,
         summary_path = Path(tmp) / "summary.json"
         step = run_step(
             "content_analyse",
-            [ctx.python, "-m", "fpl_edge.ingest.content.pipeline", "analyze",
+            [ctx.python, "-m", "fpl_edge.ingest.content.pipeline",
+             "--db", str(ctx.db_path), "analyze",
              "--since", str(since_days), "--budget-s", str(budget),
              "--token-budget", str(tokens),
              "--summary-json", str(summary_path)],
@@ -713,7 +725,7 @@ def run_fpl_core_insights(ctx: TaskContext) -> TaskResult:
     step = run_step(
         "fpl_core_insights",
         [ctx.python, "-m", "fpl_edge.ingest.fpl_core_insights",
-         "--season", ctx.season],
+         "--db", str(ctx.db_path), "--season", ctx.season],
     )
     outcome = "quiet" if step.ok else "error"
     return TaskResult(outcome=outcome, detail=step.detail[-300:], steps=[step])
@@ -729,10 +741,11 @@ def run_panel_picks_crawl(ctx: TaskContext) -> TaskResult:
     the Creators page could show squads only for the panel members who
     happened to be in a crawled cohort -- 7 of 15 on 2026-09-07.
 
-    Runs at 11:15 UTC, after the settlement slot, AND as a step inside the
-    settlement chain (``post_gw.settlement_steps``): on a settlement day the
-    standalone firing replays from cache for almost nothing. The budget is
-    the module's own default (700), sized for a cold full-season crawl; a
+    Runs once, at 11:15 UTC, after the settlement slot. It used to run here
+    and again as the settlement chain's ``crawl_panel`` step, two crawls of
+    the same 43 people a day; that step is deleted (ARCHITECTURE_REVIEW.md
+    Section 4 row 13) and this task is now the only caller. The budget is the
+    module's own default (700), sized for a cold full-season crawl; a
     steady-state run is ~2 requests per person.
 
     A person the API refuses, a name that no longer matches the verified
@@ -775,12 +788,14 @@ def run_fast_rss(ctx: TaskContext) -> TaskResult:
     before = _table_rows(ctx, "content_item")
     steps = [run_step(
         "ingest_fast_rss",
-        [ctx.python, "-m", "fpl_edge.ingest.content.pipeline", "ingest",
+        [ctx.python, "-m", "fpl_edge.ingest.content.pipeline",
+         "--db", str(ctx.db_path), "ingest",
          "--backfill-days", "1", "--only", keys],
     )]
     steps.append(run_step(
         "captions_fast",
-        [ctx.python, "-m", "fpl_edge.ingest.content.pipeline", "transcribe",
+        [ctx.python, "-m", "fpl_edge.ingest.content.pipeline",
+         "--db", str(ctx.db_path), "transcribe",
          "--kinds", "youtube", "--since", "2", "--budget-s", "300"],
         timeout=600,
     ))
@@ -1081,7 +1096,7 @@ TASKS: tuple[Task, ...] = (
         id="briefing_intel",
         # The registry admits ONE due shape per task, so this rides Calendar
         # (07:40 local, after the morning fetches); on-demand triggering is
-        # the runner's existing manual seam — POST /api/pipelines/
+        # the runner's existing manual seam. POST /api/pipelines/
         # briefing_intel/run calls runner.run_task exactly like any task.
         description="Model-authored salience pass over the panels; artefact "
                     "clearly labelled, never merged into dashboard_brief.",

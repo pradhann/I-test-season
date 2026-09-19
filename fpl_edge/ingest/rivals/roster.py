@@ -375,7 +375,7 @@ def build_pool(
     rotted seed list produces a small honest pool instead of a large arbitrary
     one. Rejections are reported, never silently swallowed.
     """
-    as_of = dt.datetime.now(dt.timezone.utc)
+    as_of = dt.datetime.now(dt.UTC)
     report = PoolReport()
     leagues = mini_leagues if mini_leagues is not None else USER.mini_leagues
 

@@ -33,7 +33,6 @@ import pytest
 from fpl_edge.config import ANALYSIS_MODEL, BRIEFING_MODEL, CHAT_MODEL
 from fpl_edge.ingest.content import analyze
 
-
 # --------------------------------------------------------------- the pins
 
 def test_the_three_pins_are_bare_model_ids() -> None:

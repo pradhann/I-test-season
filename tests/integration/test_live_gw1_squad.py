@@ -30,7 +30,7 @@ def snapshot():
         # ingestion time, so an earlier snapshot correctly cannot see it. Reading
         # it from a January snapshot would be asking what we knew before we knew
         # anything -- which point-in-time filtering rightly answers with nothing.
-        latest = wh.snapshot_at(dt.datetime.now(dt.timezone.utc))
+        latest = wh.snapshot_at(dt.datetime.now(dt.UTC))
         try:
             deadline = latest.deadline(SEASON, 1)
         except KeyError:
@@ -77,7 +77,7 @@ def test_deadline_is_utc_and_matches_the_api(snapshot) -> None:
     """Guards the browser-local-time deadline bug found during rule capture."""
     _, deadline = snapshot
     assert deadline.utcoffset() == dt.timedelta(0)
-    assert deadline == dt.datetime(2026, 8, 21, 17, 30, tzinfo=dt.timezone.utc)
+    assert deadline == dt.datetime(2026, 8, 21, 17, 30, tzinfo=dt.UTC)
 
 
 def test_snapshot_before_deadline_reports_gw1_as_next(snapshot) -> None:

@@ -20,7 +20,7 @@ from fpl_edge.ingest import fpl_core_insights as fci
 from fpl_edge.store import Warehouse
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "fpl_core_insights"
-AS_OF = dt.datetime(2026, 8, 24, 4, 0, tzinfo=dt.timezone.utc)
+AS_OF = dt.datetime(2026, 8, 24, 4, 0, tzinfo=dt.UTC)
 
 SPURS_MATCH = "26-27-prem-brentford-vs-tottenham-hotspur"
 

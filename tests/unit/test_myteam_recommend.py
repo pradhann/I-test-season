@@ -18,11 +18,9 @@ from __future__ import annotations
 
 import datetime as dt
 
-import numpy as np
 import pandas as pd
 import pytest
 
-from fpl_edge.eval.scoring import Pick
 from fpl_edge.myteam.forecast import (
     PointsForecastUnavailableError,
     TablePointsForecast,
@@ -39,12 +37,12 @@ from fpl_edge.myteam.recommend import (
 )
 from fpl_edge.myteam.sources import EntryHistory, EntrySummary, GwPicks, PublicPick
 from fpl_edge.myteam.state import PlayerIndex, reconstruct
-from fpl_edge.opt import ObjectiveMode, OptimizerConfig
+from fpl_edge.opt import ObjectiveMode
 from fpl_edge.opt.interfaces import RankUtilityUnavailableError
 from fpl_edge.store import Warehouse
 from fpl_edge.types import GwId, Money, Position
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 SEASON = "2026-27"
 T0 = dt.datetime(2026, 8, 1, 12, tzinfo=UTC)
 NOW = dt.datetime(2026, 8, 18, 12, tzinfo=UTC)

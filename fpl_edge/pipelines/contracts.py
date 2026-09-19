@@ -120,12 +120,21 @@ class Due:
 # --------------------------------------------------------------------------
 
 
+#: What a step's detail says when it exited 0 and printed nothing at all.
+#: A silent success is a real outcome and not a failure, but it is also the
+#: shape a step takes when it has stopped doing any work, so the record says
+#: so instead of leaving the panel with an empty cell.
+NO_OUTPUT = "no output"
+
+
 @dataclass
 class Step:
     name: str
     ok: bool
     seconds: float
     detail: str = ""
+    #: True when the step exited 0 with nothing on stdout or stderr.
+    quiet: bool = False
 
 
 @dataclass
@@ -162,6 +171,17 @@ class TaskResult:
         """
         return self.outcome in ("delivered", "error") and bool(self.title)
 
+    @property
+    def quiet_steps(self) -> list[Step]:
+        """Steps that succeeded and printed nothing.
+
+        The Pipelines panel shows this count beside the ok count, because a
+        chain whose steps all pass while saying nothing is the shape a chain
+        takes when it has quietly stopped doing work. It is reported, not
+        failed: a step is allowed to have nothing to say.
+        """
+        return [s for s in self.steps if s.quiet]
+
 
 def run_step(name: str, argv: list[str], *, timeout: float = STEP_TIMEOUT_S) -> Step:
     """One step as its own process, exactly as post_gw.py does it.
@@ -183,9 +203,12 @@ def run_step(name: str, argv: list[str], *, timeout: float = STEP_TIMEOUT_S) -> 
                          if re.search(r"Error|Exception|Traceback|usage:|Fatal", ln)), None)
             if head and head not in tail:
                 tail = [head, "...", *tail[-2:]]
+        ok = proc.returncode == 0
+        quiet = ok and not lines
         return Step(
-            name=name, ok=proc.returncode == 0, seconds=round(time.monotonic() - t0, 1),
-            detail=" | ".join(tail)[-300:],
+            name=name, ok=ok, seconds=round(time.monotonic() - t0, 1),
+            detail=NO_OUTPUT if quiet else " | ".join(tail)[-300:],
+            quiet=quiet,
         )
     except subprocess.TimeoutExpired:
         return Step(name=name, ok=False, seconds=round(time.monotonic() - t0, 1),

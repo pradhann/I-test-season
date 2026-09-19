@@ -14,19 +14,21 @@ package: it imports nothing from its two siblings.
 """
 
 from __future__ import annotations
+
 import datetime as dt
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
 import pandas as pd
+
 from fpl_edge.interfaces.features import player_universe
 from fpl_edge.interfaces.ideas import Clarification
 from fpl_edge.interfaces.parsing import PlayerResolver
 from fpl_edge.store import Snapshot, Warehouse
 from fpl_edge.types import PlayerCode
 
-
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 
 DEFAULT_SEASON = "2026-27"

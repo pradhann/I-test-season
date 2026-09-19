@@ -21,7 +21,7 @@ from fpl_edge.interfaces.telegram import (
 )
 from fpl_edge.interfaces.testing import SEASON, seed_warehouse
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 NOW = dt.datetime(2026, 8, 18, 22, 50, tzinfo=UTC)
 
 #: The user's real private chat, as configured in .env. Hardcoded here rather

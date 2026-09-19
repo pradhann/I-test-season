@@ -22,7 +22,7 @@ from fpl_edge.intel.items import IntelKind
 from fpl_edge.intel.store import IntelStore
 from fpl_edge.store import DEFAULT_DB, Warehouse
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 DEFAULT_SEASON = "2026-27"
 
 app = typer.Typer(no_args_is_help=True, help="News, press conferences and tactical signals.")

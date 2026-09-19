@@ -37,7 +37,6 @@ RUN mkdir -p /app/fpl_edge && touch /app/fpl_edge/__init__.py \
  && pip install --no-cache-dir /app
 
 COPY fpl_edge /app/fpl_edge
-COPY fpl_mcp /app/fpl_mcp
 COPY scripts /app/scripts
 RUN pip install --no-cache-dir --no-deps /app
 
@@ -74,7 +73,6 @@ WORKDIR /app
 
 COPY --from=build /opt/venv /opt/venv
 COPY fpl_edge /app/fpl_edge
-COPY fpl_mcp /app/fpl_mcp
 COPY scripts /app/scripts
 COPY docs /app/docs
 COPY pyproject.toml /app/pyproject.toml

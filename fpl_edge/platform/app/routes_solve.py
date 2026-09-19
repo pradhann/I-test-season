@@ -34,10 +34,30 @@ from fpl_edge.platform.users import (
 )
 
 
+def _jobs_dir_for(db_path: Path) -> Path:
+    """Where this app's solve logs and status file go.
+
+    Beside the warehouse the solve is running against, so an app built on a
+    seeded tmp warehouse writes its run log there. It used to be
+    ``solve_runner.JOBS_DIR`` unconditionally, which is the repo's own
+    ``data/warehouse/jobs/``: a test that reached POST /api/solve started a
+    real solver and left its log and status file in the checkout. The default
+    warehouse still resolves to JOBS_DIR, so the path is unchanged in
+    production.
+    """
+    from fpl_edge.platform.solve_runner import JOBS_DIR
+    from fpl_edge.store.warehouse import DEFAULT_DB
+
+    if db_path == DEFAULT_DB or db_path.resolve() == JOBS_DIR.parent / DEFAULT_DB.name:
+        return JOBS_DIR
+    return db_path.parent / "jobs"
+
+
 def _solve_router(deps: Deps) -> APIRouter:
     """Starting a solve, its status, and the two persisted plan artefacts."""
 
     db_path = deps.db_path
+    jobs_dir = _jobs_dir_for(db_path)
     router = APIRouter()
 
     @router.post("/api/solve")
@@ -76,13 +96,14 @@ def _solve_router(deps: Deps) -> APIRouter:
                 solve_runner.normalise_options(options)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return JSONResponse(solve_runner.start(mode, options=options))
+        return JSONResponse(
+            solve_runner.start(mode, jobs_dir=jobs_dir, options=options))
 
     @router.get("/api/solve/status")
     def get_solve_status() -> JSONResponse:
         from fpl_edge.platform import solve_runner
 
-        return JSONResponse(solve_runner.status())
+        return JSONResponse(solve_runner.status(jobs_dir=jobs_dir))
 
     @router.get("/api/solve/plan")
     def get_solve_plan(

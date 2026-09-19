@@ -54,7 +54,7 @@ from fpl_edge.intel.items import (
     value_duty_change,
 )
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 SOURCE = "fpl_api:bootstrap-static"
 

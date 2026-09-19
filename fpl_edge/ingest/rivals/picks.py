@@ -50,8 +50,8 @@ def _ts(value: str | None) -> dt.datetime | None:
         return None
     parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
     if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=dt.timezone.utc)
-    return parsed.astimezone(dt.timezone.utc)
+        return parsed.replace(tzinfo=dt.UTC)
+    return parsed.astimezone(dt.UTC)
 
 
 def parse_picks(
@@ -179,7 +179,7 @@ def ingest_picks(
     told 404, which on a 600-manager pool is 600 wasted requests for a fact the
     fixture list already tells us for free.
     """
-    now = now or dt.datetime.now(dt.timezone.utc)
+    now = now or dt.datetime.now(dt.UTC)
     live = [gw for gw in sorted(gws) if gw in deadlines and deadlines[gw] <= now]
     skipped_future = len(gws) - len(live)
 

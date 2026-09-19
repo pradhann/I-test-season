@@ -8,9 +8,9 @@ fails loudly rather than silently guessing.
 
 from fpl_edge.rules.loader import (
     Rule,
+    RuleNotFoundError,
     RuleRegistry,
     UnverifiedRuleError,
-    RuleNotFoundError,
     rules,
 )
 

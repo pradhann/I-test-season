@@ -44,7 +44,8 @@ otherwise would be the more dishonest option.
 from __future__ import annotations
 
 import datetime as dt
-from dataclasses import dataclass, field as _field
+from dataclasses import dataclass
+from dataclasses import field as _field
 from typing import Any
 
 import numpy as np
@@ -265,7 +266,7 @@ def build_live_world(
 
     deadline = snap.deadline(str(season), int(gw))
     if deadline.tzinfo is None:
-        deadline = deadline.replace(tzinfo=dt.timezone.utc)
+        deadline = deadline.replace(tzinfo=dt.UTC)
     n_field = int(field_size or _registry_total_players())
 
     forecaster = OwnershipForecaster(

@@ -99,7 +99,7 @@ from fpl_edge.ingest.odds import (
     odds_freshness,
     refresh_odds_api,
 )
-from fpl_edge.store import Warehouse
+from fpl_edge.store import DEFAULT_DB, Warehouse
 
 #: The season this engine is currently playing. Odds for it come from
 #: fixtures.csv until football-data publishes the completed-season file.
@@ -143,10 +143,10 @@ def _incomplete(stages: dict[str, str]) -> list[str]:
     )
 
 
-def _next_deadline(season: str) -> dt.datetime | None:
+def _next_deadline(season: str, db: str) -> dt.datetime | None:
     """The next deadline in ``dim_event``, read from a copy: no lock taken."""
     try:
-        with Warehouse.read_copy() as wh:
+        with Warehouse.read_copy(db) as wh:
             got = wh.sql(
                 "SELECT min(deadline_utc) AS d FROM dim_event "
                 "WHERE season = ? AND deadline_utc > ?",
@@ -159,10 +159,10 @@ def _next_deadline(season: str) -> dt.datetime | None:
         return None
 
 
-def _freshness(season: str) -> dict[str, Any]:
+def _freshness(season: str, db: str) -> dict[str, Any]:
     """Per-market age of ``fact_odds``. Read-only, from a copy."""
     try:
-        with Warehouse.read_copy() as wh:
+        with Warehouse.read_copy(db) as wh:
             return freshness_summary(odds_freshness(wh, season=season))
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": f"{type(exc).__name__}: {exc}", "markets": []}
@@ -171,6 +171,11 @@ def _freshness(season: str) -> dict[str, Any]:
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
+    # --db is explicit rather than implied by the default, because this
+    # script is a settlement step and the chain that runs it already knows
+    # which database it is writing.
+    ap.add_argument("--db", default=str(DEFAULT_DB),
+                    help=f"warehouse to read and write (default {DEFAULT_DB})")
     ap.add_argument("--history", nargs="*", metavar="SEASON",
                     help="completed seasons to backfill, e.g. 2024-25 2025-26")
     ap.add_argument("--fixtures", action="store_true",
@@ -237,11 +242,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "started_utc": dt.datetime.now(dt.UTC).isoformat(),
         "season": args.season,
         "stages": stages,
-        "freshness_before": _freshness(args.season),
+        "freshness_before": _freshness(args.season, args.db),
     }
 
     if {"history", "fixtures"} & set(requested):
-        with Warehouse() as wh, TextFetcher(
+        with Warehouse(args.db) as wh, TextFetcher(
             "odds_football_data", base_url=FOOTBALL_DATA_BASE
         ) as fetcher:
             if args.history:
@@ -263,7 +268,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             summary["odds_api"] = _run_odds_api(args, stages, failures)
 
     if args.match_fixtures:
-        with _stage(stages, "match_fixtures"), Warehouse.read_copy() as wh:
+        with _stage(stages, "match_fixtures"), Warehouse.read_copy(args.db) as wh:
             m = match_fixture_keys(wh, args.match_fixtures, dt.datetime.now(dt.UTC))
             matched = int(m["fixture_id"].notna().sum())
             summary["match_fixtures"] = {
@@ -272,7 +277,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                               for _, r in m[m["fixture_id"].isna()].head(10).iterrows()],
             }
 
-    summary["freshness_after"] = _freshness(args.season)
+    summary["freshness_after"] = _freshness(args.season, args.db)
     summary["incomplete_stages"] = _incomplete(stages)
     summary["failures"] = failures
     return summary
@@ -326,7 +331,7 @@ def _run_odds_api(
     out: dict[str, Any] = {"max_credits": args.max_credits}
 
     if args.max_age_hours is not None:
-        fresh = odds_api_markets_fresh(args.season, args.max_age_hours)
+        fresh = odds_api_markets_fresh(args.season, args.max_age_hours, args.db)
         out["age_gate"] = fresh
         if fresh["fresh"]:
             stages["odds_api"] = (
@@ -336,7 +341,7 @@ def _run_odds_api(
 
     horizon = None
     if not args.no_horizon:
-        deadline = _next_deadline(args.season)
+        deadline = _next_deadline(args.season, args.db)
         if deadline is not None:
             horizon = deadline + HORIZON_AFTER_DEADLINE
             out["horizon_utc"] = horizon.isoformat()
@@ -344,7 +349,7 @@ def _run_odds_api(
 
     if args.dry_run:
         from fpl_edge.ingest.odds import ingest_odds_api_gameweek
-        with Warehouse.read_copy() as wh:
+        with Warehouse.read_copy(args.db) as wh:
             report = ingest_odds_api_gameweek(
                 wh, args.season, api_key=secret("ODDS_API_KEY"),
                 regions=args.regions, max_monthly_credits=args.max_credits,
@@ -359,6 +364,7 @@ def _run_odds_api(
     report = refresh_odds_api(
         args.season, api_key=secret("ODDS_API_KEY"), regions=args.regions,
         max_monthly_credits=args.max_credits, horizon=horizon,
+        db_path=args.db,
     )
     out.update(
         events=report.events,
@@ -387,7 +393,8 @@ def _run_odds_api(
     return out
 
 
-def odds_api_markets_fresh(season: str, max_age_hours: float) -> dict[str, Any]:
+def odds_api_markets_fresh(season: str, max_age_hours: float,
+                           db: str = str(DEFAULT_DB)) -> dict[str, Any]:
     """Is every market this ingest writes younger than ``max_age_hours``?
 
     The gate that makes a nightly top-up idempotent and cheap. Only the markets
@@ -404,7 +411,7 @@ def odds_api_markets_fresh(season: str, max_age_hours: float) -> dict[str, Any]:
 
     written = [MARKET_H2H, MARKET_TOTALS, MARKET_CLEAN_SHEET, MARKET_ANYTIME_SCORER]
     try:
-        with Warehouse.read_copy() as wh:
+        with Warehouse.read_copy(db) as wh:
             rows = odds_freshness(wh, season=season, markets=written)
     except Exception as exc:  # noqa: BLE001 - unreadable freshness never skips
         return {"fresh": False, "reason": f"{type(exc).__name__}: {exc}"}

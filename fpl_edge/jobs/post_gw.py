@@ -38,6 +38,7 @@ Design rules:
 
 from __future__ import annotations
 
+import argparse
 import datetime as dt
 import json
 import subprocess
@@ -46,6 +47,9 @@ import time
 import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from fpl_edge.pipelines import contracts
+from fpl_edge.store import DEFAULT_DB
 
 LOG_DIR = Path("data/warehouse/jobs")
 
@@ -65,6 +69,9 @@ class StepResult:
     ok: bool
     seconds: float
     detail: str = ""
+    #: True when the step exited 0 with nothing on stdout or stderr. See
+    #: :data:`fpl_edge.pipelines.contracts.NO_OUTPUT`.
+    quiet: bool = False
 
 
 @dataclass
@@ -104,10 +111,12 @@ def _run(report: JobReport, name: str, argv: list[str]) -> None:
             argv, capture_output=True, text=True, timeout=1800, check=False,
         )
         ok = proc.returncode == 0
-        tail = (proc.stdout + proc.stderr).strip().splitlines()[-3:]
+        lines = (proc.stdout + proc.stderr).strip().splitlines()
+        quiet = ok and not lines
         report.steps.append(StepResult(
             name=name, ok=ok, seconds=round(time.monotonic() - t0, 1),
-            detail=" | ".join(tail)[-400:],
+            detail=contracts.NO_OUTPUT if quiet else " | ".join(lines[-3:])[-400:],
+            quiet=quiet,
         ))
     except Exception:  # noqa: BLE001 - the report is the error channel
         report.steps.append(StepResult(
@@ -183,7 +192,40 @@ def notify_failures(
     return f"alert: enqueued {title!r}; {flush.render()}"
 
 
-def settlement_steps(py: str) -> list[tuple[str, list[str]]]:
+#: How many gameweeks past the next one the nightly projection pull covers.
+#: The same horizon the T-30h task uses (``pipelines/tasks.py``).
+PROJECTION_HORIZON_GWS = 5
+
+
+def next_gameweek(db: str | Path, *, season: str = contracts.SEASON,
+                  now: dt.datetime | None = None) -> int | None:
+    """The gameweek this chain is settling into, or None when it cannot tell.
+
+    The projections CLI defaults ``--first-gw`` to 1, and LiveFPL publishes
+    predicted effective ownership per gameweek at ``predictedEOs/{gw}.json``.
+    The GW1 file has been frozen at 599 elements since the season opened, so
+    a nightly run with no ``--first-gw`` re-read that same file every night
+    and the current gameweek's predicted EO never arrived (agent PF1).
+
+    None rather than a raise: a warehouse this process cannot read is a
+    reason to run the step the way it ran before, not a reason to fail a
+    seventeen-step chain before its first step.
+    """
+    try:
+        from fpl_edge.ingest.projections.cli import _next_gw
+        from fpl_edge.store import Warehouse
+
+        moment = now or dt.datetime.now(dt.UTC)
+        with Warehouse.read_copy(db) as wh:
+            return _next_gw(wh, season, moment)
+    except Exception:  # noqa: BLE001 - an unreadable calendar is not a failure
+        return None
+
+
+def settlement_steps(py: str, db: str | Path = DEFAULT_DB,
+                     *, first_gw: int | str | None = None,
+                     last_gw: int | str | None = None,
+                     ) -> list[tuple[str, list[str]]]:
     """THE ordered settlement chain, as (name, argv) rows.
 
     This list is the single source of truth for both execution paths during
@@ -194,21 +236,33 @@ def settlement_steps(py: str) -> list[tuple[str, list[str]]]:
     settlement and scoring before the crawls and reports that read them --
     and stays a flat sequence in one process because DuckDB permits exactly
     one writer.
+
+    Every step names the database. A step that opened a bare ``Warehouse()``
+    wrote to ``DEFAULT_DB`` whatever database the chain was actually running
+    against, which is the same defect ``fixture_ratings_refit`` hit when a
+    unit test rebuilt the real artefact.
     """
+    db = str(db)
+    projections = [py, "-m", "fpl_edge.ingest.projections.cli", "ingest",
+                   "--db", db]
+    if first_gw is not None:
+        if last_gw is None:
+            last_gw = int(first_gw) + PROJECTION_HORIZON_GWS
+        projections += ["--first-gw", str(first_gw), "--last-gw", str(last_gw)]
     return [
-        ("ingest_live", [py, "scripts/ingest_live.py"]),
-        ("ingest_odds_fixtures", [py, "scripts/ingest_odds.py", "--fixtures"]),
+        ("ingest_live", [py, "scripts/ingest_live.py", "--db", db]),
+        ("ingest_odds_fixtures",
+         [py, "scripts/ingest_odds.py", "--fixtures", "--db", db]),
         # Settle finished gameweeks into fact_player_fixture -- the audit's
         # highest-leverage gap: without this the current season never gets
         # actuals, so projection_weight can never be earned and claims are
         # never scored. A still-provisional gameweek is refused by its own
         # gate and retried on the next run.
-        ("settle_results", [py, "-m", "fpl_edge.ingest.results"]),
+        ("settle_results", [py, "-m", "fpl_edge.ingest.results", "--db", db]),
         # Providers publish on their own clocks (AIrsenal twice daily, fplform
         # hourly upstream); fetching only at T-30h left the strip amber all
         # week. Nightly + T-30h gives every feed at most a day of staleness.
-        ("ingest_projections",
-         [py, "-m", "fpl_edge.ingest.projections.cli", "ingest"]),
+        ("ingest_projections", projections),
         # The projection calibration loop, deliberately right behind
         # settlement: score every provider's pre-deadline projections against
         # the gameweek that just settled, then refit projection_weight from
@@ -217,7 +271,8 @@ def settlement_steps(py: str) -> list[tuple[str, list[str]]]:
         # pairs are skipped -- and honest before settlement: with nothing
         # settled it reports pending and writes nothing, so the weights table
         # can never hold opinions.
-        ("score_projections", [py, "-m", "fpl_edge.eval.projection_scoring"]),
+        ("score_projections",
+         [py, "-m", "fpl_edge.eval.projection_scoring", "--db", db]),
         # Refit team strength now that results have landed and cache what the
         # fixtures panels read: the club attack/defence split, the blended
         # per-fixture difficulty and the calibration, three parquets beside the
@@ -228,7 +283,8 @@ def settlement_steps(py: str) -> list[tuple[str, list[str]]]:
         # merged into platform/scripts/fixtures/build.py, which had been
         # fitting the same model over the same warehouse separately.
         ("fixture_ratings_build",
-         [py, "-m", "fpl_edge.platform.scripts.fixtures", "--build"]),
+         [py, "-m", "fpl_edge.platform.scripts.fixtures", "--build",
+          "--db", db]),
         # The nightly odds top-up. Two things here were an outage until
         # 2026-08-28.
         #
@@ -249,12 +305,14 @@ def settlement_steps(py: str) -> list[tuple[str, list[str]]]:
         #    covered the week, and a real refresh in a quiet one -- about
         #    twice a week, 24 credits.
         ("ingest_odds_props",
-         [py, "scripts/ingest_odds.py", "--odds-api", "--max-age-hours", "48"]),
-        ("track_ideas", [py, "-m", "fpl_edge.cli.main", "idea", "track"]),
+         [py, "scripts/ingest_odds.py", "--odds-api", "--max-age-hours", "48",
+          "--db", db]),
+        ("track_ideas",
+         [py, "-m", "fpl_edge.cli.main", "idea", "track", "--db", db]),
         ("score_creators",
-         [py, "-m", "fpl_edge.ingest.content.pipeline", "score"]),
+         [py, "-m", "fpl_edge.ingest.content.pipeline", "--db", db, "score"]),
         ("ingest_content",
-         [py, "-m", "fpl_edge.ingest.content.pipeline", "ingest",
+         [py, "-m", "fpl_edge.ingest.content.pipeline", "--db", db, "ingest",
           "--backfill-days", "3"]),
         # Budget raised 400 -> 900 on 2026-08-27. At 400 this step spent its
         # entire allowance on the history sweep every single night --
@@ -276,12 +334,14 @@ def settlement_steps(py: str) -> list[tuple[str, list[str]]]:
         # for a finished gameweek are cached forever, so steady-state spend
         # is far below this.
         ("crawl_elite",
-         [py, "-m", "fpl_edge.ingest.rivals.crawl", "--budget", "1100"]),
+         [py, "-m", "fpl_edge.ingest.rivals.crawl", "--budget", "1100",
+          "--db", db]),
         # The named elite (Crellin et al.): verified IDs, full picks +
         # transfer history. Cheap (~4 requests per manager) and cached, so a
         # re-run after a crash costs almost nothing.
         ("crawl_elite_named",
-         [py, "-m", "fpl_edge.ingest.rivals.elite", "--budget", "200"]),
+         [py, "-m", "fpl_edge.ingest.rivals.elite", "--budget", "200",
+          "--db", db]),
         # Deepen the top-of-overall sample by 300 entries a night toward the
         # full top-10k. Resumable by construction: finished-gameweek picks
         # are cached forever, so only the new tail costs requests, and the
@@ -304,26 +364,32 @@ def settlement_steps(py: str) -> list[tuple[str, list[str]]]:
         # even on a completely cold cache.
         ("crawl_top10k_sample",
          [py, "-m", "fpl_edge.ingest.rivals.top1k", "--grow", "300",
-          "--budget", "1200", "--transfers-top", "300"]),
-        ("intel", [py, "-m", "fpl_edge.intel.cli", "collect"]),
-        ("retro_report", [py, "scripts/retro_report.py"]),
-        ("weekly_idea_report", [py, "scripts/weekly_idea_report.py"]),
+          "--budget", "1200", "--transfers-top", "300", "--db", db]),
+        ("intel", [py, "-m", "fpl_edge.intel.cli", "collect", "--db", db]),
+        ("retro_report", [py, "scripts/retro_report.py", "--db", db]),
+        ("weekly_idea_report",
+         [py, "scripts/weekly_idea_report.py", "--db", db]),
     ]
 
 
-def main() -> int:
+def main(argv_in: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description="the post-gameweek settlement chain")
+    ap.add_argument("--db", default=str(DEFAULT_DB),
+                    help=f"warehouse every step settles (default {DEFAULT_DB})")
+    args = ap.parse_args(argv_in)
     py = sys.executable
-    report = JobReport(started_utc=dt.datetime.now(dt.timezone.utc).isoformat())
+    report = JobReport(started_utc=dt.datetime.now(dt.UTC).isoformat())
 
-    for name, argv in settlement_steps(py):
+    for name, argv in settlement_steps(py, args.db,
+                                       first_gw=next_gameweek(args.db)):
         _run(report, name, argv)
 
     # Every step has run and released the write lock by now, so this is the
     # safe point to take it for the one row the alert needs.
-    report.alert = notify_failures(report)
+    report.alert = notify_failures(report, db_path=args.db)
 
     LOG_DIR.mkdir(parents=True, exist_ok=True)
-    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ")
     out = LOG_DIR / f"post_gw_{stamp}.json"
     out.write_text(report.to_json())
     print(report.to_json())

@@ -24,8 +24,8 @@ import datetime as dt
 import json
 import os
 import re
-from pathlib import Path
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 import typer

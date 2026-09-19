@@ -27,7 +27,7 @@ from fpl_edge.interfaces.ideas import IdeaStatus
 from fpl_edge.interfaces.store import IdeaRegistry
 from fpl_edge.store import Warehouse
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 #: A section renders itself from (warehouse, season, gw, as_of) and returns
 #: markdown-ish plain text. Returning None does NOT omit the section: the

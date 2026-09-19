@@ -4,7 +4,7 @@ import datetime as dt
 
 import pytest
 
-from fpl_edge.types import Deadline, Money, Position, selling_price, GwId
+from fpl_edge.types import Deadline, GwId, Money, Position, selling_price
 
 
 def test_position_rejects_manager_element_type() -> None:
@@ -40,5 +40,5 @@ def test_deadline_must_be_utc_aware() -> None:
     with pytest.raises(ValueError, match="not UTC"):
         Deadline(GwId(1), dt.datetime(2026, 8, 21, 17, 30,
                                       tzinfo=dt.timezone(dt.timedelta(hours=1))))
-    ok = Deadline(GwId(1), dt.datetime(2026, 8, 21, 17, 30, tzinfo=dt.timezone.utc))
+    ok = Deadline(GwId(1), dt.datetime(2026, 8, 21, 17, 30, tzinfo=dt.UTC))
     assert ok.gw == 1

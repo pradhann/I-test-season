@@ -75,7 +75,7 @@ from fpl_edge.types import GwId, PlayerCode, Season
 
 log = logging.getLogger("fpl_edge.inbox")
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 DEFAULT_SEASON = Season("2026-27")
 

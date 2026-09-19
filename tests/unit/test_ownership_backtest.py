@@ -17,7 +17,7 @@ import pytest
 from fpl_edge.models.ownership import baselines, build_card, panel
 from fpl_edge.models.ownership.backtest import loso_coldstart, loso_inseason
 from fpl_edge.models.ownership.drift import fit_coldstart, fit_inseason
-from fpl_edge.models.ownership.elite import EliteSample, ElitePicksSampler
+from fpl_edge.models.ownership.elite import ElitePicksSampler, EliteSample
 from fpl_edge.models.ownership.model import MEASURED_PATH
 from fpl_edge.models.ownership.simulate import simulate_field
 

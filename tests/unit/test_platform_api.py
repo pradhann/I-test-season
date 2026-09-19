@@ -415,6 +415,7 @@ def test_bad_solve_options_are_a_400_and_spawn_nothing(client, monkeypatch):
 
 def test_transfer_plan_route_resolves_names_and_judges_freshness(client, tmp_path, monkeypatch):
     import json as _json
+
     # _TRANSFER_PLAN_PATH moved with _transfer_plan into app/routes_solve.py;
     # patching it on the package would patch a name nothing reads.
     from fpl_edge.platform.app import routes_solve as app_mod

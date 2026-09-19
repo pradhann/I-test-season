@@ -13,14 +13,13 @@ backtest that can see the future measures nothing.
 
 from __future__ import annotations
 
-import datetime as dt
 import enum
 from dataclasses import dataclass, field, replace
 from typing import Protocol
 
-from fpl_edge.eval.scoring import Chip, GwScore, Outcome, Pick, score_gameweek
+from fpl_edge.eval.scoring import Chip, GwScore, Pick
 from fpl_edge.rules import rules
-from fpl_edge.store import Snapshot, Warehouse
+from fpl_edge.store import Snapshot
 from fpl_edge.types import GwId, Money, Season, selling_price
 
 

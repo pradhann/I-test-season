@@ -13,7 +13,7 @@ import pytest
 
 from fpl_edge.store import ConflictingFactError, LeakageError, Warehouse
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 
 def T(day: int, hour: int = 12) -> dt.datetime:

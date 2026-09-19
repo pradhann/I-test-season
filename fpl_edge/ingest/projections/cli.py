@@ -328,7 +328,8 @@ def _ingest_rotowire(warehouse: Warehouse, store: ProjectionStore, season: str,
         fetched_at=got.fetched_at, sha256=got.sha256,
         body_path=str(got.body_path), http_status=got.http_status,
     )
-    entries = rotowire.parse_lineups(got.body)
+    unpublished: list[str] = []
+    entries = rotowire.parse_lineups(got.body, unpublished)
     snap = warehouse.snapshot_at(got.fetched_at)
     teams = snap.table("dim_team", where="season = ?", params=[season])
     short_to_code = dict(zip(teams["short_name"], teams["team_code"].astype(int)))
@@ -361,11 +362,21 @@ def _ingest_rotowire(warehouse: Warehouse, store: ProjectionStore, season: str,
     starters = int(rows["predicted_start"].sum()) if not rows.empty else 0
     if not unresolved.empty:
         print("  rotowire unresolved names:", unresolved.head(12).to_dict("records"))
+    # Named per fixture, never as the run's status: the rest of the page is
+    # real data and a fixture Rotowire has not predicted is not this run
+    # failing. See rotowire.parse_lineups.
+    note = ""
+    if unpublished:
+        note = ("no predicted XI published for "
+                + ", ".join(sorted(unpublished)))[:400]
+        print("  rotowire", note)
     return StepResult(
         provider="rotowire", ok=True, rows=n, parsed=len(entries),
-        unresolved=len(unresolved),
+        unresolved=len(unresolved), note=note,
         detail=(f"HTTP {got.http_status}, {len({e.team_abbr for e in entries})} "
-                f"team sheets for GW{gw}, {starters} starters"),
+                f"team sheets for GW{gw}, {starters} starters"
+                + (f", {len(unpublished)} fixture side(s) not published yet"
+                   if unpublished else "")),
     )
 
 

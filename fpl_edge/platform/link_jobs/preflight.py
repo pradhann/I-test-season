@@ -16,16 +16,17 @@ Split out of the 1,700-line ``fpl_edge/platform/link_jobs.py``
 """
 
 from __future__ import annotations
+
 import datetime as dt
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
 from fpl_edge.store.warehouse import DEFAULT_DB
 
-
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 
 STAGES: tuple[str, ...] = ("fetch", "preview", "transcribe", "analyse", "attribute")

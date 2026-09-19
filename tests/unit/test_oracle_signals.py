@@ -17,7 +17,7 @@ from fpl_edge.oracle.signals import (
     aggregate,
 )
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 T0 = dt.datetime(2026, 8, 20, 12, tzinfo=UTC)
 DEADLINE = dt.datetime(2026, 8, 21, 17, 30, tzinfo=UTC)
 

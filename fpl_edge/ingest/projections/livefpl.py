@@ -100,7 +100,7 @@ def fetch(kind: str, *, gw: int = 1, client: object | None = None,
     client = client or httpx.Client(
         timeout=60.0, headers={"User-Agent": USER_AGENT}, follow_redirects=True
     )
-    fetched_at = dt.datetime.now(dt.timezone.utc)
+    fetched_at = dt.datetime.now(dt.UTC)
     try:
         resp = client.get(url)  # type: ignore[union-attr]
     finally:

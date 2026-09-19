@@ -13,13 +13,14 @@ archive that has no business near a remote.
 
 from __future__ import annotations
 
+import argparse
 import datetime as dt
 import html
 import subprocess
 from pathlib import Path
 
 from fpl_edge.interfaces.bias import review as run_review
-from fpl_edge.store import Warehouse
+from fpl_edge.store import DEFAULT_DB, Warehouse
 
 
 def _owner():
@@ -264,12 +265,19 @@ def publish(page: str, gw: int) -> str:
     return f"committed and pushed {out.name}"
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
+    # --db is explicit rather than implied by the default, because this script
+    # is a settlement step and the chain that runs it already knows which
+    # database it is reporting on.
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--db", default=str(DEFAULT_DB),
+                    help=f"warehouse to read (default {DEFAULT_DB})")
+    args = ap.parse_args(argv)
     # A writer, not a read copy: the review path runs the idea-registry
     # migration on entry, which a read-only database refuses. The queries are
     # quick and the settlement job is sequential, so briefly holding the
     # writer is fine.
-    with Warehouse() as wh:
+    with Warehouse(args.db) as wh:
         finished = wh.sql(
             "SELECT coalesce(max(gw), 0) AS g FROM fact_player_fixture WHERE season = ?",
             [SEASON],

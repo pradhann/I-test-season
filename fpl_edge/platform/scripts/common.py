@@ -17,7 +17,7 @@ import pandas as pd
 
 from fpl_edge.platform.query import guarded_query
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 SEASON_DEFAULT = "2026-27"
 
 #: The projection artefact `make solve` writes. Panels read it rather than

@@ -6,7 +6,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from fpl_edge.platform import panels as panels_mod
@@ -22,6 +22,30 @@ from fpl_edge.platform.registry import (
 from fpl_edge.platform.registry import describe_all as describe_scripts
 from fpl_edge.platform.users import UserContext, current_user
 
+#: The health fields an anonymous caller sees. AUTH.md row 1: every other
+#: field on that payload describes this deployment's own infrastructure, and
+#: ``warehouse`` is a filesystem path on the host.
+PUBLIC_HEALTH_FIELDS = ("ok", "now")
+
+
+def caller_tiers(request: Request) -> frozenset[str]:
+    """Which tiers the caller of ``request`` meets.
+
+    Read from the session the auth dependency already resolved onto the
+    request, so the catalogue and the enforcement answer from one fact. An
+    app built without ``install_auth`` has no session and no sign-in
+    configured, which ``anon_is_owner`` answers as the operator, exactly as
+    it does for the CLI and the tests.
+    """
+    from fpl_edge.platform.auth import policy, settings
+
+    session = getattr(getattr(request, "state", None), "auth_session", None)
+    return policy.tiers_allowed(
+        signed_in=session is not None,
+        is_operator=bool(session is not None and session.user.is_operator),
+        anon_is_owner=settings.anon_is_owner(),
+    )
+
 
 def _core_router(deps: Deps) -> APIRouter:
     """Health, the deadline clock, the panel registry, the script runner and
@@ -31,7 +55,7 @@ def _core_router(deps: Deps) -> APIRouter:
     router = APIRouter()
 
     @router.get("/api/health")
-    def health() -> JSONResponse:
+    def health(request: Request) -> JSONResponse:
         """Railway's healthcheck target, and the operator's one-glance page.
 
         503 when the volume is absent or unwritable, the warehouse file is
@@ -87,8 +111,17 @@ def _core_router(deps: Deps) -> APIRouter:
         else:
             payload["scheduler"] = scheduler.state.to_dict()
 
-        return JSONResponse(payload,
-                            status_code=200 if payload["ok"] else 503)
+        status = 200 if payload["ok"] else 503
+        from fpl_edge.platform.auth.policy import ANONYMOUS
+
+        if caller_tiers(request) == frozenset({ANONYMOUS}):
+            # AUTH.md row 1. The status code is unchanged, so Railway's
+            # healthcheck still reads the same signal. What the anonymous
+            # body loses is the warehouse path, the boot report, the
+            # migration list and the scheduler state, which describe this
+            # deployment rather than whether it is serving.
+            payload = {k: payload[k] for k in PUBLIC_HEALTH_FIELDS}
+        return JSONResponse(payload, status_code=status)
 
     @router.get("/api/deadline")
     def deadline() -> dict[str, Any]:
@@ -115,10 +148,28 @@ def _core_router(deps: Deps) -> APIRouter:
             return {"deadline_utc": None, "reason": f"{type(exc).__name__}: {exc}"}
 
     @router.get("/api/panels")
-    def get_panels() -> dict[str, Any]:
+    def get_panels(request: Request) -> dict[str, Any]:
+        """The catalogue, filtered to what this caller may actually run.
+
+        AUTH.md 6.2 rule 2: an anonymous visitor's UI must not render a tab
+        that 401s on click. The tiers are enforced already; this is the
+        payload catching up with them, so a name the caller cannot run is
+        absent rather than listed and then refused.
+        """
+        from fpl_edge.platform.auth.policy import OPERATOR, SCRIPT_TIERS
+
+        tiers = caller_tiers(request)
+
+        def allowed(name: str) -> bool:
+            # An unclassified script is operator only, the same fail-closed
+            # answer auth/routes.py gives an unclassified route.
+            return SCRIPT_TIERS.get(name, OPERATOR) in tiers
+
         return {
-            "panels": panels_mod.describe_all(),
-            "scripts": describe_scripts(),
+            "panels": [p for p in panels_mod.describe_all()
+                       if allowed(p["script"])],
+            "scripts": [row for row in describe_scripts()
+                        if allowed(row["name"])],
             "repo_sha": repo_sha(),
         }
 

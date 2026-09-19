@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 
 from fpl_edge.types import GwId, PlayerCode, Season
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 
 class IdeaKind(enum.StrEnum):

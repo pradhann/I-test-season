@@ -11,8 +11,8 @@ worthless in a way that produces excellent-looking numbers.
 from __future__ import annotations
 
 import datetime as dt
-import pathlib
 import json
+import pathlib
 import sys
 from pathlib import Path
 
@@ -30,7 +30,7 @@ def _load(name: str):
     return json.loads((FIXTURES / name).read_text())
 
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 AS_OF = dt.datetime(2026, 8, 19, 12, 0, tzinfo=UTC)
 DEADLINE_GW3 = dt.datetime(2026, 9, 12, 10, 0, tzinfo=UTC)
 
@@ -196,6 +196,7 @@ def test_the_same_pair_twice_in_one_gameweek_is_two_rows_not_a_crash():
     df = parse_transfers(46827, body, season="2026-27", deadlines=DEADLINES)
     assert len(df) == 3
     import tempfile
+
     from fpl_edge.ingest.rivals.schema import migrate
     with tempfile.TemporaryDirectory() as td:
         wh = Warehouse(pathlib.Path(td) / "t.duckdb")

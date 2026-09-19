@@ -12,10 +12,11 @@ unchanged.
 """
 
 from __future__ import annotations
+
 import datetime as dt
+
 from fpl_edge.ingest.content.resolve import SeasonResolvers
 from fpl_edge.store import Warehouse
-
 
 UTC = dt.UTC
 

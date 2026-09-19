@@ -27,7 +27,7 @@ from typing import Callable
 
 import pandas as pd
 
-from fpl_edge.eval.replay import Decision, SquadState, Strategy
+from fpl_edge.eval.replay import Decision, SquadState
 from fpl_edge.eval.scoring import Chip, Pick
 from fpl_edge.rules import rules
 from fpl_edge.store import Snapshot

@@ -189,15 +189,16 @@ class QuestionRouter:
     # -- handlers --------------------------------------------------------------
 
     def _now(self) -> dt.datetime:
-        return dt.datetime.now(dt.timezone.utc)
+        return dt.datetime.now(dt.UTC)
 
     def _snapshot(self):
         return self.wh.snapshot_at(self._now())
 
     def _projection(self):
         """The cached per-player simulation artefact, or None with a reason."""
-        import pandas as pd
         from pathlib import Path
+
+        import pandas as pd
 
         p = Path("data/warehouse/gw1_projection.parquet")
         if not p.exists():
@@ -310,7 +311,7 @@ class QuestionRouter:
         png = squad_pitch_png(
             starters, bench,
             title=f"{self.user.display_name or 'entry ' + str(self.entry_id)}"
-                  f" — {self.season} GW{state.gw}",
+                  f", {self.season} GW{state.gw}",
             subtitle=f"bank {bank} · source: {src}",
         )
         return Answer("\n".join(lines), images=[("team.png", png)])

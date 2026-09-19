@@ -33,7 +33,7 @@ from fpl_edge.intel.bootstrap import parse_news_added
 from fpl_edge.intel.items import IntelItem, IntelKind, content_id
 from fpl_edge.store import Warehouse
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 SOURCE = "fpl_api:bootstrap-static"
 

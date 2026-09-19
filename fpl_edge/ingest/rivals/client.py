@@ -214,7 +214,7 @@ class RivalsFetcher(Fetcher):
         if entry is None:
             return None
         fetched_at = dt.datetime.fromisoformat(entry["fetched_at"])
-        age = (dt.datetime.now(dt.timezone.utc) - fetched_at).total_seconds()
+        age = (dt.datetime.now(dt.UTC) - fetched_at).total_seconds()
         status = int(entry["http_status"])
         ttl = MISSING_TTL_S if status == 404 else _ttl(kind)
         if age > ttl and not self.offline:
@@ -291,7 +291,7 @@ class RivalsFetcher(Fetcher):
 
             url = f"{self.base_url}/{endpoint.lstrip('/')}"
             resp = self._get(url, params)
-            fetched_at = dt.datetime.now(dt.timezone.utc)
+            fetched_at = dt.datetime.now(dt.UTC)
 
             if resp.status_code == 404:
                 got = Fetched(

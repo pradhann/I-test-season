@@ -22,7 +22,7 @@ import fpl_edge.platform.scripts  # noqa: F401  (registers all five)
 from fpl_edge.platform.registry import registered, run_script, script
 from fpl_edge.store.warehouse import Warehouse
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 ALL_SCRIPTS = ["squad_overview", "projection_table", "fixture_board",
                "price_radar", "idea_registry"]
@@ -270,7 +270,7 @@ def test_market_watch_reads_the_derived_odds_nobody_else_did(tmp_path) -> None:
     """
     db = tmp_path / "m.duckdb"
     wh = Warehouse(db)
-    T = dt.datetime(2026, 8, 20, 12, tzinfo=dt.timezone.utc)
+    T = dt.datetime(2026, 8, 20, 12, tzinfo=dt.UTC)
     wh.append("dim_team", pd.DataFrame([
         {"season": "2026-27", "team_code": 3, "team_id": 1, "name": "Arsenal",
          "short_name": "ARS", "as_of": T},

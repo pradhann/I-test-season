@@ -12,7 +12,7 @@ rule registry at call time rather than hardcoded.
 from __future__ import annotations
 
 import enum
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 
 from fpl_edge.rules import rules
 from fpl_edge.types import Position

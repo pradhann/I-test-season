@@ -30,7 +30,7 @@ from fpl_edge.intel.items import IntelItem
 from fpl_edge.intel.store import IntelStore
 from fpl_edge.store import Warehouse
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 DEFAULT_HISTORY = ("2022-23", "2023-24", "2024-25", "2025-26")
 

@@ -23,14 +23,14 @@ from fpl_edge.config import ENV_PATH, USER
 from fpl_edge.myteam.forecast import PointsForecastUnavailableError, TablePointsForecast
 from fpl_edge.myteam.manual import build_draft, reconcile
 from fpl_edge.myteam.recommend import NoSquadError, recommend
-from fpl_edge.myteam.sources import AuthenticatedEndpointError, PublicEntryClient
-from fpl_edge.myteam.state import PlayerIndex, Provenance, reconstruct
+from fpl_edge.myteam.sources import PublicEntryClient
+from fpl_edge.myteam.state import PlayerIndex, reconstruct
 from fpl_edge.myteam.store import DEFAULT_ROOT, MyTeamStore, NoSuchDraftError
 from fpl_edge.opt import ObjectiveMode
 from fpl_edge.opt.interfaces import RankUtilityUnavailableError
 from fpl_edge.store import DEFAULT_DB, Warehouse
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 DEFAULT_SEASON = "2026-27"
 
 app = typer.Typer(

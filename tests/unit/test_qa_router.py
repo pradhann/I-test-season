@@ -8,8 +8,6 @@ THIS suite pins is the contract the Telegram bot depends on.
 
 from __future__ import annotations
 
-import re
-
 import pytest
 
 from fpl_edge.interfaces.qa import Answer, QuestionRouter
@@ -117,11 +115,10 @@ def test_handler_failure_is_reported_not_swallowed() -> None:
 
 def test_bot_sends_photos_for_answers_with_images(tmp_path) -> None:
     """End to end through the real bot: a routed answer ships its images."""
+    import fpl_edge.interfaces.qa as qa
     from fpl_edge.interfaces.inbox import IdeaInbox
     from fpl_edge.interfaces.telegram import FakeTransport, TelegramConfig, build_bot
     from fpl_edge.store import Warehouse
-    import fpl_edge.interfaces.telegram as tg
-    import fpl_edge.interfaces.qa as qa
 
     wh = Warehouse(tmp_path / "t.duckdb")
     cfg = TelegramConfig(token="x", allowed_chat_ids=frozenset({7}))
@@ -158,7 +155,7 @@ def _seeded_wh(tmp_path):
     from fpl_edge.store import Warehouse
     from fpl_edge.types import Position
 
-    UTC = dt.timezone.utc
+    UTC = dt.UTC
     t0 = dt.datetime(2026, 8, 1, tzinfo=UTC)
     wh = Warehouse(tmp_path / "qa.duckdb")
     layout = ([(Position.GKP, 2), (Position.DEF, 5), (Position.MID, 5), (Position.FWD, 3)])
@@ -198,7 +195,7 @@ def _real_state(wh):
     from fpl_edge.myteam.state import MyTeamState, Provenance
     from fpl_edge.types import GwId, Position
 
-    snap = wh.snapshot_at(dt.datetime(2026, 8, 20, tzinfo=dt.timezone.utc))
+    snap = wh.snapshot_at(dt.datetime(2026, 8, 20, tzinfo=dt.UTC))
     frame = snap.players("2026-27").sort_values("code")
     by_pos = {p: frame[frame["position"] == p]["code"].tolist() for p in (1, 2, 3, 4)}
     order = (by_pos[1][:1] + by_pos[2][:4] + by_pos[3][:4] + by_pos[4][:2]
@@ -211,7 +208,7 @@ def _real_state(wh):
     )
     return MyTeamState(
         entry_id=4490171, season="2026-27", gw=GwId(1),
-        as_of=dt.datetime(2026, 8, 20, tzinfo=dt.timezone.utc),
+        as_of=dt.datetime(2026, 8, 20, tzinfo=dt.UTC),
         picks=picks, bought_at={p.code: 50 for p in picks}, bank_tenths=250,
         free_transfers=1, provenance=Provenance.MANUAL,
     )

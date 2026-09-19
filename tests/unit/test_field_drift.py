@@ -35,7 +35,7 @@ from tests.unit.field_fixtures import (
     toy,
 )
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 POSITIONS = (1, 2, 3, 4)
 
 

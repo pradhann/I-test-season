@@ -32,7 +32,7 @@ from fpl_edge.theses.resolve import resolve_theses
 from fpl_edge.theses.scoreboard import source_weights
 from fpl_edge.theses.store import ThesesStore
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 SEASON = "2026-27"
 T0 = dt.datetime(2026, 8, 1, 12, tzinfo=UTC)
 GW1_DEADLINE = dt.datetime(2026, 8, 21, 17, 30, tzinfo=UTC)

@@ -23,7 +23,7 @@ from fpl_edge.ingest.projections.store import ProjectionStore
 from fpl_edge.platform.registry import run_script
 from fpl_edge.store.warehouse import Warehouse
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 SEASON = "2026-27"
 T0 = pd.Timestamp("2026-08-01 12:00", tz="UTC")
 

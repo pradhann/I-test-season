@@ -42,7 +42,7 @@ import fpl_edge.platform.scripts  # noqa: F401  (registers the creator scripts)
 from fpl_edge.platform.registry import registered, run_script, script
 from fpl_edge.store.warehouse import Warehouse
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 SEASON = "2026-27"
 
 NOW = dt.datetime.now(UTC)

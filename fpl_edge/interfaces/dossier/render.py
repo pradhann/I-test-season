@@ -10,17 +10,50 @@ Section 3 and Section 4 row 18).
 """
 
 from __future__ import annotations
+
 import datetime as dt
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from fpl_edge.interfaces.dossier.load import (
+    DEFAULT_HISTORY,
+    DEFAULT_SEASON,
+    PROJECTION_PATH,
+    UTC,
+    _Ctx,
+    _load_fixtures,
+    _load_intel,
+    _load_ownership,
+    _load_projection,
+    _load_rates,
+    resolve,
+)
+from fpl_edge.interfaces.dossier.sections import (
+    EXPECTED,
+    Section,
+    _availability,
+    _creators,
+    _defensive,
+    _disagreement,
+    _elite,
+    _fixtures,
+    _gap,
+    _identity,
+    _minutes,
+    _odds,
+    _ownership,
+    _press,
+    _price,
+    _projection,
+    _rates,
+    _set_pieces,
+    _tactical,
+)
 from fpl_edge.interfaces.ideas import CandidateMatch, Clarification
 from fpl_edge.store import DEFAULT_DB, Warehouse
 from fpl_edge.types import Position
-
-from fpl_edge.interfaces.dossier.load import DEFAULT_HISTORY, DEFAULT_SEASON, PROJECTION_PATH, UTC, _Ctx, _load_fixtures, _load_intel, _load_ownership, _load_projection, _load_rates, resolve
-from fpl_edge.interfaces.dossier.sections import EXPECTED, Section, _availability, _creators, _defensive, _disagreement, _elite, _fixtures, _gap, _identity, _minutes, _odds, _ownership, _press, _price, _projection, _rates, _set_pieces, _tactical
 
 
 @dataclass(frozen=True, slots=True)

@@ -39,8 +39,8 @@ FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "projections"
 SEASON = "2026-27"
 
 #: One minute after the GW5 deadline, which is when the scheduled run fired.
-FETCHED_AT = dt.datetime(2026, 9, 18, 17, 31, tzinfo=dt.timezone.utc)
-EARLY = dt.datetime(2026, 9, 1, 5, 0, tzinfo=dt.timezone.utc)
+FETCHED_AT = dt.datetime(2026, 9, 18, 17, 31, tzinfo=dt.UTC)
+EARLY = dt.datetime(2026, 9, 1, 5, 0, tzinfo=dt.UTC)
 
 #: The clubs on the archived lineups page, with their FPL team codes.
 CLUBS = (("ARS", 3, "Arsenal"), ("COV", 9, "Coventry"),
@@ -67,7 +67,7 @@ def _fixture_rows(gw: int, pairs: tuple[tuple[int, int], ...],
                   first_id: int) -> list[dict[str, object]]:
     return [
         {"season": SEASON, "fixture_id": first_id + i, "gw": gw,
-         "kickoff_utc": dt.datetime(2026, 9, 19, 14, 0, tzinfo=dt.timezone.utc),
+         "kickoff_utc": dt.datetime(2026, 9, 19, 14, 0, tzinfo=dt.UTC),
          "home_team_code": home, "away_team_code": away, "finished": False,
          "home_score": None, "away_score": None, "as_of": EARLY}
         for i, (home, away) in enumerate(pairs)
@@ -86,13 +86,13 @@ def warehouse(tmp_path):
     ]))
     wh.append("dim_event", pd.DataFrame([
         {"season": SEASON, "gw": 4,
-         "deadline_utc": dt.datetime(2026, 9, 12, 12, 30, tzinfo=dt.timezone.utc),
+         "deadline_utc": dt.datetime(2026, 9, 12, 12, 30, tzinfo=dt.UTC),
          "as_of": EARLY},
         {"season": SEASON, "gw": 5,
-         "deadline_utc": dt.datetime(2026, 9, 18, 17, 30, tzinfo=dt.timezone.utc),
+         "deadline_utc": dt.datetime(2026, 9, 18, 17, 30, tzinfo=dt.UTC),
          "as_of": EARLY},
         {"season": SEASON, "gw": 6,
-         "deadline_utc": dt.datetime(2026, 10, 10, 10, 0, tzinfo=dt.timezone.utc),
+         "deadline_utc": dt.datetime(2026, 10, 10, 10, 0, tzinfo=dt.UTC),
          "as_of": EARLY},
     ]))
     wh.append("dim_player", pd.DataFrame([

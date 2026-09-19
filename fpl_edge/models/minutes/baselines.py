@@ -18,12 +18,6 @@ from fpl_edge.models.minutes.base import BaseMinutesModel, normalise
 from fpl_edge.models.minutes.training import TrainingSet
 
 
-def _onehot(y: np.ndarray) -> np.ndarray:
-    out = np.zeros((len(y), 3))
-    out[np.arange(len(y)), y] = 1.0
-    return out
-
-
 def _log_loss(y: np.ndarray, p: np.ndarray) -> float:
     p = normalise(p)
     return float(-np.log(p[np.arange(len(y)), y]).mean())

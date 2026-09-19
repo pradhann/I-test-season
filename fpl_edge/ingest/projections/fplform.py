@@ -97,7 +97,7 @@ def fetch_csv(
     client = client or httpx.Client(
         timeout=90.0, headers={"User-Agent": USER_AGENT}, follow_redirects=True
     )
-    fetched_at = dt.datetime.now(dt.timezone.utc)
+    fetched_at = dt.datetime.now(dt.UTC)
     try:
         resp = client.post(  # type: ignore[union-attr]
             url,

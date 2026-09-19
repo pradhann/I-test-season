@@ -39,7 +39,7 @@ of a recommendation made under it says so.
 from __future__ import annotations
 
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 
 import numpy as np
@@ -54,9 +54,11 @@ from fpl_edge.opt import (
     ObjectiveMode,
     OptimizerConfig,
     Ruleset,
-    SquadState as OptSquadState,
     build_problem,
     solve_horizon,
+)
+from fpl_edge.opt import (
+    SquadState as OptSquadState,
 )
 from fpl_edge.opt.interfaces import RankUtilityUnavailableError
 from fpl_edge.store import Snapshot

@@ -43,7 +43,6 @@ from fpl_edge.myteam.private import (
     StaleSessionError,
 )
 from fpl_edge.myteam.sources import BASE
-from fpl_edge.platform.users import owner_context
 from fpl_edge.myteam.tokens import (
     AuthNotConfiguredError,
     RefreshRefusedError,
@@ -52,6 +51,7 @@ from fpl_edge.myteam.tokens import (
     jwt_expiry,
     jwt_payload,
 )
+from fpl_edge.platform.users import owner_context
 
 #: The one-line answer to "why is it so hard". Shown verbatim by the UI.
 WHY_HARD = (

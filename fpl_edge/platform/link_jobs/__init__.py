@@ -7,28 +7,30 @@ Three modules::
     runner.py     the job machine the API drives
 
 This file re-exports the surface the single ``link_jobs.py`` module had, so
-``fpl_edge/platform/app.py`` and ``tests/unit/test_link_jobs.py`` import
-unchanged (ARCHITECTURE_REVIEW.md Section 4 row 17).
+``fpl_edge/platform/app/routes_content.py``, ``app/helpers.py`` and
+``tests/unit/test_link_jobs.py`` import unchanged (ARCHITECTURE_REVIEW.md
+Section 4 row 17). ``platform/app.py`` was the importer named here until that
+module became the ``app/`` package in the same refactor.
 """
 
 from fpl_edge.platform.link_jobs.preflight import (
     ASR_RATE,
     CAPTION_RATE,
-    LinkRefused,
     MIN_SUBSTANTIVE_CHARS,
     PREVIEW_TTL,
-    Preflight,
     STAGES,
     UTC,
+    LinkRefused,
+    Preflight,
     preflight,
 )
 from fpl_edge.platform.link_jobs.runner import (
     JOB_TTL,
-    JobAlreadyFinished,
     LINK_JOBS_DIR,
+    REPO_ROOT,
+    JobAlreadyFinished,
     LinkJobs,
     NotAwaitingDecision,
-    REPO_ROOT,
     UnknownJob,
 )
 from fpl_edge.platform.link_jobs.take import (

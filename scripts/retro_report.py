@@ -7,6 +7,7 @@ page traces to a measured source; sections with no data say so.
 
 from __future__ import annotations
 
+import argparse
 import datetime as dt
 import html
 import json
@@ -117,7 +118,7 @@ def interval_chart(rows: list[dict], *, w=680) -> str:
     return "".join(out)
 
 
-def build() -> str:
+def build(db: str | None = None) -> str:
     now = dt.datetime.now(dt.timezone.utc)
 
     # -- backtests -------------------------------------------------------------
@@ -159,9 +160,9 @@ def build() -> str:
         ]
 
     # -- warehouse state ---------------------------------------------------------
-    from fpl_edge.store import Warehouse
+    from fpl_edge.store import DEFAULT_DB, Warehouse
 
-    with Warehouse.read_copy() as wh:
+    with Warehouse.read_copy(db or DEFAULT_DB) as wh:
         def count(sql: str) -> int:
             try:
                 return int(wh.sql(sql).iloc[0, 0])
@@ -300,8 +301,17 @@ faking it. Full methodology: docs/ in the repo.</p>
 </main>"""
 
 
-def main() -> None:
-    OUT.write_text(build())
+def main(argv: list[str] | None = None) -> None:
+    # --db is explicit rather than implied by the default, because this script
+    # is a settlement step and the chain that runs it already knows which
+    # database it is reporting on.
+    from fpl_edge.store import DEFAULT_DB
+
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--db", default=str(DEFAULT_DB),
+                    help=f"warehouse to read (default {DEFAULT_DB})")
+    args = ap.parse_args(argv)
+    OUT.write_text(build(args.db))
     print(f"wrote {OUT} ({OUT.stat().st_size:,} bytes)")
 
 
