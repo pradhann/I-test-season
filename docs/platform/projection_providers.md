@@ -297,9 +297,23 @@ OUT/QUES/SUS list.
 
 Two refusals are hard-wired: a team sheet that does not parse to exactly eleven
 starters aborts the whole page, and every `(home, away)` pair on the page is
-checked against `fact_fixture` for the target gameweek — Rotowire shows "the
-next matchday", which a midweek cup slate or a blank GW would desynchronise
-from the next FPL gameweek.
+checked against `fact_fixture` for the gameweek being written.
+
+The gameweek is read off the page rather than off the clock. Rotowire shows
+"the next matchday", which is the round about to be played and stays up until
+its last match finishes, so anything that targets "the first gameweek whose
+deadline is still ahead" is a round in front of the page for the whole of a
+matchday. `resolve_gameweek()` takes the gameweek whose `fact_fixture` rows
+contain every fixture on the page: containment rather than equality, because
+Rotowire drops a fixture once it has kicked off. An ordered `(home, away)` pair
+occurs once in a 38-gameweek season, so a partial page still names one round. A
+page whose fixtures are in no single gameweek, or in more than one, records
+`no_source` with the reason and writes nothing.
+
+Nothing about the deadline is consulted, so a round already under way maps to
+its own gameweek and lands with `as_of` at the fetch instant. The
+point-in-time read is what keeps a team sheet seen after kickoff out of a
+pre-deadline decision.
 
 **Premier Injuries** — `GET /injury-table.php`. `tr.heading` names the club;
 the `tr.sub-head` that follows carries the `team_<id>` class; every
@@ -318,6 +332,20 @@ ownership files are **effective** ownership (ownership × captain multiplier),
 so exactly one player exceeds 1.0 and each file sums to ~12. Clipping to 1
 would destroy the information the files exist to carry; the parser
 range-checks instead.
+
+None of the files says which season its `element_id`s belong to, so
+`fit_season()` asks the ids. Seasons are ranked by mismatched-id count (the
+symmetric difference), and a season is accepted when its mismatch is at most
+10% of the ids in play, the file's and the season's together. The denominator
+is the union rather than the file because these files publish subsets: on
+2026-09-18 `predictedEOs/1.json` carried element_ids 1 to 599 exactly while
+FPL's element space had reached 659, so all 60 mismatches were 2026-27 players
+the file omits. Against the file that is 10.02% and the ingest refused a file
+it had identified correctly; against the 659 ids in play it is 9.1%, and the
+next-best season is 23% away. Only a season that passes that threshold counts
+as a rival in the 3x margin test that follows. The step's ledger note carries
+the per-file counts, so a file's coverage shrinking is visible before it
+becomes a refusal.
 
 ---
 
