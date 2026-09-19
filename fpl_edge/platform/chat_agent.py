@@ -151,6 +151,25 @@ DISALLOWED_TOOLS: tuple[str, ...] = (
     "BashOutput", "KillShell",
 )
 
+#: The fallback-disclosure rule, held as its own constant so a test can pin
+#: the words and so the rule is readable without reading the whole charter.
+#: The panels are the only data path the browser and this agent share; `query`
+#: reaches the same warehouse with none of a panel's rules applied, so an
+#: answer that swapped one for the other is a different kind of answer and
+#: says so on its first line.
+PANEL_FALLBACK_RULE = (
+    "PANEL FAILURES ARE DISCLOSED AT THE TOP. If any panel tool you called "
+    "for this answer returned ok:false, or you answered from `query` because "
+    "a panel tool failed or refused, the FIRST line of your answer is "
+    "\"panels that failed: <tool>(<error type>), ...\" followed by one "
+    "sentence on what you used instead. This line goes above everything, "
+    "including a ```doc block's title, and it is never moved to the end or "
+    "softened into a caveat. A raw SQL answer standing in for a panel is "
+    "reading the warehouse without the panel's own rules, so the reader has "
+    "to know before the numbers, not after them. When every panel you needed "
+    "answered, write no such line."
+)
+
 CHARTER = (
     "You are the FPL edge engine's analyst. Answer with data from your tools "
     "only. For any chart, use python_viz (real matplotlib under the house "
@@ -160,6 +179,15 @@ CHARTER = (
     "A claim you cannot attach to a tool result does not go in the answer. "
     "When the data does not support a recommendation, say which query you "
     "ran and what it returned, and stop there.\n"
+    # A panel is the only path the browser and the engine share. When one
+    # raises and the agent answers from raw SQL instead, the numbers come
+    # from a different read of the warehouse with none of the panel's rules
+    # applied, and on 2026-09-19 that produced a whole plan built on the GW4
+    # squad lock after three my-team tools failed on a stale parameter. The
+    # answer read as confident and was wrong about which fifteen it owned.
+    # The banner is the header, not a closing caveat, because a reader who
+    # stops at the recommendation has to have seen it.
+    + PANEL_FALLBACK_RULE + "\n"
     "When an answer is a REPORT -- a deadline brief, a multi-player "
     "comparison, a transfer plan, anything the owner would keep or share -- "
     "wrap that report in a fenced block starting ```doc and ending ``` : "

@@ -506,9 +506,17 @@ export default async function home(host) {
                        el("b", null, mv.in.name));
           main.appendChild(strip);
         }
-        if (n.gain_over_roll != null)
-          numBits.push(`${fmtSigned(n.gain_over_roll, 1)} xPts vs rolling`
-            + `, ${fcName(brief?.solve?.plan)}`);
+        if (n.gain_over_roll != null) {
+          // The unit is the payload's own sentence, printed verbatim beside
+          // the number. "14.35" bare is what a manager was asked to act on,
+          // and the chat agent measured the same transfer at +0.88 by summing
+          // the XI for one gameweek. Two right answers to two questions, so
+          // the number says which one it answers. Fallback only when the plan
+          // serves no unit (an artefact written before the field existed).
+          const unit = brief?.solve?.plan?.gain_over_roll_unit;
+          numBits.push(`${fmtSigned(n.gain_over_roll, 1)} `
+            + or(unit, `xPts vs rolling, ${fcName(brief?.solve?.plan)}`));
+        }
         if (n.optimality_gap_pct != null)
           numBits.push(`${fmt1(n.optimality_gap_pct)}% gap`);
         if (n.age_hours != null) numBits.push(oldPhrase(n.age_hours));
@@ -559,6 +567,7 @@ export default async function home(host) {
         put("no move named: no plan stands and nothing cleared a gate");
         break;
       case "solver_plan_captain":
+      case "consensus_captain_over_solver":
       case "mean_xpts_captain": {
         // no solver plan stands: the line is the best XI's own top three,
         // each with its consensus number and its opponent, and a lead under
@@ -598,7 +607,9 @@ export default async function home(host) {
         // reads as two independent confirmations of it.
         {
           let solverX = null;
-          if (ln.rule === "solver_plan_captain") solverX = n.pick_solver_xpts;
+          if (ln.rule === "solver_plan_captain"
+              || ln.rule === "consensus_captain_over_solver")
+            solverX = n.pick_solver_xpts;
           const same = solverX != null && n.pick_xpts != null
             && Math.abs(solverX - n.pick_xpts) < 0.05;
           if (same) {
@@ -613,6 +624,34 @@ export default async function home(host) {
             if (n.pick_xpts != null)
               numBits.push(`consensus ${fmt1(n.pick_xpts)} xPts`);
           }
+        }
+        /* The row named by the OTHER voice, on every captain line that has
+           one. Before this the payload carried consensus_captain_code and
+           consensus_captain_xpts and the view printed only the delta, so the
+           dashboard asserted an armband without ever naming the number the
+           providers put against it. Both directions are printed, because the
+           row leads with whichever the precedence chose and the reader still
+           has to see what it was chosen over. */
+        if (n.consensus_captain_code != null) {
+          const who = or(playerIndex.get(n.consensus_captain_code)?.name,
+            String(n.consensus_captain_code));
+          numBits.push(`consensus captain ${who}`
+            + when(n.consensus_captain_xpts != null,
+                   ` ${fmt1(n.consensus_captain_xpts)} xPts`));
+        }
+        if (n.solver_captain_code != null) {
+          const who = or(playerIndex.get(n.solver_captain_code)?.name,
+            String(n.solver_captain_code));
+          numBits.push(`solver picked ${who}`
+            + when(n.solver_captain_solver_xpts != null,
+                   ` ${fmt1(n.solver_captain_solver_xpts)} xPts on its own `
+                   + `forecast`)
+            + when(n.solver_captain_xpts != null,
+                   `, ${fmt1(n.solver_captain_xpts)} consensus`)
+            + when(n.consensus_lead_over_solver != null,
+                   `, ${fmt1(n.consensus_lead_over_solver)} behind`
+                   + when(n.divergence_gate != null,
+                          ` (gate ${n.divergence_gate})`)));
         }
         if (n.pick_p_haul != null && haulFresh)
           numBits.push(`${Math.round(n.pick_p_haul * 100)}% haul odds`
@@ -737,7 +776,19 @@ export default async function home(host) {
         const stale = hdr.free_transfers_state === "stale"
           || hdr.free_transfers_state === "missing";
         const ftTxt = pick(stale, "?", String(hdr.free_transfers));
-        const ft = el("span", null, `${ftTxt} free transfer(s)`
+        /* WHERE the count comes from, on the row. The header read 2 and the
+           solver read 1 on 2026-09-19 and neither said why: one was FPL's own
+           my-team limit, the other the accrual reconstruction. The source is
+           now served, so the page prints the word rather than a bare count,
+           and an unconnected account reads as reconstructed. */
+        const src = hdr.free_transfers_source;
+        const srcTxt = pick(src === "account",
+          "from your FPL account",
+          pick(src === "accrual",
+            "reconstructed from transfer history; connect your FPL account "
+              + "on the Account tab for the game's own count",
+            "source not served"));
+        const ft = el("span", null, `${ftTxt} free transfer(s), ${srcTxt}`
           + when(stale, `, the plan's count is ${hdr.free_transfers_state}`));
         ft.title = "from the solver plan"
           + when(hdr.free_transfers_as_of, ` · read ${hdr.free_transfers_as_of}`);
@@ -1878,7 +1929,9 @@ export default async function home(host) {
         line.appendChild(el("b", null,
           `${fmtSigned(plan.gain_over_roll, 1)} xPts`));
         line.appendChild(document.createTextNode(
-          ` over ${hSpan} vs rolling, ${fcName(plan)}`));
+          " " + or(plan.gain_over_roll_unit,
+                   `over ${hSpan} vs rolling, ${fcName(plan)}`)
+                  .replace(/^xPts /, "")));
         let gapTxt = "closed within tolerance";
         if (plan.optimality_gap_pct != null)
           gapTxt = `${fmt1(plan.optimality_gap_pct)}% optimality gap`;
@@ -1947,8 +2000,13 @@ export default async function home(host) {
         det.appendChild(el("summary", null,
           "beat: " + alts.map(a => a.summary).join(" · ")));
         for (const a of alts) {
+          // The gain is the row's point. An objective total alone (263.1
+          // against a winner's 271.5) is a number with no baseline on the
+          // page, which is why these rows read as empty stubs.
           det.appendChild(el("p", "sv-altrow",
             a.summary
+            + when(a.gain_over_roll != null,
+                   `; ${fmtSigned(a.gain_over_roll, 1)} vs rolling`)
             + when(a.objective != null,
                    `; ${fmt1(a.objective)} ${or(plan.objective_mode, "")}`
                    + ` (solver currency)`)

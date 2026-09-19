@@ -147,6 +147,17 @@ class MyTeamState:
     free_transfers: int
     chips_used: tuple[tuple[Chip, GwId], ...] = ()
     provenance: Provenance = Provenance.NONE
+    #: Where ``free_transfers`` came from. ``"account"`` is FPL's own
+    #: ``my-team`` transfers limit, read with the manager's session, which is
+    #: the game's answer and not an inference. ``"accrual"`` is this engine's
+    #: reconstruction from transfer history by the accrual rule.
+    #:
+    #: The two can disagree, and on 2026-09-19 they did: the dashboard header
+    #: read 2 off a plan solved while the account was connected and the solver
+    #: read 1 off a reconstruction, with nothing on either surface saying which
+    #: was which. The count now travels with its source everywhere it is
+    #: printed.
+    free_transfers_source: str = "accrual"
 
     #: Manager-level facts straight off /api/entry/.
     team_name: str = ""
@@ -273,9 +284,12 @@ class MyTeamState:
             f"{self.season}, entering GW{self.gw}. Squad source: {self.provenance.value}.",
         ]
         if self.picks:
+            ft_src = ("from your account"
+                      if self.free_transfers_source == "account"
+                      else "reconstructed from transfer history")
             lines.append(
                 f"15 players, bank {self.bank}, "
-                f"{self.free_transfers} free transfer(s), "
+                f"{self.free_transfers} free transfer(s) ({ft_src}), "
                 f"{self.total_transfers_this_entry} transfer(s) made this season."
             )
         else:
@@ -694,8 +708,16 @@ def reconstruct(
             derived.append("bank (no deadline has passed, so the full budget is unspent)")
 
     # -- free transfers ------------------------------------------------------
+    # The account's own count wins when the session read it. FPL's my-team
+    # payload states the transfers limit outright; this code fetched it
+    # (private.py's ``free_transfers``) and then reconstructed the number
+    # anyway, so the one surface that could have been authoritative agreed with
+    # the guess only by luck. The accrual ledger still runs and still reports
+    # its checks, because a disagreement between the game and the rule is worth
+    # seeing; it just no longer decides.
     ledger = derive_free_transfers(history, up_to_gw=last_played)
     free_transfers = int(ledger.entering.get(target_gw, 1))
+    free_transfers_source = "accrual"
     if last_played >= 1:
         derived.append("banked free transfers (accrual rule; checked against hits paid)")
         checks.extend(ledger.checks)
@@ -704,6 +726,21 @@ def reconstruct(
             "free transfers (none banked: transfers before the first deadline are "
             "unlimited, so GW1 has no free-transfer count)"
         )
+    if private is not None and private.free_transfers is not None:
+        observed_ft = int(private.free_transfers)
+        if observed_ft != free_transfers:
+            checks.append(LedgerCheck(
+                name="free_transfers",
+                derived=str(free_transfers),
+                observed=str(observed_ft),
+                ok=False,
+                note=("FPL's my-team limit and the accrual reconstruction "
+                      "disagree; the account's number is used."),
+            ))
+        free_transfers = observed_ft
+        free_transfers_source = "account"
+        derived = [d for d in derived if not d.startswith(("banked free transfers",
+                                                           "free transfers"))]
 
     # -- squad value cross-check --------------------------------------------
     state = MyTeamState(
@@ -715,6 +752,7 @@ def reconstruct(
         bought_at=bought_at,
         bank_tenths=bank,
         free_transfers=free_transfers,
+        free_transfers_source=free_transfers_source,
         chips_used=chips_used_from(history),
         provenance=provenance,
         team_name=entry.name,

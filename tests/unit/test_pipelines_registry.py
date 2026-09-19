@@ -804,3 +804,92 @@ def test_forecast_refresh_commits_the_consensus_currency(tmp_path, monkeypatch):
     assert "solve" in argv and "--forecast-only" in argv
     assert argv[argv.index("--forecast-source") + 1] == "consensus"
     assert argv[argv.index("--horizon") + 1] == "5"
+
+
+# -- auto_resolve -----------------------------------------------------------
+
+
+def _write_meta(tmp_path, source):
+    import json
+
+    (tmp_path / "forecast.meta.json").write_text(
+        json.dumps({"forecast_source": source, "rows": 2390}))
+
+
+def test_auto_resolve_runs_the_dashboards_own_solve_on_the_consensus(
+        tmp_path, monkeypatch):
+    """The dashboard opened onto a 266-hour-old plan solved for a gameweek
+    already played, so a manager's first act was to press Re-solve. This task
+    runs exactly what that button runs, with the dashboard's own flags: no
+    chip and no hit in the headline, because both are the owner's decision."""
+    seen: list[list[str]] = []
+
+    def capture(name, argv, *, timeout=None):
+        seen.append(argv)
+        return contracts.Step(name=name, ok=True, seconds=1.0, detail="done")
+
+    monkeypatch.setattr(registry, "run_step", capture)
+    _write_meta(tmp_path, "consensus")
+    result = registry.run_auto_resolve(_ctx(tmp_path))
+
+    assert result.outcome == "quiet"
+    (argv,) = seen
+    assert "recommend" in argv and "--commit" in argv
+    assert "--no-chips" in argv
+    assert argv[argv.index("--max-hits") + 1] == "0"
+
+
+def test_auto_resolve_refuses_to_solve_on_the_engine_currency(
+        tmp_path, monkeypatch):
+    """The 2026-09-19 defect in one line. The engine model ran about 40 hot
+    against the providers, so a plan solved on it captained a 4.5 percent
+    owned midfielder the consensus ranked thirtieth while every other surface
+    on the page showed the consensus. An engine-denominated forecast is a
+    reason not to run, not a currency to run in, and a refusal is no_source
+    rather than an error because nothing went wrong."""
+    def boom(*a, **k):
+        raise AssertionError("no solve may run without a consensus forecast")
+
+    monkeypatch.setattr(registry, "run_step", boom)
+    _write_meta(tmp_path, "engine")
+    result = registry.run_auto_resolve(_ctx(tmp_path))
+
+    assert result.outcome == "no_source"
+    assert "engine" in result.detail and "forecast_refresh" in result.detail
+
+
+def test_auto_resolve_without_a_forecast_sidecar_is_a_named_gap(
+        tmp_path, monkeypatch):
+    def boom(*a, **k):
+        raise AssertionError("no solve may run without a forecast sidecar")
+
+    monkeypatch.setattr(registry, "run_step", boom)
+    result = registry.run_auto_resolve(_ctx(tmp_path))
+
+    assert result.outcome == "no_source"
+    assert "forecast.meta.json" in result.detail
+    assert "forecast_refresh" in result.detail
+
+
+def test_auto_resolve_fires_after_the_deadline_not_before_it(tmp_path):
+    """DeadlineRelative counts hours BEFORE a deadline, so this is the one
+    task in the registry with a negative offset. 26 hours, because the solve
+    is worth nothing until post_gw_settlement (10:30 UTC) and
+    forecast_refresh (11:30 UTC) have both run since the deadline, and the
+    gap between consecutive firings of a daily task is 24 hours."""
+    task = registry.by_id("auto_resolve")
+    assert task is not None
+    assert isinstance(task.due, registry.DeadlineRelative)
+    assert task.due.offsets() == (registry.RESOLVE_AFTER_DEADLINE_H,)
+    assert registry.RESOLVE_AFTER_DEADLINE_H < 0
+
+    deadline = dt.datetime(2026, 10, 10, 11, 0, tzinfo=UTC)
+    fired = registry.due_instants(
+        task, [(6, deadline)], deadline + dt.timedelta(hours=27),
+        lookback=dt.timedelta(hours=48))
+    assert [inst for _, inst, _ in fired] == [
+        deadline + dt.timedelta(hours=26)]
+    # and nothing is owed while the deadline is still ahead
+    assert registry.due_instants(
+        task, [(6, deadline)], deadline - dt.timedelta(hours=1),
+        lookback=dt.timedelta(hours=48)) == []

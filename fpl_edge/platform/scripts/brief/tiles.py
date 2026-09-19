@@ -1047,6 +1047,13 @@ def _header_stats(
                            else None),
         "free_transfers_as_of": solve.get("generated_at"),
         "free_transfers_state": solve["state"],
+        # WHICH source the count came from. "account" is FPL's own my-team
+        # limit; "accrual" is the engine's reconstruction from transfer
+        # history. Both are printed as themselves, because a reconstructed 1
+        # standing beside an observed 2 with no label is how the dashboard and
+        # the solver came to disagree in silence on 2026-09-19.
+        "free_transfers_source": (tplan.get("free_transfers_source")
+                                  if tplan is not None else None),
         "bank_tenths": (sq.get("bank_tenths")
                         if not sq.get("empty") else None),
         "chip": chip_val,

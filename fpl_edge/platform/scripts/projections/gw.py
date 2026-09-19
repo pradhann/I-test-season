@@ -445,6 +445,36 @@ def _gw_rows(
     return rows, detail
 
 
+def _add_horizon_sums(
+    rows: list[dict[str, Any]],
+    matrix: dict[str, dict[str, float]],
+    gws: list[int],
+) -> None:
+    """Give every served row the sum of its matrix cells over the served gws.
+
+    The browser has always computed this: ``xpoints.js`` reduces ``res.matrix``
+    over the selected gameweek chips into the ``sum`` column, so the number a
+    manager reads off the Projections tab exists only in the page. An API or
+    MCP caller asking the same panel the same question got one gameweek and had
+    to re-derive the horizon, which is the arithmetic that decides a transfer
+    ("Haaland over five" against "Haaland this week").
+
+    Two fields, because a partial sum and a complete one are different facts:
+    ``xp_sum`` adds the cells that exist, and ``xp_sum_gws`` says how many of
+    the served gameweeks contributed. A player the providers cover for three of
+    five gameweeks reads 3, not 5, and nothing is filled in for the other two.
+    The browser treats a missing cell as zero, so the two sums agree wherever
+    coverage is complete; where it is not, the count here says so and the
+    browser's total does not.
+    """
+    keys = [str(int(g)) for g in gws]
+    for row in rows:
+        cells = matrix.get(str(int(row["code"])), {})
+        present = [cells[k] for k in keys if cells.get(k) is not None]
+        row["xp_sum"] = round(sum(float(v) for v in present), 3) if present else None
+        row["xp_sum_gws"] = len(present)
+
+
 def _gw_meta(
     wh,
     *,
@@ -685,6 +715,8 @@ def _gw_mode(
     span: int = 5,
     subset: list[str] | None = None,
     weighting: str = "equal",
+    codes: list[int] | None = None,
+    compact: bool = False,
 ) -> dict[str, Any]:
     inputs = _gw_inputs(wh, season=season, gw=gw, source=source, subset=subset,
                         weighting=weighting)
@@ -712,13 +744,25 @@ def _gw_mode(
     gws, settled_gws, actuals, matrix, source_meta, as_of = _gw_meta(
         wh, season=season, gw=gw, consensus=consensus, covered=covered,
         earned=earned, now=now, source=source, span=span, subset=subset)
+    _add_horizon_sums(rows, matrix, gws)
     (prices_as_of, applied, weights_block, provider_accuracy,
      accuracy) = _gw_annotations(
         wh, season=season, gw=gw, consensus=consensus, earned=earned, gws=gws,
         notes=notes, now=now, source=source, source_meta=source_meta,
         subset=subset)
 
-    return {
+    # The code filter runs AFTER the aggregates and the matrix, on purpose:
+    # a request for four players still gets the board's own colour scale, its
+    # coverage counts and its clocks, so nothing about the four reads
+    # differently than it does on the full page.
+    codes_missing: list[int] = []
+    if codes:
+        wanted = {int(c) for c in codes}
+        have = {int(r["code"]) for r in rows}
+        codes_missing = sorted(wanted - have)
+        rows = [r for r in rows if int(r["code"]) in wanted]
+
+    out = {
         "mode": "consensus" if consensus else "source",
         "season": season,
         "gw": gw,
@@ -752,6 +796,36 @@ def _gw_mode(
         "matrix": matrix,
         "notes": notes,
     }
+    if codes:
+        out["codes_not_found"] = codes_missing
+    if not compact:
+        return out
+
+    # The decision fields, and nothing whose only reader is a chart. The MCP
+    # transfer_plan and projections tools both blew the caller's payload cap
+    # on a normal call on 2026-09-19, so the agent answered from raw SQL
+    # instead of from the panel, which is the one thing the panel path exists
+    # to prevent. Every emptied block is named, so a compact payload can never
+    # be mistaken for a panel with no data in it.
+    keep_row = ("code", "name", "pos", "team", "team_code", "price",
+                "own_pct", "status", "xpts", "spread", "p_appear",
+                "n_sources", "xp_sum", "xp_sum_gws")
+    out["rows"] = [{k: r[k] for k in keep_row if k in r} for r in out["rows"]]
+    emptied = {
+        "matrix": {}, "actuals": {}, "by_team": [], "by_position": [],
+        "source_meta": [], "accuracy": [], "weights": None,
+        "provider_accuracy": None, "detail": None,
+    }
+    for key, blank in emptied.items():
+        out[key] = blank
+    out["compact"] = True
+    out["omitted_blocks"] = sorted(emptied)
+    out["notes"] = [*notes,
+                    "compact view: " + ", ".join(sorted(emptied))
+                    + " were omitted. The matrix is where the per-gameweek "
+                      "numbers live; xp_sum on each row is their total over "
+                      "the served gameweeks."]
+    return out
 
 
 def _latest_scores_sql(scope: str = "overall") -> str:

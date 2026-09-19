@@ -30,26 +30,41 @@ STORE = "fpl_edge.platform.solve_runner"
 def transfer_plan(
     season: str = SEASON_DEFAULT,
     horizon: int = 5,
+    view: str = "headline",
 ) -> dict[str, Any]:
     """The committed transfer plan across the horizon, as the Planner draws it.
 
-    Each gameweek's moves with the projected points and the cost of each,
-    against the squad this server was started for. This reads the plan the
-    last solve committed; it does not solve. Start a fresh one with
+    The plan the last solve committed, with its moves, its armband, its
+    alternatives and the currency it was solved in, plus your 15 and their
+    per-gameweek projections. This does not solve. Start a fresh one with
     solve_start when the plan is stale, and the payload says when it was
     written.
+
+    view="headline" is the default and is what you want for a question about
+    the plan: it leaves out the browsable pool of every transferable player,
+    which is thousands of rows and will exceed the payload cap. Ask for
+    view="grid" only when the question is which players to consider, and
+    expect a large answer.
 
     Args:
         season: FPL season, for example "2026-27".
         horizon: How many gameweeks the grid covers, 1 to 10.
+        view: "headline" (the plan and your 15) or "grid" (adds the full
+            candidate pool and its per-gameweek numbers).
 
     Returns:
-        The envelope: result, provenance, budget, and gap when no plan has
-        been solved. If gap is present, quote its reason.
+        The envelope: result, provenance, budget, mode naming the view that
+        answered, and gap when no plan has been solved. If gap is present,
+        quote its reason.
     """
+    if view not in ("headline", "grid"):
+        return refusal(
+            "transfer_plan",
+            f'view must be "headline" or "grid", not {view!r}.',
+        )
     return panel_call("transfer_plan", "planner_grid", {
-        "season": season, "horizon": horizon,
-    })
+        "season": season, "horizon": horizon, "view": view,
+    }, mode=view)
 
 
 @mcp.tool()

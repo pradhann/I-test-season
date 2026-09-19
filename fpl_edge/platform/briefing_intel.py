@@ -102,9 +102,18 @@ WHY_MAX = 280
 #: that alias as if it were a model id. The requested id is now fixed and what
 #: the backend says it ran is recorded beside it.
 MODEL = BRIEFING_MODEL
-#: Wall-clock budget for the one-shot synthesis call. Generous: a large
-#: context read plus an 8-item answer, not an agentic loop.
-MODEL_TIMEOUT_S = 240.0
+#: Wall-clock budget for the one-shot synthesis call.
+#:
+#: 600s, raised from 240s on 2026-09-19. The 240 was not a budget, it was the
+#: normal case plus a minute: the run on 2026-09-18 took 178s at the same
+#: model against the same panels, and the 06:45 UTC run the next morning
+#: failed with "model call timed out after 240s". One slow response from the
+#: backend cost the whole pass, and the pass is one call, so there is nothing
+#: to resume. The cost of waiting longer is a task that occupies its slot for
+#: up to ten minutes; the cost of the tight limit is no briefing at all, and
+#: the duration of every call now rides to the ledger in the spend line so the
+#: real distribution is visible rather than inferred from the failures.
+MODEL_TIMEOUT_S = 600.0
 #: The route flags ``inputs_moved`` past this many hours (spec'd rule).
 INPUTS_MOVED_H = 6.0
 

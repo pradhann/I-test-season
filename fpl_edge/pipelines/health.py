@@ -160,9 +160,17 @@ def describe_due(due: registry.Due) -> str:
             return "weekly" if days == 7 else f"every {days}d"
         return f"every {due.hours:g}h"
     if isinstance(due, DeadlineRelative):
-        rungs = "/".join(f"T-{h:g}h" for h in due.offsets())
-        return (f"{rungs} before each deadline" if len(due.offsets()) == 1
-                else f"deadline ladder {rungs}")
+        # hours_before is signed: a NEGATIVE offset is hours AFTER the
+        # deadline, which is where auto_resolve lives. "T--26h before each
+        # deadline" is not a sentence, so each rung is rendered with the side
+        # of the deadline it falls on.
+        offsets = due.offsets()
+        rungs = "/".join(f"T-{h:g}h" if h >= 0 else f"T+{-h:g}h"
+                         for h in offsets)
+        if len(offsets) > 1:
+            return f"deadline ladder {rungs}"
+        side = "before" if offsets[0] >= 0 else "after"
+        return f"{rungs} {side} each deadline"
     if isinstance(due, OnDemand):
         return "on demand"
     return type(due).__name__

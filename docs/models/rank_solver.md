@@ -222,6 +222,72 @@ different places.
 Under `EXPECTED_POINTS` both matrices **are** `problem.xpts`, so every term is
 unchanged and the mode is behaviourally identical to before.
 
+### What the per-gameweek captain actually optimises
+
+The MILP picks **one captain per gameweek**, not one over the horizon:
+`one_captain_{j}` in `fpl_edge/opt/milp.py:540` constrains the captain binaries
+to sum to 1 for every gameweek `j` independently. A plan that names a single
+armband across five gameweeks is naming the first gameweek's captain; the rest
+are in the plan's own per-gameweek decisions.
+
+The armband term is `(captain_multiplier - 1) * captain[p, gw]`, so the man who
+wins it is the argmax of the `captain` matrix, and that matrix is not xPts. It
+is `mu_p + theta (1 - 2 captain_share_p) sigma_p^2`. Two consequences a reader
+of the dashboard has to know:
+
+* **A player nobody captains gets the full variance credit.** At
+  `captain_share_p = 0` the bracket is `+1`, so all of `theta sigma_p^2` is
+  added. At a share above 50% it turns negative and the same variance is
+  charged. Chasing a rank, that is the intended behaviour: the armband is where
+  the field concentrates hardest, so a differential armband buys more deficit
+  swing per expected point than a differential squad slot.
+* **Doubt raises sigma before it lowers mu.** A player at 75% to appear is a
+  two-outcome bet, blank or haul, which is a larger variance than a certain
+  starter of the same mean. So the flipped-variance term can rank a doubtful,
+  lightly-captained player above a widely-captained certainty whose mean is
+  higher. On 2026-09-19 that was João Pedro (3.99 consensus xPts, 75% to
+  appear, near-zero captaincy share) over B.Fernandes (6.14, the consensus
+  captain). Nothing is wrong with the arithmetic; the pick is what the
+  objective asks for and it needs to be readable as such.
+
+**Appearance probability is already inside the doubling, once.** `mu_p` is the
+row's `xpts`, which is an unconditional expectation: `sem_projections` carries
+`xpts`, `xp_if_appears` and `p_appear` as three columns, and `xpts =
+xp_if_appears * p_appear` holds per provider. Checked against the live
+warehouse on 2026-09-19 (a point-in-time read; the providers republish
+daily): fplform GW6 João Pedro `4.55147 * 0.57141 = 2.60075`, B.Fernandes
+`6.09014 * 0.94265 = 5.74086`, both equal to the `xpts` on the same row.
+`cli/solve.py:163` keeps that unconditional number as `xpts` and puts the
+providers' `p_appear` in `p_play`, a separate column. So doubling `mu_p` is
+doubling `P(plays) * E[points | plays]`, which is the expected armband
+return; multiplying by `p_play` a second time would charge the doubt twice.
+The blank branch is priced separately and exactly, on the vice:
+`P(captain blanks) * captain[vice, gw]`, linearised in
+`fpl_edge/opt/milp.py:769`. The two terms together are
+`E[armband] = mu_cap + (1 - p_play_cap) * mu_vice`, per multiple.
+
+**Open, and not fixed here: the consensus `p_play` is a different average
+from the one inside the consensus `xpts`.**
+`cli/solve.py:consensus_forecast_frame` takes `AVG(p_appear)` over every
+provider that publishes one, while `xpts_mean` averages every provider that
+publishes an expected-points figure, and those are different sets. On
+2026-09-19 João Pedro's `p_appear` mean was 0.440 over three publishers
+(fpl_ep 0.75, fplform 0.571, premierinjuries 0.00) while his `xpts_mean` of
+3.99 averaged four sources whose own appearance assumptions ranged from
+0.571 to none stated. A hard-out 0.00 from one injury feed therefore moves
+`p_play` a long way without moving `xpts` at all. This does not touch the
+captain term, which never reads `p_play`; it does inflate the
+vice-inheritance term for any flagged player. Recorded here rather than
+changed, because picking the right aggregation is a modelling decision.
+
+**Which number the surfaces print.** `transfer_plan.json`'s `chosen` carries
+`captain_xpts` (the solver's own forecast for its captain at the first
+gameweek of the horizon) and `best_xi_captain` (the highest-xPts starter at
+that gameweek on the same forecast, with its number). Both are in the
+forecast's currency, which `forecast_source` names. The dashboard's captain
+row reads them beside the provider consensus so a divergence is arithmetic on
+the page rather than an assertion.
+
 ### The F2 approximation, stated on every plan
 
 The exact relative variance of a squad is `(w - e)^T Sigma_x (w - e)` —

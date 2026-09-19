@@ -115,8 +115,12 @@ def test_alternatives_are_capped_at_five():
     art = _serialize(_rec(n_alternatives=9))
     assert len(art["alternatives"]) == 5
     a = art["alternatives"][0]
+    # gain_over_roll joined the move's key set on 2026-09-19: the alternatives
+    # read as empty stubs on the Planner because an objective total with no
+    # baseline beside it is not a fact a reader can use, and the serializer
+    # computed the subtraction for the unconstrained row alone.
     assert set(a) == {"out", "in", "n_transfers", "hits", "hit_points",
-                      "objective", "chip", "label"}
+                      "objective", "gain_over_roll", "chip", "label"}
 
 
 def test_hit_verdicts_serialise_via_their_own_to_dict():
@@ -311,3 +315,70 @@ def test_a_consistent_plan_passes_the_check():
     after = (set(art["squad_before"]) - set(art["chosen"]["out"])) \
         | set(art["chosen"]["in"])
     assert set(art["chosen"]["starting_xi"]) <= after
+
+
+def test_every_alternative_carries_its_gain_against_the_solved_roll():
+    """The four rows the Planner showed as empty stubs on 2026-09-19 were
+    real solved moves whose only served descriptors were a blank label and an
+    objective with no baseline. The gain is the same subtraction the headline
+    gets, so the losing rows are comparable with the winning one."""
+    art = _serialize(_rec(roll_objective=120.1))
+    assert art["chosen"]["gain_over_roll"] == pytest.approx(123.4 - 120.1)
+    for alt in art["alternatives"]:
+        assert alt["gain_over_roll"] == pytest.approx(
+            alt["objective"] - 120.1)
+    # an unmeasured gain stays null rather than collapsing to a measured tie
+    no_roll = _serialize(_rec(roll_objective=None))
+    assert all(a["gain_over_roll"] is None for a in no_roll["alternatives"])
+
+
+def test_a_move_the_solver_did_not_label_serialises_as_absent_not_blank():
+    """An empty string renders as a labelled row whose label is blank, which
+    is how four unlabelled alternatives came to read as four empty stubs."""
+    art = _serialize(_rec())
+    assert art["chosen"]["label"] is None
+    assert all(a["label"] is None for a in art["alternatives"])
+
+
+def test_the_captain_numbers_say_why_the_armband_landed_where_it_did():
+    """The MILP's captain is the argmax of the rank-aware captaincy matrix,
+    not of xPts, so it can trail the highest projected starter and did on
+    2026-09-19: 3.99 against 6.14. Both numbers are the forecast's, at the
+    first gameweek of the horizon, so one artefact answers the question
+    without a join and forecast_source names the currency for both."""
+    xi = list(range(100, 111))
+    rec = _rec()
+    gw0 = {c: 2.0 for c in xi}
+    gw0[120] = 3.99          # the solver's captain
+    gw0[107] = 6.14          # the best projected starter
+    art = serialize_recommendation(
+        rec, generated_at=dt.datetime(2026, 9, 1, 12, 0, tzinfo=UTC),
+        max_candidates=25, seconds=60.0, gw0_xpts=gw0,
+    )
+    c = art["chosen"]
+    assert c["captain"] == 120
+    assert c["captain_xpts"] == pytest.approx(3.99)
+    assert c["best_xi_captain"] == {"code": 107, "xpts": pytest.approx(6.14)}
+
+
+def test_captain_numbers_are_absent_rather_than_zero_without_a_forecast():
+    art = _serialize(_rec())
+    assert art["chosen"]["captain_xpts"] is None
+    assert art["chosen"]["best_xi_captain"] is None
+
+
+def test_the_free_transfer_count_travels_with_its_source():
+    """The dashboard header read 2 and the solver read 1, and neither surface
+    said which was FPL's own my-team limit and which was the engine's accrual
+    reconstruction. The count now carries the answer."""
+    rec = _rec()
+    now = dt.datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
+    assert serialize_recommendation(
+        rec, generated_at=now, max_candidates=25, seconds=60.0,
+    )["free_transfers_source"] is None
+    art = serialize_recommendation(
+        rec, generated_at=now, max_candidates=25, seconds=60.0,
+        free_transfers_source="account",
+    )
+    assert art["free_transfers"] == 2
+    assert art["free_transfers_source"] == "account"

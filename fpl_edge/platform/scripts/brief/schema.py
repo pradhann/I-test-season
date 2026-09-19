@@ -23,9 +23,13 @@ PRECEDENCE = (
     "fresh plan wins ties; a voice may only overrule it through a named "
     "rule. Transfer: the solver plan while fresh or aging; the deterministic "
     "move rules only when the plan is stale or missing. Captain: the solver "
-    "plan's captain while fresh or aging, else the highest consensus xPts "
-    "in the best XI, and a lead under captain_close_call_xpts is a close "
-    "call, not a pick; dissenting measures are printed, never blended. "
+    "plan's captain while fresh or aging, unless the best XI's consensus "
+    "captain leads that pick by more than captain_divergence_xpts on the "
+    "consensus currency, in which case the consensus captain leads and the "
+    "solver's pick is printed as the dissent; with no plan, the highest "
+    "consensus xPts in the best XI, and a lead under captain_close_call_xpts "
+    "is a close call, not a pick; dissenting measures are printed, never "
+    "blended. "
     "Bench: the best formation-legal XI by consensus xPts, drawn on the "
     "pitch; the locked picks are named where they differ. Chip: the solver "
     "plan's chip, else hold."
@@ -231,6 +235,10 @@ _ALTERNATIVE = {
     "properties": {
         "summary": {"type": "string"},   # names built from sem_players, no advice
         "objective": {"type": ["number", "null"]},
+        # This alternative's objective minus the solved roll's, the same
+        # subtraction the headline's gain_over_roll is, in the same currency.
+        # Null on a plan artefact written before the field existed.
+        "gain_over_roll": {"type": ["number", "null"]},
         "hits": {"type": ["integer", "null"]},
     },
 }
@@ -269,6 +277,12 @@ _PLAN = {
         "free_transfers": {"type": ["integer", "null"]},
         "unlimited_transfers": {"type": ["boolean", "null"]},
         "gain_over_roll": {"type": ["number", "null"]},
+        # What gain_over_roll IS, in words, served so the view prints the unit
+        # instead of a bare 14.35. The chat agent measured the same move at
+        # +0.88 on 2026-09-19 by summing the XI: two honest measures of one
+        # transfer, and the dashboard named neither. Built from the plan's own
+        # horizon and objective_mode; the view never composes this sentence.
+        "gain_over_roll_unit": {"type": ["string", "null"]},
         "forecast_source": {"type": ["string", "null"]},
         "forecast_engine_fill_share": {"type": ["number", "null"]},
         "hits": {"type": ["integer", "null"]},
@@ -570,7 +584,13 @@ _VERDICT_LINE = {
                  "enum": ["solver_plan", "solver_roll",
                           "rule_moves_solver_stale",
                           "rule_moves_solver_missing", "no_move_named",
-                          "solver_plan_captain", "mean_xpts_captain",
+                          "solver_plan_captain",
+                          # The named overrule: the consensus captain leads
+                          # and the solver's pick is printed as dissent,
+                          # because the consensus leads it by more than
+                          # captain_divergence_xpts on the consensus currency.
+                          "consensus_captain_over_solver",
+                          "mean_xpts_captain",
                           "no_captain_named",
                           "bench_inversion_applied", "bench_confirmed",
                           "no_bench_named",
@@ -658,6 +678,11 @@ _HEADER = {
         # The solve state the count was read under — "stale" means the count
         # predates the last deadline and must render flagged, never bare.
         "free_transfers_state": {"type": ["string", "null"]},
+        # "account" (FPL's own my-team transfers limit, read with the
+        # manager's session) or "accrual" (this engine's reconstruction from
+        # transfer history). Null when the plan predates the field. The view
+        # prints the word; an unconnected account reads as reconstructed.
+        "free_transfers_source": {"type": ["string", "null"]},
         "bank_tenths": {"type": ["integer", "null"]},
         "chip": {"type": ["string", "null"]},       # null = hold
         "chip_rule": {"type": ["string", "null"]},
