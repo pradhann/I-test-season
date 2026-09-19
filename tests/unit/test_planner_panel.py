@@ -16,10 +16,10 @@ import pandas as pd
 import pytest
 
 import fpl_edge.platform.scripts  # noqa: F401  (registers everything)
-from fpl_edge.platform.registry import run_script, script
+from fpl_edge.platform.registry import run_script
 from fpl_edge.store.warehouse import Warehouse
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 SEASON = "2026-27"
 STAMP = pd.Timestamp("2026-08-01", tz="UTC")
 

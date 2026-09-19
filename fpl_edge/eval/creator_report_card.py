@@ -50,7 +50,6 @@ gameweek numbers only; creator prose stays in ``creators.py``.
 
 from __future__ import annotations
 
-import datetime as dt
 import math
 from typing import Any
 
@@ -536,20 +535,6 @@ def team_channel(
             f"which is more than a season."
         ),
     }
-
-
-def as_iso(value: Any) -> str | None:
-    """ISO-8601 UTC for anything timestamp-shaped, else None. No guessing."""
-    if value is None:
-        return None
-    try:
-        stamp = dt.datetime.fromisoformat(str(value)) if not isinstance(
-            value, dt.datetime) else value
-    except (TypeError, ValueError):
-        return None
-    if stamp.tzinfo is None:
-        stamp = stamp.replace(tzinfo=dt.UTC)
-    return stamp.astimezone(dt.UTC).isoformat()
 
 
 # Re-exported so a caller never reaches past this module for the floor that

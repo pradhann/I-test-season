@@ -24,17 +24,15 @@ and there is no longer a checkout that can be absent.
 from __future__ import annotations
 
 import datetime as dt
-import sys
 import time
-from pathlib import Path
 
 import pytest
 
-from fpl_edge.interfaces.watchlist import Watchlist, digest_lines
 from fpl_edge.interfaces.testing import SEASON, seed_warehouse
+from fpl_edge.interfaces.watchlist import Watchlist, digest_lines
 from fpl_edge.store import Warehouse
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 T0 = dt.datetime(2026, 8, 18, 22, 50, tzinfo=UTC)
 
 def _chat_core():

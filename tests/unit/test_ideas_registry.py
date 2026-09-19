@@ -19,7 +19,7 @@ from fpl_edge.interfaces.tracking import track
 from fpl_edge.interfaces.verdict import PriorVerdict
 from fpl_edge.store import Warehouse
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 #: Three days before the real 2026-27 GW1 deadline. No results exist.
 PRESEASON = dt.datetime(2026, 8, 18, 22, 50, tzinfo=UTC)

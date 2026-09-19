@@ -40,7 +40,7 @@ from fpl_edge.eval.creator_report_card import (
 from fpl_edge.platform.registry import run_script
 from fpl_edge.store.warehouse import Warehouse
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 SEASON = "2026-27"
 
 NOW = dt.datetime.now(UTC)

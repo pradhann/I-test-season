@@ -47,8 +47,8 @@ def _ts(value: str | None) -> dt.datetime | None:
     if parsed.tzinfo is None:
         # FPL publishes in UTC; an absent offset is a formatting quirk, not a
         # local time. Attach it explicitly so nothing downstream has to guess.
-        return parsed.replace(tzinfo=dt.timezone.utc)
-    return parsed.astimezone(dt.timezone.utc)
+        return parsed.replace(tzinfo=dt.UTC)
+    return parsed.astimezone(dt.UTC)
 
 
 def ingest_bootstrap(wh: Warehouse, fetcher: Fetcher | None = None) -> dict[str, int]:

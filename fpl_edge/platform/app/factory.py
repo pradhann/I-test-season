@@ -82,14 +82,33 @@ def _lifespan_for(db_path: Path):
     return _lifespan
 
 
+def _chat_root_for(db_path: Path, chat_root: Path | str | None) -> Path:
+    """Where this app's conversation store lives.
+
+    The store belongs beside the warehouse it serves, so an app built on a
+    seeded tmp warehouse gets a tmp store. It used to fall back to CHAT_ROOT
+    unconditionally, and since ``ChatAgent.__init__`` creates the directory,
+    every ``create_app(db)`` in the suite created ``data/warehouse/chat/
+    assets/`` in the repo. The default warehouse still resolves to CHAT_ROOT,
+    so the served path is unchanged in production.
+    """
+    from fpl_edge.platform.chat_agent import CHAT_ROOT
+
+    if chat_root is not None:
+        return Path(chat_root)
+    if db_path == DEFAULT_DB or db_path.resolve() == CHAT_ROOT.parent / DEFAULT_DB.name:
+        return CHAT_ROOT
+    return db_path.parent / "chat"
+
+
 def create_app(db: Path | str = DEFAULT_DB,
                chat_root: Path | str | None = None) -> FastAPI:
     """Build the app. ``db`` is injectable so tests can seed a tmp warehouse;
     ``chat_root`` likewise for the agent conversation store."""
-    from fpl_edge.platform.chat_agent import CHAT_ROOT, ChatAgent
+    from fpl_edge.platform.chat_agent import ChatAgent
 
     db_path = Path(db)
-    chat_agent = ChatAgent(root=Path(chat_root) if chat_root else CHAT_ROOT)
+    chat_agent = ChatAgent(root=_chat_root_for(db_path, chat_root))
     app = FastAPI(
         title="i-test platform",
         version="1.0",

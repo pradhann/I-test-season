@@ -47,7 +47,7 @@ from fpl_edge.store import Warehouse
 from fpl_edge.store.warehouse import PIT_KEYS
 
 FIX = Path(__file__).parents[1] / "fixtures" / "odds"
-UTC = dt.timezone.utc
+UTC = dt.UTC
 AS_OF = dt.datetime(2026, 8, 19, 18, 0, tzinfo=UTC)
 
 

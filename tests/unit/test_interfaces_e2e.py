@@ -22,14 +22,14 @@ import pytest
 from fpl_edge.interfaces.bias import review
 from fpl_edge.interfaces.ideas import IdeaStatus, Outcome
 from fpl_edge.interfaces.inbox import IdeaInbox
-from fpl_edge.interfaces.store import IdeaRegistry
 from fpl_edge.interfaces.report import weekly_report
+from fpl_edge.interfaces.store import IdeaRegistry
 from fpl_edge.interfaces.telegram import FakeTransport, TelegramBot
 from fpl_edge.interfaces.testing import SEASON, seed_warehouse
 from fpl_edge.interfaces.tracking import track
 from fpl_edge.store import Warehouse
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 #: The requirement, in seconds.
 BUDGET_S = 60.0

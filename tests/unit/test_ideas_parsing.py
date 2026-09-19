@@ -12,6 +12,8 @@ import datetime as dt
 
 import pytest
 
+from fpl_edge.interfaces.features import player_universe
+from fpl_edge.interfaces.ideas import IdeaKind
 from fpl_edge.interfaces.parsing import (
     MessageParser,
     PlayerResolver,
@@ -20,11 +22,9 @@ from fpl_edge.interfaces.parsing import (
     interpret_reply,
     name_fragments,
 )
-from fpl_edge.interfaces.features import player_universe
-from fpl_edge.interfaces.ideas import IdeaKind
 from fpl_edge.interfaces.testing import SEASON, seed_warehouse
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 NOW = dt.datetime(2026, 8, 18, 22, 50, tzinfo=UTC)
 
 

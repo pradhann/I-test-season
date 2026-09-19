@@ -186,6 +186,23 @@ def command_of(argv: list[str]) -> str:
     return " ".join(argv)
 
 
+def _without_db(args: list[str]) -> list[str]:
+    """``args`` with ``--db`` and the path after it removed."""
+    out: list[str] = []
+    skip = False
+    for arg in args:
+        if skip:
+            skip = False
+            continue
+        if arg == "--db":
+            skip = True
+            continue
+        if arg.startswith("--db="):
+            continue
+        out.append(arg)
+    return out
+
+
 def target_of(argv: list[str]) -> str:
     """The module (or script) plus its first argument.
 
@@ -194,8 +211,13 @@ def target_of(argv: list[str]) -> str:
     unless its first flag is in :data:`MODE_FLAGS`: ``ingest_odds.py
     --fixtures`` and ``--odds-api`` fetch different things from different
     vendors and are not one target.
+
+    ``--db`` and its value are dropped first. It names the database, not the
+    job, and on the argparse CLIs whose ``--db`` sits on the top-level parser
+    it has to precede the subcommand, which would otherwise make every
+    ``content.pipeline`` step the same target.
     """
-    rest = argv[1:]
+    rest = _without_db(argv[1:])
     if rest and rest[0] == "-m":
         module, rest = rest[1], rest[2:]
     elif rest:
@@ -278,7 +300,11 @@ def steps_for(task: registry.Task) -> PathSteps:
     if task.id == "post_gw_settlement":
         # THE settlement chain, read from the list both execution paths share
         # rather than from a copy of it (jobs/post_gw.py settlement_steps).
-        for _name, argv in post_gw.settlement_steps(PY):
+        # Placeholders, not this machine's values: the runbook has to read
+        # the same on every checkout, and a resolved gameweek would make the
+        # generated block depend on whatever the warehouse holds today.
+        for _name, argv in post_gw.settlement_steps(
+                PY, "<db_path>", first_gw="<gw>", last_gw="<gw plus 5>"):
             path.commands.append(command_of(argv))
             path.targets.append(target_of(argv))
         return path
@@ -341,7 +367,7 @@ ALLOWED: tuple[Overlap, ...] = (
             "before the deadline. Section 6 of ARCHITECTURE_REVIEW.md keeps "
             "the nightly one: it is a documented fix, not double work.",
         citations=(
-            Citation("fpl_edge/jobs/post_gw.py", 209,
+            Citation("fpl_edge/jobs/post_gw.py", 264,
                      "Nightly + T-30h gives every feed at most a day of staleness."),
             Citation("fpl_edge/pipelines/tasks.py", 74,
                      "T-30h: refetch what press conferences and projection "
@@ -358,13 +384,13 @@ ALLOWED: tuple[Overlap, ...] = (
             "The 11:00 UTC refit is the daily one, settlement rebuilds after "
             "results land, and T-30h rebuilds after midweek rescheduling.",
         citations=(
-            Citation("fpl_edge/jobs/post_gw.py", 227,
+            Citation("fpl_edge/jobs/post_gw.py", 282,
                      "This ran `models.team_goals.ratings_cache` until that "
                      "module was"),
-            Citation("fpl_edge/pipelines/tasks.py", 82,
+            Citation("fpl_edge/pipelines/tasks.py", 86,
                      "Refresh the cached fixture artefacts so the ticker's "
                      "colours reflect"),
-            Citation("fpl_edge/pipelines/registry.py", 686,
+            Citation("fpl_edge/pipelines/registry.py", 698,
                      "Refit the Dixon-Coles club split the Fixtures board "
                      "colours from."),
         ),
@@ -391,7 +417,7 @@ ALLOWED: tuple[Overlap, ...] = (
             "captions only and never downloads audio; the nightly task runs "
             "the GPU under a wall-clock budget.",
         citations=(
-            Citation("fpl_edge/pipelines/registry.py", 761,
+            Citation("fpl_edge/pipelines/registry.py", 774,
                      "Podcast ASR stays on the nightly task"),
         ),
     ),
@@ -402,7 +428,7 @@ ALLOWED: tuple[Overlap, ...] = (
             "daily one covers the last 21 days, the overnight one drops the "
             "window and eats the never-analysed backlog.",
         citations=(
-            Citation("fpl_edge/pipelines/registry.py", 645,
+            Citation("fpl_edge/pipelines/registry.py", 657,
                      "The second pass, overnight: no window at all, so it eats "
                      "the backlog."),
         ),
@@ -414,7 +440,7 @@ ALLOWED: tuple[Overlap, ...] = (
             "already priced the week. --max-age-hours 48 is what makes it one, "
             "and it reports the skip rather than a fake ok.",
         citations=(
-            Citation("fpl_edge/jobs/post_gw.py", 247,
+            Citation("fpl_edge/jobs/post_gw.py", 303,
                      "``--max-age-hours 48`` makes this a genuine no-op"),
         ),
     ),

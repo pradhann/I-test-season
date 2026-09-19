@@ -25,7 +25,7 @@ import pandas as pd
 import pytest
 
 from fpl_edge.eval.replay import InvalidDecision
-from fpl_edge.eval.scoring import Chip, Pick
+from fpl_edge.eval.scoring import Pick
 from fpl_edge.myteam.sources import (
     ChipPlay,
     EntryHistory,
@@ -47,7 +47,7 @@ from fpl_edge.myteam.state import (
 from fpl_edge.store import Warehouse
 from fpl_edge.types import GwId, Money, Position, selling_price
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 SEASON = "2026-27"
 T0 = dt.datetime(2026, 8, 1, 12, tzinfo=UTC)
 NOW = dt.datetime(2026, 8, 18, 12, tzinfo=UTC)
@@ -472,6 +472,7 @@ def test_public_picks_reverse_automatic_substitutions_to_the_selected_xi(warehou
     in the starting XI" aborted every solve. Reversing automatic_subs
     restores the squad the manager selected, and reconstruct() validates."""
     import dataclasses
+
     from fpl_edge.myteam.state import picks_from_public
     picks = _picks(_legal_squad(index), index)
     public = _public(picks, index)

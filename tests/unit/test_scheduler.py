@@ -26,8 +26,8 @@ import time
 
 import pytest
 
-from fpl_edge.platform import scheduler as sched
 from fpl_edge.pipelines import registry as pipe_registry
+from fpl_edge.platform import scheduler as sched
 
 UTC = dt.UTC
 

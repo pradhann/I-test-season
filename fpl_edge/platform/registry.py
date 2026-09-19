@@ -47,7 +47,7 @@ from typing import Any, Callable
 
 import jsonschema
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 #: Soft latency budget, seconds. Over it, the run still returns.
 BUDGET_S = 10.0

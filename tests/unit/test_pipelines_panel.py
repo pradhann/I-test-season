@@ -24,8 +24,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import fpl_edge.platform.scripts  # noqa: F401 - registration is the import
-from fpl_edge.pipelines import contracts
-from fpl_edge.pipelines import registry, runner
+from fpl_edge.pipelines import contracts, registry, runner
 from fpl_edge.platform.app import create_app
 from fpl_edge.platform.registry import ParamsInvalid, run_script
 from fpl_edge.platform.scripts.pipelines_panel import (

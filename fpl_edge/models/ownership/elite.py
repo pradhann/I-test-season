@@ -247,7 +247,7 @@ class ElitePicksSampler:
         return EliteSample(
             gw=gw, entry_ids=tuple(used), ownership=series(own), start_share=series(start),
             captaincy=series(cap), triple_captain=series(tc),
-            as_of=dt.datetime.now(dt.timezone.utc),
+            as_of=dt.datetime.now(dt.UTC),
         )
 
     def elite_frame_from_history(

@@ -596,7 +596,7 @@ def derive_gameweek_priors(
     snapshot API, so the derivation obeys the same point-in-time rules as
     everything else. Writes to ``fact_odds_derived`` stamped at ``as_of``.
     """
-    now = as_of or dt.datetime.now(dt.timezone.utc)
+    now = as_of or dt.datetime.now(dt.UTC)
     ensure_derived_schema(wh)
 
     snap = wh.snapshot_at(now)

@@ -23,7 +23,7 @@ from fpl_edge.platform.registry import (
 )
 from fpl_edge.store.warehouse import Warehouse
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 
 @pytest.fixture()

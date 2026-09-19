@@ -41,7 +41,7 @@ from fpl_edge.ingest.rivals import schema as rivals_schema
 from fpl_edge.sim.synthetic import toy_world
 from fpl_edge.store.warehouse import Warehouse
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 SEASON = "2026-27"
 GW1_DEADLINE = dt.datetime(2026, 8, 21, 17, 30, tzinfo=UTC)
 # GW2 must be in the FUTURE for this fixture to mean what it says: GW1 locked,

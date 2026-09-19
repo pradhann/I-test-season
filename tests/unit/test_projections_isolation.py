@@ -20,7 +20,7 @@ from fpl_edge.ingest.projections import cli
 from fpl_edge.ingest.projections.store import ProjectionStore
 from fpl_edge.store import Warehouse
 
-AS_OF = dt.datetime(2026, 8, 20, 6, 30, tzinfo=dt.timezone.utc)
+AS_OF = dt.datetime(2026, 8, 20, 6, 30, tzinfo=dt.UTC)
 
 
 def _row(provider: str, code: int) -> pd.DataFrame:

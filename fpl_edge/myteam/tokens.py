@@ -46,10 +46,10 @@ Two facts measured against the live API on 2026-08-20, both counter-intuitive:
 from __future__ import annotations
 
 import base64
+import contextlib
 import datetime as dt
 import json
 import re
-import contextlib
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -79,7 +79,7 @@ def jwt_payload(token: str) -> dict:
 
 
 def jwt_expiry(token: str) -> dt.datetime:
-    return dt.datetime.fromtimestamp(jwt_payload(token)["exp"], dt.timezone.utc)
+    return dt.datetime.fromtimestamp(jwt_payload(token)["exp"], dt.UTC)
 
 
 def extract_tokens_from_cookie(cookie: str) -> tuple[str | None, str | None]:
@@ -183,7 +183,7 @@ class TokenManager:
         if not refresh:
             return "not configured: no refresh token stored"
         parts = []
-        now = dt.datetime.now(dt.timezone.utc)
+        now = dt.datetime.now(dt.UTC)
         if access:
             exp = jwt_expiry(access)
             parts.append(
@@ -212,7 +212,7 @@ class TokenManager:
             # was refreshing must see the winner's newly-persisted pair.
             env = self._read()
             access = env.get("FPL_ACCESS_TOKEN")
-            now = dt.datetime.now(dt.timezone.utc)
+            now = dt.datetime.now(dt.UTC)
             if access:
                 try:
                     if jwt_expiry(access) - now > dt.timedelta(seconds=REFRESH_MARGIN_S):
@@ -255,8 +255,8 @@ class TokenManager:
                 "FPL_OAUTH_CLIENT_ID is not stored and the refresh token does not "
                 "carry it. Re-run the one-time setup with a full Cookie paste."
             )
-        exp = dt.datetime.fromtimestamp(payload["exp"], dt.timezone.utc)
-        if exp <= dt.datetime.now(dt.timezone.utc):
+        exp = dt.datetime.fromtimestamp(payload["exp"], dt.UTC)
+        if exp <= dt.datetime.now(dt.UTC):
             raise RefreshRefusedError(
                 f"The stored refresh token expired at {exp:%Y-%m-%d %H:%MZ}. "
                 "Log in once in your browser and re-run "

@@ -34,8 +34,13 @@ dependencies = [
   # GPU; `av` decodes podcast audio in-process so no system ffmpeg is needed.
   # Both were installed by hand during the build and would be removed by the
   # next `uv sync` if they were not declared here.
+  #
+  # Both are darwin-only. ASR runs on the owner's Mac and nowhere else, and
+  # `av` is only ever imported by the ASR path, so an image that cannot run
+  # mlx-whisper has no use for the decoder either; building `av` on Linux
+  # costs the deploy a wheel with no caller.
   "mlx-whisper>=0.4; sys_platform == 'darwin'",
-  "av>=12",  # v2 renamed FastMCP->MCPServer; migration is its own change
+  "av>=12; sys_platform == 'darwin'",
   "claude-agent-sdk>=0.2.149",
   # Google sign-in (docs/platform/AUTH.md §11). Both already resolve in
   # uv.lock as transitives of mcp, which pins pyjwt[crypto]; declaring them

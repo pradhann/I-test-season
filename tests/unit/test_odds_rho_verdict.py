@@ -42,7 +42,7 @@ from fpl_edge.models.team_goals.scoreline import GoalRates, score_matrix
 ROOT = Path(__file__).parents[2]
 DOCS = ROOT / "docs" / "platform"
 FIX = Path(__file__).parents[1] / "fixtures" / "odds"
-UTC = dt.timezone.utc
+UTC = dt.UTC
 AS_OF = dt.datetime(2026, 8, 19, 18, 0, tzinfo=UTC)
 
 #: chi-square 0.95 quantile, 1 df. Above this, rho would be a real parameter.

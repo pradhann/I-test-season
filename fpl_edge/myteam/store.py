@@ -26,7 +26,7 @@ from pathlib import Path
 
 from fpl_edge.myteam.manual import ManualEntryError, ManualSquadRecord, SquadDraft
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 DEFAULT_ROOT = Path("data/myteam")
 

@@ -43,7 +43,7 @@ from fpl_edge.intel.items import (
 )
 from fpl_edge.store import Warehouse
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 

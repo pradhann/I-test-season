@@ -24,6 +24,12 @@ What is measured, and what is not
 Every output frame carries the flag saying which of these it is.
 """
 
+from fpl_edge.models.ownership.elite import (
+    ElitePicksSampler,
+    EliteSample,
+    EliteTiltParams,
+    elite_tilt,
+)
 from fpl_edge.models.ownership.eo import (
     CAPTAIN_MULTIPLIER,
     TRIPLE_CAPTAIN_MULTIPLIER,
@@ -32,12 +38,6 @@ from fpl_edge.models.ownership.eo import (
     my_multiplier,
     rank_edge,
     start_share_from_ownership,
-)
-from fpl_edge.models.ownership.elite import (
-    ElitePicksSampler,
-    EliteSample,
-    EliteTiltParams,
-    elite_tilt,
 )
 from fpl_edge.models.ownership.model import OwnershipForecaster, OwnershipParams, build_card
 

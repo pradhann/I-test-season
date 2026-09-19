@@ -26,7 +26,7 @@ from fpl_edge.ingest.odds import (
 )
 from fpl_edge.store import Warehouse
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 FIXTURE = Path(__file__).parents[1] / "fixtures" / "odds" / "football_data_E0_2526_sample.csv"
 
 

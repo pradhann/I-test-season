@@ -21,11 +21,9 @@ this project exists to get right.
 
 from __future__ import annotations
 
-import datetime as dt
 from dataclasses import dataclass
 
 import numpy as np
-import pandas as pd
 
 from fpl_edge.models.contracts import ModelCard, PointsSample
 from fpl_edge.models.points.bps import allocate_bonus, bps_from_events

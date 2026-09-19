@@ -329,7 +329,7 @@ def run(
                 "after it would have been a no-op reporting success"
             )
 
-        now = dt.datetime.now(dt.timezone.utc)
+        now = dt.datetime.now(dt.UTC)
         live_gws = [gw for gw, d in deadlines.items() if d <= now]
 
         # -- picks, then transfers, then history. See STAGE_SHARE. ------------

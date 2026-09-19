@@ -31,7 +31,6 @@ from __future__ import annotations
 import contextlib
 import datetime as dt
 import re
-import shutil
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -200,7 +199,7 @@ def _pit_view_sql(as_of: dt.datetime, catalog: str,
     error about a table the caller never mentioned.
     """
     stmts = []
-    stamp = as_of.astimezone(dt.timezone.utc).isoformat()
+    stamp = as_of.astimezone(dt.UTC).isoformat()
     for table, keys in PIT_KEYS.items():
         if present is not None and table not in present:
             continue
@@ -284,7 +283,7 @@ def guarded_query(
     assert_single_statement(sql)
     assert_read_only(sql)
 
-    started = dt.datetime.now(dt.timezone.utc)
+    started = dt.datetime.now(dt.UTC)
     notes: list[str] = []
     with contextlib.ExitStack() as stack:
         wh = warehouse if warehouse is not None else stack.enter_context(read_copy(db))
@@ -325,14 +324,14 @@ def guarded_query(
             f"Aggregate or project fewer columns in SQL rather than in the client."
         )
 
-    elapsed = int((dt.datetime.now(dt.timezone.utc) - started).total_seconds() * 1000)
+    elapsed = int((dt.datetime.now(dt.UTC) - started).total_seconds() * 1000)
     return QueryResult(
         sql=sql.strip(),
         rows=_frame_to_rows(df),
         columns=[str(c) for c in df.columns],
         row_count=int(len(df)),
         truncated=truncated,
-        as_of=as_of.astimezone(dt.timezone.utc).isoformat() if as_of else None,
+        as_of=as_of.astimezone(dt.UTC).isoformat() if as_of else None,
         elapsed_ms=elapsed,
         notes=notes,
     )

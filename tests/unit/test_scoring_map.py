@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import numpy as np
-import pytest
 
 from fpl_edge.models.points.scoring_map import (
     defensive_contribution_points,

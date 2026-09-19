@@ -24,8 +24,8 @@ from pathlib import Path
 
 import pytest
 
-from fpl_edge.ingest.rivals.client import RequestBudget
 from fpl_edge.ingest.http import Fetched
+from fpl_edge.ingest.rivals.client import RequestBudget
 from fpl_edge.ingest.rivals.crawl import _incomplete
 from fpl_edge.ingest.rivals.top1k import (
     OVERALL_LEAGUE_ID,
@@ -43,7 +43,7 @@ from fpl_edge.ingest.rivals.top1k import (
 def top1k_stages() -> tuple[str, ...]:
     return STAGES
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 GW1 = dt.datetime(2026, 8, 21, 17, 30, tzinfo=UTC)
 GW2 = dt.datetime(2026, 8, 28, 17, 30, tzinfo=UTC)
 BEFORE_GW1 = GW1 - dt.timedelta(days=2)

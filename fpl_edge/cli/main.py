@@ -26,17 +26,19 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from fpl_edge.interfaces.bias import MIN_OBSERVATIONS, review as run_review
+from fpl_edge.interfaces.bias import MIN_OBSERVATIONS
+from fpl_edge.interfaces.bias import review as run_review
 from fpl_edge.interfaces.ideas import IdeaStatus
 from fpl_edge.interfaces.inbox import IdeaInbox
-from fpl_edge.interfaces.store import IdeaRegistry
 from fpl_edge.interfaces.report import weekly_report
+from fpl_edge.interfaces.store import IdeaRegistry
 from fpl_edge.interfaces.tracking import track as run_track
+
 # Importing the package also registers the weekly report's `transfers` section.
 from fpl_edge.myteam.cli import app as myteam_app
 from fpl_edge.store import DEFAULT_DB, Warehouse
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 DEFAULT_SEASON = "2026-27"
 
 app = typer.Typer(
@@ -566,7 +568,6 @@ def _configure_report_providers(*, validate: bool = False) -> None:
         echo("Building the season simulator for paired validation "
              "(minutes, not seconds)...")
         from fpl_edge.sim.engine import SeasonSimulator
-
         from fpl_edge.types import Season
 
         lw = open_live_world()

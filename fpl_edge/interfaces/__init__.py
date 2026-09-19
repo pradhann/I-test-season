@@ -9,6 +9,7 @@ is deliberately absent: importing it pulls in httpx and the bot machinery, and
 ``fpl idea review`` should not need either.
 """
 
+from fpl_edge.interfaces import squad_section  # noqa: F401  (registers on import)
 from fpl_edge.interfaces.bias import BiasFinding, Review, Scoreboard, review
 from fpl_edge.interfaces.ideas import (
     CandidateMatch,
@@ -25,9 +26,8 @@ from fpl_edge.interfaces.ideas import (
 )
 from fpl_edge.interfaces.inbox import IdeaInbox, Submission
 from fpl_edge.interfaces.parsing import MessageParser, PlayerResolver
-from fpl_edge.interfaces.store import IdeaRegistry
 from fpl_edge.interfaces.report import register_section, weekly_report
-from fpl_edge.interfaces import squad_section  # noqa: F401  (registers on import)
+from fpl_edge.interfaces.store import IdeaRegistry
 from fpl_edge.interfaces.tracking import track
 from fpl_edge.interfaces.verdict import (
     PriorVerdict,

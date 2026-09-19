@@ -18,7 +18,7 @@ from fpl_edge.ingest.player_mapping import normalize_name
 from fpl_edge.ingest.projections import livefpl, rotowire
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "projections"
-AS_OF = dt.datetime(2026, 8, 20, 6, 30, tzinfo=dt.timezone.utc)
+AS_OF = dt.datetime(2026, 8, 20, 6, 30, tzinfo=dt.UTC)
 
 
 def roster(*people: tuple[int, str, str, str]) -> pd.DataFrame:

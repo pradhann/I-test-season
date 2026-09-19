@@ -220,8 +220,8 @@ def _ts(value: str | None) -> dt.datetime | None:
         return None
     parsed = dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=dt.timezone.utc)
-    return parsed.astimezone(dt.timezone.utc)
+        return parsed.replace(tzinfo=dt.UTC)
+    return parsed.astimezone(dt.UTC)
 
 
 def parse_entry(body: dict[str, Any]) -> EntrySummary:
@@ -293,7 +293,7 @@ def parse_transfers(body: list[dict[str, Any]]) -> tuple[TransferRow, ...]:
     )
     # The API returns newest-first. Purchase-price derivation walks forward in
     # time, so sort here once rather than relying on the endpoint's order.
-    return tuple(sorted(rows, key=lambda t: (int(t.gw), t.made_utc or dt.datetime.min.replace(tzinfo=dt.timezone.utc))))
+    return tuple(sorted(rows, key=lambda t: (int(t.gw), t.made_utc or dt.datetime.min.replace(tzinfo=dt.UTC))))
 
 
 def parse_picks(gw: int, body: dict[str, Any]) -> GwPicks:

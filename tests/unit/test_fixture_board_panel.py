@@ -25,6 +25,7 @@ import pytest
 from fpl_edge.platform import scripts  # noqa: F401 - registers the scripts
 from fpl_edge.platform.registry import registered, run_script, script
 from fpl_edge.platform.scripts import fixtures as fxmod
+
 # The private helpers are reached through the module that owns them.
 # fixtures/__init__.py re-exports the public surface only: a monkeypatch
 # of a re-exported private name would patch a copy that the owning module

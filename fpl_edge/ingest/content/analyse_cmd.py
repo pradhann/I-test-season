@@ -12,18 +12,20 @@ main and its ``-m`` target, and re-exports every name moved here.
 """
 
 from __future__ import annotations
+
 import argparse
 import datetime as dt
 import json
+import re as _re
+
 import pandas as pd
+
 from fpl_edge.ingest.content.calendar import load_calendar
 from fpl_edge.ingest.content.claims import ExtractionStats, extract_from_item
 from fpl_edge.ingest.content.models import ContentItem
+from fpl_edge.ingest.content.pipeline_common import UTC, _now, build_resolver
 from fpl_edge.ingest.content.store import ContentStore
 from fpl_edge.store import Warehouse
-import re as _re
-
-from fpl_edge.ingest.content.pipeline_common import UTC, _now, build_resolver
 
 
 def cmd_reextract(args: argparse.Namespace) -> int:

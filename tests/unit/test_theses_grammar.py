@@ -17,7 +17,7 @@ from fpl_edge.theses.grammar import (
 )
 from fpl_edge.theses.model import ClaimType, Thesis, ThesisOutcome, ThesisSource
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 T0 = dt.datetime(2026, 8, 18, 23, 0, tzinfo=UTC)
 
 

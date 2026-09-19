@@ -24,7 +24,7 @@ import enum
 import hashlib
 from dataclasses import dataclass
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 
 class IntelKind(enum.StrEnum):

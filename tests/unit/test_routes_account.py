@@ -136,7 +136,7 @@ def make_entry_client(paths, monkeypatch, tmp_path, *, check=None,
     from fpl_edge.myteam import account as account_mod
     from fpl_edge.platform import users as users_mod
 
-    monkeypatch.setenv(users_mod.DATA_ROOT_ENV, str(tmp_path / "data"))
+    monkeypatch.setenv(users_mod.DATA_DIR_ENV, str(tmp_path / "data"))
     monkeypatch.delenv("FPL_ENTRY_ID", raising=False)
     found = check if check is not None else (
         lambda eid: account_mod.EntryCheck(found=True, status=200,

@@ -55,7 +55,7 @@ from fpl_edge.interfaces.tracking import track as run_track
 
 log = logging.getLogger("fpl_edge.telegram")
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 API_ROOT = "https://api.telegram.org"
 

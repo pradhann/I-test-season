@@ -33,7 +33,7 @@ import pandas as pd
 
 from fpl_edge.store import Warehouse
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 SEASON = "2026-27"
 

@@ -76,7 +76,7 @@ from tests.unit.field_fixtures import (
     toy,
 )
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 #: The macro's key columns: what a row is *about*, rather than what it claims.
 KEY_COLUMNS = {"season", "gw", "cohort", "code"}

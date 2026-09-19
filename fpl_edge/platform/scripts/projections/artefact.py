@@ -134,7 +134,7 @@ def _artefact_mode(
         artefact = Path(path).parent / "gw1_projection.parquet"
         if artefact.exists():
             generated = dt.datetime.fromtimestamp(
-                artefact.stat().st_mtime, dt.timezone.utc).isoformat()
+                artefact.stat().st_mtime, dt.UTC).isoformat()
 
     state_as_of = latest_as_of(wh, "fact_player_state", season)
     return {

@@ -41,10 +41,7 @@ from typing import TYPE_CHECKING
 
 from fpl_edge.eval.replay import Decision, InvalidDecision, SquadState, apply_decision
 from fpl_edge.eval.scoring import Chip, Pick
-from typing import TYPE_CHECKING
-
 from fpl_edge.myteam.sources import (
-    ChipPlay,
     EntryHistory,
     EntrySummary,
     GwPicks,
@@ -61,7 +58,7 @@ from fpl_edge.types import GwId, Money, Position, selling_price
 if TYPE_CHECKING:  # pragma: no cover - import cycle: manual.py needs PlayerIndex
     from fpl_edge.myteam.manual import ManualSquadRecord
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 #: Named so a caller can branch on provenance without string matching.
 class Provenance(enum.StrEnum):

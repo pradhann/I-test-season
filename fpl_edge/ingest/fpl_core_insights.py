@@ -123,7 +123,7 @@ def fetch(path: str, *, timeout: float = 60.0,
     url = _raw_url(path)
     require_allowed(url)
     time.sleep(delay_s)
-    fetched_at = dt.datetime.now(dt.timezone.utc)
+    fetched_at = dt.datetime.now(dt.UTC)
     with httpx.Client(timeout=timeout, headers={"User-Agent": USER_AGENT},
                       follow_redirects=True) as client:
         resp = client.get(url)

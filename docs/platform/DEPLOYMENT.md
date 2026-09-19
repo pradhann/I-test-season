@@ -890,7 +890,7 @@ changes a recommendation.
 | Volume sizing at 10 GB | Extrapolated from 26 days of growth (160 MiB from 2026-08-18 to 2026-09-12, roughly 6 MB/day). Not a season measurement. |
 | Whether all 18 panel scripts return a structured empty state against a schema-only warehouse | Not verified; verifying it requires running them, which this spec did not do. `make deploy-check` step 5 is the verification. |
 | Whether `faster-whisper` on Railway CPU runs near 1x realtime | Estimated. The 11.7x to 12.3x MLX figure is measured and recorded in `registry.py`; the CPU figure is not. It does not change the recommendation, since (a) is free. |
-| The unattributed projections ingest of 2026-09-09 16:26 UTC with `trigger=scheduler` while launchd was unloaded | Open in the brief and untouched here. **It matters for this workstream**: if a second scheduler exists on the Mac and survives the move, it would be a second writer against a database that has moved to Railway, or it would keep writing to a stale local copy. B2 should not start the in-process scheduler on Railway until that item is closed. |
+| The unattributed projections ingest of 2026-09-09 16:26 UTC with `trigger=scheduler` while launchd was unloaded | **Closed. There is no second scheduler.** It was the settlement chain started from the Pipelines panel (fetch_run 77d3a20b, trigger=ui, log present under `data/warehouse/pipeline_logs/`). Its subprocess steps say `scheduler` because `fpl_edge/store/fetch_ledger.py:94` hardcodes that default and only `pipelines/runner.py:147` overrides it, so the `trigger` column is untrustworthy for every subprocess-written row until that default is fixed. The in-process scheduler on Railway is the only one; see the preamble to Section 13. |
 
 ## 13. Runbook: the first deploy
 
@@ -940,7 +940,8 @@ Every name the image reads. The Dockerfile bakes `FPL_EDGE_BOOT=1`,
 | `FPL_EDGE_SCHEDULER` | `1` starts the in-process tick; unset means no scheduler | no | set to `1` |
 | `FPL_EDGE_SCHEDULER_INTERVAL_S` | seconds between ticks; default 600 | no | leave unset |
 | `FPL_EDGE_DISABLE_NETWORK_INGEST` | `1` makes every scheduled fetch record `no_source` with a named reason | no | set to `1`, clear after the seed |
-| `FPL_EDGE_DATA_DIR` | which directory boot checks and seeds into; default `data` | no | leave unset |
+| `FPL_EDGE_DATA_DIR` | which directory boot checks and seeds into, and the base of the per-user store; default `data` | no | leave unset |
+| `FPL_EDGE_DATA_ROOT` | deprecated alias for `FPL_EDGE_DATA_DIR`. Still read when `FPL_EDGE_DATA_DIR` is unset, and warns once at boot. Two names for one directory let a deployment set one and put the per-user store off the volume, where it survives until the first redeploy | no | leave unset |
 | `FPL_ENTRY_ID` | the default FPL entry when no user is signed in | no | set to your entry id |
 | `ODDS_API_KEY` | the credit-metered Odds API key | yes | set it |
 | `TELEGRAM_BOT_TOKEN` | outbox delivery | yes | set it |

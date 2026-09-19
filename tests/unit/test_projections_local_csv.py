@@ -27,12 +27,12 @@ from fpl_edge.store import Warehouse
 SEASON = "2026-27"
 
 #: Roster written before the export.
-EARLY = dt.datetime(2026, 9, 1, 9, 0, tzinfo=dt.timezone.utc)
+EARLY = dt.datetime(2026, 9, 1, 9, 0, tzinfo=dt.UTC)
 #: The export instant, and the epoch in the test filename.
-EXPORT = dt.datetime(2026, 9, 18, 15, 16, 34, tzinfo=dt.timezone.utc)
+EXPORT = dt.datetime(2026, 9, 18, 15, 16, 34, tzinfo=dt.UTC)
 EXPORT_EPOCH = int(EXPORT.timestamp())
 #: Roster written after the export, where element 7 has been reassigned.
-LATE = dt.datetime(2026, 9, 25, 9, 0, tzinfo=dt.timezone.utc)
+LATE = dt.datetime(2026, 9, 25, 9, 0, tzinfo=dt.UTC)
 
 #: Five invented players in the FPL Review export shape: a UTF-8 BOM, two
 #: columns per gameweek named by the gameweek, and Elite% as a percent
@@ -314,7 +314,7 @@ def test_the_run_records_one_fetch_run_row_with_its_trigger_and_files(
             "SELECT source, max(fetched_at) AS last_fetched "
             "FROM sem_projections(?) WHERE season = ?"
             " GROUP BY source",
-            [dt.datetime(2026, 10, 1, tzinfo=dt.timezone.utc), SEASON],
+            [dt.datetime(2026, 10, 1, tzinfo=dt.UTC), SEASON],
         )
     assert len(run) == 1
     assert run.iloc[0]["status"] == "ok"

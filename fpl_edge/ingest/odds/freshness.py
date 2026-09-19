@@ -14,14 +14,16 @@ imports exactly what it imported before.
 """
 
 from __future__ import annotations
+
 import datetime as dt
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 from zoneinfo import ZoneInfo
-import pandas as pd
-from fpl_edge.store import Warehouse
 
+import pandas as pd
+
+from fpl_edge.store import Warehouse
 
 UK = ZoneInfo("Europe/London")
 

@@ -52,7 +52,7 @@ from typing import Any
 
 from fpl_edge.intel.items import Duty
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 #: Resolved against the repository rather than the current working directory.
 #: The MCP server runs from its own checkout and the Telegram bot may run from

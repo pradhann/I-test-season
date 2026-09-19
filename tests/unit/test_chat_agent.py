@@ -615,6 +615,21 @@ def test_sse_route_replays_the_transcript(client):
     assert '"user"' in body and '"done"' in body
 
 
+def test_sse_route_404s_an_unknown_conversation(client):
+    """The 404 lands on the response, not inside the SSE body.
+
+    subscribe() is a generator: before the route resolved the conversation
+    itself, UnknownConversation was raised on the first pull, after the
+    handler had already returned 200, and the caller saw a stream that died
+    with a 500 instead of a refusal it could act on.
+    """
+    unknown = "0" * 32
+    with client.stream("GET", f"/api/conversations/{unknown}/stream?once=1") as r:
+        assert r.status_code == 404
+    with client.stream("GET", "/api/conversations/not-an-id/stream?once=1") as r:
+        assert r.status_code == 404
+
+
 # -- liveness under steady activity ------------------------------------------
 
 

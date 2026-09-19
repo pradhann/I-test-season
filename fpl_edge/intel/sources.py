@@ -41,7 +41,7 @@ from typing import Any
 from fpl_edge.intel.bootstrap import ARCHIVE_DIR, read_archive
 from fpl_edge.intel.items import IntelItem, IntelKind, SourceProbe, content_id
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 #: The same honest User-Agent the rest of the project uses. Sent unchanged.
 USER_AGENT = "fpl-edge/0.1 (personal research; contact via repo owner)"

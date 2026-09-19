@@ -2,12 +2,12 @@
 
 from fpl_edge.store.warehouse import (
     DEFAULT_DB,
-    ConflictingFactError,
-    LeasedWarehouse,
-    LeakageError,
-    UnknownAvailabilityError,
     PIT_KEYS,
+    ConflictingFactError,
+    LeakageError,
+    LeasedWarehouse,
     Snapshot,
+    UnknownAvailabilityError,
     Warehouse,
     WarehouseLockedError,
 )

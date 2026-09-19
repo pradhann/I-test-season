@@ -16,7 +16,8 @@ from fpl_edge.eval.replay import (
     revert_free_hit,
 )
 from fpl_edge.eval.scoring import Chip, Pick
-from fpl_edge.types import GwId, Position as P
+from fpl_edge.types import GwId
+from fpl_edge.types import Position as P
 
 LAYOUT = [
     (1, P.GKP), (2, P.DEF), (3, P.DEF), (4, P.DEF), (5, P.DEF),

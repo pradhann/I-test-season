@@ -13,20 +13,21 @@ imports exactly what it imported before.
 """
 
 from __future__ import annotations
+
 import datetime as dt
 import io
 import math
 import re
 from typing import Any
+
 import numpy as np
 import pandas as pd
-from fpl_edge.ingest.http import Fetched, Fetcher, _now, _slug
-from fpl_edge.store import Warehouse
 
+from fpl_edge.ingest.http import Fetched, Fetcher, _now, _slug
 from fpl_edge.ingest.odds.devig import DevigMethod, devig
 from fpl_edge.ingest.odds.freshness import MARKET_CLEAN_SHEET, MARKET_H2H, MARKET_TOTALS, UK
 from fpl_edge.ingest.odds.prices import clean_sheet_probs, fit_goal_rates
-
+from fpl_edge.store import Warehouse
 
 FOOTBALL_DATA_BASE = "https://www.football-data.co.uk"
 
@@ -149,7 +150,7 @@ def _kickoff_utc(date_s: str, time_s: str | None) -> dt.datetime | None:
         hh, mm = (int(x) for x in time_s.strip().split(":"))
     else:
         hh, mm = 23, 59
-    return dt.datetime(d.year, d.month, d.day, hh, mm, tzinfo=UK).astimezone(dt.timezone.utc)
+    return dt.datetime(d.year, d.month, d.day, hh, mm, tzinfo=UK).astimezone(dt.UTC)
 
 
 def _slugify(s: object) -> str:

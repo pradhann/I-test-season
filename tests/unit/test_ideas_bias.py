@@ -22,7 +22,7 @@ from fpl_edge.interfaces.testing import SEASON, plant_ideas, seed_warehouse
 from fpl_edge.interfaces.tracking import track
 from fpl_edge.store import Warehouse
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 #: Mid-September 2026: four gameweeks are in the books, so form, venue and haul
 #: context all exist. Ideas planted here settle well before December.

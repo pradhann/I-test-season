@@ -17,7 +17,7 @@ from fpl_edge.theses.model import (
 )
 from fpl_edge.theses.store import DuplicateThesisError, ThesesStore
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 T0 = dt.datetime(2026, 8, 18, 23, 5, tzinfo=UTC)
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "theses" / "sample.md"

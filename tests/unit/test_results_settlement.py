@@ -15,7 +15,7 @@ import pytest
 
 from fpl_edge.ingest.results import NotFinalError, assert_final, build_rows
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 
 def _fixture(fid: int, *, finished: bool = True, provisional: bool | None = None,

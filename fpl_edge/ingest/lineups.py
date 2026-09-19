@@ -348,10 +348,6 @@ def match_fixtures(
 # --------------------------------------------------------------------------
 
 
-def _latest(wh: Warehouse, sql: str, params: list[Any]) -> pd.DataFrame:
-    return wh.sql(sql, params)
-
-
 def _stored_bridges(wh: Warehouse, season: str) -> tuple[dict[int, int], dict[int, int]]:
     players = wh.sql(
         "SELECT pl_player_id, code FROM bridge_pl_player WHERE season = ? "

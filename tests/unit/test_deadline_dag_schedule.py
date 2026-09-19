@@ -21,7 +21,7 @@ from fpl_edge.jobs.deadline_dag import (
 )
 from fpl_edge.pipelines.contracts import LOOKBACK, NIGHTLY_TASK
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 GW1 = dt.datetime(2026, 8, 21, 17, 30, tzinfo=UTC)
 GW2 = dt.datetime(2026, 8, 28, 17, 30, tzinfo=UTC)
@@ -202,9 +202,9 @@ def test_refresh_survives_a_sleeping_laptop_but_lineup_check_does_not():
 
     from fpl_edge.jobs.deadline_dag import due_tasks, stale_window_for
 
-    deadline = dt.datetime(2026, 8, 21, 17, 30, tzinfo=dt.timezone.utc)
+    deadline = dt.datetime(2026, 8, 21, 17, 30, tzinfo=dt.UTC)
     # 6h45m after the T-30h instant: the exact production case.
-    now = dt.datetime(2026, 8, 20, 18, 15, tzinfo=dt.timezone.utc)
+    now = dt.datetime(2026, 8, 20, 18, 15, tzinfo=dt.UTC)
     by_task = {d.task: d for d in due_tasks([(1, deadline)], now)}
 
     assert by_task["presser_projection_refresh"].stale is False, (
@@ -223,7 +223,7 @@ def test_an_explicit_stale_window_still_overrides_every_task():
 
     from fpl_edge.jobs.deadline_dag import due_tasks
 
-    deadline = dt.datetime(2026, 8, 21, 17, 30, tzinfo=dt.timezone.utc)
-    now = dt.datetime(2026, 8, 20, 18, 15, tzinfo=dt.timezone.utc)
+    deadline = dt.datetime(2026, 8, 21, 17, 30, tzinfo=dt.UTC)
+    now = dt.datetime(2026, 8, 20, 18, 15, tzinfo=dt.UTC)
     forced = due_tasks([(1, deadline)], now, stale_window=dt.timedelta(minutes=5))
     assert all(d.stale for d in forced)

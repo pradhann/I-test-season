@@ -1,8 +1,7 @@
 """A YouTube source must honour the result cap, not just the fetch budget."""
-import datetime as dt
-import pytest
 from fpl_edge.ingest.content import loaders
 from fpl_edge.ingest.content.sources import Source, SourceKind
+
 
 class _Resp:
     status, body = 200, "x" * 10

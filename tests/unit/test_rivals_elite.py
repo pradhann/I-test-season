@@ -19,7 +19,7 @@ from fpl_edge.ingest.http import Fetched
 from fpl_edge.ingest.rivals.client import RequestBudget
 from fpl_edge.ingest.rivals.elite import ELITE_NAMED, EliteEntry, collect, verify
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 GW1 = dt.datetime(2026, 8, 21, 17, 30, tzinfo=UTC)
 AFTER_GW1 = GW1 + dt.timedelta(days=2)
 

@@ -90,11 +90,6 @@ def user_context() -> UserContext:
     return owner_context()
 
 
-def reset_context_cache() -> None:
-    """Test hook. Production resolves the context once and keeps it."""
-    user_context.cache_clear()
-
-
 def entry_id() -> int:
     """The FPL entry this server reads. Never a tool parameter."""
     return int(user_context().entry_id)

@@ -6,17 +6,15 @@ the session cookie must never appear in output, errors, or repr.
 
 from __future__ import annotations
 
-import datetime as dt
-
 import pytest
 
-from fpl_edge.myteam.tokens import TokenManager
 from fpl_edge.myteam.private import (
+    SETUP_STEPS,
     NoSessionError,
     PrivateTeamClient,
-    SETUP_STEPS,
     StaleSessionError,
 )
+from fpl_edge.myteam.tokens import TokenManager
 
 COOKIE = "pl_profile=SECRET_SESSION_VALUE; other=x"
 
@@ -120,7 +118,7 @@ def test_reconstruct_prefers_private_over_manual_and_reports_provenance(tmp_path
 
     from fpl_edge.myteam.state import Provenance, reconstruct
     from fpl_edge.store import Warehouse
-    from tests.unit.test_myteam_state import SEASON, _entry, _universe, T0, UTC
+    from tests.unit.test_myteam_state import SEASON, T0, UTC, _entry, _universe
 
     wh = Warehouse(tmp_path / "t.duckdb")
     players, states = _universe()
@@ -285,7 +283,7 @@ def test_status_never_calls_an_unexpired_refresh_token_valid(tmp_path) -> None:
     from fpl_edge.myteam.tokens import TokenManager
 
     def token(days: int) -> str:
-        exp = dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=days)
+        exp = dt.datetime.now(dt.UTC) + dt.timedelta(days=days)
         payload = base64.urlsafe_b64encode(
             json.dumps({"exp": int(exp.timestamp())}).encode()
         ).decode().rstrip("=")

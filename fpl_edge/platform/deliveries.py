@@ -27,7 +27,7 @@ from fpl_edge.jobs import outbox
 from fpl_edge.platform.query import read_copy
 from fpl_edge.store.warehouse import DEFAULT_DB, LeasedWarehouse
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 
 def _has_table(wh) -> bool:

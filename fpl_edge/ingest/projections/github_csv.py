@@ -351,7 +351,7 @@ def fetch(feed: Feed, *, season: str, gw: int, timeout: float = 60.0,
     path = (feed.path_template.format(gw=gw, season=season)
             if feed.path_template else discover_path(feed, gw=gw, delay_s=delay_s))
     url = feed.raw_url(path)
-    fetched_at = dt.datetime.now(dt.timezone.utc)
+    fetched_at = dt.datetime.now(dt.UTC)
     resp = _get(url, timeout=timeout, delay_s=delay_s)
     if resp.status_code != 200:
         raise GithubFeedError(f"{url} returned HTTP {resp.status_code}")

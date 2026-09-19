@@ -10,7 +10,6 @@ own suite).
 
 from __future__ import annotations
 
-import datetime as dt
 from pathlib import Path
 
 import pandas as pd
@@ -94,9 +93,10 @@ def test_weekly_without_an_artefact_configures_nothing(monkeypatch) -> None:
 def test_the_gap_message_names_the_command_that_fixes_it() -> None:
     """`fpl solve` must be the stated fix, and it must exist (docs/CLI drift
     is the bug class that shipped a documented-but-missing auth command)."""
+    import inspect
+
     from fpl_edge.cli.main import app
     from fpl_edge.myteam import report as report_mod
-    import inspect
 
     src = inspect.getsource(report_mod)
     assert "fpl solve" in src

@@ -37,7 +37,7 @@ from typing import Any, Protocol, Sequence
 
 log = logging.getLogger("fpl_edge.jobs.outbox")
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 #: Telegram caps a message at 4096 characters; leave room for the title line.
 MAX_BODY_CHARS = 3500

@@ -74,10 +74,14 @@ def presser_projection_refresh(ctx: TaskContext) -> TaskResult:
     """T-30h: refetch what press conferences and projection sites just changed."""
     py = ctx.python
     steps = [
-        run_step("ingest_live", [py, "scripts/ingest_live.py"]),
-        run_step("ingest_odds_fixtures", [py, "scripts/ingest_odds.py", "--fixtures"]),
+        run_step("ingest_live",
+                 [py, "scripts/ingest_live.py", "--db", str(ctx.db_path)]),
+        run_step("ingest_odds_fixtures",
+                 [py, "scripts/ingest_odds.py", "--fixtures",
+                  "--db", str(ctx.db_path)]),
         run_step("ingest_content",
-                 [py, "-m", "fpl_edge.ingest.content.pipeline", "ingest",
+                 [py, "-m", "fpl_edge.ingest.content.pipeline",
+                  "--db", str(ctx.db_path), "ingest",
                   "--backfill-days", "2"]),
         # Refresh the cached fixture artefacts so the ticker's colours reflect
         # any midweek results and rescheduled fixtures the ingest above just
@@ -157,7 +161,7 @@ def presser_projection_refresh(ctx: TaskContext) -> TaskResult:
         detail += "; failed: " + ",".join(failed)
     return TaskResult(
         outcome="delivered", detail=detail, kind="digest",
-        title=f"T-30h refresh — GW{ctx.gw}", body="\n".join(lines), steps=steps,
+        title=f"T-30h refresh, GW{ctx.gw}", body="\n".join(lines), steps=steps,
     )
 
 
@@ -286,7 +290,7 @@ def price_radar(ctx: TaskContext) -> TaskResult:
         )
     lines += ["", f"Snapshots: {prev} -> {newest}.",
               "Velocity is net transfers per hour, not FPL's own price algorithm."]
-    result.title = f"Price radar — {len(movers)} mover(s)"
+    result.title = f"Price radar: {len(movers)} mover(s)"
     result.body = "\n".join(lines)
     return result
 
@@ -362,7 +366,7 @@ def final_solve_delivery(ctx: TaskContext) -> TaskResult:
                 f"The newest plan ({path.name}) was generated {gen.isoformat()}, "
                 f"{age.total_seconds() / 3600:.1f} hours ago. That is older than the "
                 "24h freshness bar, so it is NOT being presented as this deadline's "
-                "recommendation — prices, injuries and ownership have moved since.\n\n"
+                "recommendation. Prices, injuries and ownership have moved since.\n\n"
                 f"Its captain was {nm(block.get('captain'))}. "
                 "Re-run `make solve` to get a plan for these conditions."
             ),
@@ -396,7 +400,7 @@ def final_solve_delivery(ctx: TaskContext) -> TaskResult:
     return TaskResult(
         outcome="delivered", kind="report",
         detail=f"plan {path.name} age {age.total_seconds() / 3600:.1f}h",
-        title=f"GW{ctx.gw} final plan — C: {nm(block.get('captain'))}",
+        title=f"GW{ctx.gw} final plan, C: {nm(block.get('captain'))}",
         body="\n".join(lines),
     )
 
@@ -543,13 +547,13 @@ def lineup_captain_check(ctx: TaskContext) -> TaskResult:
             outcome="delivered", kind="alert", steps=[step], detail=detail,
             title=f"ACT: captain {who} is not starting",
             body=(
-                f"Confirmed lineups are out and {who} — your captain — is not in "
+                f"Confirmed lineups are out and {who}, your captain, is not in "
                 f"the XI ({cap_status}).\n\n" + "\n".join(lines)
             ),
         )
     return TaskResult(
         outcome="delivered", kind="report", steps=[step], detail=detail,
-        title=f"GW{ctx.gw} teamsheets — captain {who} {cap_status}",
+        title=f"GW{ctx.gw} teamsheets, captain {who} {cap_status}",
         body="\n".join(lines),
     )
 
@@ -595,7 +599,8 @@ def odds_refresh(ctx: TaskContext) -> TaskResult:
         )
 
     py = ctx.python
-    argv = [py, "scripts/ingest_odds.py", "--odds-api", "--season", ctx.season]
+    argv = [py, "scripts/ingest_odds.py", "--odds-api", "--season", ctx.season,
+            "--db", str(ctx.db_path)]
     steps = [run_step("ingest_odds_props", argv)]
 
     # The earliest rung also refreshes correct score / BTTS / team totals,
@@ -672,7 +677,7 @@ def odds_refresh(ctx: TaskContext) -> TaskResult:
         return TaskResult(
             outcome="error", kind="alert", steps=steps, detail=detail,
             observations=observations,
-            title=f"ODDS REFRESH FAILED — GW{ctx.gw}, "
+            title=f"ODDS REFRESH FAILED, GW{ctx.gw}, "
                   f"{_fmt_delta(ctx.deadline_utc, ctx.now)} to deadline",
             body=("The odds refresh did not complete. The prices the solver "
                   "will read at this deadline are the ones listed below, at "
@@ -682,7 +687,7 @@ def odds_refresh(ctx: TaskContext) -> TaskResult:
         return TaskResult(
             outcome="delivered", kind="alert", steps=steps, detail=detail,
             observations=observations,
-            title=f"Odds refreshed, {len(stale)} market(s) still stale — GW{ctx.gw}",
+            title=f"Odds refreshed, {len(stale)} market(s) still stale, GW{ctx.gw}",
             body=("Every step succeeded and these markets are still outside "
                   "their freshness budget:\n\n" + "\n".join(lines)),
         )

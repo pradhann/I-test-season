@@ -14,6 +14,7 @@ Section 3 and Section 4 row 17).
 """
 
 from __future__ import annotations
+
 import random
 import time
 from collections.abc import Callable
@@ -21,7 +22,6 @@ from pathlib import Path
 from typing import Any
 
 from fpl_edge.platform.link_jobs.preflight import _now
-
 
 WRITE_ATTEMPTS = 3
 
@@ -43,8 +43,8 @@ def _existing_item(db: Path | str, *, vid: str | None,
     segments -- and every sibling id is returned too, because the take is
     assembled across all of them or it loses its timestamps.
     """
-    from fpl_edge.platform.query import read_copy
     from fpl_edge.ingest.content.urls import youtube_id
+    from fpl_edge.platform.query import read_copy
 
     db_path = Path(db)
     if not db_path.exists():

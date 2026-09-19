@@ -305,6 +305,12 @@ def boot(
     """
     global LAST_REPORT
 
+    # One line in the startup log when a deployment still sets the old name
+    # for this directory. See users.DEPRECATED_DATA_ROOT_ENV.
+    from fpl_edge.platform.users import deprecated_data_root
+
+    deprecated_data_root()
+
     data_dir = Path(data_dir)
     db = Path(db_path) if db_path is not None else data_dir / "warehouse" / "fpl.duckdb"
     report = BootReport(data_dir=str(data_dir), db_path=str(db))

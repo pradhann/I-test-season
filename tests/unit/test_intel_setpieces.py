@@ -21,7 +21,7 @@ import pytest
 from fpl_edge.intel.items import Duty, value_duty_change
 from fpl_edge.intel.setpieces import ALERT_GOALS_PER_GAME, compare, scan_archive
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 ARCHIVE = Path(__file__).resolve().parents[1] / "fixtures" / "intel" / "archive"
 

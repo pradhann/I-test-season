@@ -14,22 +14,16 @@ import pandas as pd
 import pytest
 
 from fpl_edge.models.contracts import OWNERSHIP_COLUMNS, OwnershipModel
-from fpl_edge.models.ownership import OwnershipForecaster, build_card
-from fpl_edge.models.ownership import baselines, panel
-from fpl_edge.models.ownership.backtest import loso_coldstart, loso_inseason
+from fpl_edge.models.ownership import OwnershipForecaster, panel
 from fpl_edge.models.ownership.captaincy import CaptaincyParams
 from fpl_edge.models.ownership.drift import (
     HORIZON_EXPONENT,
-    coldstart_predict,
-    fit_coldstart,
-    fit_inseason,
-    inseason_predict,
 )
 from fpl_edge.models.ownership.elite import EliteTiltParams, elite_tilt
 from fpl_edge.models.ownership.field import SQUAD_SIZE, project_to_simplex
 from fpl_edge.store import Warehouse
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 SEASON = "2026-27"
 DEADLINE = dt.datetime(2026, 8, 21, 17, 30, tzinfo=UTC)
 

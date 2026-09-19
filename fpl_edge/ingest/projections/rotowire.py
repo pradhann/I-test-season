@@ -91,7 +91,7 @@ def fetch(*, client: object | None = None, delay_s: float = POLITE_DELAY_S) -> F
     client = client or httpx.Client(
         timeout=60.0, headers={"User-Agent": USER_AGENT}, follow_redirects=True
     )
-    fetched_at = dt.datetime.now(dt.timezone.utc)
+    fetched_at = dt.datetime.now(dt.UTC)
     try:
         resp = client.get(url)  # type: ignore[union-attr]
     finally:
@@ -123,12 +123,46 @@ class LineupEntry:
     certainty: str         # 'expected' | 'confirmed' | 'out' | 'questionable'
 
 
-def parse_lineups(html: str) -> list[LineupEntry]:
+#: Rotowire's own label for a fixture it has not predicted an XI for yet.
+#: The box is rendered with an empty ``ul.lineup__list`` and a status element
+#: carrying neither ``is-expected`` nor ``is-confirmed``.
+UNKNOWN_SHEET = "unknown"
+
+
+def _sheet_status(el) -> str:
+    """``confirmed`` | ``expected`` | ``unknown`` for one status element.
+
+    ``unknown`` used to read as ``expected``, because the class test was
+    "confirmed or else expected". Rotowire has a third state and says so in
+    both the class list and the text ("Unknown Lineup"), so it is read as
+    itself.
+    """
+    classes = el.get("class", [])
+    if "is-confirmed" in classes:
+        return "confirmed"
+    if "is-expected" in classes:
+        return "expected"
+    return UNKNOWN_SHEET
+
+
+def parse_lineups(html: str,
+                  skipped: list[str] | None = None) -> list[LineupEntry]:
     """The lineups page -> flat entries, one per named player.
 
     Fails loudly when a fixture box does not carry exactly two teams or a team
-    sheet does not carry exactly eleven starters: a page that has changed shape
-    must stop the ingest, not feed it a fraction of the truth.
+    sheet carries between one and ten starters: a page that has changed shape,
+    or a sheet that is genuinely partial, must stop the ingest rather than
+    feed it a fraction of the truth.
+
+    A sheet Rotowire labels "Unknown Lineup" with no starters at all is a
+    different thing and is not a refusal. It is the site saying it has not
+    predicted that fixture yet, and it is common: 26 sides across the archived
+    pages, including the ``BRE v CHE`` box that raised on every run from
+    2026-09-04 (agent PF1, seven of twelve errors). One unpublished fixture
+    used to throw away the other nine team sheets on the page. Each one is
+    appended to ``skipped`` by name and the rest of the page is parsed. Any
+    injury entries the box carries are kept, because an OUT flag is true
+    whether or not an XI has been published.
     """
     soup = BeautifulSoup(html, "lxml")
     boxes = soup.select("div.lineup__box")
@@ -140,16 +174,14 @@ def parse_lineups(html: str) -> list[LineupEntry]:
         if len(abbrs) != 2 or not all(abbrs):
             raise RotowireError(f"fixture box has team abbrs {abbrs!r}, expected two")
         home_abbr, visit_abbr = abbrs
-        statuses = [
-            ("confirmed" if "is-confirmed" in el.get("class", []) else "expected")
-            for el in box.select(".lineup__status")
-        ]
+        statuses = [_sheet_status(el) for el in box.select(".lineup__status")]
         for side, team, opp in (("is-home", home_abbr, visit_abbr),
                                 ("is-visit", visit_abbr, home_abbr)):
             ul = box.select_one(f"ul.lineup__list.{side}")
             if ul is None:
                 raise RotowireError(f"{team} v {opp}: no ul.lineup__list.{side}")
-            sheet_status = statuses[0 if side == "is-home" else -1] if statuses else "expected"
+            sheet_status = (statuses[0 if side == "is-home" else -1]
+                            if statuses else "expected")
             in_injuries = False
             starters = 0
             for li in ul.find_all("li", recursive=False):
@@ -184,6 +216,11 @@ def parse_lineups(html: str) -> list[LineupEntry]:
                     starters += 1
                     entries.append(LineupEntry(team, opp, side == "is-home",
                                                name, pos, True, sheet_status))
+            if starters == 0 and sheet_status == UNKNOWN_SHEET:
+                # Not published yet. Named, skipped, and the page goes on.
+                if skipped is not None:
+                    skipped.append(f"{team} v {opp}")
+                continue
             if starters != 11:
                 raise RotowireError(
                     f"{team} v {opp}: {starters} starters parsed, expected 11. "

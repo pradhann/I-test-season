@@ -26,8 +26,6 @@ import pandas as pd
 
 from fpl_edge.models.ownership import baselines, panel
 from fpl_edge.models.ownership.drift import (
-    ColdStartParams,
-    InSeasonParams,
     NEAR_KNOT_DAYS,
     coldstart_predict,
     fit_coldstart,
@@ -36,6 +34,7 @@ from fpl_edge.models.ownership.drift import (
 )
 from fpl_edge.models.ownership.metrics import COVERAGES, mae_pp
 from fpl_edge.models.ownership.model import MEASURED_PATH, PARAMS_PATH
+
 
 @dataclass(frozen=True, slots=True)
 class Score:

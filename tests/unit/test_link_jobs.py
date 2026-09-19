@@ -26,11 +26,11 @@ from fastapi.testclient import TestClient
 
 from fpl_edge.ingest.content import asr
 from fpl_edge.platform import link_jobs
-from fpl_edge.platform.link_jobs import take
 from fpl_edge.platform.app import create_app
+from fpl_edge.platform.link_jobs import take
 from fpl_edge.store.warehouse import Warehouse
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 VID = "dQw4w9WgXcQ"
 WATCH = f"https://www.youtube.com/watch?v={VID}"
 

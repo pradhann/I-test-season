@@ -403,7 +403,7 @@ def gws_with_results(results: pd.DataFrame) -> set[int]:
 
 
 def utc(ts: dt.datetime) -> dt.datetime:
-    return ts.astimezone(dt.timezone.utc)
+    return ts.astimezone(dt.UTC)
 
 
 def safe_int(value: object) -> int | None:

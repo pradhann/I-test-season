@@ -35,7 +35,7 @@ from fpl_edge.types import Position
 
 FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures" / "vaastav"
 SEASONS = ("2022-23", "2023-24", "2024-25", "2025-26")
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 RICE = 204480
 KUDUS = 460842
@@ -413,7 +413,7 @@ def test_the_derived_calendar_is_persisted_not_discarded() -> None:
     assert list(rows["gw"]) == [1, 2]
     gw1 = rows[rows["gw"] == 1].iloc[0]
     # first kickoff minus 90 minutes, the verified deadline rule
-    assert gw1["deadline_utc"] == dt.datetime(2022, 8, 5, 17, 30, tzinfo=dt.timezone.utc)
+    assert gw1["deadline_utc"] == dt.datetime(2022, 8, 5, 17, 30, tzinfo=dt.UTC)
     assert bool(gw1["is_finished"]) is True
     # observable the moment the fixture list is: the season epoch
     assert (rows["as_of"] == season_epoch(calendar)).all()

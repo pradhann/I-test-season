@@ -54,7 +54,6 @@ from fpl_edge.models.team_goals.market import MarketImpliedModel
 from fpl_edge.models.team_goals.odds import FrameOddsProvider
 from fpl_edge.store import Snapshot, Warehouse
 
-
 #: Clubs neither published alias table covers. football-data.co.uk writes
 #: "Man United" where FPL writes "Man Utd", and The Odds API's table only knows
 #: the long form "Manchester United", so 38 of 380 fixtures per season -- every
@@ -274,7 +273,7 @@ class KickoffOddsProvider:
     def odds_for(self, fixture_keys: list[str], as_of: dt.datetime) -> dict:
         del as_of  # deliberately ignored; see the class docstring
         return self._inner.odds_for(fixture_keys, dt.datetime.max.replace(
-            tzinfo=dt.timezone.utc))
+            tzinfo=dt.UTC))
 
 
 def market_goal_model_at_kickoff(
@@ -283,7 +282,7 @@ def market_goal_model_at_kickoff(
 ) -> tuple[MarketImpliedModel, pd.DataFrame]:
     """Market model over closing lines. See :class:`KickoffOddsProvider`."""
     odds, unmatched = odds_with_fixture_keys(
-        warehouse, season, dt.datetime.now(dt.timezone.utc)
+        warehouse, season, dt.datetime.now(dt.UTC)
     )
     if odds.empty:
         raise NoOddsCoverageError(f"no {season} odds at all")

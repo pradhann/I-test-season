@@ -38,7 +38,7 @@ from fpl_edge.myteam.state import PlayerIndex, reconstruct
 from fpl_edge.myteam.store import DEFAULT_ROOT, MyTeamStore, NoSuchDraftError
 
 log = logging.getLogger(__name__)
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 COMMANDS = frozenset({"/myteam", "/setsquad", "/confirm", "/discard", "/sync"})
 

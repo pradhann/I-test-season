@@ -9,16 +9,19 @@ Section 3 and Section 4 row 16).
 """
 
 from __future__ import annotations
+
 import argparse
 import datetime as dt
 from dataclasses import dataclass
 from typing import Any
 
-from fpl_edge.store import Warehouse
-
-from fpl_edge.ingest.content.analyse_cmd import RELEVANCE_THRESHOLD, _write_with_retry, relevance_score
+from fpl_edge.ingest.content.analyse_cmd import (
+    RELEVANCE_THRESHOLD,
+    _write_with_retry,
+    relevance_score,
+)
 from fpl_edge.ingest.content.pipeline_common import _now, build_resolver
-
+from fpl_edge.store import Warehouse
 
 #: What a host with no local engine prints, and the reason line the nightly
 #: registry task carries into its ledger row. One string so the console and
@@ -387,8 +390,8 @@ def cmd_transcribe(args: argparse.Namespace) -> int:
                 continue
             try:
                 if row.kind == "youtube":
-                    from fpl_edge.ingest.content.youtube import is_panel_creator
                     from fpl_edge.ingest.content.urls import youtube_id
+                    from fpl_edge.ingest.content.youtube import is_panel_creator
 
                     if not is_panel_creator(str(row.creator)):
                         # --any-creator widens podcast ASR, which is local work

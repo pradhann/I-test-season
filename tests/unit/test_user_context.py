@@ -22,7 +22,7 @@ from fpl_edge.platform import users as U
 @pytest.fixture(autouse=True)
 def isolated_root(tmp_path, monkeypatch):
     """Every test in this file writes under its own data root."""
-    monkeypatch.setenv(U.DATA_ROOT_ENV, str(tmp_path))
+    monkeypatch.setenv(U.DATA_DIR_ENV, str(tmp_path))
     monkeypatch.delenv("FPL_ENTRY_ID", raising=False)
     return tmp_path
 

@@ -134,7 +134,7 @@ def collect(
     are empty and that is reported as a skip, not raised as a failure. Every
     stage's outcome is recorded in ``summary["stages"]`` whether it ran or not.
     """
-    now = now or dt.datetime.now(dt.timezone.utc)
+    now = now or dt.datetime.now(dt.UTC)
     frames: dict[str, pd.DataFrame] = {}
     summary: dict[str, Any] = {"plan": plan(n_entries, transfers_top=transfers_top)}
     stages: dict[str, str] = {name: "not_reached" for name in STAGES}

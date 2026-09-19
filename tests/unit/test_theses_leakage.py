@@ -30,7 +30,7 @@ from tests.unit.test_theses_resolve import (
     seed_theses_warehouse,
 )
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 #: After the planted price change AND after GW5-6 finalised.
 T_AFTER = dt.datetime(2026, 10, 1, 12, tzinfo=UTC)

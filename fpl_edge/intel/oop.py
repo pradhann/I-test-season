@@ -64,7 +64,7 @@ import pandas as pd
 from fpl_edge.intel.items import IntelItem, IntelKind, OopSignal, content_id
 from fpl_edge.types import Position
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 #: Minutes of history below which the empirical-Bayes shrinkage in shares.py has
 #: pulled a player most of the way onto their positional prior, so their rates

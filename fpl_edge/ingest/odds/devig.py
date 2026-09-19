@@ -15,12 +15,13 @@ imports exactly what it imported before.
 """
 
 from __future__ import annotations
+
 from typing import Any, Literal
+
 import numpy as np
 from scipy.optimize import brentq
 
 from fpl_edge.ingest.odds.prices import implied_prob
-
 
 DevigMethod = Literal["multiplicative", "shin", "power"]
 

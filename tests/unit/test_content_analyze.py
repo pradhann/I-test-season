@@ -22,7 +22,7 @@ from fpl_edge.ingest.content.analyze import (
     store_analysis,
 )
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 
 def sample_analysis() -> TranscriptAnalysis:

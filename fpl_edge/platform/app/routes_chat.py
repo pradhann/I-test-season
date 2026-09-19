@@ -27,7 +27,7 @@ def _chat_router(deps: Deps) -> APIRouter:
     # Read-only: serves the model-authored salience artefact plus freshness.
     # A missing artefact is 404-shaped JSON, never an exception, so the UI
     # renders the gap and offers the trigger; generation itself goes through
-    # POST /api/pipelines/briefing_intel/run — the same seam as every task,
+    # POST /api/pipelines/briefing_intel/run, the same seam as every task,
     # so a UI-triggered briefing leaves the same ledger row a scheduled one
     # does. No POST here on purpose.
 
@@ -115,12 +115,16 @@ def _chat_router(deps: Deps) -> APIRouter:
         live with comment heartbeats, indefinitely."""
         from sse_starlette.sse import EventSourceResponse
 
+        agent = deps.agent_for(user)
+        # Resolved before the stream opens. subscribe() is a generator, so
+        # an unknown id raised from inside it reaches sse-starlette rather
+        # than this except, and the caller got a 200 with a broken body.
         try:
-            stream = deps.agent_for(user).subscribe(conv_id, after=after,
-                                                    follow=not once)
+            agent.require_conversation(conv_id)
         except UnknownConversation as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        return EventSourceResponse(stream)
+        return EventSourceResponse(
+            agent.subscribe(conv_id, after=after, follow=not once))
 
     @router.get("/api/conversations/{conv_id}/events")
     def get_conversation_events(

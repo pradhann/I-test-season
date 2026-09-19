@@ -190,6 +190,27 @@ SCRIPT_TIERS: dict[str, str] = {
 STATIC_MOUNT = "/"
 
 
+#: Which tiers a caller satisfies, given what the enforcement in
+#: ``auth/routes.py`` would decide for the same caller.
+def tiers_allowed(*, signed_in: bool, is_operator: bool,
+                  anon_is_owner: bool) -> frozenset[str]:
+    """The tiers this caller meets, for trimming a payload.
+
+    The enforcement lives in ``auth/routes.py`` and refuses a request. This
+    answers the other half of the same question: which of the things a
+    catalogue lists is this caller allowed to click. The two read the same
+    three facts in the same order, so a catalogue cannot advertise a route
+    that will refuse on click (AUTH.md 6.2 rule 2).
+    """
+    if not signed_in:
+        if anon_is_owner:
+            return frozenset({ANONYMOUS, SESSION, OPERATOR})
+        return frozenset({ANONYMOUS})
+    if is_operator:
+        return frozenset({ANONYMOUS, SESSION, OPERATOR})
+    return frozenset({ANONYMOUS, SESSION})
+
+
 def tier_for(method: str, path: str,
              path_params: dict[str, Any] | None = None) -> str | None:
     """The tier one request must meet, or None when the route is unclassified.

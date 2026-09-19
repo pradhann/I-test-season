@@ -12,8 +12,6 @@ and raise rather than train on it.
 
 from __future__ import annotations
 
-import datetime as dt
-
 import pandas as pd
 
 from fpl_edge.store import LeakageError, Snapshot
@@ -125,5 +123,3 @@ def promoted_team_codes(
     return set(target_teams) - teams_with_history(matches, before_season=season)
 
 
-def as_of_of(snapshot: Snapshot) -> dt.datetime:
-    return snapshot.as_of

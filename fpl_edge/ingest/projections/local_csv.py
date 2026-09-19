@@ -71,7 +71,7 @@ from typing import Literal
 
 import pandas as pd
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 
 #: Where the owner drops exports. Relative to the repo root, gitignored.
 DROP_ROOT = Path("data/projections")

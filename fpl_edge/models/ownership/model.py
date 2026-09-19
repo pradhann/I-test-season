@@ -25,7 +25,7 @@ from typing import Mapping
 import numpy as np
 import pandas as pd
 
-from fpl_edge.models.contracts import ModelCard, OWNERSHIP_COLUMNS
+from fpl_edge.models.contracts import OWNERSHIP_COLUMNS, ModelCard
 from fpl_edge.models.ownership import captaincy as cap
 from fpl_edge.models.ownership.drift import (
     ColdStartParams,
@@ -34,8 +34,8 @@ from fpl_edge.models.ownership.drift import (
     coldstart_predict,
     inseason_predict,
 )
-from fpl_edge.models.ownership.eo import FieldShares
 from fpl_edge.models.ownership.elite import EliteTiltParams, elite_tilt
+from fpl_edge.models.ownership.eo import FieldShares
 from fpl_edge.models.ownership.field import SQUAD_SIZE
 from fpl_edge.store import Snapshot
 from fpl_edge.types import Availability, GwId, Season
@@ -235,7 +235,7 @@ class OwnershipForecaster:
 
         deadline = snapshot.deadline(str(season), int(gw))
         if deadline.tzinfo is None:
-            deadline = deadline.replace(tzinfo=dt.timezone.utc)
+            deadline = deadline.replace(tzinfo=dt.UTC)
         days = (deadline - snapshot.as_of).total_seconds() / 86400.0
         if days < 0:
             raise ValueError(

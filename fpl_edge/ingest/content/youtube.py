@@ -513,10 +513,6 @@ def creator_for_channel(channel: Channel, *,
 # -- transcripts: implemented, documented, and off ---------------------------
 
 
-class RobotsDisallowedRoute(RuntimeError):
-    """Raised when a caller asks for a route youtube.com/robots.txt forbids."""
-
-
 def fetch_transcript(
     fetcher: ContentFetcher,
     video_id: str,

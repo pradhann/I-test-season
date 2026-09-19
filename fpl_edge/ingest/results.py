@@ -46,7 +46,7 @@ import pandas as pd
 from fpl_edge.ingest.http import Fetcher
 from fpl_edge.store import Warehouse
 
-UTC = dt.timezone.utc
+UTC = dt.UTC
 UK = ZoneInfo("Europe/London")
 BASE = "https://fantasy.premierleague.com/api"
 POINTS_FINAL_HOUR = 9

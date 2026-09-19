@@ -56,7 +56,7 @@ def configure(monkeypatch, tmp_path: Path, *, anon_is_owner: bool = False,
     state of a deployment the owner has not configured yet.
     """
     auth_db = tmp_path / "auth" / "auth.sqlite3"
-    monkeypatch.setenv("FPL_EDGE_DATA_ROOT", str(tmp_path / "data"))
+    monkeypatch.setenv("FPL_EDGE_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("AUTH_DB", str(auth_db))
     monkeypatch.setenv("SESSION_SECRET", SESSION_SECRET)
     monkeypatch.setenv("USER_KEY_ENC_SECRET", KEY_SECRET)
