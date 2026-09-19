@@ -101,6 +101,10 @@ body {
   text-decoration: none; font-weight: 500;
 }
 .rail a:hover { color: var(--ink); background: var(--raised); }
+/* an entry that leaves the app says so on the entry, not in a title */
+.rail a.ext { display: flex; align-items: center;
+              justify-content: space-between; gap: var(--sp2); }
+.rail a.ext .ic { opacity: .6; }
 .rail a.active { color: var(--ink); background: var(--raised);
                  box-shadow: inset 2px 0 0 var(--accent); }
 .rail .foot { margin-top: auto; padding: var(--sp2); color: var(--faint);
@@ -447,6 +451,24 @@ input[type="checkbox"], input[type="radio"] { font: inherit; }
 /* what a filter removed, printed under the table it filtered (R16) */
 .rowcount { color: var(--faint); font-size: var(--t-cell);
             margin-top: var(--sp2); }
+
+/* the citation chip: the panel a number came from, and its age. Moved here
+   from dashboard.css when citeChip became shared, because a component in
+   app.js whose rule lives in one view's stylesheet is a component that
+   renders unstyled on every other tab. */
+.cite { border: 0; cursor: pointer; font: var(--t-micro) var(--mono);
+        color: var(--faint); background: var(--raised);
+        border-radius: 999px; padding: 2px var(--sp2); }
+.cite:hover { color: var(--ink); }
+
+/* the working block: term down the left edge, the payload's own number or
+   sentence on the right, one grid so the terms align */
+.worklist { display: grid; grid-template-columns: max-content minmax(0, 1fr);
+            gap: var(--sp1) var(--sp3); margin: var(--sp3) 0 0; }
+.worklist dt { color: var(--faint); font: var(--t-micro) var(--mono);
+               text-transform: uppercase; letter-spacing: .06em;
+               padding-top: 2px; }
+.worklist dd { margin: 0; font-size: var(--t-cell); min-width: 0; }
 
 /* chat */
 .chat-log { display: flex; flex-direction: column; gap: var(--sp2);

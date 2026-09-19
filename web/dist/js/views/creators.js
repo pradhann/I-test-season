@@ -20,7 +20,7 @@
  * are a different axis from direction and never share a mark with it.
  */
 
-import { runPanel, getJSON, postJSON, el, emptyBox, errBox, provenance,
+import { runPanel, getJSON, postJSON, el, emptyBox, errBox, provenance, writeHeaders,
          faceImg, fmtPrice, fmt1, fmtAge } from "/js/app.js";
 
 /* ------------------------------------------------------------------ utils */
@@ -1229,7 +1229,7 @@ export default async function creators(host) {
     let r;
     try {
       r = await fetch("/api/ingest/link", {
-        method: "POST", headers: { "Content-Type": "application/json" },
+        method: "POST", headers: writeHeaders(true),
         body: JSON.stringify({ url }),
       });
     } catch (e) {
@@ -1431,7 +1431,7 @@ export default async function creators(host) {
     try {
       r = await fetch(
         `/api/ingest/link/${encodeURIComponent(job.job_id)}/${verb}`,
-        { method: "POST", headers: { "Content-Type": "application/json" },
+        { method: "POST", headers: writeHeaders(true),
           body: JSON.stringify({ reason: "" }) });
       p = await r.json();
     } catch (e) {
@@ -1464,7 +1464,7 @@ export default async function creators(host) {
     let r, p = null;
     try {
       r = await fetch(`/api/ingest/link/${encodeURIComponent(job.job_id)}`,
-                      { method: "DELETE" });
+                      { method: "DELETE", headers: writeHeaders(false) });
       p = await r.json();
     } catch (e) {
       job.busy = null; job.aborting = false;

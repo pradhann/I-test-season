@@ -101,45 +101,47 @@
 
 /* ---------- the two load-bearing claims under the title ---------- */
 .fx-claim {
-  margin: 0 0 8px; max-width: 76ch; font-size: 12.5px; line-height: 1.5;
-  color: var(--muted); border-left: 2px solid var(--line); padding-left: 10px;
+  margin: 0 0 var(--sp2); max-width: 76ch; font-size: var(--t-cell); line-height: 1.5;
+  color: var(--muted); border-left: 2px solid var(--line); padding-left: var(--sp2);
 }
 .fx-claim b { color: var(--ink); font-weight: 650; }
+/* the two claim lines are one paragraph, so the second is pulled up against
+   the first's own line-height rather than reading as a new block */
 .fx-claim + .fx-claim { margin-top: -2px; }
 .fx-calib {
-  margin: 0 0 10px; max-width: 76ch; font-size: 12px; color: var(--faint);
+  margin: 0 0 var(--sp2); max-width: 76ch; font-size: var(--t-cell); color: var(--faint);
   border-left: 2px solid color-mix(in oklab, var(--warn) 50%, var(--line));
-  padding-left: 10px;
+  padding-left: var(--sp2);
 }
 .fx-calib b { color: var(--ink); font-weight: 650; }
 .fx-calib p { margin: 0; }
-.fx-cal-line { font-size: 12.5px; color: var(--ink); line-height: 1.55; }
+.fx-cal-line { font-size: var(--t-cell); color: var(--ink); line-height: 1.55; }
 .fx-cal-line b.fx-cal-hi { color: var(--warn); font-weight: 700;
                            font-variant-numeric: tabular-nums; }
-.fx-calib .sub { display: block; margin-top: 4px; color: var(--faint);
-                 font-size: 11.5px; line-height: 1.5; }
-.fx-cal-poslab { display: block; margin-top: 8px; color: var(--muted);
-                 font-size: 10px; letter-spacing: .07em; text-transform: uppercase;
+.fx-calib .sub { display: block; margin-top: var(--sp1); color: var(--faint);
+                 font-size: var(--t-label); line-height: 1.5; }
+.fx-cal-poslab { display: block; margin-top: var(--sp2); color: var(--muted);
+                 font-size: var(--t-micro); letter-spacing: .07em; text-transform: uppercase;
                  font-weight: 700; }
-.fx-cal-pos { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 5px; }
-.fx-cal-chip { display: inline-flex; align-items: baseline; gap: 6px;
+.fx-cal-pos { display: flex; gap: var(--sp1); flex-wrap: wrap; margin-top: var(--sp1); }
+.fx-cal-chip { display: inline-flex; align-items: baseline; gap: var(--sp1);
                border: 1px solid var(--line); border-radius: 999px;
-               padding: 2px 9px; background: var(--raised); cursor: help; }
-.fx-cal-chip .p { font-size: 10px; letter-spacing: .06em; font-weight: 700;
+               padding: 2px var(--sp2); background: var(--raised); cursor: help; }
+.fx-cal-chip .p { font-size: var(--t-micro); letter-spacing: .06em; font-weight: 700;
                   color: var(--muted); }
-.fx-cal-chip .n { font-family: var(--mono); font-size: 11.5px; color: var(--ink);
+.fx-cal-chip .n { font-family: var(--mono); font-size: var(--t-label); color: var(--ink);
                   font-variant-numeric: tabular-nums; }
 
 /* ---------- freshness strip: one chip per input, above the numbers ---------- */
-.fx-fresh { display: grid; gap: 3px; padding: 6px 0 8px; }
-.fx-fresh-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 2px; }
-.fx-fresh-head .sub { color: var(--faint); font-size: 10.5px; }
+.fx-fresh { display: grid; gap: var(--sp1); padding: var(--sp1) 0 var(--sp2); }
+.fx-fresh-head { display: flex; align-items: baseline; gap: var(--sp2); margin-bottom: 2px; }
+.fx-fresh-head .sub { color: var(--faint); font-size: var(--t-micro); }
 /* one row per input: dot · name · what it is · age · does age matter. A
    button, because clicking opens the input inspector. */
 .fx-inrow {
   display: grid; grid-template-columns: 7px 112px minmax(0, 1fr) 62px 150px;
-  gap: 0 10px; align-items: center; width: 100%; text-align: left;
-  padding: 4px 8px; border-radius: 6px; font: inherit; font-size: 11.5px;
+  gap: 0 var(--sp2); align-items: center; width: 100%; text-align: left;
+  padding: var(--sp1) var(--sp2); border-radius: 6px; font: inherit; font-size: var(--t-label);
   border: 1px solid transparent; background: none; color: var(--muted);
   cursor: pointer;
 }
@@ -151,7 +153,7 @@
                   white-space: nowrap; }
 .fx-inrow .age { font-family: var(--mono); font-variant-numeric: tabular-nums;
                  color: var(--ink); text-align: right; white-space: nowrap; }
-.fx-inrow .rule { font-size: 10.5px; color: var(--faint); white-space: nowrap;
+.fx-inrow .rule { font-size: var(--t-micro); color: var(--faint); white-space: nowrap;
                   overflow: hidden; text-overflow: ellipsis; }
 .fx-inrow.warn .rule { color: var(--warn); }
 .fx-inrow.stale .rule { color: var(--bad); }
@@ -162,8 +164,8 @@
   .fx-inrow .what, .fx-inrow .rule { grid-column: 2 / -1; }
 }
 .fx-inchip {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 4px 10px; border-radius: 999px; font-size: 11.5px;
+  display: inline-flex; align-items: center; gap: var(--sp1);
+  padding: var(--sp1) var(--sp2); border-radius: 999px; font-size: var(--t-label);
   border: 1px solid var(--line); background: var(--surface); color: var(--muted);
   cursor: help;
 }
@@ -174,7 +176,7 @@
 .fx-inchip.warn  { border-color: color-mix(in oklab, var(--warn) 45%, var(--line));
                    background: color-mix(in oklab, var(--warn) 9%, var(--surface)); }
 .fx-inchip.missing { border-style: dashed; color: var(--faint); }
-.fx-inchip .tag { font-size: 10px; letter-spacing: .07em; text-transform: uppercase;
+.fx-inchip .tag { font-size: var(--t-micro); letter-spacing: .07em; text-transform: uppercase;
                   font-weight: 700; }
 .fx-inchip.stale .tag { color: var(--bad); }
 .fx-inchip.warn .tag  { color: var(--warn); }
@@ -198,7 +200,7 @@ button.fx-inchip:focus-visible { outline: 2px solid var(--s1); outline-offset: 1
 
 /* the inspector's age-vs-budget bar */
 .fx-agebar { position: relative; height: 8px; border-radius: 4px;
-  margin: 6px 0 2px; overflow: hidden;
+  margin: var(--sp1) 0 2px; overflow: hidden;
   background: color-mix(in oklab, var(--ink) 9%, var(--surface));
   border: 1px solid var(--line); }
 .fx-agebar .fill { position: absolute; inset: 0 auto 0 0;
@@ -212,37 +214,37 @@ button.fx-inchip:focus-visible { outline: 2px solid var(--s1); outline-offset: 1
   opacity: .45; cursor: not-allowed; text-decoration: line-through;
   text-decoration-thickness: 1px;
 }
-.fx-nav { display: inline-flex; gap: 4px; }
-.fx-nav button { padding: 5px 10px; font-size: 12px; }
+.fx-nav { display: inline-flex; gap: var(--sp1); }
+.fx-nav button { padding: var(--sp1) var(--sp2); font-size: var(--t-cell); }
 .fx-nav button:disabled { opacity: .4; cursor: not-allowed; }
-.fx-win { color: var(--faint); font-size: 11.5px; font-family: var(--mono);
+.fx-win { color: var(--faint); font-size: var(--t-label); font-family: var(--mono);
           font-variant-numeric: tabular-nums; }
 
 /* ---------- the verdict strip: the zero-gesture answers ---------- */
-.fx-verdict { display: grid; gap: 6px; margin: 2px 0 10px; }
-.fx-verdict .vrow { display: flex; align-items: center; gap: 6px;
+.fx-verdict { display: grid; gap: var(--sp1); margin: 2px 0 var(--sp2); }
+.fx-verdict .vrow { display: flex; align-items: center; gap: var(--sp1);
                     flex-wrap: wrap; }
 /* A 148px gutter of wrapped uppercase was two lines of shouting to label one
    line of content, and it pushed every "open" button onto a line of its own.
    The label is a chip now: it sizes to its words, sits on the baseline of the
    row it names, and reads as a tag rather than a heading. */
-.fx-verdict .vlab { flex: none; font-size: 10px; font-weight: 700;
+.fx-verdict .vlab { flex: none; font-size: var(--t-micro); font-weight: 700;
   letter-spacing: .03em; color: var(--muted); white-space: nowrap;
-  padding: 2px 7px; border-radius: 999px; background: var(--raised);
+  padding: 2px var(--sp2); border-radius: 999px; background: var(--raised);
   border: 1px solid var(--line); }
-.vchip { display: inline-flex; align-items: center; gap: 5px;
-  padding: 3px 9px 3px 5px; border-radius: 999px; cursor: pointer;
+.vchip { display: inline-flex; align-items: center; gap: var(--sp1);
+  padding: var(--sp1) var(--sp2) var(--sp1) var(--sp1); border-radius: 999px; cursor: pointer;
   border: 1px solid var(--line); background: var(--raised);
   font: inherit; color: var(--ink); }
 .vchip:hover { border-color: var(--ink); }
 .vchip:focus-visible { outline: 2px solid var(--s1); outline-offset: 1px; }
-.vchip b { font-size: 11.5px; font-weight: 700; }
-.vchip .rk { font: 700 10px/1 var(--mono); color: var(--muted);
+.vchip b { font-size: var(--t-label); font-weight: 700; }
+.vchip .rk { font: 700 var(--t-micro)/1 var(--mono); color: var(--muted);
              font-variant-numeric: tabular-nums; }
 /* on both shortlists: the ring never travels alone — the ×2 prints too */
 .vchip.both2 { box-shadow: 0 0 0 1px var(--line), 0 0 0 3px var(--accent); }
-.vchip .x2 { font: 700 9px/1 var(--mono); color: var(--accent); }
-.fx-verdict .tear .txt { font-size: 12px; color: var(--muted);
+.vchip .x2 { font: 700 var(--t-micro)/1 var(--mono); color: var(--accent); }
+.fx-verdict .tear .txt { font-size: var(--t-cell); color: var(--muted);
                          line-height: 1.45; }
 .fx-verdict .tear .txt b { color: var(--ink); }
 .fx-verdict .tear.quiet .txt { color: var(--faint); }
@@ -252,7 +254,7 @@ button.fx-inchip:focus-visible { outline: 2px solid var(--s1); outline-offset: 1
 
 /* ---------- the ticker grid ---------- */
 .fx-gridwrap { overflow-x: auto; overscroll-behavior-x: contain;
-               padding-bottom: 4px; }
+               padding-bottom: var(--sp1); }
 .fx-grid {
   --fx-rail: 206px; --fx-col: 72px;
   display: grid; gap: 2px; width: max-content; min-width: 100%;
@@ -262,31 +264,31 @@ button.fx-inchip:focus-visible { outline: 2px solid var(--s1); outline-offset: 1
 .fx-hcell {
   position: sticky; top: 0; z-index: 3;
   background: var(--surface); color: var(--muted);
-  font-size: 10.5px; letter-spacing: .07em; text-transform: uppercase;
-  font-weight: 700; padding: 5px 6px 6px; text-align: center;
+  font-size: var(--t-micro); letter-spacing: .07em; text-transform: uppercase;
+  font-weight: 700; padding: var(--sp1) var(--sp1) var(--sp1); text-align: center;
   border-bottom: 1px solid var(--line);
 }
-.fx-hcell .d { display: block; font-size: 10px; letter-spacing: 0;
+.fx-hcell .d { display: block; font-size: var(--t-micro); letter-spacing: 0;
                text-transform: none; color: var(--faint); font-weight: 500; }
 .fx-hcell.fx-railhead { text-align: left; left: 0; z-index: 4;
-  display: flex; flex-direction: column; gap: 3px; justify-content: center; }
-.fx-hcell.fx-railhead .d { font-size: 9.5px; }
+  display: flex; flex-direction: column; gap: var(--sp1); justify-content: center; }
+.fx-hcell.fx-railhead .d { font-size: var(--t-micro); }
 .fx-rhtitle { font-weight: 650; }
 /* The two column heads ARE the sort control: the words that used to repeat on
    every row live here once, and clicking one orders the grid by it. */
-.fx-rhsorts { display: flex; gap: 4px; }
+.fx-rhsorts { display: flex; gap: var(--sp1); }
 /* A column head, not a form control: boxed buttons in a boxed header read as
    an input group sitting where a table header belongs. Flat, with the active
    column underlined the way a sorted column is underlined anywhere else. */
 .fx-rhsort {
   flex: 1; display: inline-flex; align-items: center; justify-content: center;
-  gap: 2px; padding: 2px 0 3px; border: 0; border-bottom: 2px solid transparent;
+  gap: 2px; padding: 2px 0 var(--sp1); border: 0; border-bottom: 2px solid transparent;
   background: transparent; color: var(--faint); cursor: pointer;
-  font: 700 9px/1.2 var(--mono); letter-spacing: .04em;
+  font: 700 var(--t-micro)/1.2 var(--mono); letter-spacing: .04em;
 }
 .fx-rhsort:hover { color: var(--ink); }
 .fx-rhsort.on { color: var(--ink); border-bottom-color: var(--s1); }
-.fx-rhsort .arr { font-size: 7px; }
+.fx-rhsort .arr { font-size: var(--t-micro); }
 
 /* left rail: crest · name · form chip, then the rank pair with its bars on
    ONE shared axis. The rank pair is the only way to read the off-lens rank
@@ -296,28 +298,28 @@ button.fx-inchip:focus-visible { outline: 2px solid var(--s1); outline-offset: 1
   box-shadow: 1px 0 0 var(--line); cursor: pointer;
   border-radius: 6px 0 0 6px;
   display: grid; grid-template-columns: 20px 1fr auto;
-  gap: 2px 7px; align-items: center; padding: 4px 8px 4px 4px;
+  gap: 2px var(--sp2); align-items: center; padding: var(--sp1) var(--sp2) var(--sp1) var(--sp1);
 }
 .fx-rail:hover { background: var(--raised); }
 .fx-rail:focus-visible { outline: 2px solid var(--s1); outline-offset: -2px; }
-.fx-rail .nm { font-weight: 700; font-size: 12.5px;
-               display: flex; align-items: center; gap: 5px; }
+.fx-rail .nm { font-weight: 700; font-size: var(--t-cell);
+               display: flex; align-items: center; gap: var(--sp1); }
 .fx-rail .rr { grid-column: 1 / -1; display: flex; align-items: center;
-               gap: 5px; }
+               gap: var(--sp1); }
 /* The two rank chips. They wear the grid's own FDR step for the club's
    per-game ease, so the rail and the cells speak one colour language and a
    green ATT chip means the same green as a green cell. The chip is a swatch
    with a number on it, which is why it needs no bar beside it. */
 .fx-ranks { grid-column: 1 / -1; display: grid;
-            grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 1px; }
+            grid-template-columns: 1fr 1fr; gap: var(--sp1); margin-top: 1px; }
 .fx-rk {
   display: flex; align-items: center; justify-content: space-between;
-  gap: 4px; padding: 2px 5px; border-radius: 4px;
+  gap: var(--sp1); padding: 2px var(--sp1); border-radius: 4px;
   background: var(--raised); border: 1px solid var(--line); cursor: pointer;
 }
-.fx-rk i { font: 700 8.5px/1 var(--mono); font-style: normal;
+.fx-rk i { font: 700 var(--t-micro)/1 var(--mono); font-style: normal;
            letter-spacing: .05em; opacity: .8; }
-.fx-rk b { font: 700 12px/1 var(--mono); font-variant-numeric: tabular-nums; }
+.fx-rk b { font: 700 var(--t-cell)/1 var(--mono); font-variant-numeric: tabular-nums; }
 /* TINTED, not filled. Filling these with the FDR step made 40 saturated
    blocks in the rail that outshouted the 120 cells they were meant to
    summarise -- and FPL's neutral (#e7e7e7) is a bright white plate on a dark
@@ -339,15 +341,15 @@ button.fx-inchip:focus-visible { outline: 2px solid var(--s1); outline-offset: 1
 .fx-rk b { color: var(--ink); }
 
 /* Method, kickoffs and provenance live under the grid now. */
-.fx-method { margin-top: 14px; padding-top: 12px;
-             border-top: 1px solid var(--line); display: grid; gap: 8px; }
+.fx-method { margin-top: var(--sp3); padding-top: var(--sp3);
+             border-top: 1px solid var(--line); display: grid; gap: var(--sp2); }
 .fx-promo { cursor: help; }
 /* club strength on the row, beside the run rank: "elite club, hard run" is a
    fact the row shows, not one the reader assembles */
-.fx-rail .fx-club { grid-column: 1 / -1; font-size: 9.5px; color: var(--faint);
+.fx-rail .fx-club { grid-column: 1 / -1; font-size: var(--t-micro); color: var(--faint);
                     font-variant-numeric: tabular-nums; white-space: nowrap;
                     line-height: 1.2; }
-.fx-rail .rr b { font: 700 11px/1 var(--mono); color: var(--ink);
+.fx-rail .rr b { font: 700 var(--t-label)/1 var(--mono); color: var(--ink);
                  width: 30px; font-variant-numeric: tabular-nums; }
 .fx-rail .rr .fx-track { flex: 1; height: 8px; }
 
@@ -363,21 +365,24 @@ button.fx-inchip:focus-visible { outline: 2px solid var(--s1); outline-offset: 1
    lands on a fixture cell. Nothing here may spill. */
 .fx-rail { overflow: hidden; }
 .fx-rail > * { min-width: 0; }
-.formchip.smalln { font: 700 10px/1 var(--mono); color: var(--warn); }
-.formchip.resid { display: inline-flex; gap: 4px; }
-.formchip.resid .pill { padding: 0 6px; border-radius: 999px;
+.formchip.smalln { font: 700 var(--t-micro)/1 var(--mono); color: var(--warn); }
+.formchip.resid { display: inline-flex; gap: var(--sp1); }
+.formchip.resid .pill { padding: 0 var(--sp1); border-radius: 999px;
   border: 1px solid var(--line); color: var(--ink); white-space: nowrap;
-  font: 600 9.5px/1.6 var(--mono); font-variant-numeric: tabular-nums; }
+  font: 600 var(--t-micro)/1.6 var(--mono); font-variant-numeric: tabular-nums; }
 .formchip.resid .pill.up {
   background: color-mix(in oklab, var(--s1) 13%, var(--surface)); }
 .formchip.resid .pill.dn {
   background: color-mix(in oklab, var(--s2) 13%, var(--surface)); }
-.fx-torn2 { color: var(--warn); font-style: normal; font-size: 11px;
-            cursor: help; }
+/* the rail's torn mark: the word, not a geometric character standing in for
+   a drawing (R41). It keys to the same legend the torn card does. */
+.fx-torn2 { color: var(--warn); font-style: normal; font: 700 var(--t-micro) var(--mono);
+            letter-spacing: .04em; text-transform: uppercase; cursor: help;
+            margin-left: var(--sp1); }
 /* the prior mark: a word tag, never a dotted underline (an underline reads as
    a link). Same tag in the legend, so the mark is keyed without a hover. */
-.fx-promo { display: inline-block; padding: 1px 5px; border-radius: 4px;
-  font: 700 8.5px/1.3 var(--mono); letter-spacing: .04em; text-transform: uppercase;
+.fx-promo { display: inline-block; padding: 1px var(--sp1); border-radius: 4px;
+  font: 700 var(--t-micro)/1.3 var(--mono); letter-spacing: .04em; text-transform: uppercase;
   color: var(--warn); border: 1px solid color-mix(in oklab, var(--warn) 55%, var(--line));
   background: color-mix(in oklab, var(--warn) 9%, var(--surface)); }
 
@@ -422,17 +427,17 @@ button.fx-inchip:focus-visible { outline: 2px solid var(--s1); outline-offset: 1
    the same trick .seam.torn already uses to stay legible on any step. */
 .fx-cell .opp {
   position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
-  font-weight: 750; font-size: 12.5px; letter-spacing: .02em;
+  font-weight: 750; font-size: var(--t-cell); letter-spacing: .02em;
   color: var(--ink); pointer-events: none; z-index: 2;
   background: color-mix(in oklab, var(--surface) 90%, transparent);
-  padding: 1px 5px; border-radius: 3px;
+  padding: 1px var(--sp1); border-radius: 3px;
 }
 /* the one signed number, solo lens only — a lens user is doing arithmetic */
 /* Solo lens: one step fills the cell, so the number can wear that step's own
    FPL ink -- set per class below rather than one token for all five. */
 .fx-cell.solo .vv {
   position: absolute; right: 5px; bottom: 3px; font-family: var(--mono);
-  font-size: 10px; font-variant-numeric: tabular-nums;
+  font-size: var(--t-micro); font-variant-numeric: tabular-nums;
   z-index: 2; pointer-events: none; opacity: .9;
 }
 .fx-cell.solo:has(.fx-d1) .vv { color: var(--fx-d1-ink); }
@@ -461,28 +466,28 @@ button.fx-inchip:focus-visible { outline: 2px solid var(--s1); outline-offset: 1
 .fx-cell.blank:hover, .fx-cell.nomodel:hover { border-color: var(--line); }
 .fx-cell.blank .why, .fx-cell.nomodel .why {
   position: absolute; inset: 0; display: flex; align-items: center;
-  justify-content: center; font-size: 10px; letter-spacing: .05em;
+  justify-content: center; font-size: var(--t-micro); letter-spacing: .05em;
   text-transform: uppercase; font-weight: 700; color: var(--faint);
 }
 /* a fixture the panel has, with no fitted rating: the schedule is still a fact */
 .fx-cell.nomodel .opp { color: var(--muted); text-shadow: none; }
-.fx-cell.nomodel .why { align-items: flex-end; padding-bottom: 4px;
-                        font-size: 9px; }
+.fx-cell.nomodel .why { align-items: flex-end; padding-bottom: var(--sp1);
+                        font-size: var(--t-micro); }
 
 /* double gameweek: two decisions, two marks */
 .fx-dgw { display: grid; grid-auto-rows: 1fr; gap: 2px; height: 100%; }
 .fx-dgw .fx-cell { min-height: 0; }
-.fx-dgw .fx-cell .opp { font-size: 10.5px; }
-.fx-dgw .fx-cell .vv { font-size: 8.5px; }
+.fx-dgw .fx-cell .opp { font-size: var(--t-micro); }
+.fx-dgw .fx-cell .vv { font-size: var(--t-micro); }
 
 
 /* ---------- legend ---------- */
-.fx-legend { display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-start;
-             margin-top: 12px; padding-top: 10px;
+.fx-legend { display: flex; gap: var(--sp3); flex-wrap: wrap; align-items: flex-start;
+             margin-top: var(--sp3); padding-top: var(--sp2);
              border-top: 1px solid var(--line); }
 .fx-ramp { display: flex; align-items: center; gap: 0; }
 .fx-ramp .sw { width: 26px; height: 15px; border: 1px solid var(--line);
-               border-right: 0; font-size: 10px; font-weight: 700;
+               border-right: 0; font-size: var(--t-micro); font-weight: 700;
                display: inline-flex; align-items: center;
                justify-content: center; font-variant-numeric: tabular-nums; }
 .fx-ramp .sw.fx-d1 { color: var(--fx-d1-ink); }
@@ -493,11 +498,11 @@ button.fx-inchip:focus-visible { outline: 2px solid var(--s1); outline-offset: 1
 .fx-ramp .sw:last-of-type { border-right: 1px solid var(--line); }
 .fx-ramp .sw:first-of-type { border-radius: 3px 0 0 3px; }
 .fx-ramp .sw:last-of-type { border-radius: 0 3px 3px 0; }
-.fx-legend .lab { color: var(--faint); font-size: 11px; }
+.fx-legend .lab { color: var(--faint); font-size: var(--t-label); }
 .fx-legend .lab b { color: var(--muted); }
-.fx-keys { display: flex; gap: 12px; flex-wrap: wrap; color: var(--faint);
-           font-size: 11px; }
-.fx-keys .k { display: inline-flex; align-items: center; gap: 5px; }
+.fx-keys { display: flex; gap: var(--sp3); flex-wrap: wrap; color: var(--faint);
+           font-size: var(--t-label); }
+.fx-keys .k { display: inline-flex; align-items: center; gap: var(--sp1); }
 .fx-swatch-seam { width: 22px; height: 5px; flex: none;
   background:
     repeating-linear-gradient(90deg, var(--warn) 0 6px, transparent 6px 10px)
@@ -508,39 +513,37 @@ button.fx-inchip:focus-visible { outline: 2px solid var(--s1); outline-offset: 1
   border: 1px dashed var(--line);
   background: repeating-linear-gradient(135deg, transparent 0 4px,
                                         var(--fx-hatch) 4px 5px), var(--surface); }
-.fx-boundaries { color: var(--faint); font-size: 10.5px; font-family: var(--mono);
-                 font-variant-numeric: tabular-nums; margin-top: 4px; }
+.fx-boundaries { color: var(--faint); font-size: var(--t-micro); font-family: var(--mono);
+                 font-variant-numeric: tabular-nums; margin-top: var(--sp1); }
 
 /* ---------- "where the lenses disagree": one row per torn opponent-venue -- */
-.fx-torn-list { display: grid; gap: 8px; }
+.fx-torn-list { display: grid; gap: var(--sp2); }
 .fx-torn-row {
-  display: grid; gap: 4px 10px; padding: 9px 11px; border-radius: 8px;
+  display: grid; gap: var(--sp1) var(--sp2); padding: var(--sp2) var(--sp3); border-radius: 8px;
   background: var(--raised); border: 1px solid var(--line);
 }
-.fx-torn-row .hd { display: flex; align-items: center; gap: 7px; }
-.fx-torn-row .hd b { color: var(--ink); font-size: 12.5px; }
-.fx-torn-row .txt { font-size: 12px; line-height: 1.45; color: var(--muted); }
-.fx-torn-row .who { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
+.fx-torn-row .hd { display: flex; align-items: center; gap: var(--sp2); }
+.fx-torn-row .hd b { color: var(--ink); font-size: var(--t-cell); }
+.fx-torn-row .txt { font-size: var(--t-cell); line-height: 1.45; color: var(--muted); }
+.fx-torn-row .who { display: flex; gap: var(--sp1); flex-wrap: wrap; margin-top: 2px; }
 
-/* ---------- the drawer: masthead + five acts behind a sticky nav ---------- */
-.fx-drawer { width: min(600px, 96vw); }
-.fx-mast { display: flex; align-items: center; gap: 12px; flex: 1;
-           min-height: 56px; }
-.fx-mast .mid { flex: 1; min-width: 0; }
-.fx-mastfresh { display: flex; gap: 6px; flex-wrap: wrap; margin: 2px 0 6px; }
-.fx-actnav { position: sticky; top: 0; z-index: 5; display: flex; gap: 4px;
-  padding: 6px 0; margin: 0 0 4px; background: var(--surface);
+/* ---------- the drawer: masthead + five acts behind a sticky nav ----------
+   The aside itself, its width and its masthead are app.css's (R20): this
+   file's own 600px and its hand-built `.fx-mast` are gone. */
+.fx-mastfresh { display: flex; gap: var(--sp1); flex-wrap: wrap; margin: 2px 0 var(--sp1); }
+.fx-actnav { position: sticky; top: 0; z-index: 5; display: flex; gap: var(--sp1);
+  padding: var(--sp1) 0; margin: 0 0 var(--sp1); background: var(--surface);
   border-bottom: 1px solid var(--line); }
-.fx-actnav button { font-size: 11px; letter-spacing: .06em;
+.fx-actnav button { font-size: var(--t-label); letter-spacing: .06em;
   text-transform: uppercase; font-weight: 700; color: var(--muted);
-  padding: 3px 8px; border-radius: 999px; border: 1px solid transparent;
+  padding: var(--sp1) var(--sp2); border-radius: 999px; border: 1px solid transparent;
   background: none; cursor: pointer; }
 .fx-actnav button:hover { color: var(--ink); border-color: var(--line);
   background: var(--raised); }
 .fx-actnav button:focus-visible { outline: 2px solid var(--s1); }
 .fx-act { scroll-margin-top: 38px; }
-.fx-acthead { border-top: 1px solid var(--line); padding-top: 10px; }
-.fx-drawer h2.fx-acthead { margin-top: 18px; font-size: 12px;
+.fx-acthead { border-top: 1px solid var(--line); padding-top: var(--sp2); }
+.fx-drawer h2.fx-acthead { margin-top: var(--sp4); font-size: var(--t-cell);
   color: var(--ink); letter-spacing: .09em; }
 
 /* the fixture-specific pair, deliberately off the ramp: outlined marks on a
@@ -551,22 +554,22 @@ button.fx-inchip:focus-visible { outline: 2px solid var(--s1); outline-offset: 1
   box-shadow: inset 0 0 0 1.5px color-mix(in oklab, var(--ink) 60%, transparent); }
 
 /* Act 3: two columns, home | away, stacking narrow */
-.fx-people { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 16px;
-             margin-top: 6px; }
+.fx-people { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp1) var(--sp4);
+             margin-top: var(--sp1); }
 .fx-people .col { min-width: 0; }
-.fx-people .club { display: block; font-size: 11.5px; font-weight: 700;
-                   color: var(--ink); margin-bottom: 4px; }
-.fx-people .pb { margin: 8px 0 0; }
-.fx-people .pl { display: block; font-size: 10px; letter-spacing: .07em;
+.fx-people .club { display: block; font-size: var(--t-label); font-weight: 700;
+                   color: var(--ink); margin-bottom: var(--sp1); }
+.fx-people .pb { margin: var(--sp2) 0 0; }
+.fx-people .pl { display: block; font-size: var(--t-micro); letter-spacing: .07em;
   text-transform: uppercase; font-weight: 700; color: var(--faint);
-  margin-bottom: 3px; }
-.fx-newslist { display: grid; gap: 5px; }
-.fx-newslist .nrow { font-size: 12px; line-height: 1.4; }
-.fx-newslist .nrow b { color: var(--ink); margin-right: 5px; }
-.fx-newslist .chance { font: 700 10px/1.4 var(--mono); color: var(--warn);
-  border: 1px solid var(--line); border-radius: 999px; padding: 0 5px;
-  margin-right: 5px; }
-.fx-newslist .meta { color: var(--faint); font-size: 11px; }
+  margin-bottom: var(--sp1); }
+.fx-newslist { display: grid; gap: var(--sp1); }
+.fx-newslist .nrow { font-size: var(--t-cell); line-height: 1.4; }
+.fx-newslist .nrow b { color: var(--ink); margin-right: var(--sp1); }
+.fx-newslist .chance { font: 700 var(--t-micro)/1.4 var(--mono); color: var(--warn);
+  border: 1px solid var(--line); border-radius: 999px; padding: 0 var(--sp1);
+  margin-right: var(--sp1); }
+.fx-newslist .meta { color: var(--faint); font-size: var(--t-label); }
 @media (max-width: 480px) { .fx-people { grid-template-columns: 1fr; } }
 
 /* Act 4: per-club form rows — the same two-state chip as the rail */
@@ -576,26 +579,26 @@ button.fx-inchip:focus-visible { outline: 2px solid var(--s1); outline-offset: 1
    itself and the two pills overflowed into the rates line once their labels
    grew from "att form +0.4" to "att +0.4 vs rating". A drawer is ~400px; two
    pills plus a club plus three rates were never going to share a line. */
-.fx-formrec { display: grid; gap: 10px; margin: 6px 0 2px; }
+.fx-formrec { display: grid; gap: var(--sp2); margin: var(--sp1) 0 2px; }
 .fx-formrec .row {
   display: grid; grid-template-columns: 42px minmax(0, 1fr);
-  gap: 3px 8px; align-items: start;
+  gap: var(--sp1) var(--sp2); align-items: start;
 }
-.fx-formrec .row b { font-size: 12px; color: var(--ink);
+.fx-formrec .row b { font-size: var(--t-cell); color: var(--ink);
                      grid-row: 1 / span 2; align-self: center; }
 .fx-formrec .formchip { justify-self: start; flex-wrap: wrap; }
-.fx-formrec .rates { grid-column: 2; color: var(--muted); font-size: 11px;
+.fx-formrec .rates { grid-column: 2; color: var(--muted); font-size: var(--t-label);
   font-family: var(--mono); font-variant-numeric: tabular-nums;
   line-height: 1.4; }
 
 /* Act 2: the model/market gap dumbbell — the page's only dumbbell, and it
    means model-vs-market and nothing else. Thin marks, one shared 0–100%
    axis, both estimators visible, the gap drawn as a length. */
-.fx-mktmeta { margin: 4px 0 6px; font-size: 11.5px; color: var(--muted);
+.fx-mktmeta { margin: var(--sp1) 0 var(--sp1); font-size: var(--t-label); color: var(--muted);
   font-family: var(--mono); font-variant-numeric: tabular-nums; }
-.fx-gaplines { display: grid; gap: 7px; margin: 6px 0 4px; }
-.gapline { display: grid; grid-template-columns: 118px 1fr 52px; gap: 10px;
-  align-items: center; font-size: 12px; }
+.fx-gaplines { display: grid; gap: var(--sp2); margin: var(--sp1) 0 var(--sp1); }
+.gapline { display: grid; grid-template-columns: 118px 1fr 52px; gap: var(--sp2);
+  align-items: center; font-size: var(--t-cell); }
 .gapline .k { color: var(--muted); }
 .db { position: relative; height: 14px; border-radius: 7px;
   background: color-mix(in oklab, var(--ink) 7%, var(--surface)); }
@@ -608,73 +611,72 @@ button.fx-inchip:focus-visible { outline: 2px solid var(--s1); outline-offset: 1
   box-shadow: 0 0 0 1.5px var(--surface); }
 .db .model { left: calc(var(--m) * 1%); background: var(--s1); }
 .db .market { left: calc(var(--k) * 1%); background: var(--s2); }
-.gapline .v { font: 700 11px/1 var(--mono); text-align: right;
+.gapline .v { font: 700 var(--t-label)/1 var(--mono); text-align: right;
   color: var(--muted); font-variant-numeric: tabular-nums; }
 .gapline.flagged .v { color: var(--warn); }
-.fx-gapkey { margin: 2px 0 6px; font-size: 11px; color: var(--faint); }
+.fx-gapkey { margin: 2px 0 var(--sp1); font-size: var(--t-label); color: var(--faint); }
 .fx-gapkey .dot { display: inline-block; width: 8px; height: 8px;
   border-radius: 50%; vertical-align: -1px; }
 .fx-gapkey .dot.m { background: var(--s1); }
 .fx-gapkey .dot.k { background: var(--s2); }
 
 /* the match result: model above market, one shared 0–100% axis */
-.fx-hda { display: grid; grid-template-columns: 52px 1fr; gap: 10px;
-  align-items: center; margin-top: 5px; }
-.fx-hda .k { font-size: 10px; letter-spacing: .06em; text-transform: uppercase;
+.fx-hda { display: grid; grid-template-columns: 52px 1fr; gap: var(--sp2);
+  align-items: center; margin-top: var(--sp1); }
+.fx-hda .k { font-size: var(--t-micro); letter-spacing: .06em; text-transform: uppercase;
   font-weight: 700; color: var(--faint); }
 .fx-hda .bar { display: flex; height: 16px; border-radius: 4px;
   overflow: hidden; border: 1px solid var(--line); }
 .fx-hda .seg { display: flex; align-items: center; justify-content: center;
-  font: 600 9.5px/1 var(--mono); color: var(--ink); white-space: nowrap;
+  font: 600 var(--t-micro)/1 var(--mono); color: var(--ink); white-space: nowrap;
   overflow: hidden; }
 .fx-hda .seg.h { background: color-mix(in oklab, var(--s1) 30%, var(--surface)); }
 .fx-hda .seg.d { background: color-mix(in oklab, var(--ink) 8%, var(--surface)); }
 .fx-hda .seg.a { background: color-mix(in oklab, var(--s2) 30%, var(--surface)); }
 .fx-hda .seg + .seg { border-left: 1px solid var(--line); }
 
-.fx-drawer h2 { margin: 16px 0 4px; font-size: 11px; letter-spacing: .07em;
+.fx-drawer h2 { margin: var(--sp4) 0 var(--sp1); font-size: var(--t-label); letter-spacing: .07em;
                 text-transform: uppercase; color: var(--muted); }
-.fx-dh { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 8px; }
-.fx-dh .dname { font-size: 17px; font-weight: 700; }
-.fx-dh button { margin-left: auto; }
-.fx-lens { display: grid; gap: 8px; margin: 6px 0 2px; }
-.fx-lensrow { display: grid; grid-template-columns: 84px 1fr auto; gap: 10px;
+.fx-dh { margin-bottom: var(--sp2); }
+.fx-dh .dhead { min-height: 56px; }
+.fx-lens { display: grid; gap: var(--sp2); margin: var(--sp1) 0 2px; }
+.fx-lensrow { display: grid; grid-template-columns: 84px 1fr auto; gap: var(--sp2);
               align-items: center; }
-.fx-lensrow .lk { color: var(--muted); font-size: 11px; letter-spacing: .05em;
+.fx-lensrow .lk { color: var(--muted); font-size: var(--t-label); letter-spacing: .05em;
                   text-transform: uppercase; font-weight: 700; }
-.fx-lensrow .lv { font-family: var(--mono); font-size: 11.5px; text-align: right;
+.fx-lensrow .lv { font-family: var(--mono); font-size: var(--t-label); text-align: right;
                   font-variant-numeric: tabular-nums; }
 .fx-gap {
-  border: 1px dashed var(--line); border-radius: 8px; padding: 9px 11px;
-  background: var(--raised); color: var(--muted); font-size: 12px;
+  border: 1px dashed var(--line); border-radius: 8px; padding: var(--sp2) var(--sp3);
+  background: var(--raised); color: var(--muted); font-size: var(--t-cell);
   line-height: 1.5;
 }
-.fx-gap b { display: block; color: var(--ink); margin-bottom: 3px;
-            font-size: 12px; }
-.fx-gap code { font-family: var(--mono); font-size: 11px;
+.fx-gap b { display: block; color: var(--ink); margin-bottom: var(--sp1);
+            font-size: var(--t-cell); }
+.fx-gap code { font-family: var(--mono); font-size: var(--t-label);
                background: color-mix(in oklab, var(--ink) 7%, transparent);
-               padding: 0 4px; border-radius: 3px; }
+               padding: 0 var(--sp1); border-radius: 3px; }
 .fx-note {
   border: 1px solid var(--line); border-left: 3px solid var(--accent);
-  border-radius: 8px; padding: 9px 11px;
-  background: var(--raised); color: var(--muted); font-size: 12px;
+  border-radius: 8px; padding: var(--sp2) var(--sp3);
+  background: var(--raised); color: var(--muted); font-size: var(--t-cell);
   line-height: 1.5;
 }
-.fx-note b { display: block; color: var(--ink); margin-bottom: 3px; font-size: 12px; }
-.fx-note code { font-family: var(--mono); font-size: 11px;
+.fx-note b { display: block; color: var(--ink); margin-bottom: var(--sp1); font-size: var(--t-cell); }
+.fx-note code { font-family: var(--mono); font-size: var(--t-label);
                 background: color-mix(in oklab, var(--ink) 7%, transparent);
-                padding: 0 4px; border-radius: 3px; }
-.fx-kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px;
-         font-size: 12px; }
+                padding: 0 var(--sp1); border-radius: 3px; }
+.fx-kv { display: grid; grid-template-columns: auto 1fr; gap: var(--sp1) var(--sp3);
+         font-size: var(--t-cell); }
 .fx-kv .k { color: var(--muted); }
 .fx-kv .v { font-family: var(--mono); font-variant-numeric: tabular-nums; }
-.fx-links { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+.fx-links { display: flex; gap: var(--sp2); flex-wrap: wrap; margin-top: var(--sp1); }
 
 /* ---------- the table view (the contrast-relief obligation, made real) ---- */
 .fx-tableview td.n { font-family: var(--mono); text-align: right;
                      font-variant-numeric: tabular-nums; }
 .fx-tableview td .sw { display: inline-block; width: 9px; height: 9px;
-                       border-radius: 2px; margin-right: 6px;
+                       border-radius: 2px; margin-right: var(--sp1);
                        vertical-align: -1px; border: 1px solid var(--line); }
 
 
@@ -683,18 +685,18 @@ button.fx-inchip:focus-visible { outline: 2px solid var(--s1); outline-offset: 1
    logical space — the marks stay real buttons (tab order, Enter, native
    focus ring) and the crest component is reused untouched. */
 .fx-shape { position: relative; width: 100%; max-width: 640px;
-  aspect-ratio: 560 / 340; margin-top: 6px; }
+  aspect-ratio: 560 / 340; margin-top: var(--sp1); }
 .fx-shape svg { position: absolute; inset: 0; width: 100%; height: 100%;
   display: block; }
 .fx-shape .wash.good { fill: color-mix(in oklab, var(--s1) 4%, transparent); }
 .fx-shape .wash.bad  { fill: color-mix(in oklab, var(--s2) 4%, transparent); }
 .fx-shape .ax { stroke: var(--line); stroke-width: 1; }
 .fx-shape .tick { stroke: var(--line); stroke-width: 1; }
-.fx-shape .ticklab { fill: var(--faint); font-size: 9px;
+.fx-shape .ticklab { fill: var(--faint); font-size: var(--t-micro);
   font-family: var(--mono); }
-.fx-shape .quad { fill: var(--faint); font-size: 10px; font-weight: 700;
+.fx-shape .quad { fill: var(--faint); font-size: var(--t-micro); font-weight: 700;
   letter-spacing: .07em; }
-.fx-shape .axlab { fill: var(--faint); font-size: 10px; }
+.fx-shape .axlab { fill: var(--faint); font-size: var(--t-micro); }
 .fx-shape .mark { position: absolute; transform: translate(-50%, -50%);
   width: 26px; height: 26px; display: grid; place-items: center; padding: 0;
   border-radius: 50%; border: 1px solid var(--line);
@@ -705,7 +707,7 @@ button.fx-inchip:focus-visible { outline: 2px solid var(--s1); outline-offset: 1
 /* promoted: the fit leans on a prior — the ring says so before the tooltip */
 .fx-shape .mark.promoted { border-style: dashed; }
 .fx-shape .mark .lbl { position: absolute; left: calc(100% + 4px); top: 50%;
-  transform: translateY(-50%); font-size: 11px; font-weight: 600;
+  transform: translateY(-50%); font-size: var(--t-label); font-weight: 600;
   color: var(--muted); white-space: nowrap; pointer-events: none; }
 
 /* ---------- narrow ---------- */
@@ -717,11 +719,11 @@ button.fx-inchip:focus-visible { outline: 2px solid var(--s1); outline-offset: 1
   /* 72px is the column floor: a double gameweek splits the cell and the
      12.5px label still has to fit each half */
   .fx-grid { --fx-rail: 160px; --fx-col: 72px; }
-  .fx-rail .rr i { width: 70px; font-size: 8.5px; }
+  .fx-rail .rr i { width: 70px; font-size: var(--t-micro); }
   /* 160px of rail does not hold both form pills side by side, and a pill that
      wraps mid-label reads as two facts; stack them instead */
   .fx-rail .formchip.resid { flex-direction: column; align-items: flex-start; }
-  .fx-cell .opp { font-size: 11.5px; }
+  .fx-cell .opp { font-size: var(--t-label); }
   .fx-torn-row { grid-template-columns: 1fr; }
 }
 
@@ -735,19 +737,19 @@ button.fx-inchip:focus-visible { outline: 2px solid var(--s1); outline-offset: 1
 
 /* ---------- appendix cards fold: the summary states the finding ---------- */
 details.card.fx-fold > summary { cursor: pointer; color: var(--ink);
-  font-size: 13px; font-weight: 650; line-height: 1.5; padding: 2px 0;
-  list-style: none; display: flex; gap: 8px; align-items: baseline; }
+  font-size: var(--t-body); font-weight: 650; line-height: 1.5; padding: 2px 0;
+  list-style: none; display: flex; gap: var(--sp2); align-items: baseline; }
 details.card.fx-fold > summary::-webkit-details-marker { display: none; }
-details.card.fx-fold > summary::before { content: "▸"; color: var(--faint); font-size: 11px; }
+details.card.fx-fold > summary::before { content: "▸"; color: var(--faint); font-size: var(--t-label); }
 details.card.fx-fold[open] > summary::before { content: "▾"; }
 details.card.fx-fold > summary:hover { color: var(--s1); }
 details.card.fx-fold > summary:focus-visible { outline: 2px solid var(--s1);
   outline-offset: 2px; border-radius: 4px; }
-details.card.fx-fold > .sub { color: var(--faint); margin: 6px 0 10px; font-size: 12px;
+details.card.fx-fold > .sub { color: var(--faint); margin: var(--sp1) 0 var(--sp2); font-size: var(--t-cell);
   max-width: 76ch; line-height: 1.5; }
 
 /* ---------- skeleton while the board call is in flight ---------- */
-.fx-sk { display: grid; gap: 4px; padding: 6px 0; }
+.fx-sk { display: grid; gap: var(--sp1); padding: var(--sp1) 0; }
 .fx-sk-row { display: grid; grid-template-columns: 206px repeat(6, 72px); gap: 2px;
              width: max-content; }
 .fx-sk-rail, .fx-sk-cell { display: block; height: 52px; border-radius: 6px;
@@ -759,48 +761,48 @@ details.card.fx-fold > .sub { color: var(--faint); margin: 6px 0 10px; font-size
 }
 
 /* the club drawer's lead sentence: club strength and run difficulty, in words */
-.fx-lead { margin: 4px 0 6px; font-size: 13px; line-height: 1.5; color: var(--muted);
+.fx-lead { margin: var(--sp1) 0 var(--sp1); font-size: var(--t-body); line-height: 1.5; color: var(--muted);
            max-width: 60ch; }
 .fx-lead b { color: var(--ink); font-weight: 700; }
 
 /* ---------- method disclosure: one click, not six lines every visit -------- */
-.fx-how { margin: 8px 0 2px; }
+.fx-how { margin: var(--sp2) 0 2px; }
 .fx-how > summary {
   cursor: pointer; list-style: none; display: inline-flex; align-items: center;
-  gap: 6px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
-  font-weight: 700; color: var(--muted); padding: 3px 0;
+  gap: var(--sp1); font-size: var(--t-label); letter-spacing: .06em; text-transform: uppercase;
+  font-weight: 700; color: var(--muted); padding: var(--sp1) 0;
 }
 .fx-how > summary::-webkit-details-marker { display: none; }
-.fx-how > summary::before { content: "+"; font-family: var(--mono); font-size: 12px;
+.fx-how > summary::before { content: "+"; font-family: var(--mono); font-size: var(--t-cell);
                             color: var(--accent); font-weight: 700; }
 .fx-how[open] > summary::before { content: "\2212"; }
 .fx-how > summary:hover { color: var(--ink); }
 .fx-how > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px;
                                   border-radius: 3px; }
-.fx-how > .fx-claim:first-of-type { margin-top: 8px; }
-.fx-hownotes { margin-top: 6px; }
-.fx-hownotes p { margin: 0 0 5px; max-width: 76ch; font-size: 11.5px;
+.fx-how > .fx-claim:first-of-type { margin-top: var(--sp2); }
+.fx-hownotes { margin-top: var(--sp1); }
+.fx-hownotes p { margin: 0 0 var(--sp1); max-width: 76ch; font-size: var(--t-label);
                  color: var(--faint); line-height: 1.55; }
 
 /* ---------- controls: two axes, one block — the lens IS the sort ---------- */
 .fx-controls {
   display: flex; flex-direction: column; gap: 2px;
   border: 1px solid var(--line); border-radius: 10px;
-  background: var(--raised); padding: 4px 10px; margin: 10px 0 8px;
+  background: var(--raised); padding: var(--sp1) var(--sp2); margin: var(--sp2) 0 var(--sp2);
 }
-.fx-controls .fx-tb { border: 0; background: none; padding: 4px 0; margin: 0; }
+.fx-controls .fx-tb { border: 0; background: none; padding: var(--sp1) 0; margin: 0; }
 .fx-controls .fx-tb + .fx-tb { border-top: 1px solid
   color-mix(in oklab, var(--line) 55%, transparent); }
 
 /* ---------- predicted XI: names as a line, annotation only where it differs -- */
-.fx-xi { display: flex; flex-direction: column; gap: 8px; }
-.fx-xi-club { display: flex; align-items: baseline; gap: 8px; }
-.fx-xi-club b { font-size: 11px; letter-spacing: .06em; font-weight: 700; color: var(--ink); }
-.fx-xi-club .n { font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
-.fx-xi-names { margin: 2px 0 0; font-size: 11.5px; line-height: 1.55; color: var(--faint); }
-.fx-xi-other { margin: 3px 0 0; font-size: 11.5px; line-height: 1.55; color: var(--muted);
+.fx-xi { display: flex; flex-direction: column; gap: var(--sp2); }
+.fx-xi-club { display: flex; align-items: baseline; gap: var(--sp2); }
+.fx-xi-club b { font-size: var(--t-label); letter-spacing: .06em; font-weight: 700; color: var(--ink); }
+.fx-xi-club .n { font-family: var(--mono); font-size: var(--t-micro); color: var(--muted); }
+.fx-xi-names { margin: 2px 0 0; font-size: var(--t-label); line-height: 1.55; color: var(--faint); }
+.fx-xi-other { margin: var(--sp1) 0 0; font-size: var(--t-label); line-height: 1.55; color: var(--muted);
                border-left: 2px solid color-mix(in oklab, var(--warn) 45%, var(--line));
-               padding-left: 8px; }
+               padding-left: var(--sp2); }
 
 
 /* ---------- absence vs failure: two states, two looks ----------
@@ -808,35 +810,35 @@ details.card.fx-fold > .sub { color: var(--faint); margin: 6px 0 10px; font-size
    to one line. A FAILED FETCH (fx-fetchfail) is a different species: solid
    --bad rail, the server's reason, a retry — an error must never dress as
    absence. */
-.fx-quiet { margin: 6px 0; padding-left: 9px; font-size: 11.5px;
+.fx-quiet { margin: var(--sp1) 0; padding-left: var(--sp2); font-size: var(--t-label);
   color: var(--faint); line-height: 1.5;
   border-left: 2px dashed var(--line); }
 .fx-quiet.fail { border-left-style: solid;
   border-left-color: color-mix(in oklab, var(--bad) 55%, var(--line));
   color: var(--muted); }
-.fx-fetchfail { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  margin: 8px 0; padding: 9px 11px; border-radius: 8px;
+.fx-fetchfail { display: flex; align-items: center; gap: var(--sp2); flex-wrap: wrap;
+  margin: var(--sp2) 0; padding: var(--sp2) var(--sp3); border-radius: 8px;
   border: 1px solid color-mix(in oklab, var(--bad) 45%, var(--line));
   border-left: 3px solid var(--bad);
   background: color-mix(in oklab, var(--bad) 7%, var(--surface));
-  font-size: 12px; line-height: 1.45; }
+  font-size: var(--t-cell); line-height: 1.45; }
 .fx-fetchfail b { color: var(--ink); }
-.fx-fetchfail .why { color: var(--muted); font-size: 11.5px; flex: 1 1 24ch;
+.fx-fetchfail .why { color: var(--muted); font-size: var(--t-label); flex: 1 1 24ch;
   min-width: 0; overflow-wrap: anywhere; }
 .fx-fetchfail .retry { flex: none; }
 
 /* ---------- the hover card: title-tooltip numbers, instantly ---------- */
 .fx-hover { position: fixed; z-index: 60; max-width: 320px;
-  padding: 8px 10px; border-radius: 8px; pointer-events: none;
+  padding: var(--sp2) var(--sp2); border-radius: 8px; pointer-events: none;
   background: var(--surface); border: 1px solid var(--line);
   box-shadow: 0 6px 24px rgb(0 0 0 / .28);
-  font-size: 11.5px; line-height: 1.5; color: var(--muted);
+  font-size: var(--t-label); line-height: 1.5; color: var(--muted);
   white-space: pre-line; font-variant-numeric: tabular-nums; }
 
 /* ---------- my-squad overlay: pip, row emphasis, dim toggle ---------- */
 .fx-own { display: inline-flex; align-items: center; justify-content: center;
-  min-width: 15px; height: 15px; padding: 0 3px; margin-left: 4px;
-  border-radius: 999px; font: 700 9.5px/1 var(--mono);
+  min-width: 15px; height: 15px; padding: 0 var(--sp1); margin-left: var(--sp1);
+  border-radius: 999px; font: 700 var(--t-micro)/1 var(--mono);
   font-variant-numeric: tabular-nums; color: var(--ink); cursor: help;
   border: 1px solid color-mix(in oklab, var(--accent) 55%, var(--line));
   background: color-mix(in oklab, var(--accent) 16%, var(--surface)); }
@@ -849,83 +851,77 @@ details.card.fx-fold > .sub { color: var(--faint); margin: 6px 0 10px; font-size
 .fx-dim.fx-rail:hover, .fx-grid .fx-dim:hover { opacity: 1; }
 
 /* ---------- the next-GW strip: this week, hardest → easiest ---------- */
-.fx-strip-wrap { display: flex; align-items: center; gap: 8px;
-  margin: 0 0 8px; }
-.fx-strip-wrap > .vlab { flex: none; font-size: 10px; letter-spacing: .07em;
+.fx-strip-wrap { display: flex; align-items: center; gap: var(--sp2);
+  margin: 0 0 var(--sp2); }
+.fx-strip-wrap > .vlab { flex: none; font-size: var(--t-micro); letter-spacing: .07em;
   text-transform: uppercase; font-weight: 700; color: var(--muted);
   cursor: help; }
-.fx-strip { display: flex; gap: 5px; overflow-x: auto; min-width: 0;
+.fx-strip { display: flex; gap: var(--sp1); overflow-x: auto; min-width: 0;
   padding: 2px 0; }
-.fx-stripchip { display: inline-flex; align-items: center; gap: 5px;
-  flex: none; padding: 3px 8px; border-radius: 999px; cursor: pointer;
+.fx-stripchip { display: inline-flex; align-items: center; gap: var(--sp1);
+  flex: none; padding: var(--sp1) var(--sp2); border-radius: 999px; cursor: pointer;
   border: 1px solid var(--line); background: var(--raised);
   font: inherit; color: var(--ink); }
 .fx-stripchip:hover { border-color: var(--ink); }
 .fx-stripchip:focus-visible { outline: 2px solid var(--s1); outline-offset: 1px; }
-.fx-stripchip .side { display: inline-flex; align-items: center; gap: 4px; }
-.fx-stripchip .side b { font-size: 11px; font-weight: 700; }
+.fx-stripchip .side { display: inline-flex; align-items: center; gap: var(--sp1); }
+.fx-stripchip .side b { font-size: var(--t-label); font-weight: 700; }
 .fx-stripchip .sw { width: 8px; height: 8px; border-radius: 2px;
   border: 1px solid var(--line); font-style: normal; }
 .fx-stripchip .sw.nofit {
   background: repeating-linear-gradient(135deg, transparent 0 2px,
                                         var(--fx-hatch) 2px 3px), var(--surface); }
-.fx-stripchip .v { font-size: 9.5px; color: var(--faint); }
-.fx-stripchip .ko { font: 500 10px/1 var(--mono); color: var(--faint);
+.fx-stripchip .v { font-size: var(--t-micro); color: var(--faint); }
+.fx-stripchip .ko { font: 500 var(--t-micro)/1 var(--mono); color: var(--faint);
   font-variant-numeric: tabular-nums; }
-.fx-stripchip .fx-own { min-width: 13px; height: 13px; font-size: 8.5px;
+.fx-stripchip .fx-own { min-width: 13px; height: 13px; font-size: var(--t-micro);
   margin-left: 0; }
 
 /* ---------- the fixture-turn sentence: your clubs, the board's ranks ------ */
-.fx-turnrow .txt { font-size: 12px; color: var(--muted); line-height: 1.45; }
+.fx-turnrow .txt { font-size: var(--t-cell); color: var(--muted); line-height: 1.45; }
 .fx-turnrow .txt b { color: var(--ink); }
 
 /* ---------- the freshness chip's fit-window note ---------- */
-.fx-inchip .fit { font-size: 10.5px; color: var(--faint); }
+.fx-inchip .fit { font-size: var(--t-micro); color: var(--faint); }
 
-/* ---------- table view: real sortable headers ---------- */
-.fx-tableview th .fx-th { display: inline-flex; align-items: center; gap: 3px;
-  background: none; border: 0; padding: 0; margin: 0; cursor: pointer;
-  font: inherit; color: inherit; letter-spacing: inherit;
-  text-transform: inherit; }
-.fx-tableview th .fx-th:hover { color: var(--ink); }
-.fx-tableview th .fx-th:focus-visible { outline: 2px solid var(--s1);
-  outline-offset: 1px; border-radius: 3px; }
-.fx-tableview th .fx-th.on { color: var(--ink); }
-.fx-tableview th .fx-th .arr { font-size: 8px; min-width: 8px;
-  color: var(--accent-ink); }
+/* ---------- table view: the sortable header is app.css's `th.sortable`,
+     built by app.js's `sortableTh`; this file's own button and arrow are
+     gone with the three glyph families they drew from ---------- */
+.fx-tableview th.sortable:focus-visible { outline: 2px solid var(--s1);
+  outline-offset: -2px; }
 .fx-tableview td.num, .fx-tableview th.num { font-family: var(--mono);
   font-variant-numeric: tabular-nums; }
-.fx-tableview td .fx-own { margin-left: 5px; }
+.fx-tableview td .fx-own { margin-left: var(--sp1); }
 
 /* ---------- the by-position dot plot inside the calibration disclosure ---- */
-.fx-caldisc { margin-top: 4px; }
-.fx-caldisc > summary { font-size: 10px; }
-.fx-dotplot { display: grid; gap: 4px; margin-top: 6px; max-width: 340px; }
+.fx-caldisc { margin-top: var(--sp1); }
+.fx-caldisc > summary { font-size: var(--t-micro); }
+.fx-dotplot { display: grid; gap: var(--sp1); margin-top: var(--sp1); max-width: 340px; }
 .fx-dotplot .dp-row { display: grid; grid-template-columns: 30px 1fr 52px;
-  gap: 8px; align-items: center; cursor: help; }
-.fx-dotplot .dp-k { font: 700 9.5px/1 var(--mono); color: var(--muted);
+  gap: var(--sp2); align-items: center; cursor: help; }
+.fx-dotplot .dp-k { font: 700 var(--t-micro)/1 var(--mono); color: var(--muted);
   letter-spacing: .05em; }
 .fx-dotplot .dp-track { position: relative; height: 10px; border-radius: 5px;
   background: color-mix(in oklab, var(--ink) 8%, var(--surface)); }
 .fx-dotplot .dp-dot { position: absolute; top: 2px; width: 6px; height: 6px;
   border-radius: 50%; transform: translateX(-50%);
   background: var(--warn); box-shadow: 0 0 0 1.5px var(--surface); }
-.fx-dotplot .dp-v { font: 600 10.5px/1 var(--mono); color: var(--ink);
+.fx-dotplot .dp-v { font: 600 var(--t-micro)/1 var(--mono); color: var(--ink);
   text-align: right; font-variant-numeric: tabular-nums; }
 
 /* ---------- creator team-talk: two clubs on screen, so name the club ------- */
-.fx-talk { display: flex; flex-direction: column; gap: 10px; }
+.fx-talk { display: flex; flex-direction: column; gap: var(--sp2); }
 .fx-talk-row { border-left: 2px solid color-mix(in oklab, var(--accent) 45%, var(--line));
-               padding-left: 9px; }
-.fx-talk-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
-.fx-talk-head b { font-size: 11.5px; color: var(--ink); font-weight: 700; }
-.fx-talk-head .tag { font-size: 10px; letter-spacing: .05em; text-transform: uppercase;
+               padding-left: var(--sp2); }
+.fx-talk-head { display: flex; align-items: baseline; gap: var(--sp2); flex-wrap: wrap; }
+.fx-talk-head b { font-size: var(--t-label); color: var(--ink); font-weight: 700; }
+.fx-talk-head .tag { font-size: var(--t-micro); letter-spacing: .05em; text-transform: uppercase;
                      color: var(--muted); border: 1px solid var(--line);
-                     border-radius: 999px; padding: 1px 7px; }
-.fx-talk-head .who { font-size: 10.5px; color: var(--faint); margin-left: auto;
+                     border-radius: 999px; padding: 1px var(--sp2); }
+.fx-talk-head .who { font-size: var(--t-micro); color: var(--faint); margin-left: auto;
                      font-family: var(--mono); }
-.fx-talk-claim { margin: 3px 0 0; font-size: 12px; color: var(--ink); line-height: 1.5; }
-.fx-talk-quote { margin: 3px 0 0; font-size: 11.5px; color: var(--faint);
+.fx-talk-claim { margin: var(--sp1) 0 0; font-size: var(--t-cell); color: var(--ink); line-height: 1.5; }
+.fx-talk-quote { margin: var(--sp1) 0 0; font-size: var(--t-label); color: var(--faint);
                  line-height: 1.5; font-style: italic; }
 
 /* ---------- "How to read this grid": what the number is, how it is made ----
@@ -933,8 +929,8 @@ details.card.fx-fold > .sub { color: var(--faint); margin: 6px 0 10px; font-size
    read off the payload. Terms are quiet and fixed-width so the four answers
    line up and can be scanned rather than read. */
 .fx-deriv {
-  display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px;
-  margin: 10px 0 0; max-width: 88ch; font-size: 12px; line-height: 1.55;
+  display: grid; grid-template-columns: max-content 1fr; gap: var(--sp1) var(--sp3);
+  margin: var(--sp2) 0 0; max-width: 88ch; font-size: var(--t-cell); line-height: 1.55;
 }
 .fx-deriv dt {
   color: var(--muted); font-weight: 650; white-space: nowrap;
@@ -942,7 +938,7 @@ details.card.fx-fold > .sub { color: var(--faint); margin: 6px 0 10px; font-size
 .fx-deriv dd { margin: 0; color: var(--faint); }
 @media (max-width: 620px) {
   .fx-deriv { grid-template-columns: 1fr; gap: 2px; }
-  .fx-deriv dd { margin: 0 0 8px; }
+  .fx-deriv dd { margin: 0 0 var(--sp2); }
 }
 
 /* The away marker. Quieter than the club code it qualifies, because it is a
@@ -955,63 +951,63 @@ details.card.fx-fold > .sub { color: var(--faint); margin: 6px 0 10px; font-size
    because the same question was asked three times against a legend that lived
    somewhere else on the page: whose numbers are these, and is + good? */
 .fx-povkey {
-  margin: 0 0 8px; padding: 7px 10px; border-radius: 6px;
+  margin: 0 0 var(--sp2); padding: var(--sp2) var(--sp2); border-radius: 6px;
   background: var(--raised); border: 1px solid var(--line);
-  font-size: 12px; line-height: 1.5; color: var(--muted);
+  font-size: var(--t-cell); line-height: 1.5; color: var(--muted);
 }
 .fx-povkey b { color: var(--ink); font-weight: 650; }
 .fx-povkey b.pos { color: var(--ok, #2e9e5b); }
 .fx-povkey b.neg { color: var(--warn, #d4553f); }
 /* Each half of a pair carries its own tag, so no number is ever a bare float
    sitting next to another bare float. */
-.fx-lensrow .lv .opp { margin-right: 8px; }
+.fx-lensrow .lv .opp { margin-right: var(--sp2); }
 .fx-lensrow .lv i.pair {
-  font-style: normal; font-family: var(--mono); font-size: 10.5px;
+  font-style: normal; font-family: var(--mono); font-size: var(--t-micro);
   font-variant-numeric: tabular-nums; color: var(--muted);
-  margin-left: 10px; white-space: nowrap;
+  margin-left: var(--sp2); white-space: nowrap;
 }
 
 /* The swap sits inside the point-of-view key, because "whose numbers are
    these" and "show me the other club's" are one question asked twice. */
-.fx-povkey .fx-swap { margin-left: 4px; vertical-align: baseline; }
+.fx-povkey .fx-swap { margin-left: var(--sp1); vertical-align: baseline; }
 
 /* One heading per club inside the verdict, so the two sets of bars can never
    be read as one list. The crest carries the identity; the venue word is the
    thing that makes the two sides differ. */
 .fx-sidehead {
-  display: flex; align-items: center; gap: 6px;
-  margin: 12px 0 5px; padding-bottom: 4px;
+  display: flex; align-items: center; gap: var(--sp1);
+  margin: var(--sp3) 0 var(--sp1); padding-bottom: var(--sp1);
   border-bottom: 1px solid var(--line);
 }
-.fx-sidehead:first-of-type { margin-top: 6px; }
-.fx-sidehead b { font-size: 13px; font-weight: 650; color: var(--ink); }
+.fx-sidehead:first-of-type { margin-top: var(--sp1); }
+.fx-sidehead b { font-size: var(--t-body); font-weight: 650; color: var(--ink); }
 .fx-sidehead .v {
-  font: 600 9.5px/1 var(--mono); letter-spacing: .05em; color: var(--faint);
-  text-transform: uppercase; padding: 2px 6px; border-radius: 999px;
+  font: 600 var(--t-micro)/1 var(--mono); letter-spacing: .05em; color: var(--faint);
+  text-transform: uppercase; padding: 2px var(--sp1); border-radius: 999px;
   background: var(--raised); border: 1px solid var(--line);
 }
 
 /* The drawer's answer line: the three numbers the reader opened it for, above
    any prose. Everything under it is the same three with their working shown. */
 .fx-headline {
-  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
-  margin: 2px 0 8px;
+  display: flex; align-items: center; gap: var(--sp1); flex-wrap: wrap;
+  margin: 2px 0 var(--sp2);
 }
 .fx-headline .who {
-  font: 700 11px/1 var(--mono); letter-spacing: .04em; color: var(--muted);
-  padding: 4px 7px; border-radius: 5px; background: var(--raised);
+  font: 700 var(--t-label)/1 var(--mono); letter-spacing: .04em; color: var(--muted);
+  padding: var(--sp1) var(--sp2); border-radius: 5px; background: var(--raised);
   border: 1px solid var(--line);
 }
 .fx-headline .hv {
-  display: inline-flex; align-items: baseline; gap: 5px;
-  padding: 4px 9px; border-radius: 5px;
+  display: inline-flex; align-items: baseline; gap: var(--sp1);
+  padding: var(--sp1) var(--sp2); border-radius: 5px;
   background: var(--raised); border: 1px solid var(--line);
 }
 .fx-headline .hv i {
-  font: 700 8.5px/1 var(--mono); font-style: normal; letter-spacing: .06em;
+  font: 700 var(--t-micro)/1 var(--mono); font-style: normal; letter-spacing: .06em;
   color: var(--faint);
 }
 .fx-headline .hv b {
-  font: 700 14px/1 var(--mono); font-variant-numeric: tabular-nums;
+  font: 700 var(--t-body)/1 var(--mono); font-variant-numeric: tabular-nums;
   color: var(--ink);
 }

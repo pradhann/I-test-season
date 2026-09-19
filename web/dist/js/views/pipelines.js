@@ -33,7 +33,8 @@
    reason}. Every timestamp is relative with the absolute in its title. */
 
 import { runPanel, el, emptyBox, errBox, provenance, getJSON, postJSON,
-         sortableTh, gapBox, fmtAgeDays, agePhrase, absInstant } from "/js/app.js";
+         sortableTh, rowLink, gapBox, pick, when, fmtAgeDays, agePhrase,
+         absInstant } from "/js/app.js";
 import { icon } from "/js/components/icons.js";
 
 /* ------------------------------------------------------------------ utils */
@@ -42,21 +43,14 @@ function num(v) {
   if (typeof v === "number" && isFinite(v)) return v;
   return null;
 }
-/* A number with a stated fallback, and a string that is present only when a
-   condition holds. Both exist so this file can be read aloud: a chain of
-   nested conditionals in a class name is not prose. */
+/* A NUMBER with a stated fallback, which is this file's own because it
+   rejects a non-finite value as well as a null. The three branch shapes
+   beside it, `or`, `pick` and `when`, are app.js's; four views wrote them
+   independently and the shared layer owns one copy. */
 function numOr(v, fallback) {
   const n = num(v);
   if (n == null) return fallback;
   return n;
-}
-function when(cond, text) {
-  if (cond) return text;
-  return "";
-}
-function pick(cond, a, b) {
-  if (cond) return a;
-  return b;
 }
 
 /* The one placeholder on this page: an en dash for a value that is absent.
@@ -514,20 +508,13 @@ export default async function pipelines(host) {
     tr.appendChild(cell(due, "due"));
 
     /* The row is a button: it opens its expandable on click, on Enter and on
-       Space. Nothing else on the row is clickable, so nothing competes. */
-    tr.tabIndex = 0;
-    tr.setAttribute("role", "button");
-    tr.setAttribute("aria-expanded", pick(open.has(md.id), "true", "false"));
-    tr.setAttribute("aria-controls", `pipe-exp-${md.id}`);
-    tr.setAttribute("aria-label",
+       Space, through app.js's one `rowLink` (R18). Nothing else on the row is
+       clickable, so nothing competes. */
+    rowLink(tr, () => toggle(md),
       `${md.id}: ${STATE_WORD[md.state] || md.state || "state unknown"}. `
       + `${md.reason || ""} Open its last run, its log and its Run button.`);
-    tr.onclick = () => toggle(md);
-    tr.onkeydown = e => {
-      if (e.key !== "Enter" && e.key !== " " && e.key !== "Spacebar") return;
-      e.preventDefault();                 // Space would scroll the page
-      toggle(md);
-    };
+    tr.setAttribute("aria-expanded", pick(open.has(md.id), "true", "false"));
+    tr.setAttribute("aria-controls", `pipe-exp-${md.id}`);
     return tr;
   }
 

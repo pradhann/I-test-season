@@ -80,6 +80,67 @@ def test_every_panel_script_is_rendered_by_some_view() -> None:
     assert not unknown, f"views call scripts no panel declares: {sorted(unknown)}"
 
 
+def test_every_write_carries_the_csrf_token() -> None:
+    """The auth layer refuses an unsafe method that rides a session cookie
+    without the matching header: `enforce_policy` in
+    `fpl_edge/platform/auth/routes.py` compares `X-CSRF-Token` against the
+    digest on the session row. A write that forgets the header is a 403 the
+    user sees as "the button does nothing".
+
+    So `app.js` owns one sender and one header builder, `runPanel` and
+    `postJSON` go through the sender, and no module in `web/dist/js` issues an
+    unsafe fetch without naming the token. A caller that needs the raw
+    Response builds its own fetch on `writeHeaders`, which is still app.js's
+    header and not a second copy of the rule.
+    """
+    # The two names, as `auth/sessions.py` sets the cookie and `auth/routes.py`
+    # reads the header. They are asserted as literals rather than imported so
+    # this runs the same whether or not the auth package is installed in the
+    # tree under test.
+    assert "itest_csrf" in APP, (
+        "app.js must read the cookie name the server actually sets"
+    )
+    assert "export async function sendJSON" in APP
+    assert "export function writeHeaders" in APP
+    assert '"X-CSRF-Token"' in _fn_body(APP, "writeHeaders"), (
+        "the header builder must set the header the server checks"
+    )
+    for name in ("runPanel", "postJSON"):
+        assert "sendJSON(" in _fn_body(APP, name), (
+            f"{name} must send through the one sender"
+        )
+
+    unsafe = re.compile(r'method:\s*"?(POST|PUT|PATCH|DELETE)')
+    offenders = []
+    for path in sorted((WEB / "js").rglob("*.js")):
+        src = _strip_comments(path.read_text())
+        for m in re.finditer(r"fetch\(", src):
+            window = src[max(0, m.start() - 600):m.start() + 400]
+            if not unsafe.search(src[m.start():m.start() + 400]):
+                continue        # a GET needs no token
+            if "X-CSRF-Token" in window or "writeHeaders" in window:
+                continue
+            offenders.append(f"{path.name}: {src[m.start():m.start() + 70]}")
+    assert not offenders, (
+        f"an unsafe fetch sends no CSRF token: {offenders}"
+    )
+
+
+def test_the_chat_bundle_carries_the_csrf_change_its_source_makes() -> None:
+    """`web/chat-app/` is the one built surface in the app, so its source and
+    its artefact can disagree silently. They did: the CSRF change landed in
+    `src/api.js` and the served `dist/chat-app/assets/index.js` was the old
+    bundle, which would have 403'd every chat write behind a session."""
+    src = (WEB.parent / "chat-app" / "src" / "api.js").read_text()
+    assert "X-CSRF-Token" in src and "itest_csrf" in src
+    bundle = (WEB / "chat-app" / "assets" / "index.js").read_text()
+    assert "X-CSRF-Token" in bundle, (
+        "the served chat bundle predates its source; run `npm run build` in "
+        "web/chat-app"
+    )
+    assert "itest_csrf" in bundle
+
+
 def test_the_shell_is_a_shell_and_views_are_modules() -> None:
     """index.html regrowing inline logic is the failure §2.2 exists to prevent."""
     inline = re.search(r'<script type="module">(.*?)</script>', HTML, re.S)
@@ -240,21 +301,27 @@ def test_the_solver_objective_is_never_relabelled_as_xpts() -> None:
         "the raw objective value stays off the dashboard (gain_over_roll is "
         "the served delta); the Solver tab speaks in the solver's currency"
     )
-    # The solver lives in the Planner tab (one tab, fplreview's idiom); the
-    # from-scratch Solver view is gone and must not come back beside it.
-    assert "solver" not in VIEWS, "solver.js is folded into planner.js"
-    assert 'href="#solver"' not in HTML and 'register("solver"' not in HTML
-    planner_src = _strip_comments(VIEWS["planner"])
-    assert "objective_mode" in planner_src, (
-        "the Planner tab must print the objective in the payload's own unit"
+    # The solver lives in the dashboard's transfer row. The from-scratch
+    # Solver view was folded into the Planner tab; the Planner tab's grid is
+    # retired in turn and its entry is an external link, so neither view may
+    # come back beside the row that answers the transfer question.
+    assert "solver" not in VIEWS, "solver.js is folded into the transfer row"
+    assert "planner" not in VIEWS, (
+        "the planner grid is retired; its tab links out and its solver "
+        "controls live in home.js's transfer working block"
     )
-    for name in ("home", "planner"):
-        for ln in _strip_comments(VIEWS[name]).splitlines():
-            if "objective" in ln:
-                assert "xPts" not in ln, (
-                    f"solver objective rendered adjacent to 'xPts' — the "
-                    f"silent blend ({name}): {ln.strip()[:90]}"
-                )
+    assert 'href="#solver"' not in HTML and 'register("solver"' not in HTML
+    assert 'register("planner"' not in HTML and 'href="#planner"' not in HTML
+    assert "fplreview.com/team-planner" in HTML, (
+        "the Planner rail entry is an external link to the grid the owner "
+        "actually uses"
+    )
+    for ln in src.splitlines():
+        if "objective" in ln:
+            assert "xPts" not in ln, (
+                f"solver objective rendered adjacent to 'xPts', which is "
+                f"the silent blend (home): {ln.strip()[:90]}"
+            )
 
 
 def test_the_solve_plan_gain_travels_with_its_currency_label() -> None:
@@ -647,34 +714,49 @@ def test_no_em_dashes_in_dashboard_strings() -> None:
     assert not bad, f"em-dashes in dashboard strings: {bad}"
 
 
-def test_the_planner_tab_carries_the_solver_rail_and_fills_the_grid() -> None:
-    """One tab: the rail's options are the runner's TRANSFER_DEFAULTS keys,
-    Solve posts mode=transfers with them, the headline plan is drawn into the
-    grid by the planner's own move machinery, and a stale plan is a gap with
-    Re-solve rather than guidance."""
+def test_the_transfer_row_carries_the_solver_rail_and_its_stale_guard() -> None:
+    """The Planner tab's rail moved to the dashboard's transfer working block
+    when the grid was retired. The same rules hold where it now lives: the
+    rail's options are the runner's TRANSFER_DEFAULTS keys, Solve posts
+    mode=transfers with them, and a plan that cannot guide renders its state,
+    its reason and Re-run rather than a plan body.
+
+    The stale guard is pinned character for character, because it is the rule
+    that stops a plan priced against a squad you no longer hold being read as
+    this week's advice. It travelled here from the Planner unchanged."""
     from fpl_edge.platform import solve_runner
-    src = _strip_comments(VIEWS["planner"])
-    assert 'runPanel("planner_grid"' in src
+    src = _strip_comments(VIEWS["home"])
     assert 'postJSON("/api/solve", { mode: "transfers", options: solveOptions() })' in src
     for key in solve_runner.TRANSFER_DEFAULTS:
         assert key in src, f"the rail must carry solve option {key}"
     assert 'getJSON("/api/solve/transfer-plan")' in src
     assert 'getJSON("/api/solve/status")' in src
-    # the plan reaches the grid only through applyMove -> moves -> sanitise
-    assert "function applyMove(" in src and "sanitise()" in src
-    assert "tplan.stale" in src and "Re-solve" in src
-    # the unconstrained best and chip plans are labelled, never mixed in
-    assert "plan.unconstrained" in src and "chip plan" in src
+    assert "function solveOptions(" in src, (
+        "one builder for the options, so the fold's summary and the run "
+        "cannot describe different settings"
+    )
+    assert "function solverRail(" in src and "function renderSolver(" in src
+    assert (
+        '(S && (S.state === "fresh" || S.state === "aging"))\n'
+        "      && S.plan || null;"
+    ) in src, "the stale-plan guard must stand byte for byte"
+    assert 'S.state === "stale" || S.state === "superseded"' in src
+    assert "Re-run solve" in src
+    # the unconstrained best is labelled, never mixed into the headline
+    assert "plan.unconstrained" in src
     # no em-dash asides in authored strings (the owner's prose rule)
     bad = [m.group(0)[:60] for m in _JS_STRING.finditer(src) if "\u2014" in m.group(0)]
-    assert not bad, f"em-dashes in planner strings: {bad}"
+    assert not bad, f"em-dashes in dashboard strings: {bad}"
 
 
 def test_the_dashboard_names_the_unconstrained_best_beside_the_headline() -> None:
     src = _strip_comments(VIEWS["home"])
     assert "if hits were free" in src
-    assert 'href = "#planner"' in src and 'href="#solver"' not in src
     assert "#solver" not in src, "no link may point at the removed Solver tab"
+    assert "#planner" not in src, (
+        "no link may point at the retired Planner tab; the hit cap it used "
+        "to send the reader to is in the solver rail on this page"
+    )
 
 
 # -- the pipelines tab: vocabulary, prose, CSS namespace, keyboard ------------
@@ -684,23 +766,23 @@ def _css_classes(path: Path) -> set[str]:
     return set(re.findall(r"\.([a-zA-Z][\w-]*)", path.read_text()))
 
 
-def test_pipeline_styles_share_no_class_with_the_planner() -> None:
-    """Both stylesheets are loaded globally on every tab, so a class defined
-    in both is decided by load order, not by intent. It happened: `.pl-gap`
-    and `.pl-log` were planner's on the pipelines page. The prefixes must not
-    overlap."""
-    def prefixed(name: str) -> set[str]:
-        return {c for c in _css_classes(WEB / name)
-                if c.startswith(("pl-", "pipe-"))}
-
-    pipe, planner = prefixed("pipelines.css"), prefixed("planner.css")
-    assert not (pipe & planner), (
-        f"pipelines.css and planner.css both define {sorted(pipe & planner)}; "
-        "whichever loads last wins on both tabs"
+def test_the_pipelines_prefix_is_its_own_and_the_planner_prefix_is_gone() -> None:
+    """Every per-view stylesheet loads on every tab, so a class defined in two
+    of them is decided by load order rather than by intent. It happened:
+    `.pl-gap` and `.pl-log` were the planner's on the pipelines page.
+    planner.css is deleted with the grid it styled, so the rule now is that
+    the `pl-` prefix belongs to nobody and pipelines keeps its own."""
+    assert not (WEB / "planner.css").exists(), (
+        "planner.css is retired with the grid it styled"
     )
-    assert pipe and not [c for c in pipe if c.startswith("pl-")], (
-        "the pipelines prefix must not be `pl-`; planner owns it"
-    )
+    stray = {name: sorted(c for c in _css_classes(WEB / name)
+                          if c.startswith("pl-"))
+             for name in ("pipelines.css", "dashboard.css")}
+    stray = {k: v for k, v in stray.items() if v}
+    assert not stray, f"the retired planner prefix survives in {stray}"
+    pipe = {c for c in _css_classes(WEB / "pipelines.css")
+            if c.startswith("pipe-")}
+    assert pipe, "the pipelines sheet keeps its own `pipe-` prefix"
 
 
 def test_every_pipeline_state_and_status_has_words_and_a_dot() -> None:
@@ -737,13 +819,18 @@ def test_pipeline_rows_are_operable_and_labelled() -> None:
     back out. The columns need names, since they fold to a card.
 
     Repointed 2026-09-18: the drawer became a per-row expandable, so the
-    dialog assertions became the disclosure ones. The intent survives
-    verbatim: a row is operable from the keyboard, it says whether it is
-    open, and focus goes into what it opened and comes back when it closes.
+    dialog assertions became the disclosure ones. Repointed again in the UI
+    sweep's second phase: the role, the tab stop and both activation keys are
+    app.js's `rowLink` now, which is where every clickable row in the app
+    gets them. The intent survives verbatim: a row is operable from the
+    keyboard, it says whether it is open, and focus goes into what it opened
+    and comes back when it closes.
     """
     src = _strip_comments(VIEWS["pipelines"])
-    assert 'setAttribute("role", "button")' in src, "rows need a button role"
-    assert re.search(r'e\.key [!=]== " "', src), (
+    assert "rowLink(tr," in src, "rows reach their affordance through rowLink"
+    shared = _fn_body(APP, "rowLink")
+    assert 'setAttribute("role", "button")' in shared, "rows need a button role"
+    assert re.search(r'e\.key [!=]== " "', shared), (
         "Space must activate a row, not scroll the page"
     )
     assert 'setAttribute("aria-expanded"' in src, (
@@ -1035,70 +1122,44 @@ def test_the_account_card_folds_the_steps_and_footers_its_provenance() -> None:
     assert "CARD_TITLE[state]" in src, "the card is titled by connection state"
 
 
-def test_the_planner_does_not_reimplement_the_age_vocabulary() -> None:
-    """"112.2h ago" is the format the owner asked to be removed. The planner
-    imports fmtAge and keeps no ladder of its own."""
-    src = VIEWS["planner"]
-    imports = re.search(r"import \{(.*?)\} from \"/js/app\.js\"", src, re.S)
-    assert imports and "fmtAge" in imports.group(1), (
-        "the shared helper must be imported, not re-implemented"
+def test_the_rail_describes_the_next_run_not_the_standing_plan() -> None:
+    """The Planner rail printed one run's settings, times and log directly
+    above a plan card built by a different run, so "keep 1, ban 1" sat three
+    inches from "solved with: keep none, ban none".
+
+    In the dashboard's transfer row the two are separated by what they are
+    for: the plan carries its own state and its own age, and the fold below
+    it describes the run the Solve control would start. One builder makes the
+    options, so the summary and the request cannot diverge."""
+    src = _strip_comments(VIEWS["home"])
+    assert "function railSummaryText(" in src
+    body = _fn_body(src, "railSummaryText").replace("\n", " ")
+    assert "solveOptions()" in body, (
+        "the summary must read the same builder the Solve request posts"
     )
-    assert "function ageText" not in src, "the local age helper is gone"
-    assert "toFixed(1)}h ago" not in src
-
-
-def test_the_planner_ties_the_run_status_to_the_plan_it_produced() -> None:
-    """The rail printed one run's settings, times and log above a plan card
-    built by a different run. The status block now says which."""
-    src = _strip_comments(VIEWS["planner"])
-    assert "function runOwnsPlan(" in src
-    assert "generated_at" in _fn_body(src, "runOwnsPlan"), (
-        "the test is the plan's own stamp against the run's window"
+    assert "solver settings:" in body, (
+        "the fold names what it describes, so it cannot be read as the "
+        "settings behind the plan above it"
     )
-    assert "Last run, not the run behind the plan card" in src
-    assert "/position" not in src, (
-        "the per-position candidate cap is not the size of the search and no "
-        "longer rides in a settings headline"
+    # the plan's own age rides on the plan, in days, never in hours
+    assert "oldPhrase(S.age_hours)" in src
+    assert "function oldPhrase(" in src and "daysFromHours(h)" in src
+
+
+def test_the_keep_and_ban_toggles_say_when_nothing_is_selected() -> None:
+    """Fifteen names under "locked in every gameweek" read as fifteen locks,
+    because a pressed toggle differs from an unpressed one only by its
+    background. The count is stated and the block is dimmed while nothing is
+    selected."""
+    src = _strip_comments(VIEWS["home"])
+    assert 'box.classList.toggle("sv-none"' in src
+    assert "${n} of ${squad15.length}" in src, (
+        "the count of locks is stated against the count of names"
     )
-    assert "candidate moves solved in full" in src, (
-        "the screened/solved counts belong beside the gain, not in a footer"
-    )
-
-
-def test_an_alternative_that_is_part_of_the_plan_is_labelled(tmp_path) -> None:
-    """"Odegaard to Tavernier, +4.8" was listed as an alternative the plan
-    beat while being exactly half of the plan's own two transfers."""
-    chosen = {"out": [184029, 466052], "in": [201658, 243298], "n_transfers": 2}
-    half = {"out": [184029], "in": [201658], "n_transfers": 1}
-    other = {"out": [244850], "in": [201658], "n_transfers": 1}
-    result = _render(tmp_path, "planner",
-                     f"const result = {{"
-                     f"half: view.subsetMove({json.dumps(half)}, {json.dumps(chosen)}),"
-                     f"other: view.subsetMove({json.dumps(other)}, {json.dumps(chosen)}),"
-                     f"self: view.subsetMove({json.dumps(chosen)}, {json.dumps(chosen)})}};")
-    assert result["half"] is True, "half of the chosen move is part of it"
-    assert result["other"] is False, "a genuine alternative is not"
-    assert result["self"] is False, "the plan is not a subset of itself"
-    assert "part of the headline plan" in VIEWS["planner"]
-
-
-def test_the_must_keep_rail_says_when_nothing_is_selected() -> None:
-    """Fifteen names under "locked in every gameweek" read as fifteen locks."""
-    src = _strip_comments(VIEWS["planner"])
-    assert "None selected: the solver may sell any of the" in src
-    assert 'keepBox.classList.toggle("pl-none"' in src
-    assert ".pl-toggles.pl-none" in (WEB / "planner.css").read_text(), (
+    assert ".sv-toggles.sv-none" in (WEB / "dashboard.css").read_text(), (
         "the dimmed state needs the rule that dims it"
     )
-
-
-def test_the_pool_heading_and_footer_count_the_same_set() -> None:
-    """"ALL 639 PLAYERS" over "showing 40 of 637": the two players the plan
-    buys were subtracted from one number and not the other."""
-    src = _strip_comments(VIEWS["planner"])
-    assert "res.candidates.length} players" not in src
-    assert "players you do not hold in GW" in src
-    assert "const addable = res.candidates.filter(c => !heldNow.has(c.code)).length" in src
+    assert 'setAttribute("aria-pressed"' in src
 
 
 # ======================================================== the Creators tab
@@ -1315,22 +1376,26 @@ def test_the_loading_affordance_has_one_glyph_and_one_capitalisation() -> None:
 
 
 # --------------------------------------------------------------------------
-# The shared layer, phase 1 of the UI sweep. DESIGN_PRINCIPLES R1, R11, R20,
-# R23, R39, R40 name one implementation of each of these; these assertions
-# pin that there is exactly one and that the views reach for it.
+# The shared layer of the UI sweep. DESIGN_PRINCIPLES R1, R11, R20, R23, R39,
+# R40 name one implementation of each of these; these assertions pin that
+# there is exactly one and that the views reach for it.
 #
-# SCOPE. The file list is the shared layer plus the views phase 1 converted.
-# `home.js`, `creators.js` and `planner.js` are being rebuilt or deprecated by
-# other agents and phase 2 folds them in; naming them here would break this
-# gate on work that is still in flight.
+# SCOPE. Every view in the app. Phase 1 converted five of them and named the
+# five; phase 2 folded in the dashboard, Creators and Fixtures and retired
+# the Planner, so the list is now the whole of `views/` and there is no
+# rebuild still in flight to exempt. `chat.js` is a shell around the chat
+# sub-app and carries no table, drawer or age of its own.
 # --------------------------------------------------------------------------
 
-#: The shared layer and the views already converted to it.
-SWEPT = {name: VIEWS[name] for name in
-         ("account", "pipelines", "template", "template-tools", "xpoints")
-         if name in VIEWS}
+#: The shared layer and every view converted to it.
+SWEPT = dict(VIEWS)
 SWEPT.update(COMPONENTS)
 SWEPT["app"] = APP
+# The Creators view was restored to its pre-rebuild state on 2026-09-19 and is
+# being reworked on top of that state (agent G8); it joins the sweep when that
+# lands.
+SWEPT.pop("creators", None)
+LEGACY_STYLESHEETS = {"creators.css"}
 
 
 def test_one_type_scale_and_no_raw_font_size_in_the_swept_stylesheets() -> None:
@@ -1344,8 +1409,8 @@ def test_one_type_scale_and_no_raw_font_size_in_the_swept_stylesheets() -> None:
         assert re.search(rf"{token}:\s*[\d.]+px", app_css), (
             f"{token} is not declared in app.css"
         )
-    for name in ("app.css", "account.css", "chatter.css", "clubmark.css",
-                 "pipelines.css", "template.css", "template-tools.css"):
+    # every stylesheet the app ships, which is what phase 2 widened this to
+    for name in sorted(p.name for p in WEB.glob("*.css") if p.name not in LEGACY_STYLESHEETS):
         css = (WEB / name).read_text()
         raw = re.findall(r"font-size:\s*([\d.]+px)", css)
         raw += re.findall(r"font:[^;{}]*?\s([\d.]+px)", css)
@@ -1367,17 +1432,19 @@ def test_one_sortable_header_and_the_views_call_it() -> None:
         "the first direction must come from the column (R12)"
     )
     for view in ("xpoints", "pipelines", "template"):
-        assert "sortableTh" in VIEWS[view], (
+        assert "sortableTh" in SWEPT[view], (
             f"{view} does not use the shared sortable header"
         )
-        assert "h.dataset.dir" not in VIEWS[view], (
+        assert "h.dataset.dir" not in SWEPT[view], (
             f"{view} is drawing its own sort glyph again"
         )
 
 
 def test_one_drawer_in_the_swept_layer() -> None:
-    """R20: one aside, one width, one focus trap. `fixtures.js` and
-    `creators.js` still build their own; phase 2 converts them."""
+    """R20: one aside, one width, one focus trap. The audit counted four
+    asides at three widths; phase 2 converted the last two, so `makeDrawer`
+    is the only place an aside.drawer is built and app.css is the only place
+    a drawer width is declared."""
     assert "export function makeDrawer" in APP
     built = [name for name, src in SWEPT.items()
              if re.search(r'el\("aside", "drawer', src)]
@@ -1385,6 +1452,11 @@ def test_one_drawer_in_the_swept_layer() -> None:
         f"a second drawer is built in {built}; makeDrawer is the one"
     )
     assert "width: min(560px, 96vw)" in (WEB / "app.css").read_text()
+    widths = {name: re.findall(r"\.[\w-]*drawer[^{}]*\{[^{}]*?(?<![\w-])width:\s*([^;}]+)",
+                               (WEB / name).read_text())
+              for name in sorted(p.name for p in WEB.glob("*.css") if p.name not in LEGACY_STYLESHEETS)}
+    extra = {k: v for k, v in widths.items() if v and k != "app.css"}
+    assert not extra, f"a second drawer width is declared in {extra}"
 
 
 def test_every_age_in_the_swept_views_is_days() -> None:
@@ -1392,11 +1464,22 @@ def test_every_age_in_the_swept_views_is_days() -> None:
     reserved for the deadline countdown (R24), which lives in app.js."""
     assert "export function fmtAgeDays" in APP
     assert "export function agePhrase" in APP
-    for name in ("xpoints", "pipelines", "account", "template"):
-        src = _strip_comments(VIEWS[name])
-        assert "fmtSpan" not in src, (
+    for name, src in SWEPT.items():
+        if name == "app":
+            continue
+        code = _strip_comments(src)
+        assert "fmtSpan" not in code, (
             f"{name} renders an hours-and-minutes span again"
         )
+        # the two shapes an hour age was printed in before the sweep
+        assert not re.search(r"\}h ago", code), f"{name} prints an hour age"
+        assert not re.search(r"_hours\}\s*h\b", code), (
+            f"{name} prints a raw hour count as an age"
+        )
+    # a span the payload serves in hours reads in days through one helper
+    assert "export function daysFromHours" in APP
+    # a measurement WINDOW is not an age, and says so
+    assert "export function hoursWindow" in APP
     # the one exception, and it names itself
     assert "fmtSpan(hours)" in _fn_body(APP, "mountDeadline")
 

@@ -12,15 +12,59 @@ import { sortIcon } from "/js/components/icons.js";
 
 const API = "";
 
+/* ---------- CSRF: THE DOUBLE-SUBMIT TOKEN ----------
+   The auth layer refuses an unsafe method that rides a session cookie
+   without the matching header (auth/routes.py enforce_policy, against the
+   digest on the session row in auth/sessions.py). The `itest_csrf` cookie is
+   readable by the page on purpose: the server holds only its digest, and a
+   cross-site POST cannot read this origin's cookies, so it has nothing to
+   echo. An anonymous caller has no session to ride on and needs no token,
+   which is why a missing token is not an error here. */
+const CSRF_COOKIE = "itest_csrf";
+export function csrfToken(cookieText) {
+  const raw = cookieText === undefined ? document.cookie : cookieText;
+  for (const part of String(raw || "").split(";")) {
+    const [k, ...rest] = part.trim().split("=");
+    if (k === CSRF_COOKIE) return decodeURIComponent(rest.join("="));
+  }
+  return "";
+}
+
+/* Headers for a state changing request. Content-Type only when there is a
+   body, so a bare POST stays a bare POST. A caller that needs the raw
+   Response (the status code tells a not-deployed route apart from a rejected
+   one) builds its own fetch on these rather than losing the code inside a
+   thrown message. */
+export function writeHeaders(withBody = false) {
+  const headers = {};
+  if (withBody) headers["Content-Type"] = "application/json";
+  const token = csrfToken();
+  if (token) headers["X-CSRF-Token"] = token;
+  return headers;
+}
+
+/* ---------- THE ONE SENDER ----------
+   Every write the app makes goes through this: one place that sets the
+   content type and the CSRF header, so a new route cannot be added with the
+   header forgotten. A GET needs neither and goes through getJSON. */
+export async function sendJSON(path, { method = "POST", body, label } = {}) {
+  const headers = writeHeaders(true);
+  const init = { method, headers };
+  if (body !== undefined) init.body = JSON.stringify(body);
+  const r = await fetch(API + path, init);
+  // `label` is what the caller wants the failure named after: a panel run
+  // fails as the script, not as the route, and three views parse that shape
+  if (!r.ok)
+    throw new Error(`${or(label, path)}: HTTP ${r.status} ${await r.text()}`);
+  if (r.status === 204) return {};
+  return r.json();
+}
+
 // ---------- api ----------
 export async function runPanel(script, params = {}) {
-  const r = await fetch(`${API}/api/scripts/${script}/run`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ params }),
-  });
-  if (!r.ok) throw new Error(`${script}: HTTP ${r.status} ${await r.text()}`);
-  return r.json(); // {result, provenance}
+  // a panel run is a POST, so it carries the token like every other write
+  return sendJSON(`/api/scripts/${script}/run`,
+                  { body: { params }, label: script });   // {result, provenance}
 }
 export async function getJSON(path) {
   const r = await fetch(API + path);
@@ -28,12 +72,7 @@ export async function getJSON(path) {
   return r.json();
 }
 export async function postJSON(path, body) {
-  const r = await fetch(API + path, {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body ?? {}),
-  });
-  if (!r.ok) throw new Error(`${path}: HTTP ${r.status} ${await r.text()}`);
-  return r.json();
+  return sendJSON(path, { body: body ?? {} });
 }
 
 // ---------- tiny dom ----------
@@ -42,6 +81,68 @@ export function el(tag, cls, text) {
   if (cls) n.className = cls;
   if (text !== undefined) n.textContent = text;
   return n;
+}
+
+/* ---------- THE THREE BRANCH SHAPES ----------
+   A value with a stated fallback, a branch written as a call, and a string
+   present only when a condition holds. Four views wrote these three
+   functions independently (home.js, creators.js, pipelines.js and
+   components/ingest_link.js) because the house prose gate reads a question
+   mark followed by a space as a rhetorical question, so a chain of ternaries
+   is a wall of them. One copy, here. */
+export function or(v, fallback) {
+  if (v == null) return fallback;
+  return v;
+}
+export function pick(cond, a, b) {
+  if (cond) return a;
+  return b;
+}
+export function when(cond, text) {
+  if (cond) return text;
+  return "";
+}
+
+/* Payload prose from a model or from FPL's own copy may carry em dashes.
+   This app prints none (prose_style.py's rule), so the punctuation is
+   rewritten at the point of print and nothing else about the words changes.
+   The payload itself is never touched. Two views carried this guard; it is
+   one function now. */
+export function noDash(s) {
+  if (s == null) return s;
+  const EM = String.fromCharCode(8212);
+  return String(s).split(" " + EM + " ").join("; ").split(EM).join(", ");
+}
+
+/* ---------- A PANEL CALL THAT REPORTS FAILURE AS DATA ----------
+   The fixtures idiom, written a third time in home.js before this: a panel
+   that 404s is remembered so a re-render does not ask again, and every
+   caller gets one shape back rather than a throw. A zone built on this
+   degrades alone and the page never blanks. */
+const MISSING_SCRIPTS = new Map();
+export async function tryPanel(script, params = {}) {
+  const gone = MISSING_SCRIPTS.get(script);
+  if (gone) return { ok: false, error: gone, script, missing: true, cached: true };
+  try {
+    const { result, provenance: prov } = await runPanel(script, params);
+    return { ok: true, result, prov, script };
+  } catch (e) {
+    const missing = /HTTP 404|no panel script named/.test(String(e.message || e));
+    if (missing) MISSING_SCRIPTS.set(script, e);
+    return { ok: false, error: e, script, missing };
+  }
+}
+
+/* ---------- THE CARD ----------
+   `.card` is app.css's and no view redefines it (R9). This builds one with
+   its heading and its sub-line, which is what three views hand-rolled. */
+export function cardEl(title, sub, cls) {
+  let name = "card";
+  if (cls) name = `card ${cls}`;
+  const c = el("section", name);
+  if (title) c.appendChild(el("h2", null, title));
+  if (sub) c.appendChild(el("p", "sub", sub));
+  return c;
 }
 
 // ---------- shared components ----------
@@ -341,11 +442,18 @@ export function fmtSpan(hours) {
   return `${Math.round(h / 24)} days`;
 }
 
-/* The one parser: ISO, or "YYYY-MM-DD HH:MM", or an already-Z stamp. */
-function whenMs(iso) {
+/* The one parser: ISO, or "YYYY-MM-DD HH:MM", or an already-Z stamp.
+   Exported as `parseTs` for the views that compare two stamps to each other
+   (a projection against the last deadline) rather than formatting one. */
+export function parseTs(iso) {
   if (!iso) return null;
   const d = new Date(String(iso).replace(" ", "T").replace(/\+00:00$/, "Z"));
   if (isNaN(d)) return null;
+  return d;
+}
+function whenMs(iso) {
+  const d = parseTs(iso);
+  if (d == null) return null;
   return d.getTime();
 }
 
@@ -382,12 +490,95 @@ export function agePhrase(iso, verb) {
   return `${head} ${text} ago`.trim();
 }
 
+/* The same vocabulary for a span the payload serves in HOURS rather than as
+   a stamp, so dashboard_brief's solve.age_hours of 254 reads "10 days" and
+   never "254h" (R23). */
+export function daysFromHours(h) {
+  if (h == null || !isFinite(h)) return "age unknown";
+  if (h < 24) return "today";
+  if (h < 48) return "yesterday";
+  return `${Math.floor(h / 24)} days`;
+}
+
+/* A measurement WINDOW is not an age: it is the span the measurement covers,
+   and it is spelled out so no reader mistakes a 34 minute observation window
+   for a 34 minute old number. The one place hours survive outside the
+   deadline countdown, and it says what they are. */
+export function hoursWindow(h) {
+  if (h == null) return "window length unknown";
+  return `${fmt2(h)} hour window`;
+}
+
 /* The exact instant, for a title. Minute precision: the microseconds in the
    raw stamp are noise nobody reads. */
 export function absInstant(iso) {
   const ms = whenMs(iso);
   if (ms == null) return null;
   return `${new Date(ms).toISOString().slice(0, 16).replace("T", " ")} UTC`;
+}
+
+/* A calendar date, in UTC, for a sentence that names WHEN rather than how
+   long ago. UTC because a 06:48Z artefact is that day's and not the evening
+   before in the browser's own zone. */
+export function shortDate(iso) {
+  const d = parseTs(iso);
+  if (d == null) return null;
+  return d.toLocaleDateString("en-GB",
+    { day: "numeric", month: "short", timeZone: "UTC" });
+}
+
+/* The wall clock of a stamp, for a process the reader started themselves
+   and is watching now. Local, because that is the clock they are reading. */
+export function localClock(iso) {
+  const d = parseTs(iso);
+  if (d == null) return "an unrecorded time";
+  return d.toTimeString().slice(0, 5);
+}
+
+/* A signed number, with the true minus sign rather than a hyphen. */
+export function fmtSigned(v, digits = 0) {
+  if (v == null) return "–";
+  const s = Math.abs(v).toLocaleString(undefined,
+    { minimumFractionDigits: digits, maximumFractionDigits: digits });
+  return pick(v >= 0, "+", "−") + s;
+}
+
+/* An FPL rank with thousands separators. Ranks are large and read wrong
+   without them: 769533 and 76953 are one glance apart. */
+export function fmtRank(v) {
+  if (v == null || !Number.isFinite(Number(v))) return "unknown";
+  return Number(v).toLocaleString("en-GB");
+}
+
+/* ---------- THE CITATION CHIP ----------
+   The panel a number came from and how old that panel's answer is, as one
+   small control beside the number. The exact instant stays in the title
+   (R25) and the age is days (R23). */
+export function citeChip(panel, asOf) {
+  const b = el("button", "cite");
+  b.type = "button";
+  b.textContent = pick(asOf, `${panel} · ${or(fmtAgeDays(asOf), "age unknown")}`,
+                       String(panel));
+  b.title = pick(asOf, `as of ${asOf}`, `${panel}: no as-of instant served`);
+  return b;
+}
+
+/* ---------- THE WORKING BLOCK ----------
+   A definition list: the term on the left, the payload's own number or
+   sentence on the right. It is how every expandable "show me the working"
+   region on the app renders, so the terms line up down one edge. */
+export function workList(cls) {
+  let name = "worklist";
+  if (cls) name = `worklist ${cls}`;
+  return el("dl", name);
+}
+export function workRow(list, term, body) {
+  const dt = el("dt", null, term);
+  const dd = el("dd");
+  if (body instanceof Node) dd.appendChild(body);
+  else dd.appendChild(document.createTextNode(String(body)));
+  list.append(dt, dd);
+  return list;
 }
 
 /* ---------- THE BREADCRUMB ----------
