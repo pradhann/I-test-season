@@ -85,7 +85,7 @@ Three edges inside a layer are named and allowed:
 
 <!-- BEGIN GENERATED: scripts/module_layout.py -->
 
-341 modules, 112,651 lines.
+341 modules, 112,723 lines.
 
 | Package | Module | Responsibility | Lines |
 |---|---|---|---:|
@@ -337,7 +337,7 @@ Three edges inside a layer are named and allowed:
 | `fpl_edge.platform.auth` | `routes.py` | The sign-in routes, the key routes, and the one check that reads the matrix | 464 |
 | `fpl_edge.platform.auth` | `sessions.py` | The auth database, the session row, and the three cookies | 413 |
 | `fpl_edge.platform.auth` | `settings.py` | Every deployment variable the auth layer reads, in one place | 147 |
-| `fpl_edge.platform` | `boot.py` | The boot sequence a container runs before it answers a single request | 346 |
+| `fpl_edge.platform` | `boot.py` | The boot sequence a container runs before it answers a single request | 418 |
 | `fpl_edge.platform` | `briefing_intel.py` | briefing_intel, the model-authored salience pass OVER the panels | 1049 |
 | `fpl_edge.platform` | `chat_agent.py` | The chat agent loop: conversations driven through the Claude Agent SDK | 1044 |
 | `fpl_edge.platform` | `deliveries.py` | Reading and acknowledging the delivery outbox | 131 |
