@@ -997,24 +997,48 @@ writes one `.env` and cannot hold two managers' tokens.
 
 ### 13.4 First boot, then the seed
 
-Deploy and watch `/api/health`. It returns 503 until the volume is mounted
-and writable, the warehouse file exists and every migration set has run,
-then 200 with the boot report (`volume`, `migrations`, `artefacts`,
-`scheduler`).
+Deploy with `FPL_EDGE_SCHEDULER` unset and `FPL_EDGE_DISABLE_NETWORK_INGEST=1`,
+so the first boot does nothing but come up. Watch `/api/health`: it returns 503
+until the volume is mounted and writable, the warehouse file exists and every
+migration set has run, then 200 with the boot report (`volume`, `promoted`,
+`migrations`, `artefacts`, `scheduler`).
 
 At that point the warehouse is schema-only. Every panel answers 200 with a
-named gap; `fixture_ratings_refit` and `forecast_refresh` record honest
-error rows until there is history; everything else records `no_source`.
+named gap; `fixture_ratings_refit` and `forecast_refresh` record honest error
+rows until there is history; everything else records `no_source`.
 
-Upload the database once, from the Mac:
+Now send the real database. Checkpoint it on the Mac first, so no write-ahead
+log is left beside it:
 
-    uv run python -c "from fpl_edge.store import Warehouse; Warehouse().sql('CHECKPOINT')"
-    ls -l data/warehouse/fpl.duckdb
+    uv run python -c "from fpl_edge.store import Warehouse
+    with Warehouse() as wh: wh.sql('CHECKPOINT')"
+    ls -l data/warehouse/fpl.duckdb*
 
-The file is about 160 MiB and there must be no `.wal` beside it. Copy it onto
-the volume with the Railway CLI while the service is stopped, or through the
-seed route, which refuses when a database already exists. Then clear
-`FPL_EDGE_DISABLE_NETWORK_INGEST` and redeploy. The next tick reads 36 hours
+One file, about 165 MiB, and no `.wal`. Upload it under the staging name. The
+running container may hold `fpl.duckdb` open, and DuckDB replays a write-ahead
+log against whatever file carries that name, so a direct overwrite is how a
+good upload destroys a good database. Boot promotes the staged file instead,
+before it opens any connection:
+
+    railway ssh config                 # writes an OpenSSH block for the service
+    scp data/warehouse/fpl.duckdb <the host that block names>:/app/data/warehouse/fpl.duckdb.incoming
+    railway redeploy
+
+`railway ssh "ls -la /app/data/warehouse/"` confirms the upload arrived whole
+before the redeploy: the byte count must match the Mac's. The next boot
+validates it (a readable DuckDB with rows in `dim_player`), drops the WAL of
+the database it supersedes, and renames it into place atomically. The health
+payload then carries the receipt:
+
+    "promoted": {"from": "fpl.duckdb.incoming", "bytes": 173551616,
+                 "players": 659, "replaced_bytes": 2359296, "wal_dropped": false}
+
+A truncated or wrong-shaped upload fails the boot with the path named and
+leaves the database that was already there untouched, so a bad copy costs a
+restart and nothing else.
+
+With the receipt in hand, set `FPL_EDGE_SCHEDULER=1`, clear
+`FPL_EDGE_DISABLE_NETWORK_INGEST`, and redeploy. The first tick reads 36 hours
 of owed firings, runs what is inside each task's stale window and records the
 rest as `skipped_stale`.
 

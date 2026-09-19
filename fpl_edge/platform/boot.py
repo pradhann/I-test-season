@@ -17,28 +17,37 @@ The steps
    database file per heavy read and its finalizer has already failed in the
    field (457 orphaned directories, 5.1 GB, found on one machine). No read
    copy legitimately survives a restart.
-3. **Open the warehouse as a writer once.** The constructor creates the file,
+3. **Promote a staged upload.** A warehouse seeded onto a live volume cannot
+   be written straight over ``fpl.duckdb``: the running container may hold
+   that file open, and DuckDB replays a WAL belonging to the file it
+   replaced. An operator uploads to ``fpl.duckdb.incoming`` instead, and this
+   step validates it, drops any WAL of the database it supersedes, and moves
+   it into place with one atomic rename before anything opens a connection.
+   An unreadable or empty upload fails the boot with the path named, and the
+   database already on the volume is left untouched.
+
+4. **Open the warehouse as a writer once.** The constructor creates the file,
    applies ``store/schema.sql``, runs the additive column migrations and
    applies ``store/views.sql``. This is also where a WAL left by a killed
    container is replayed, so the step ends with a ``CHECKPOINT`` and a failure
    here names the WAL path. An empty volume comes out of this step with a
    schema-only warehouse, which is what lets every panel answer with a
    structured gap instead of a stack trace.
-4. **Apply the per-package migrations.** They are lazy today, applied at first
+5. **Apply the per-package migrations.** They are lazy today, applied at first
    use, so a migration failure surfaces as a 500 on whichever request happened
    to touch it first. Running them here makes it a boot failure instead.
-5. **Seed from the image, never overwriting.** ``/app/seed/data`` holds the
+6. **Seed from the image, never overwriting.** ``/app/seed/data`` holds the
    git-tracked files under ``data/``, which the volume mount would otherwise
    hide. A file is copied only when the target is absent, so a first boot
    lands the committed artefacts and every later boot leaves the live ones
    alone.
-6. **Artefact presence check.** Present or absent, with mtime. Nothing is
+7. **Artefact presence check.** Present or absent, with mtime. Nothing is
    created and nothing is fabricated. The result rides into the health payload
    so an operator can see that, for example, ``forecast.parquet`` is absent
    and the Planner will report an honest empty state until the next
    ``forecast_refresh``.
 
-Steps 7 and 8, starting the scheduler and flipping health to ready, belong to
+Steps 8 and 9, starting the scheduler and flipping health to ready, belong to
 ``create_app``: the loop needs a running event loop and the health route needs
 the report this module returns.
 """
@@ -99,6 +108,7 @@ class BootReport:
     warehouse_present: bool = False
     migrations: dict[str, str] = field(default_factory=dict)
     seeded: list[str] = field(default_factory=list)
+    promoted: dict[str, Any] | None = None
     artefacts: dict[str, Any] = field(default_factory=dict)
     booted_utc: str | None = None
 
@@ -126,6 +136,7 @@ class BootReport:
             "warehouse": self.db_path,
             "warehouse_present": self.warehouse_present,
             "migrations": dict(self.migrations),
+            "promoted": self.promoted,
             "seeded": list(self.seeded),
             "artefacts": dict(self.artefacts),
         }
@@ -177,6 +188,66 @@ def clear_tmp(data_dir: Path, report: BootReport) -> None:
         except OSError:
             continue
     report.tmp_cleared = removed
+
+
+#: What an operator uploads a seeded warehouse as. The live database cannot be
+#: written over in place: this container may hold it open, and DuckDB replays a
+#: WAL against whatever file now carries the name, which is how a good upload
+#: destroys a good database.
+INCOMING_SUFFIX = ".incoming"
+
+
+def promote_incoming(db_path: Path, report: BootReport) -> None:
+    """Step 3. Move an uploaded warehouse into place, or leave one alone.
+
+    The upload is validated before it replaces anything: a truncated ``scp``
+    or a file that is not a warehouse fails the boot here, with the database
+    already on the volume untouched, rather than at the first request.
+    ``dim_player`` is the probe because every panel reads it and an empty one
+    is the shape a schema-only file takes.
+    """
+    incoming = db_path.with_name(db_path.name + INCOMING_SUFFIX)
+    if not incoming.is_file():
+        return
+
+    import duckdb
+
+    size = incoming.stat().st_size
+    try:
+        con = duckdb.connect(str(incoming), read_only=True)
+        try:
+            players = int(con.execute(
+                "SELECT count(*) FROM dim_player").fetchone()[0])
+        finally:
+            con.close()
+    except Exception as exc:  # noqa: BLE001 - re-raised as a boot failure
+        raise BootFailure(
+            f"{incoming} is not a readable DuckDB warehouse: "
+            f"{type(exc).__name__}: {exc}. {db_path} was not touched. Upload "
+            f"again, and CHECKPOINT the source before copying so no .wal is "
+            f"left beside it."
+        ) from exc
+    if players <= 0:
+        raise BootFailure(
+            f"{incoming} holds no rows in dim_player, so it is schema-only or "
+            f"truncated ({size} bytes). {db_path} was not touched."
+        )
+
+    # The WAL belongs to the database being replaced. Left in place, DuckDB
+    # would replay it into the new file on the next write open.
+    wal = db_path.with_suffix(db_path.suffix + ".wal")
+    wal_dropped = wal.exists()
+    if wal_dropped:
+        wal.unlink()
+    replaced = db_path.stat().st_size if db_path.exists() else None
+    incoming.replace(db_path)
+    report.promoted = {
+        "from": incoming.name,
+        "bytes": size,
+        "players": players,
+        "replaced_bytes": replaced,
+        "wal_dropped": wal_dropped,
+    }
 
 
 def open_warehouse_once(db_path: Path, report: BootReport) -> None:
@@ -316,6 +387,7 @@ def boot(
     report = BootReport(data_dir=str(data_dir), db_path=str(db))
     check_mount(data_dir, report)
     clear_tmp(data_dir, report)
+    promote_incoming(db, report)
     db.parent.mkdir(parents=True, exist_ok=True)
     open_warehouse_once(db, report)
     apply_migrations(db, report)
