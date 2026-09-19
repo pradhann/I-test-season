@@ -770,7 +770,6 @@ def _verdict(
             if cons_cap and cons_cap.get("code") != cap_pick["code"]:
                 cons_row = sq_by_code_v.get(int(cons_cap["code"]))
                 c_numbers["consensus_captain_code"] = int(cons_cap["code"])
-                c_numbers["consensus_captain_name"] = cons_cap.get("name")
                 if cons_row is not None:
                     c_numbers["consensus_captain_xpts"] = cons_row.get("xpts")
     c_dissent: list[dict[str, Any]] = []
