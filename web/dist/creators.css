@@ -1,27 +1,31 @@
-/* Creators view styles. Owned by the creators view and by the paste-a-link
- * component it mounts.
+/* Creators view styles. Owned by the creators view only.
  *
  * THEMES. Every colour below resolves to a token declared in app.css for BOTH
  * themes, so nothing here needs a light/dark block of its own: app.css states
  * the palette dark-first on bare :root, then redefines it under
  * @media (prefers-color-scheme: light) :root:not([data-theme="dark"]),
  * [data-theme="light"] and [data-theme="dark"]. All three theme states are
- * covered, the OS preference with no attribute set and the explicit toggle in
- * both directions. There are no literal colour values in this file at all:
- * every fill, stroke and text colour is a token or a color-mix over one.
+ * therefore covered — the OS preference with no attribute set, and the
+ * explicit toggle in both directions. Aliasing rather than hard-coding is
+ * what keeps the "readable in one theme only" bug out of this file. There
+ * are no literal colour values at all: every fill, stroke and text colour in
+ * this file is a token or a color-mix over one.
  *
- * THE BUDGET, after the rebuild. Four rendered text sizes on level 1: 13px
- * for the card head, 12.5px for a table cell, 12px for a note or a summary,
- * 11px for a column head. Four spacing values: 4, 8, 12 and 16. Three status
- * tokens: good, warn, bad, used for the transcription state and for the
- * verdict against a coin flip, which are different axes and never share a
- * mark. One accent, for a link out to a recording.
- *
- * WHAT WENT. The deadline board, the decision cards, the armband, the watch
- * calls, the said-versus-owned grid, the report-card wall, the roster table,
- * the gameweek picker, the window fact row and the source console all left
- * with the blocks that drew them. player_chatter serves both halves of the
- * grid per player and is already mounted in the shared player drawer.
+ * TWO HUES, AND ONLY TWO.
+ *   --cx-in  = --s1  the panel is IN  (buy / hold / captain)
+ *   --cx-out = --s2  the panel is OUT (sell / avoid / bench)
+ * Re-validated for this build with the dataviz six-checks validator, all
+ * pairs, against each theme's own surface:
+ *   dark  #16181b: lightness band PASS, chroma PASS, CVD ΔE 25.9 protan /
+ *                  29.3 tritan, normal-vision ΔE 30.4, contrast PASS
+ *   light #ffffff: lightness band PASS, chroma PASS, CVD ΔE 24.7 protan /
+ *                  32.7 tritan, normal-vision ΔE 33.6, contrast PASS
+ * Captaincy is NOT a third hue — it is a ★ with the count printed beside it,
+ * because a one-of-N choice is not a direction. Evidence strength is not a
+ * hue either: a keyword window is a HOLLOW mark, so "less certain" reads as
+ * quieter rather than as a different category. Ownership in the grid is an
+ * OUTLINE, never a fill, so hue and shape stay independent and the whole view
+ * survives colour-blindness.
  */
 
 .cx {
@@ -30,352 +34,41 @@
   --cx-quiet: var(--faint);
 }
 
-/* ============================================================== notes */
-
-/* The panel's own words, drawn as a QUOTATION so it reads as an aside: a rule
-   down the left rather than eight lines of the faintest grey on the page,
-   which is what a bare paragraph gave it. */
-.cx-note { color: var(--muted); font-size: 12px; max-width: 78ch;
-           line-height: 1.6; margin: 0 0 8px;
+/* The panel's own words about that measurement: a QUOTATION, so it reads as
+   an aside — a rule down the left rather than eight lines of the faintest
+   grey on the page, which is what a bare paragraph gave it. */
+.cx-note { color: var(--muted); font-size: 12px; max-width: 74ch;
+           line-height: 1.6; margin: 0 0 10px;
            border-left: 2px solid var(--line); padding: 1px 0 1px 11px; }
-.cx-honest { color: var(--muted); font-size: 12px; line-height: 1.6;
-             max-width: 78ch; margin: 4px 0 8px; }
-.cx-honest.warn { border-left: 2px solid var(--warn); padding-left: 10px; }
-.cx-why { color: var(--ink); font-size: 12.5px; line-height: 1.6;
-          max-width: 78ch; margin: 4px 0 8px; }
-.cx-tiny { color: var(--faint); font-size: 11px; line-height: 1.5; }
-.cx-thin { max-width: 78ch; line-height: 1.6; }
+.cx-quotemark { text-transform: uppercase; letter-spacing: .07em;
+                font-size: 10px; font-weight: 700; color: var(--faint); }
 
-/* a disclosure, never a tab: the deeper layer lives one click away */
-.cx-disclose { margin: 8px 0; }
+/* a disclosure, never a tab: the honest paragraph lives one click away */
+.cx-disclose { margin: 6px 0; }
 .cx-disclose > summary { cursor: pointer; color: var(--muted); font-size: 12px;
-                         list-style: none; display: inline-flex; gap: 8px;
-                         align-items: center; padding: 4px 0; }
+                         list-style: none; display: inline-flex; gap: 6px;
+                         align-items: center; padding: 3px 0; }
 .cx-disclose > summary::-webkit-details-marker { display: none; }
-.cx-disclose > summary::before { content: "\25b8"; color: var(--faint); }
-.cx-disclose[open] > summary::before { content: "\25be"; }
+.cx-disclose > summary::before { content: "▸"; color: var(--faint); }
+.cx-disclose[open] > summary::before { content: "▾"; }
 .cx-disclose > summary:hover { color: var(--ink); }
 /* the custom marker replaced the UA one, so the keyboard ring has to be
-   restated here: app.css only rings button, a, select and input */
+   restated here — app.css only rings button, a, select and input */
 .cx-disclose > summary:focus-visible { outline: 2px solid var(--s1);
   outline-offset: 3px; border-radius: 4px; color: var(--ink); }
 .cx-disclose > p, .cx-disclose > .sub { max-width: 78ch; line-height: 1.6;
-                                        color: var(--muted); font-size: 12px; }
+                                        color: var(--muted); font-size: 12.5px; }
+.cx-disclose.big > summary { font-size: 13px; font-weight: 600; }
+.cx-ul { margin: 4px 0 8px; padding-left: 18px; color: var(--muted);
+         font-size: 12.5px; line-height: 1.6; max-width: 78ch; }
+.cx-ul li { margin-bottom: 3px; }
 
-/* a failed panel body, folded rather than interpolated into a sentence */
-.cx-raw { margin: 4px 0 0; padding: 8px; max-height: 240px; overflow: auto;
-          background: var(--surface); border: 1px solid var(--line);
-          border-radius: 6px; font-family: var(--mono); font-size: 11px;
-          white-space: pre-wrap; word-break: break-word; color: var(--muted); }
-
-/* ====================================================== level 1, the board */
-
-/* The name is the click, on every level. A button drawn as text, so the row
-   reads as a row and the keyboard still finds it. */
-.cx-show { background: none; border: 0; padding: 0; margin: 0; font: inherit;
-           font-size: 12.5px; color: var(--ink); text-align: left;
-           cursor: pointer; max-width: 30ch; overflow: hidden;
-           text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
-.cx-show:hover { text-decoration: underline; }
-
-/* The sortable column head, the Fixtures idiom: the header is a button, the
-   active one carries an arrow as well as aria-sort. */
-.cx-th { background: none; border: 0; padding: 0; margin: 0; font: inherit;
-         color: inherit; cursor: pointer; display: inline-flex; gap: 4px;
-         align-items: center; }
-.cx-th.on { color: var(--ink); }
-.cx-th .arr { font-size: 8px; color: var(--s1); }
-
-/* Which rung of the latest-line ladder this row is on. The tag names the
-   served key the text came from and is never a judgment about the text. */
-.cx-rung { font-size: 11px; font-family: var(--mono); color: var(--faint);
-           margin-right: 8px; text-transform: uppercase; letter-spacing: .04em; }
-
-/* The table has to fit its 1,019 px container without an internal drag: a
-   column that sizes itself to "Ignore the Template (anonymous host)" takes
-   246 px and pushes the latest line off the right edge. Both text columns are
-   clamped and both keep the full string in the title. */
-table.cx-l1 td.line { white-space: nowrap; overflow: hidden;
-                      text-overflow: ellipsis; max-width: 27ch; }
-table.cx-l1 td.team { color: var(--muted); max-width: 14ch; overflow: hidden;
-                      text-overflow: ellipsis; }
-table.cx-l1 th, table.cx-l1 td { padding: 5px 8px; }
-table.cx-l1 td.show, table.cx-l1 th:first-child { min-width: 168px;
-                                                  max-width: 168px; }
-
-/* the shows with nothing on file, folded rather than sorted to the bottom */
-.cx-quiet { display: flex; flex-direction: column; gap: 4px; margin: 4px 0 0; }
-.cx-quietrow { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline;
-               font-size: 12px; }
-.cx-quietrow .sub { color: var(--faint); font-size: 12px; max-width: 70ch; }
-
-table.cx-cons td { vertical-align: baseline; }
-table.cx-cons .sub { color: var(--faint); font-size: 11px; }
-
-/* ====================================================== the drawer, levels 2 and 3 */
-
-/* 30 KB of level 3 does not fit in 524 px of content: 19 transfer calls, 4
-   captain calls and 20 players each carrying its own quotes. */
-.cx-drawer { width: min(920px, 96vw); }
-.cx-drawer h2 { margin: 16px 0 4px; font-size: 12px; letter-spacing: .06em;
-                text-transform: uppercase; color: var(--muted); }
-.cx-drawer h3 { margin: 12px 0 4px; font-size: 11px; letter-spacing: .06em;
-                text-transform: uppercase; color: var(--faint); font-weight: 700; }
-.cx-drawer .sub { color: var(--faint); font-size: 12px; line-height: 1.55;
-                  max-width: 78ch; }
-.cx-backbar { margin-bottom: 8px; }
-.cx-back { background: none; border: 0; padding: 0; font: inherit;
-           font-size: 12px; color: var(--muted); cursor: pointer; }
-.cx-back:hover { color: var(--ink); text-decoration: underline; }
-
-/* The archive table lives inside 884 px of drawer. The title is the only
-   elastic column, so it is the one that clamps; the whole string stays in the
-   button's tooltip and the row height stays one line. */
-table.cx-l2 td.title { white-space: nowrap; max-width: 26ch; overflow: hidden;
-                       text-overflow: ellipsis; }
-table.cx-l2 td.title .cx-show { max-width: 22ch; }
-table.cx-l2 th, table.cx-l2 td { padding: 5px 8px; }
-table.cx-l2 tr.thin td { color: var(--muted); }
-/* one recording, two stored rows: the mark opens the other copy */
-.cx-sib { background: none; border: 1px solid var(--line); border-radius: 4px;
-          padding: 0 4px; margin-left: 6px; font: inherit; font-size: 11px;
-          color: var(--faint); cursor: pointer; }
-.cx-sib:hover { color: var(--ink); border-color: var(--muted); }
-
-/* the episode head: state, where, when, how much text, and the way out */
-.cx-ephead { display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
-             font-size: 12px; color: var(--muted); margin: 4px 0; }
-
-/* ============================================ the stored summary and calls */
-
-.cx-bullets { display: flex; flex-direction: column; gap: 4px; margin: 4px 0 8px; }
-.cx-bullet { margin: 0; color: var(--ink); font-size: 12.5px; line-height: 1.6;
-             max-width: 84ch; padding-left: 12px; position: relative; }
-.cx-bullet::before { content: "\2022"; position: absolute; left: 0;
-                     color: var(--faint); }
-
-.cx-calls { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 8px; }
-.cx-call { border-left: 2px solid var(--line); padding-left: 12px; }
-.cx-callhead { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline;
-               font-size: 12.5px; }
-.cx-callhead b { color: var(--ink); }
-.cx-player > summary { font-size: 12.5px; }
-.cx-player > summary .sub { color: var(--faint); font-size: 12px; }
-
-/* ============================================================== quotes */
-
-.cx-quote { margin: 4px 0 0; padding: 8px 12px; border-left: 2px solid var(--line);
-            background: var(--surface); border-radius: 0 8px 8px 0;
-            color: var(--ink); font-size: 12.5px; line-height: 1.6; }
-.cx-qmark { color: var(--faint); }
-.cx-qfoot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
-            margin-top: 8px; }
-.cx-tier { font-size: 11px; font-weight: 700; letter-spacing: .06em;
-           text-transform: uppercase; padding: 1px 8px; border-radius: 999px;
-           border: 1px solid var(--line); color: var(--muted);
-           background: var(--raised); white-space: nowrap; }
-/* "method not recorded" is an ABSENCE, and it repeats on every row in a
-   section. A filled badge for it shouts as loudly as the tiers that carry
-   meaning, so the absence is drawn as an outline instead. */
-.cx-tier.unknown { color: var(--faint); background: transparent;
-                   border-style: dashed; font-weight: 650; }
-.cx-tier.llm { color: var(--ink);
-  border-color: color-mix(in oklab, var(--s1) 50%, var(--line));
-  background: color-mix(in oklab, var(--s1) 12%, var(--surface)); }
-/* a keyword window is drawn as texture, never as a hue */
-.cx-tier.cue { color: var(--faint); background:
-  repeating-linear-gradient(135deg, var(--raised) 0 3px,
-                            var(--surface) 3px 6px); }
-.cx-tier.call { color: var(--muted); }
-.cx-conv { color: var(--faint); font-size: 11px;
-           font-variant-numeric: tabular-nums; white-space: nowrap; }
-.cx-conv.warn { color: var(--warn); }
-
-/* THE OFFSET. An anchor only where the platform has a link grammar for a
-   moment, which today is YouTube. Everywhere else the offset is stored and
-   the episode link opens at the start, so the mark is drawn as text and says
-   so in its tooltip rather than pretending to be a link. */
-a.cx-at { color: var(--accent-ink); font-size: 11px; text-decoration: none;
-          margin-left: auto; white-space: nowrap; }
-a.cx-at:hover { text-decoration: underline; }
-.cx-at.flat { color: var(--faint); font-size: 11px; margin-left: auto;
-              white-space: nowrap; border-bottom: 1px dotted var(--line); }
-
-/* ==================================== the transcription state, four values */
-
-.cx-state { display: inline-flex; align-items: center; gap: 8px;
-            color: var(--muted); font-size: 12px; white-space: nowrap; }
-.cx-statedot { content: ""; display: inline-block; width: 8px; height: 8px;
-               border-radius: 50%; background: var(--faint); flex: none; }
-.cx-state.good .cx-statedot { background: var(--good); }
-.cx-state.warn .cx-statedot { background: var(--warn); }
-.cx-state.bad .cx-statedot { background: var(--bad); }
-.cx-state.muted .cx-statedot { background: transparent;
-  box-shadow: inset 0 0 0 1.5px var(--faint); }
-
-/* ============================================== the report card, as a chip */
-
-.cx-rc { display: inline-flex; align-items: center; gap: 8px;
-         padding: 3px 9px 3px 8px; border-radius: 999px;
-         border: 1px solid var(--line); background: var(--surface);
-         font: inherit; font-size: 11px; color: var(--muted); cursor: pointer; }
-.cx-rc:hover { border-color: var(--muted); color: var(--ink); }
-.cx-rc b { color: var(--ink); font-weight: 600; }
-.cx-rcdir { font-family: var(--mono); font-size: 11px; letter-spacing: .04em;
-            color: var(--faint); }
-.cx-rc .cx-rcstat { margin: 0; font-size: 11px; font-variant-numeric: tabular-nums; }
-.cx-rc.below .cx-rcstat { color: var(--bad); }
-.cx-rc.above .cx-rcstat { color: var(--good); }
-
-/* the verdict without a name: the drawer's record line */
-.cx-rctag { display: inline-block; font-size: 11px; padding: 1px 8px;
-            border-radius: 999px; border: 1px solid var(--line);
-            color: var(--muted); background: var(--surface);
-            font-variant-numeric: tabular-nums; white-space: nowrap;
-            letter-spacing: 0; text-transform: none; font-weight: 500; }
-.cx-rctag.above { color: var(--good);
-  border-color: color-mix(in oklab, var(--good) 45%, var(--line)); }
-.cx-rctag.below { color: var(--bad);
-  border-color: color-mix(in oklab, var(--bad) 45%, var(--line)); }
-.cx-rctag.big { font-size: 12.5px; padding: 3px 12px; font-weight: 600; }
-.cx-recline { display: flex; flex-wrap: wrap; align-items: center;
-              gap: 8px 12px; margin: 4px 0 8px; font-size: 12px;
-              color: var(--muted); }
-.cx-recteam { font-size: 12px; color: var(--muted); }
-
-/* ============================================ under the floor, drawn faint
- *
- * `verdict()` appends `few` when a record has fewer scored claims than
- * `min_scored_claims`. Nothing styled it, so a verdict from 12 claims was
- * painted the same full red as one from 274 and only an 11px word told the
- * reader which was which. Colour must not assert what the count denies: the
- * hue still says which side of the coin flip, the saturation says how much
- * evidence stands behind it. `--muted` is the mix target so the result lands
- * in the app's own neutral in both themes. */
-.cx-rc.few .cx-rcstat,
-.cx-rctag.few { color: color-mix(in oklab, currentColor 45%, var(--muted)); }
-.cx-rc.few.below .cx-rcstat { color: color-mix(in oklab, var(--bad) 45%, var(--muted)); }
-.cx-rc.few.above .cx-rcstat { color: color-mix(in oklab, var(--good) 45%, var(--muted)); }
-.cx-rctag.few.below { color: color-mix(in oklab, var(--bad) 45%, var(--muted));
-  border-color: color-mix(in oklab, var(--bad) 20%, var(--line)); }
-.cx-rctag.few.above { color: color-mix(in oklab, var(--good) 45%, var(--muted));
-  border-color: color-mix(in oklab, var(--good) 20%, var(--line)); }
-
-/* ================================================== the record, once open */
-
-/* the Wilson interval as a range on a 0-100 track; the tick is the coin flip */
-.cx-range { position: relative; height: 8px; margin-top: 8px; border-radius: 4px;
-            background: var(--surface); border: 1px solid var(--line); }
-.cx-range.big { height: 16px; margin: 8px 0 4px; }
-.cx-range-mid { position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px;
-                background: var(--muted); }
-.cx-range-band { position: absolute; top: 1px; bottom: 1px; border-radius: 4px;
-                 background: color-mix(in oklab, var(--muted) 45%, var(--surface)); }
-.cx-range-pt { position: absolute; top: -2px; width: 3px; height: calc(100% + 4px);
-               margin-left: -1.5px; background: var(--ink); border-radius: 2px; }
-/* per-gameweek hit rate: small columns on a 22px track, dashed line at 50% */
-.cx-gwbars { display: flex; gap: 4px; align-items: flex-end; height: 34px;
-             margin-top: 8px; position: relative; }
-.cx-gwbars::before { content: ""; position: absolute; left: 0; right: 0; bottom: 23px;
-                     border-top: 1px dashed var(--line); }
-.cx-gwbar { display: flex; flex-direction: column; align-items: center;
-            justify-content: flex-end; width: 28px; height: 34px; }
-.cx-gwfill { display: block; width: 14px; background: var(--muted);
-             border-radius: 2px 2px 0 0; }
-.cx-gwbar.thin .cx-gwfill { opacity: .5; }
-.cx-gwlab { font-size: 11px; color: var(--faint); font-family: var(--mono);
-            line-height: 12px; }
-.cx-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr);
-            gap: 4px 12px; margin: 8px 0; font-size: 12.5px; }
-.cx-facts dt { color: var(--faint); font-size: 11px; letter-spacing: .06em;
-               text-transform: uppercase; padding-top: 2px; }
-.cx-facts dd { margin: 0; color: var(--ink); }
-table.cx-byaction { font-size: 12px; margin-top: 4px; }
-table.cx-byaction tr.thin td { color: var(--faint); }
-.cx-teamrow { margin-top: 8px; border-left: 2px solid var(--line); padding-left: 12px; }
-.cx-teamhead { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
-a.cx-cross { color: var(--accent-ink); font-size: 11px; text-decoration: none; }
-a.cx-cross:hover { text-decoration: underline; }
-/* the same FPL entry attached to more than one card */
-.cx-samewho { font-size: 11px; letter-spacing: .04em; color: var(--warn);
-              border: 1px dashed color-mix(in oklab, var(--warn) 45%, var(--line));
-              border-radius: 4px; padding: 0 5px; white-space: nowrap; }
-
-/* the folds at the bottom of level 2: the arithmetic, the squad, the console */
-.cx-method { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 8px; }
-.cx-methodbody { padding: 4px 0 0; }
-.cx-inkhost { padding: 4px 0 0; }
-table.cx-squad { font-size: 12px; margin-top: 4px; }
-
-/* ---- skeleton loading ---------------------------------------------------
-   The panel build is measured at 2.5 to 4s; a shape that says "loading"
-   replaces the bare text line. Tokens only, both themes; motion respects
-   prefers-reduced-motion. */
-.cx-skel { display: flex; flex-direction: column; gap: 12px; margin: 12px 0; }
-.cx-skelrow, .cx-skelblock, .cx-skelcard {
-  border-radius: 8px;
-  background: linear-gradient(100deg,
-    var(--raised) 40%,
-    color-mix(in oklab, var(--ink) 7%, var(--raised)) 50%,
-    var(--raised) 60%);
-  background-size: 200% 100%;
-  animation: cx-shimmer 1.2s linear infinite; }
-.cx-skelrow { height: 14px; width: 38%; }
-.cx-skelblock { height: 72px; }
-.cx-skelcard { height: 96px; }
-@keyframes cx-shimmer { to { background-position: -200% 0; } }
-@media (prefers-reduced-motion: reduce) {
-  .cx-skelrow, .cx-skelblock, .cx-skelcard { animation: none; }
-}
-
-/* ============================================================ narrow
- *
- * At a true 390 CSS pixel viewport the level-1 table stops being a table and
- * becomes one block per show: the name on its own line, the numbers running
- * together on the next with their column names inline, and the latest line
- * clamped to two. No horizontal scroll at page level and no drag gesture per
- * column. The archive column and the team column go, because a phone reading
- * is "what did they publish and did we read it", and both are answerable
- * without them. */
-@media (max-width: 760px) {
-  table.cx-l1, table.cx-l1 tbody, table.cx-l1 tr, table.cx-l1 td { display: block; }
-  table.cx-l1 thead { display: none; }
-  /* the block table must not out-grow its wrapper: the row's own text is
-     what gets clipped, not the page */
-  table.cx-l1 { width: 100%; max-width: 100%; }
-  table.cx-l1 tr { max-width: 100%; overflow: hidden; }
-  table.cx-l1 tr { padding: 3px 0 4px; border-bottom: 1px solid var(--line);
-                   line-height: 1.3; }
-  table.cx-l1 td.show, table.cx-l1 td.line { line-height: 1.3; }
-  table.cx-l1 tr:hover td { background: none; }
-  table.cx-l1 td { border: 0; padding: 0; white-space: normal; display: inline;
-                   font-size: 11px; line-height: 1.3; margin-right: 9px; }
-  table.cx-l1 td.show, table.cx-l1 td.line { display: block; margin-right: 0;
-    width: 100%; max-width: 100%; }
-  table.cx-l1 td[data-k]::before { content: attr(data-k) " ";
-    color: var(--faint); font-size: 11px; letter-spacing: .04em; }
-  /* five columns on a phone: the name, how old the latest item is, how much
-     they published and how much of it was read, and the record. The feed
-     kinds, the archive total and the people behind the show all answer
-     questions a phone reader is not asking at a deadline. */
-  table.cx-l1 td[data-k="arch"], table.cx-l1 td[data-k="team"],
-  table.cx-l1 td[data-k="feeds"] { display: none; }
-  table.cx-l1 td.line { max-width: none; white-space: nowrap; overflow: hidden;
-                        text-overflow: ellipsis; line-height: 1.3; }
-  table.cx-l1 .cx-show { max-width: none; white-space: nowrap; overflow: hidden;
-                         text-overflow: ellipsis; font-size: 12px;
-                         font-weight: 600; line-height: 1.3; }
-  table.cx-l1 .cx-rung { margin-right: 6px; }
-  /* sticky-first pins a 170 px first column, which is the whole width here */
-  table.cx-l1 td:first-child, table.cx-l1 th:first-child { position: static;
-    min-width: 0; max-width: none; box-shadow: none; }
-  .cx-note { max-width: none; }
-  section.cx.card { padding: 10px 12px; margin-bottom: 10px; }
-  .cx-drawer { width: 100vw; padding: 12px; }
-  table.cx-l2 td.title, table.cx-l2 td.title .cx-show { max-width: 18ch; }
-  .cx-facts { grid-template-columns: minmax(0, 1fr); gap: 1px; }
-  .cx-callhead { gap: 4px 8px; }
-}
+.cx-provline { font-size: 12.5px; color: var(--muted); line-height: 1.6;
+               max-width: 88ch; margin: 10px 0 6px; }
+.cx-provline b { color: var(--ink); }
+.cx-provline code { font-family: var(--mono); font-size: 11.5px;
+                    background: var(--raised); padding: 1px 4px; border-radius: 4px; }
+.cx-provline.warn { border-left: 2px solid var(--warn); padding-left: 10px; }
 
 /* ======================================================== the link bar */
 
@@ -444,7 +137,7 @@ a.cx-job-url:hover { color: var(--ink); text-decoration: underline; }
  *
  * The accept/decline pair is deliberately NOT two equal buttons in two hues.
  * Spending is the affirmative act and it carries the filled button; declining
- * is free, and free things do not need to be shouted. It is a plain button
+ * is free, and free things do not need to be shouted — it is a plain button
  * with the word "free" spelled out underneath, because the cost is the
  * decision and the cost belongs next to the control. */
 
@@ -554,3 +247,828 @@ button.cx-no:hover { color: var(--ink); }
 }
 
 
+/* ========================================================== toolbar bits */
+
+/* WHICH SLICE the board is drawn from — gameweek, window, freshness. One
+   right-aligned cluster with hairline separators, so it reads as reference
+   beside the controls instead of three loose runs at full body weight. It
+   lands in the same right-hand column as the Evidence row's key below it. */
+.cx-toolmeta { margin-left: auto; display: inline-flex; align-items: center;
+               flex-wrap: wrap; gap: 3px 10px; color: var(--muted);
+               font-size: 12px; }
+.cx-toolmeta > * + *::before { content: "·"; color: var(--faint);
+                               margin-right: 9px; }
+/* .cx-asof is itself a flex box with a 6px gap, so its separator only owes
+   the remaining 3px — otherwise that one gap sits 6px wider than the others */
+.cx-toolmeta > .cx-asof::before { margin-right: 3px; }
+.cx-asof { display: inline-flex; align-items: center; gap: 6px; }
+
+/* ---------------------------------------------------- the gameweek picker */
+/* Same `.chip.gw` vocabulary as xPoints, because it is the same control: pick
+   which gameweek the board is drawn for. Two things ride ON the chip rather
+   than beside it — the count behind that gameweek, and which one is the next
+   deadline — so the row answers "is there anything there" before it is
+   clicked. A chip that has been MEASURED empty is `.chip.off` and disabled;
+   an unmeasured one stays live and says "…", because not knowing and knowing
+   nothing are different facts. */
+/* A REAL badge, visually severed from the GW label: "GW1" + a glued "9"
+   read as GW19 at speed (R1+R3). The chip also carries an aria-label, so
+   this pill is presentation only. */
+.cx-gwn { margin-left: 7px; font-family: var(--mono);
+          font-variant-numeric: tabular-nums; font-weight: 600;
+          font-size: 10px; color: var(--muted); line-height: 1;
+          padding: 2px 6px; border-radius: 999px;
+          background: color-mix(in oklab, var(--ink) 8%, var(--surface));
+          border: 1px solid var(--line); }
+.chip.gw.on .cx-gwn { color: var(--ink);
+          background: color-mix(in oklab, var(--ink) 12%, var(--surface)); }
+.cx-gwnext { margin-left: 6px; font-size: 9px; font-weight: 700;
+             letter-spacing: .08em; text-transform: uppercase;
+             color: var(--accent-ink); }
+.cx-gwhint { margin-left: auto; color: var(--faint); font-size: 11px; }
+/* the reasons under the row: which gameweek you are on, and how it was picked */
+.cx-gwnote:not(:empty) { padding: 2px 0 6px; }
+.cx-gwnote .cx-provline { margin: 4px 0 0; }
+.cx-key { display: inline-flex; gap: 14px; align-items: center;
+          margin-left: auto; }
+.cx-keyitem { display: inline-flex; align-items: center; gap: 6px;
+              color: var(--muted); font-size: 11.5px; }
+
+/* the shared mark vocabulary: hue = direction, fill = evidence strength */
+.cx-dot { width: 11px; height: 11px; border-radius: 50%; flex: none;
+          display: inline-block; background: var(--cx-quiet); }
+.cx-dot.solid { background: var(--cx-quiet); }
+.cx-dot.solid.in { background: var(--cx-in); }
+.cx-dot.solid.out { background: var(--cx-out); }
+.cx-dot.hollow { background: var(--surface);
+                 box-shadow: inset 0 0 0 2px var(--muted); }
+.cx-dot.split { background: linear-gradient(90deg,
+                  var(--cx-out) 0 50%, var(--cx-in) 50% 100%); }
+.cx-star { color: var(--muted); font-size: 12px; }
+.cx-shadesw { width: 24px; height: 11px; border-radius: 3px; flex: none;
+              background: color-mix(in oklab, var(--muted) 14%, var(--surface));
+              border: 1px solid var(--line); }
+
+/* ====================================================== the deadline board */
+
+.cx-chartwrap { position: relative; margin: 8px 0 4px; }
+.cx-chartscroll { overflow-x: auto; }
+svg.cx-board { width: 100%; height: auto; display: block; overflow: visible; }
+/* Below this width the viewBox would squeeze every label into illegibility,
+   so the board keeps its size and scrolls inside its own container. The page
+   itself never scrolls sideways. */
+@media (max-width: 820px) { svg.cx-board { min-width: 700px; } }
+
+svg.cx-board .cx-grid { stroke: var(--line); stroke-width: 1; }
+svg.cx-board .cx-zero { stroke: var(--muted); stroke-width: 1.25; opacity: .8; }
+svg.cx-board .cx-lanerule { stroke: var(--line); stroke-width: 1; }
+svg.cx-board .cx-tick { fill: var(--faint); font-size: 10px; text-anchor: middle;
+                        font-family: var(--mono); }
+svg.cx-board .cx-axlabel { fill: var(--faint); font-size: 10px;
+                           letter-spacing: .14em; }
+svg.cx-board .cx-axlabel.end { text-anchor: end; }
+svg.cx-board .cx-axunit { fill: var(--faint); font-size: 10.5px;
+                          text-anchor: middle; }
+svg.cx-board .cx-lanelabel { fill: var(--ink); font-size: 12px; font-weight: 650; }
+svg.cx-board .cx-lanecount { fill: var(--faint); font-size: 10.5px; }
+svg.cx-board .cx-shade { fill: var(--muted); opacity: .07; }
+
+/* Marks: thin, with a 2px surface ring so overlapping dots stay separable
+   without drawing borders around them. Hue = direction. Hollow = a keyword
+   window, which is a search hit and not an opinion. */
+svg.cx-board .cx-node { stroke: var(--surface); stroke-width: 2; }
+svg.cx-board .cx-node.in { fill: var(--cx-in); }
+svg.cx-board .cx-node.out { fill: var(--cx-out); }
+svg.cx-board .cx-node.flat { fill: var(--cx-quiet); }
+svg.cx-board .cx-node.hollow { fill: var(--surface); stroke-width: 2; }
+svg.cx-board .cx-node.hollow.in { stroke: var(--cx-in); }
+svg.cx-board .cx-node.hollow.out { stroke: var(--cx-out); }
+svg.cx-board .cx-node.hollow.flat { stroke: var(--muted); }
+svg.cx-board .cx-half { stroke: var(--surface); stroke-width: 1.4; }
+svg.cx-board .cx-half.in { fill: var(--cx-in); }
+svg.cx-board .cx-half.out { fill: var(--cx-out); }
+svg.cx-board .cx-capstar { fill: var(--muted); font-size: 10px; }
+svg.cx-board .cx-plabel { fill: var(--muted); font-size: 11px; }
+svg.cx-board .cx-plabel.mine { fill: var(--ink); font-weight: 650; }
+svg.cx-board .cx-mark { cursor: pointer; }
+svg.cx-board .cx-mark.agreed { opacity: .38; }
+/* a split is drawn as two half-discs, not a .cx-node, so it needs its own
+   hover rule — the most informative mark on the board was the one mark that
+   did not answer the pointer */
+svg.cx-board .cx-mark:hover .cx-node,
+svg.cx-board .cx-mark:hover .cx-half { stroke: var(--ink); }
+svg.cx-board .cx-mark:focus-visible { outline: 2px solid var(--s1);
+                                      outline-offset: 2px; }
+
+/* the board tooltip — self-contained, not borrowed from another view */
+.cx-tip { position: absolute; pointer-events: none; opacity: 0;
+          transition: opacity .09s ease; min-width: 186px; max-width: 280px;
+          background: var(--raised); border: 1px solid var(--line);
+          border-radius: 9px; padding: 8px 10px; box-shadow: var(--shadow);
+          font-size: 12px; z-index: 5; color: var(--ink); }
+.cx-tip.on { opacity: 1; }
+.cx-tip b { color: var(--ink); font-size: 13px; }
+.cx-tip .sub { color: var(--faint); font-size: 11px; margin-bottom: 5px; }
+.cx-tl { display: flex; justify-content: space-between; gap: 14px; line-height: 1.6; }
+.cx-tk { color: var(--muted); }
+.cx-tv { color: var(--ink); font-family: var(--mono);
+         font-variant-numeric: tabular-nums; }
+.cx-tipreason { margin-top: 6px; padding-top: 5px; border-top: 1px solid var(--line);
+                color: var(--muted); font-size: 11.5px; line-height: 1.5; }
+@media (prefers-reduced-motion: reduce) { .cx-tip { transition: none; } }
+
+.cx-legend { display: flex; flex-wrap: wrap; align-items: center;
+             gap: 8px 20px; margin: 8px 0 2px; padding-top: 8px;
+             border-top: 1px solid var(--line); }
+.cx-legitem { display: inline-flex; align-items: center; gap: 7px;
+              color: var(--muted); font-size: 11.5px; }
+.cx-legend > .sub, .cx-legend > p { flex-basis: 100%; color: var(--faint);
+             font-size: 11.5px; line-height: 1.6; max-width: 88ch; margin: 2px 0 0; }
+.cx-legend > .cx-disclose { flex-basis: 100%; }
+/* The shape of tonight's board is a FINDING, not legend chrome — it has to
+   out-specify the `.cx-legend > p` rule above, which was quietly demoting it
+   to the faintest grey and the smallest size on the page. */
+.cx-legend > p.cx-shape { color: var(--muted); font-size: 12.5px;
+            line-height: 1.6; max-width: 88ch; margin: 6px 0 0; }
+.cx-shape { flex-basis: 100%; }
+.cx-shape b { color: var(--ink); }
+
+/* ========================================================== the decisions */
+
+.cx-sec { margin-top: 22px; border-top: 1px solid var(--line); padding-top: 14px; }
+.cx-sechead { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.cx-sechead h3 { margin: 0; font-size: 12.5px; letter-spacing: .07em;
+                 text-transform: uppercase; color: var(--ink); }
+.cx-sechint { color: var(--faint); font-size: 11.5px; line-height: 1.55;
+              max-width: 74ch; }
+.cx-subhead { margin: 14px 0 6px; font-size: 11px; letter-spacing: .08em;
+              text-transform: uppercase; color: var(--muted); font-weight: 650; }
+
+/* EMPTY IS THE COMMON CASE, so it gets a container of its own. A bare
+   `p.sub` inherits full ink at body size — an empty armband was rendering
+   LOUDER than the populated one it replaces, and with nothing around it to
+   say the emptiness was deliberate. These read as the app's own empty box
+   (dashed, raised) so a finding and a gap look like the same considered
+   answer everywhere on the page. */
+.cx-sec > p.sub, .cx-body > p.sub {
+  color: var(--muted); font-size: 12.5px; line-height: 1.6; max-width: 82ch;
+  margin: 8px 0 2px; padding: 11px 13px; border-radius: 8px;
+  background: var(--raised); border: 1px dashed var(--line); }
+/* PENDING is not EMPTY. No box: a container would claim the answer is in. */
+.cx-loading { color: var(--muted); font-size: 12.5px; margin: 10px 0; }
+
+.cx-card { border: 1px solid var(--line); border-left: 3px solid var(--line);
+           border-radius: 9px; background: var(--raised);
+           padding: 11px 13px; margin-bottom: 9px; }
+.cx-card.in { border-left-color: var(--cx-in); }
+.cx-card.out { border-left-color: var(--cx-out); }
+.cx-card.split { border-left-color: var(--muted); }
+.cx-card-head { display: flex; align-items: center; gap: 11px; flex-wrap: wrap; }
+.cx-face { width: 34px; height: 42px; object-fit: cover; object-position: top center;
+           border-radius: 6px; background: var(--surface); flex: none; }
+.cx-card-id { min-width: 0; }
+.cx-card-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cx-card-title b { font-size: 15px; color: var(--ink); }
+.cx-card-id .sub { color: var(--faint); font-size: 11.5px; margin-top: 1px; }
+.cx-verb { font-size: 9.5px; font-weight: 700; letter-spacing: .1em;
+           padding: 2px 7px; border-radius: 5px; color: var(--muted);
+           background: var(--surface); border: 1px solid var(--line); }
+.cx-card.in .cx-verb { color: var(--ink);
+  border-color: color-mix(in oklab, var(--cx-in) 55%, var(--line));
+  background: color-mix(in oklab, var(--cx-in) 22%, var(--surface)); }
+.cx-card.out .cx-verb { color: var(--ink);
+  border-color: color-mix(in oklab, var(--cx-out) 55%, var(--line));
+  background: color-mix(in oklab, var(--cx-out) 22%, var(--surface)); }
+.cx-card-counts { margin-left: auto; display: flex; gap: 7px; }
+.cx-count { font-size: 11.5px; color: var(--muted); padding: 3px 9px;
+            border-radius: 999px; border: 1px solid var(--line);
+            background: var(--surface); white-space: nowrap; }
+.cx-count b { font-family: var(--mono); color: var(--ink);
+              font-variant-numeric: tabular-nums; }
+.cx-count.in { border-color: color-mix(in oklab, var(--cx-in) 45%, var(--line)); }
+.cx-count.out { border-color: color-mix(in oklab, var(--cx-out) 45%, var(--line)); }
+
+.cx-why { color: var(--ink); font-size: 13px; margin: 9px 0 4px;
+          line-height: 1.55; max-width: 82ch; }
+.cx-evline { color: var(--faint); font-size: 11.5px; margin-bottom: 6px;
+             font-variant-numeric: tabular-nums; }
+.cx-who { margin: 5px 0 0; }
+/* A GRID, not a flex row. As a flex row the label was sized by its own text,
+   so "actually own him" (120px) pushed its value 32px right of every other
+   value on the card and the whole block read ragged. One fixed label column
+   means every value on every card starts on the same line. */
+.cx-wholine, .cx-dissent, .cx-owned {
+  display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 8px;
+  font-size: 12px; color: var(--muted); line-height: 1.6; margin-top: 2px; }
+.cx-wholabel { color: var(--faint); font-size: 10px; letter-spacing: .09em;
+               text-transform: uppercase; padding-top: 2px;
+               font-weight: 650; }
+.cx-dissent { margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--line); }
+
+.cx-actions { display: flex; gap: 8px; align-items: center; margin-top: 9px;
+              flex-wrap: wrap; }
+.cx-open { font-size: 12px; padding: 4px 11px; }
+a.cx-cross { color: var(--muted); font-size: 11.5px; text-decoration: none;
+             border-bottom: 1px dashed var(--line); }
+a.cx-cross:hover { color: var(--accent-ink); border-bottom-color: var(--accent-ink); }
+
+.cx-thin { display: flex; flex-direction: column; gap: 1px; margin: 4px 0 8px; }
+.cx-thinrow { display: flex; align-items: center; gap: 8px; text-align: left;
+              background: none; border: 0; border-radius: 6px; padding: 4px 8px;
+              color: var(--ink); font: inherit; cursor: pointer; width: 100%; }
+.cx-thinrow:hover { background: var(--raised); }
+.cx-thinrow .sub { color: var(--faint); font-size: 11.5px; }
+
+.cx-agreed { margin-top: 14px; }
+.cx-agreed-btn { width: 100%; text-align: left; background: var(--raised);
+                 border: 1px dashed var(--line); border-radius: 9px;
+                 padding: 10px 13px; color: var(--muted); font: inherit;
+                 cursor: pointer; }
+.cx-agreed-btn:hover { border-color: var(--muted); color: var(--ink); }
+.cx-agreed-btn b { color: var(--ink); font-family: var(--mono); font-size: 16px;
+                   font-variant-numeric: tabular-nums; margin-right: 6px; }
+.cx-agreed-list { display: flex; flex-direction: column; gap: 1px;
+                  margin-top: 6px; }
+.cx-agreed-list[hidden] { display: none; }
+
+/* ============================================================ the armband */
+
+.cx-arm { display: flex; flex-direction: column; gap: 2px; margin-top: 8px; }
+.cx-armrow { display: flex; align-items: center; gap: 10px; width: 100%;
+             text-align: left; background: none; border: 0; border-radius: 7px;
+             padding: 5px 8px; font: inherit; color: var(--ink); cursor: pointer; }
+.cx-armrow:hover { background: var(--raised); }
+.cx-armrow.yours { background: color-mix(in oklab, var(--accent) 10%, var(--surface)); }
+.cx-armname { min-width: 190px; display: flex; align-items: baseline; gap: 7px; }
+.cx-yours { font-size: 9.5px; font-weight: 700; letter-spacing: .08em;
+            text-transform: uppercase; color: var(--accent-ink); }
+.cx-inyours { font-size: 10px; color: var(--faint); }
+.cx-armbar { flex: 0 1 200px; height: 9px; border-radius: 4px;
+             background: var(--raised); overflow: hidden; }
+.cx-armfill { display: block; height: 100%;
+              background: color-mix(in oklab, var(--muted) 62%, var(--surface)); }
+.cx-armn { font-family: var(--mono); font-variant-numeric: tabular-nums;
+           font-weight: 700; min-width: 20px; text-align: right; }
+.cx-armmeta { color: var(--faint); font-size: 11px;
+              font-variant-numeric: tabular-nums; }
+
+/* ======================================================= watch calls */
+
+.cx-obslist { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.cx-obs { border: 1px dashed var(--line); border-radius: 9px;
+          background: var(--raised); padding: 9px 12px; }
+.cx-obs-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.cx-obs-head b { color: var(--ink); font-size: 13px; }
+/* who said it is attribution, not the headline — it was inheriting full ink
+   at body size and reading level with the player's name beside it */
+.cx-obs-head .sub { color: var(--muted); font-size: 12px; }
+.cx-obsbadge { font-size: 9.5px; font-weight: 700; letter-spacing: .1em;
+               text-transform: uppercase; color: var(--muted);
+               border: 1px solid var(--line); border-radius: 5px; padding: 1px 6px;
+               white-space: nowrap; }
+
+/* ============================================================== quotes */
+
+.cx-quote { margin: 7px 0 0; padding: 8px 12px; border-left: 2px solid var(--line);
+            background: var(--surface); border-radius: 0 7px 7px 0;
+            color: var(--ink); font-size: 13px; line-height: 1.6; }
+.cx-qmark { color: var(--faint); }
+.cx-qfoot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+            margin-top: 7px; }
+.cx-tier { font-size: 9.5px; font-weight: 700; letter-spacing: .08em;
+           text-transform: uppercase; padding: 1px 7px; border-radius: 999px;
+           border: 1px solid var(--line); color: var(--muted);
+           background: var(--raised); white-space: nowrap; }
+/* "extractor not recorded" is an ABSENCE, and it repeats on every card in a
+   section. A filled badge for it shouts as loudly as the two tiers that
+   carry meaning, so the absence is drawn as an outline instead. */
+.cx-tier.unknown { color: var(--faint); background: transparent;
+                   border-style: dashed; font-weight: 650; }
+.cx-tier.llm { color: var(--ink);
+  border-color: color-mix(in oklab, var(--s1) 50%, var(--line));
+  background: color-mix(in oklab, var(--s1) 12%, var(--surface)); }
+/* a keyword window is drawn as texture, never as a hue */
+.cx-tier.cue { color: var(--faint); background:
+  repeating-linear-gradient(135deg, var(--raised) 0 3px,
+                            var(--surface) 3px 6px); }
+.cx-conv { color: var(--faint); font-size: 11px;
+           font-variant-numeric: tabular-nums; white-space: nowrap; }
+a.cx-src-link { color: var(--accent-ink); font-size: 11.5px;
+                text-decoration: none; margin-left: auto; white-space: nowrap; }
+a.cx-src-link:hover { text-decoration: underline; }
+
+.cx-tiny { color: var(--faint); font-size: 10.5px; line-height: 1.5; }
+
+/* ------------------------------------------------------------- the roster */
+/* The roster's own summary promises "the honest scoreboard". Un-clamped, one
+   episode title took 683px and `people` 340px, so scored / hit rate / weight
+   sat outside the container and the promise was only kept by scrolling. Both
+   prose columns are clamped and ellipsised; the full string stays in the
+   link's title, and every number is visible without moving anything. */
+table.cx-roster td.cx-latest, table.cx-roster th.cx-latest { max-width: 300px; }
+table.cx-roster td.cx-people, table.cx-roster th.cx-people { max-width: 210px; }
+/* The title is a link with the whole string in its tooltip, so it ellipsises.
+   The people column WRAPS instead — a host list and the "this show's claims
+   are the show's" caveat are sentences, and cutting a caveat mid-word is the
+   one thing this page must not do to make a table fit. */
+table.cx-roster td.cx-latest a.cx-title { display: block; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; overflow-wrap: normal; }
+table.cx-roster td.cx-latest .cx-tiny { overflow: hidden; white-space: nowrap;
+  text-overflow: ellipsis; }
+table.cx-roster td.cx-people { white-space: normal; vertical-align: top;
+  padding-top: 6px; }
+a.cx-title { color: var(--ink); font-weight: 550; text-decoration: none;
+             overflow-wrap: anywhere; }
+a.cx-title:hover { text-decoration: underline; }
+/* nowrap: "FULL TRANSCRIPT" was breaking across two lines inside its own pill */
+.cx-src { display: inline-block; font-size: 9.5px; font-weight: 700;
+          letter-spacing: .05em; white-space: nowrap;
+          text-transform: uppercase; padding: 1px 6px; border-radius: 999px;
+          margin-left: 7px; color: var(--muted); background: var(--raised);
+          border: 1px solid var(--line); }
+.cx-src.transcript { color: var(--good);
+  border-color: color-mix(in oklab, var(--good) 40%, var(--line)); }
+
+/* ==================================================== the said/owned grid */
+
+table.cx-grid { border-collapse: separate; border-spacing: 2px; font-size: 12px; }
+table.cx-grid th, table.cx-grid td { padding: 0; }
+td.cx-gutter, th.cx-gutter { position: sticky; left: 0; z-index: 2;
+  background: var(--surface); min-width: 178px; max-width: 178px;
+  padding: 4px 10px 4px 2px; vertical-align: middle;
+  box-shadow: 1px 0 0 var(--line); }
+td.cx-gutter b { color: var(--ink); font-size: 12.5px; }
+.cx-gutsub { color: var(--faint); font-size: 10.5px; margin-left: 6px; }
+
+/* The row head is the way in to the person's team. It is a real button — the
+   whole point of the view was unreachable while this was inert text — but it
+   is drawn as the name it already was, with the affordance carried by the
+   underline on hover and a real focus ring, so the gutter keeps its density. */
+.cx-gutname { display: block; width: 100%; text-align: left; padding: 0;
+              margin: 0; background: none; border: 0; cursor: pointer;
+              font: inherit; color: inherit; line-height: 1.35; }
+.cx-gutname:hover b { text-decoration: underline; }
+.cx-gutname.show:hover b { text-decoration-style: dashed; }
+.cx-gutname:focus-visible { outline: 2px solid var(--s1); outline-offset: 2px;
+                            border-radius: 4px; }
+tr.cx-gridrow.show .cx-gutname b { font-style: italic; color: var(--muted); }
+/* how many of that person's 15 were read — the ring channel, counted */
+.cx-gutown { display: inline-block; font-size: 10px; letter-spacing: .04em;
+             text-transform: uppercase; color: var(--accent-ink);
+             font-weight: 650; margin-top: 1px; }
+/* a count bounded by these columns is NOT a squad size, so it is not drawn
+   with the weight of one */
+.cx-gutown.part { color: var(--faint); font-weight: 500; }
+
+th.cx-colh { height: 118px; vertical-align: bottom; padding-bottom: 4px;
+             width: 22px; }
+.cx-colname { writing-mode: vertical-rl; transform: rotate(180deg);
+              color: var(--muted); font-size: 11px; font-weight: 500;
+              white-space: nowrap; max-height: 110px; overflow: hidden; }
+
+tr.cx-bandrow td.cx-band { padding: 14px 2px 5px;
+  border-bottom: 1px solid var(--line); }
+/* Sentence-case one-liners, not ALL-CAPS shouts repeated per group (R3);
+   the shared sentence lives in one footnote under the grid. */
+.cx-bandt { color: var(--muted); font-size: 11px; letter-spacing: .02em;
+            font-weight: 650; }
+.cx-bandnote { display: block; color: var(--faint); font-size: 11px;
+               font-weight: 400; letter-spacing: 0; text-transform: none;
+               margin-top: 2px; max-width: 70ch; line-height: 1.5; }
+tr.cx-gridrow.show td.cx-gutter b { font-style: italic; color: var(--muted); }
+tr.cx-gridrow.own-only td.cx-gutter { border-left: 2px dashed var(--line); }
+tr.cx-gridrow:hover td.cx-gutter { background: var(--raised); }
+tr.cx-you td.cx-gutter { background: color-mix(in oklab, var(--accent) 10%, var(--surface)); }
+
+/* HUE = what they SAID. OUTLINE = what they OWN. Never crossed. */
+.cx-cell { display: block; width: 18px; height: 18px; border-radius: 4px;
+           background: var(--raised); cursor: pointer; }
+.cx-cell.in { background: color-mix(in oklab, var(--cx-in) 62%, var(--surface)); }
+.cx-cell.out { background: color-mix(in oklab, var(--cx-out) 62%, var(--surface)); }
+.cx-cell.split { background: linear-gradient(135deg,
+  color-mix(in oklab, var(--cx-out) 62%, var(--surface)) 0 50%,
+  color-mix(in oklab, var(--cx-in) 62%, var(--surface)) 50% 100%); }
+.cx-cell.watch { background: color-mix(in oklab, var(--muted) 34%, var(--surface)); }
+.cx-cell.cue { background-image: repeating-linear-gradient(135deg,
+  color-mix(in oklab, var(--ink) 34%, transparent) 0 2px,
+  transparent 2px 5px); }
+.cx-cell.owns { box-shadow: inset 0 0 0 2px var(--ink); }
+.cx-cell.own-captain { background: var(--raised);
+  box-shadow: inset 0 0 0 2px var(--ink), inset 0 0 0 4px var(--surface),
+              inset 0 0 0 6px var(--ink); }
+.cx-cell.own-start { background: var(--raised);
+  box-shadow: inset 0 0 0 2px var(--ink); }
+.cx-cell.own-bench { background: var(--raised);
+  box-shadow: inset 0 0 0 2px var(--muted); }
+.cx-cell:hover { outline: 2px solid var(--s1); outline-offset: 1px; }
+.cx-cell:focus-visible { outline: 2px solid var(--s1); outline-offset: 1px; }
+.cx-more { margin-top: 6px; font-size: 12px; }
+
+/* ============================================================== drawer */
+
+.cx-drawer { width: min(560px, 96vw); }
+.cx-drawer h2 { margin: 14px 0 2px; font-size: 12px; letter-spacing: .06em;
+                text-transform: uppercase; color: var(--muted); }
+.cx-drawer .sub { color: var(--faint); font-size: 11.5px; line-height: 1.55;
+                  max-width: 62ch; }
+.cx-quotes { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
+.cx-qcard { border: 1px solid var(--line); border-radius: 9px;
+            background: var(--raised); padding: 9px 11px; }
+.cx-qhead { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.cx-qhead b { color: var(--ink); }
+.cx-act { font-size: 9.5px; font-weight: 700; letter-spacing: .09em;
+          text-transform: uppercase; padding: 1px 7px; border-radius: 5px;
+          color: var(--muted); background: var(--surface);
+          border: 1px solid var(--line); }
+.cx-act.in { color: var(--cx-in);
+  border-color: color-mix(in oklab, var(--cx-in) 50%, var(--line)); }
+.cx-act.out { color: var(--cx-out);
+  border-color: color-mix(in oklab, var(--cx-out) 50%, var(--line)); }
+.cx-qitem { margin-top: 5px; font-size: 12px; }
+/* ------------------------------------------------- a person and their team */
+/* The squad is a grid of small cards, not a pitch: the payload gives fifteen
+   picks with a captain flag and no bench marker, so drawing a formation would
+   invent the one fact it does not carry. QUIET is the state the view exists
+   for, so it is the one that is drawn — a dashed edge and a muted card, the
+   same "hollow = weaker evidence" grammar the board uses, here meaning
+   "held, never spoken about". */
+.cx-sq { display: grid; gap: 6px; margin-top: 10px;
+         grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); }
+.cx-sqcard { display: block; text-align: left; cursor: pointer;
+             background: var(--raised); border: 1px solid var(--line);
+             border-radius: 9px; padding: 6px 7px 7px; color: inherit;
+             font: inherit; position: relative; }
+.cx-sqcard:hover { border-color: var(--muted); }
+.cx-sqcard:focus-visible { outline: 2px solid var(--s1); outline-offset: 2px; }
+.cx-sqcard.quiet { border-style: dashed;
+  border-color: color-mix(in oklab, var(--ink) 26%, var(--line));
+  background: var(--surface); }
+.cx-sqface { width: 30px; height: 36px; object-fit: cover;
+             object-position: top center; border-radius: 5px;
+             background: var(--raised); display: block; margin-bottom: 3px; }
+.cx-sqface.missing { visibility: hidden; }
+.cx-sqname { font-size: 12px; font-weight: 650; color: var(--ink);
+             overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cx-sqcap { color: var(--warn); margin-right: 3px; }
+.cx-sqmeta { font-size: 10px; color: var(--faint); font-family: var(--mono);
+             font-variant-numeric: tabular-nums; margin-top: 1px; }
+.cx-sqsay { font-size: 10px; margin-top: 3px; color: var(--muted); }
+.cx-sqcard.quiet .cx-sqsay { color: var(--ink); font-weight: 600; }
+.cx-sqyours { display: inline-block; margin-top: 3px; font-size: 9px;
+              font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+              padding: 0 5px; border-radius: 999px; color: var(--accent-ink);
+              background: color-mix(in oklab, var(--accent) 16%, var(--surface)); }
+.cx-quietlist { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
+.cx-people-list { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.cx-personrow { border-left: 2px solid var(--line); padding-left: 9px; }
+.cx-personname { display: flex; align-items: baseline; gap: 8px;
+                 flex-wrap: wrap; font-size: 12.5px; }
+
+/* The cross-tab strip is a PEER SECTION of "what was said, and where", but it
+   mounts in its `pc-full` variant, which drops its own top rule. Without one
+   the two sections ran together as a single column of cards. */
+.cx-strip { margin-top: 20px; padding-top: 14px;
+            border-top: 1px solid var(--line); }
+
+/* ============================================================ narrow */
+
+@media (max-width: 760px) {
+  .cx-card-counts { margin-left: 0; width: 100%; }
+  /* no room for a 120px label column — the label goes above its value, which
+     keeps the left edge shared instead of half-aligning to a squeezed one */
+  .cx-wholine, .cx-dissent, .cx-owned { grid-template-columns: minmax(0, 1fr);
+                                        gap: 1px; }
+  .cx-armname { min-width: 120px; }
+  .cx-key, .cx-toolmeta, .cx-gwhint { margin-left: 0; flex-basis: 100%; }
+  td.cx-gutter, th.cx-gutter { min-width: 132px; max-width: 132px; }
+  .cx-legend { gap: 6px 14px; }
+  /* the clamps buy nothing once the table scrolls anyway, and a 280px title
+     column inside a 375px viewport is unreadable */
+  table.cx-roster td.cx-latest, table.cx-roster th.cx-latest,
+  table.cx-roster td.cx-people, table.cx-roster th.cx-people {
+    max-width: 190px; }
+}
+
+/* ---- skeleton loading (R3) ----------------------------------------------
+   The panel build is measured at 2.5–4s; a shape that says "board loading"
+   replaces the bare text line. Tokens only, both themes; motion respects
+   prefers-reduced-motion. */
+.cx-skel { display: flex; flex-direction: column; gap: 10px; margin: 12px 0; }
+.cx-skelrow, .cx-skelblock, .cx-skelcard {
+  border-radius: 9px;
+  background: linear-gradient(100deg,
+    var(--raised) 40%,
+    color-mix(in oklab, var(--ink) 7%, var(--raised)) 50%,
+    var(--raised) 60%);
+  background-size: 200% 100%;
+  animation: cx-shimmer 1.2s linear infinite; }
+.cx-skelrow { height: 14px; width: 38%; }
+.cx-skelblock { height: 72px; }
+.cx-skelcard { height: 96px; }
+@keyframes cx-shimmer { to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .cx-skelrow, .cx-skelblock, .cx-skelcard { animation: none; }
+}
+
+/* ---- row-level recency (R1) --------------------------------------------- */
+.cx-fresh { margin-left: 8px; font-size: 10px; font-family: var(--mono);
+            font-variant-numeric: tabular-nums; color: var(--faint);
+            padding: 1px 6px; border-radius: 999px;
+            border: 1px solid var(--line); white-space: nowrap; }
+.cx-fresh.hot { color: var(--good); border-color:
+                color-mix(in oklab, var(--good) 45%, var(--line)); }
+.chip.cx-48:disabled { opacity: .55; cursor: default; }
+
+/* ============================================ the record and the sources */
+
+.cx-honest { font-size: 13.5px; line-height: 1.6; color: var(--muted);
+             margin: 4px 0 10px; max-width: 88ch; }
+.cx-honest b { color: var(--ink); font-weight: 650; }
+.cx-honest.warn { border-left: 2px solid var(--warn); padding-left: 10px; }
+
+.cx-sources { border-top: 1px solid var(--line); padding-top: 10px; }
+.cx-srcrow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+/* the segmented count: one button per measured state, a dot for the state */
+.cx-segbar { display: inline-flex; border: 1px solid var(--line);
+             border-radius: 8px; overflow: hidden; }
+.cx-segb { border: 0; border-radius: 0; padding: 5px 11px; font-size: 12px;
+           background: var(--surface); color: var(--muted);
+           display: inline-flex; gap: 6px; align-items: center; }
+.cx-segb + .cx-segb { border-left: 1px solid var(--line); }
+.cx-segb b { font-family: var(--mono); color: var(--ink);
+             font-variant-numeric: tabular-nums; }
+.cx-segb::before, .cx-statedot { content: ""; display: inline-block; width: 8px;
+  height: 8px; border-radius: 50%; background: var(--faint); flex: none; }
+.cx-segb.live::before, .cx-state.live .cx-statedot { background: var(--good); }
+.cx-segb.quiet::before, .cx-state.quiet .cx-statedot {
+  background: color-mix(in oklab, var(--good) 45%, var(--surface)); }
+.cx-segb.stale::before, .cx-segb.empty::before,
+.cx-state.stale .cx-statedot, .cx-state.empty .cx-statedot { background: var(--warn); }
+.cx-segb.failing::before, .cx-segb.blocked::before,
+.cx-state.failing .cx-statedot, .cx-state.blocked .cx-statedot { background: var(--bad); }
+.cx-segb.legacy::before, .cx-segb.disabled::before, .cx-segb.unprobed::before,
+.cx-state.legacy .cx-statedot, .cx-state.disabled .cx-statedot,
+.cx-state.unprobed .cx-statedot { background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--faint); }
+.cx-segb:hover { color: var(--ink); }
+.cx-segb.on { background: color-mix(in oklab, var(--s1) 14%, var(--surface));
+              color: var(--ink); }
+.cx-srcmeta { display: inline-flex; align-items: center; gap: 6px;
+              color: var(--faint); font-size: 11.5px; }
+.cx-srcacts { margin-left: auto; display: inline-flex; gap: 8px; align-items: center; }
+.cx-srclist, .cx-fetchall { font-size: 12px; padding: 5px 11px; }
+.cx-srclist.on { border-color: var(--s1); }
+.cx-seq { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+          margin-top: 8px; padding: 7px 10px; border-radius: 8px;
+          background: var(--raised); font-size: 12.5px; color: var(--muted); }
+.cx-seqbar { flex: 0 1 180px; height: 6px; border-radius: 3px; overflow: hidden;
+             background: var(--surface); border: 1px solid var(--line); }
+.cx-seqfill { display: block; height: 100%; background: var(--s1); }
+.cx-seqtext { color: var(--ink); }
+.cx-seq .cx-x { margin-left: 0; }
+.cx-srcwrap { margin-top: 8px; }
+table.cx-srctable { font-size: 12.5px; }
+table.cx-srctable td { vertical-align: middle; }
+.cx-tier-tag { margin-left: 6px; font-size: 9.5px; letter-spacing: .06em;
+               text-transform: uppercase; color: var(--faint);
+               border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+.cx-kind { color: var(--muted); }
+.cx-state { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+.cx-probe { color: var(--muted); white-space: nowrap; }
+.cx-srcact { white-space: nowrap; }
+.cx-srcact > * + * { margin-left: 8px; }
+.cx-fetch1 { font-size: 11.5px; padding: 3px 9px; }
+.cx-srcgot { color: var(--good); font-size: 12px; }
+.cx-srcbad { color: var(--bad); font-size: 12px; }
+tr.cx-srcline.legacy td, tr.cx-srcline.blocked td { color: var(--faint); }
+
+/* ================================================ the window, as a fact */
+
+.cx-factrow { justify-content: space-between; }
+.cx-fact { color: var(--muted); font-size: 12.5px; display: inline-flex;
+           flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.cx-fact b { color: var(--ink); font-size: 13.5px; }
+.cx-factwin { color: var(--faint); }
+.cx-factwin::before, .cx-fact .cx-asof::before { content: "·"; color: var(--faint);
+                                                  margin-right: 6px; }
+.cx-togs { display: inline-flex; gap: 8px; flex-wrap: wrap; }
+.cx-tog:disabled { opacity: .5; cursor: default; }
+
+/* ============================================== the report card, as a chip */
+
+.cx-rcrow { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.cx-rc { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px 3px 8px;
+         border-radius: 999px; border: 1px solid var(--line); background: var(--surface);
+         font: inherit; font-size: 11.5px; color: var(--muted); cursor: pointer; }
+.cx-rc:hover { border-color: var(--muted); color: var(--ink); }
+.cx-rc b { color: var(--ink); font-weight: 600; }
+.cx-rcdir { font-family: var(--mono); font-size: 10px; letter-spacing: .04em;
+            color: var(--faint); }
+.cx-rc .cx-rcstat { margin: 0; font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.cx-rc.below .cx-rcstat { color: var(--bad); }
+.cx-rc.above .cx-rcstat { color: var(--good); }
+.cx-rc.legacy { border-style: dashed; }
+
+/* ============================================ under the floor, drawn faint
+ *
+ * `verdict()` appends `few` when a record has fewer scored claims than
+ * `min_scored_claims`. Nothing styled it, so a verdict from 12 claims was
+ * painted the same full red as one from 274 and only an 11.5px word told the
+ * reader which was which. Colour must not assert what the count denies: the
+ * hue still says which side of the coin flip, the saturation says how much
+ * evidence stands behind it. `--muted` is the mix target so the result lands
+ * in the app's own neutral in both themes. */
+.cx-rc.few .cx-rcstat,
+.cx-rctag.few { color: color-mix(in oklab, currentColor 45%, var(--muted)); }
+.cx-rc.few.below .cx-rcstat { color: color-mix(in oklab, var(--bad) 45%, var(--muted)); }
+.cx-rc.few.above .cx-rcstat { color: color-mix(in oklab, var(--good) 45%, var(--muted)); }
+.cx-rctag.few.below { color: color-mix(in oklab, var(--bad) 45%, var(--muted));
+  border-color: color-mix(in oklab, var(--bad) 20%, var(--line)); }
+.cx-rctag.few.above { color: color-mix(in oklab, var(--good) 45%, var(--muted));
+  border-color: color-mix(in oklab, var(--good) 20%, var(--line)); }
+/* the card carries it too: the 3px left rule is the loudest mark on the grid */
+.cx-rcard.few.below { border-left-color: color-mix(in oklab, var(--bad) 40%, var(--line)); }
+.cx-rcard.few.above { border-left-color: color-mix(in oklab, var(--good) 40%, var(--line)); }
+.cx-rcard.few.below .cx-rccoin { color: color-mix(in oklab, var(--bad) 45%, var(--muted)); }
+.cx-rcard.few.above .cx-rccoin { color: color-mix(in oklab, var(--good) 45%, var(--muted)); }
+.cx-rcard.few.below .cx-range-band { background: color-mix(in oklab, var(--bad) 18%, var(--surface)); }
+.cx-rcard.few.above .cx-range-band { background: color-mix(in oklab, var(--good) 18%, var(--surface)); }
+/* a dashed left rule: the same "not established" mark the tables already use */
+.cx-rcard.few { border-left-style: dashed; }
+.cx-count.cue { background: repeating-linear-gradient(135deg, var(--raised) 0 3px,
+                                                      var(--surface) 3px 6px); }
+.cx-count.own { border-color: color-mix(in oklab, var(--accent) 55%, var(--line)); }
+
+/* ============================================================ report cards */
+
+.cx-rcgrid { display: grid; gap: 8px; margin-top: 10px;
+             grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
+.cx-rcard { display: block; text-align: left; background: var(--raised);
+            border: 1px solid var(--line); border-left: 3px solid var(--line);
+            border-radius: 9px; padding: 9px 11px; font: inherit; color: inherit;
+            cursor: pointer; min-width: 0; }
+.cx-rcard:hover { border-color: var(--muted); }
+.cx-rcard:focus-visible { outline: 2px solid var(--s1); outline-offset: 2px; }
+.cx-rcard.below { border-left-color: var(--bad); }
+.cx-rcard.above { border-left-color: var(--good); }
+.cx-rcard.flip { border-left-color: var(--muted); }
+.cx-rcard.legacy { border-style: dashed; border-left-style: solid; }
+.cx-rcname { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.cx-rcname b { color: var(--ink); font-size: 13px; }
+.cx-rccoin { margin-left: auto; font-size: 10px; letter-spacing: .06em;
+             text-transform: uppercase; color: var(--faint); white-space: nowrap; }
+.cx-rcard.below .cx-rccoin { color: var(--bad); }
+.cx-rcard.above .cx-rccoin { color: var(--good); }
+.cx-legacy { font-size: 9.5px; letter-spacing: .06em; text-transform: uppercase;
+             color: var(--warn); border-radius: 4px; padding: 0 5px;
+             border: 1px dashed color-mix(in oklab, var(--warn) 50%, var(--line)); }
+.cx-rcstat { margin-top: 5px; font-size: 12px; color: var(--muted);
+             font-variant-numeric: tabular-nums; }
+.cx-rcstat b { color: var(--ink); font-family: var(--mono); font-size: 15px; }
+/* the Wilson interval as a range on a 0-100 track; the tick is the coin flip */
+.cx-range { position: relative; height: 10px; margin-top: 8px; border-radius: 5px;
+            background: var(--surface); border: 1px solid var(--line); }
+.cx-range.big { height: 16px; margin: 10px 0 6px; }
+.cx-range-mid { position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px;
+                background: var(--muted); }
+.cx-range-band { position: absolute; top: 1px; bottom: 1px; border-radius: 4px;
+                 background: color-mix(in oklab, var(--muted) 45%, var(--surface)); }
+.cx-rcard.below .cx-range-band { background: color-mix(in oklab, var(--bad) 40%, var(--surface)); }
+.cx-rcard.above .cx-range-band { background: color-mix(in oklab, var(--good) 40%, var(--surface)); }
+.cx-range-pt { position: absolute; top: -2px; width: 3px; height: calc(100% + 4px);
+               margin-left: -1.5px; background: var(--ink); border-radius: 2px; }
+/* per-gameweek hit rate: small columns on a 22px track, dashed line at 50% */
+.cx-gwbars { display: flex; gap: 4px; align-items: flex-end; height: 34px;
+             margin-top: 8px; position: relative; }
+.cx-gwbars::before { content: ""; position: absolute; left: 0; right: 0; bottom: 23px;
+                     border-top: 1px dashed var(--line); }
+.cx-gwbar { display: flex; flex-direction: column; align-items: center;
+            justify-content: flex-end; width: 28px; height: 34px; }
+.cx-gwfill { display: block; width: 14px; background: var(--muted);
+             border-radius: 2px 2px 0 0; }
+.cx-gwbar.thin .cx-gwfill { opacity: .5; }
+.cx-gwlab { font-size: 9px; color: var(--faint); font-family: var(--mono);
+            line-height: 12px; }
+.cx-rcteam { margin-top: 7px; padding-top: 6px; border-top: 1px dashed var(--line);
+             font-size: 11.5px; color: var(--muted); line-height: 1.5; }
+.cx-rcchan { font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase;
+             color: var(--faint); margin-right: 6px; font-weight: 700; }
+.cx-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr);
+            gap: 3px 12px; margin: 8px 0; font-size: 12.5px; }
+.cx-facts dt { color: var(--faint); font-size: 10.5px; letter-spacing: .06em;
+               text-transform: uppercase; padding-top: 2px; }
+.cx-facts dd { margin: 0; color: var(--ink); }
+table.cx-byaction { font-size: 12px; margin-top: 4px; }
+table.cx-byaction tr.thin td { color: var(--faint); }
+.cx-teamrow { margin-top: 8px; border-left: 2px solid var(--line); padding-left: 10px; }
+.cx-teamhead { display: flex; gap: 8px; align-items: baseline; }
+.cx-gridhost { margin-top: 6px; }
+.cx-legend > span.cx-shape { flex-basis: auto; margin-left: auto; color: var(--faint);
+                             font-size: 11px; }
+.cx-maintakes .cx-subhead:first-of-type { margin-top: 8px; }
+
+@media (max-width: 760px) {
+  .cx-srcacts { margin-left: 0; flex-basis: 100%; }
+  .cx-legend > span.cx-shape { margin-left: 0; flex-basis: 100%; }
+}
+.cx-factwin.warn { color: var(--warn); }
+
+/* ============================================ the record, used in the flow
+ *
+ * Owner notes 2 to 5. Every colour is an app.css token: the verdict uses the
+ * status pair (good / bad) and nothing else, so it never shares a hue with the
+ * direction channel. A row with no crawled squad is HATCHED, so the absence
+ * of a ring reads as "unknown" and never as "owns nothing". */
+
+/* the player is the click: face and name are one button, drawn as they were */
+.cx-card-player { display: flex; align-items: center; gap: 11px; min-width: 0;
+                  background: none; border: 0; padding: 0; margin: 0;
+                  font: inherit; color: inherit; text-align: left;
+                  cursor: pointer; border-radius: 6px; }
+.cx-card-player:hover .cx-card-title b { text-decoration: underline; }
+.cx-card-player:focus-visible { outline: 2px solid var(--s1); outline-offset: 3px; }
+.cx-card-id { display: block; }
+.cx-card-id > .sub { display: block; }
+.cx-qcue { font-size: 10.5px; color: var(--faint); letter-spacing: .02em; }
+.cx-card-player:hover .cx-qcue { color: var(--ink); }
+
+/* the verdict without a name: gutters and the drawer's record line */
+.cx-rctag { display: inline-block; font-size: 10.5px; padding: 1px 7px;
+            border-radius: 999px; border: 1px solid var(--line);
+            color: var(--muted); background: var(--surface);
+            font-variant-numeric: tabular-nums; white-space: nowrap;
+            letter-spacing: 0; text-transform: none; font-weight: 500; }
+.cx-rctag.above { color: var(--good);
+  border-color: color-mix(in oklab, var(--good) 45%, var(--line)); }
+.cx-rctag.below { color: var(--bad);
+  border-color: color-mix(in oklab, var(--bad) 45%, var(--line)); }
+.cx-rctag.big { font-size: 12.5px; padding: 3px 10px; font-weight: 600; }
+.cx-recline { display: flex; flex-wrap: wrap; align-items: center;
+              gap: 6px 10px; margin: 2px 0 8px; font-size: 12px;
+              color: var(--muted); }
+.cx-recteam { font-size: 11.5px; color: var(--muted); }
+
+/* leaders and laggards, under the takes */
+.cx-recstrip { display: flex; flex-wrap: wrap; align-items: center;
+               gap: 8px 16px; margin-top: 14px; padding: 9px 12px;
+               border: 1px solid var(--line); border-radius: 9px;
+               background: var(--raised); }
+.cx-recgroup { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.cx-reclabel { font-size: 10px; font-weight: 700; letter-spacing: .09em;
+               text-transform: uppercase; color: var(--faint); margin-right: 2px; }
+.cx-recmeta { flex-basis: 100%; }
+
+/* the gutter's tags: squad state and record, side by side */
+.cx-guttags { display: flex; flex-wrap: wrap; align-items: center;
+              gap: 4px 6px; margin-top: 2px; }
+.cx-gutown.unread { color: var(--muted); font-weight: 500; letter-spacing: 0;
+                    text-transform: none; padding: 0 5px; border-radius: 4px;
+                    border: 1px dashed color-mix(in oklab, var(--ink) 30%, var(--line)); }
+tr.cx-gridrow.unread td.unread { background-image: repeating-linear-gradient(135deg,
+  color-mix(in oklab, var(--ink) 9%, transparent) 0 1px, transparent 1px 6px); }
+.cx-cell.unread { outline: 1px dashed color-mix(in oklab, var(--ink) 40%, var(--line));
+                  outline-offset: -1px; }
+.cx-legend .cx-cell.unread { background: repeating-linear-gradient(135deg,
+  color-mix(in oklab, var(--ink) 12%, transparent) 0 1px, transparent 1px 5px); }
+
+/* the person's drawer: the arithmetic folded at the bottom */
+.cx-method { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 8px; }
+.cx-methodbody { padding: 4px 0 0; }
+.cx-thinrow.static { cursor: default; }
+.cx-thinrow.static:hover { background: none; }
+.cx-linkish { background: none; border: 0; padding: 0; font: inherit;
+              color: var(--ink); text-decoration: underline dotted; cursor: pointer; }
+.cx-linkish:focus-visible { outline: 2px solid var(--s1); outline-offset: 2px; }
+.cx-sqcard.bench { opacity: .82; }
+.cx-sqcard.bench .cx-sqmeta::after { content: " · bench"; }
+
+/* two names and a count on the compact team line (defect: seven people on one
+   400-character line that never wrapped) */
+.cx-rcmore { color: var(--faint); font-size: 11px; white-space: nowrap; }
+/* the same FPL entry attached to more than one card */
+.cx-samewho { font-size: 10px; letter-spacing: .04em; color: var(--warn);
+              border: 1px dashed color-mix(in oklab, var(--warn) 45%, var(--line));
+              border-radius: 4px; padding: 0 5px; white-space: nowrap; }
+/* what the board read, and what it left out */
+.cx-scope { margin: 2px 0 8px; font-size: 12px; color: var(--muted);
+            line-height: 1.55; }
+.cx-scope .cx-disclose { margin-top: 3px; }
+/* a failed panel body, folded rather than interpolated into a sentence */
+.cx-raw { margin: 4px 0 0; padding: 7px 9px; max-height: 240px; overflow: auto;
+          background: var(--surface); border: 1px solid var(--line);
+          border-radius: 6px; font-family: var(--mono); font-size: 11px;
+          white-space: pre-wrap; word-break: break-word; color: var(--muted); }
+
+/* The report-card wall is a <details>: its head is the summary, so the marker
+   goes where a reader expects a disclosure and the census stays readable while
+   the section is shut. */
+.cx-rcsec > summary { cursor: pointer; list-style: none; }
+.cx-rcsec > summary::-webkit-details-marker { display: none; }
+.cx-rcsec > summary::before {
+  content: "▸"; color: var(--faint); font-size: 10px; margin-right: 2px;
+  display: inline-block; transition: transform .12s ease;
+}
+.cx-rcsec[open] > summary::before { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) {
+  .cx-rcsec > summary::before { transition: none; }
+}

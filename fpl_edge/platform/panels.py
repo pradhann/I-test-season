@@ -101,6 +101,9 @@ PANELS: tuple[Panel, ...] = (
     # tables in the dashboard rebuild (FINAL_SPEC cut list #1–#3): price flow
     # now reaches the page only through dashboard_brief's alerts/tiles/rails,
     # and the bookmaker table and idea list have no rendering surface. The
+    # creator_episodes and episode_summary (agent G0) keep their SCRIPTS and lose
+    # their Panel rows until the episode layer on the Creators tab renders them;
+    # the rebuilt view that did was reverted on 2026-09-19 at the owner's request.
     # SCRIPTS stay registered, because they are dashboard_brief's sources
     # and the contract test reads them. A Panel nobody renders is dead weight
     # wearing a schema, so their Panel declarations are retired with them.
@@ -169,33 +172,6 @@ PANELS: tuple[Panel, ...] = (
         description=(
             "Every item from one creator with its claims, verbatim quotes and "
             "deep links to the moment each was said."
-        ),
-    ),
-    Panel(
-        id="creator_episodes",
-        title="One creator's episodes",
-        script="creator_episodes",
-        default_params={"limit": 200, "include_untranscribed": True},
-        layout="table",
-        description=(
-            "Every publication one creator has on file, newest first, with "
-            "its link, its title, whether a transcript and an analysis are "
-            "stored, how many positions came out of it and which gameweek it "
-            "is about. The default asks for every episode, not only the "
-            "transcribed ones: 21 of the 29 creators on the board have no "
-            "transcript on file at all."
-        ),
-    ),
-    Panel(
-        id="episode_summary",
-        title="One episode, opened",
-        script="episode_summary",
-        layout="list",
-        description=(
-            "One episode: the stored summary bullets, the transfer and "
-            "captaincy calls with the gameweek each one targets, every player "
-            "talked about with the quote and offset each position was stored "
-            "with, and the sections that are empty with the reason."
         ),
     ),
     Panel(

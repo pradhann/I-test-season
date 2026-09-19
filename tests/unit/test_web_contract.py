@@ -1177,10 +1177,7 @@ def test_plural_returns_null_on_a_null_count() -> None:
     sites interpolated it and the tab printed the literal string "null" nine
     times. Null in, null out, so no caller can stringify it by accident."""
     src = _strip_comments(CREATORS)
-    # The guard moved from a ternary to an if/return in the rebuild: the house
-    # prose gate reads "? " as a rhetorical question, so this file has no
-    # ternaries at all. The rule it encodes is unchanged.
-    assert "if (n == null) return null;" in src, "plural() must refuse a null count"
+    assert "n == null ? null :" in src, "plural() must refuse a null count"
     # ...and nothing interpolates n_total into a template without a guard.
     assert not re.search(r"\$\{plural\([^)]*n_total", src), (
         "a null count reached a template again")
@@ -1205,13 +1202,10 @@ def test_the_team_verdict_is_gated_on_quotable_not_on_a_null_boolean() -> None:
     reason saying three gameweeks is below the floor."""
     src = _strip_comments(CREATORS)
     assert "p.beats_baseline == null ? `under the" not in src
-    # The branch is a named helper now, because the file carries no ternaries,
-    # and `quotable` is still the first thing it reads.
-    assert "function baselineFact(p, tm)" in src
-    assert "if (!p.quotable)" in src, "the floor decides this, not the boolean"
-    assert 'fact("beats the baseline", baselineFact(p, tm))' in src
-    # `teamLine`, which carried the second copy of the same gate, is deleted:
-    # `reportBody` draws every person and is the only surface left.
+    assert 'fact("beats the baseline", p.quotable' in src, (
+        "the floor decides this, not the boolean")
+    # the compact card qualifies it too, rather than printing a bare delta
+    assert "const one = p => p.quotable" in src
 
 
 def test_the_under_floor_class_is_actually_styled() -> None:
@@ -1230,15 +1224,10 @@ def test_the_under_floor_class_is_actually_styled() -> None:
 
 
 def test_one_creator_count_is_drawn_and_it_says_what_the_others_are() -> None:
-    """20, 31 and 28 for one population, twelve pixels apart and unlabelled.
-
-    `cardCensus` and `censusLine` counted the report-card wall, which is gone.
-    Level 1 counts one population, the board's own `creators[]`, and names the
-    subset it does not draw in the same sentence."""
+    """20, 31 and 28 for one population, twelve pixels apart and unlabelled."""
     src = _strip_comments(CREATORS)
-    assert 'plural(all.length, "show")' in src, "the population is not counted"
-    assert "const all = or(res.creators, []);" in src, (
-        "the count must come from the payload's own list")
+    assert "function cardCensus()" in src and "function censusLine()" in src
+    assert "censusLine()} · floor" in src
     assert 'plural((rc.cards || []).length, "creator")' not in src, (
         "the raw card count is back in the heading")
 
@@ -1252,37 +1241,31 @@ def test_the_board_scope_and_its_own_note_are_rendered() -> None:
     assert "function scopeLine()" in src
 
 
-def test_the_filtered_count_rule_left_with_the_source_console() -> None:
-    """The defect was a count that named a filtered set as the whole set.
-
-    The 43-feed fetch console left the reading view in the creators rebuild:
-    `GET /api/content/sources`, `sourceStrip`, `sourceTable` and the segmented
-    state counts are all deleted, and fetch state is the Pipelines tab's
-    question. The rule is recorded here rather than silently dropped, and the
-    assertions are the negative half: this view no longer draws a source count
-    of any kind, so it cannot draw a filtered one."""
+def test_the_source_button_does_not_call_a_filtered_list_all_of_them() -> None:
+    """HIDDEN_STATES drops 3 of 43 sources and the button said "all 40"."""
     src = _strip_comments(CREATORS)
     assert "`all ${shown.length} sources`" not in src
-    assert "fetchable sources" not in src, "the console is back in the view"
-    assert "/api/content/sources" not in src, (
-        "the source list is fetched again; it has no reader here")
-    # what a count IS drawn over on every level: the list actually in hand
-    assert "counts.episodes_total" in src, (
-        "level 2 must count publications from the payload's own total")
+    assert "fetchable sources" in src
+    assert "const dropped = total - shown.length" in src
 
 
-def test_the_record_column_is_not_a_leaderboard_of_creators() -> None:
+def test_the_compact_team_line_is_capped_at_two_people() -> None:
+    """Fantasy Football Hub has seven; they rendered on one 400-character
+    line that never wrapped."""
+    src = _strip_comments(CREATORS)
+    assert "const SHOWN = 2;" in src
+    assert "more, in the card" in src
+
+
+def test_the_record_strip_draws_no_permanently_empty_group() -> None:
     """"Record leaders" whose only possible content was "nobody above chance",
-    beside "Laggards", which is a judgment this surface otherwise avoids.
-
-    `recordStrip` is deleted with the takes it sat under, so the three
-    positive clauses have nothing left to pin. The two negative ones are the
-    whole rule and they now guard the level-1 RECORD column, which is the
-    surface that could become the same leaderboard."""
+    beside "Laggards", which is a judgment this surface otherwise avoids."""
     src = _strip_comments(CREATORS)
     assert "Laggards" not in src and "Record leaders" not in src
-    # the column is sortable, so the floor has to be stated where it is read
-    assert "The floor for reading it as a rank is the report card's" in src
+    assert "Interval below a coin flip" in src
+    assert "if (!list.length) return null;" in src, "an empty group is still drawn"
+    # and the strip reconciles its two chips with the honesty line's three
+    assert "of them over the floor" in src
 
 
 def test_a_repeated_fpl_entry_is_named_as_a_repeat() -> None:
@@ -1304,14 +1287,6 @@ def test_the_age_helper_is_the_shared_one() -> None:
     assert "yesterday" not in src
     assert "mo ago" not in src
     assert "export function fmtAge" in APP, "the shared helper must still exist"
-    # THE BOUNDARY, in one sentence: a date on a thing the creator published is
-    # whole days, a stamp on a thing this app did is the shared span. The page
-    # rendered five ages carrying an hour unit against four carrying a day
-    # unit, for publication dates that nobody reads by the hour.
-    assert "function ageDays(iso)" in src, "publication dates need their own unit"
-    assert src.count("ageDays(") >= 6, "a publication date is still formatted by hand"
-    assert src.count("relAge(") <= 2, (
-        "relAge is for as_of only; a publication date reached it")
 
 
 def test_a_failed_panel_body_is_folded_not_interpolated() -> None:
