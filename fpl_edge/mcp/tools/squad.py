@@ -37,7 +37,7 @@ def my_squad(season: str = SEASON_DEFAULT) -> dict[str, Any]:
         not be read. If gap is present, quote its reason.
     """
     return panel_call("my_squad", "squad_overview", {
-        "season": season, "entry_id": context.entry_id(),
+        "season": season,
     })
 
 
@@ -61,5 +61,5 @@ def brief(season: str = SEASON_DEFAULT) -> dict[str, Any]:
         had nothing. If gap is present, quote its reason.
     """
     return panel_call("brief", "dashboard_brief", {
-        "season": season, "entry_id": context.entry_id(),
+        "season": season,
     })

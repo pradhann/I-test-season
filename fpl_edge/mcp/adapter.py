@@ -129,7 +129,10 @@ def panel_call(
 
     clean = {k: v for k, v in (params or {}).items() if v is not None}
     try:
-        run = run_script(panel, clean, db=context.db_path())
+        # The requesting user reaches the panel as a context, never as a
+        # parameter: the squad, brief and plan panels dropped entry_id from
+        # their params on 2026-09-18 and a param would be refused as unknown.
+        run = run_script(panel, clean, db=context.db_path(), ctx=context.user_context())
     except ParamsInvalid as exc:
         return error(tool, str(exc), kind="ParamsInvalid", panel=panel,
                      params=clean)

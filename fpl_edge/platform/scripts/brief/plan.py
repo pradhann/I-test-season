@@ -748,11 +748,31 @@ def _verdict(
         # Null when the pick is already the locked armband: there is no swap.
         if suggested_xi is not None:
             my_cap_ref = suggested_xi.get("your_captain")
-            delta = suggested_xi.get("captain_delta_xpts")
-            if (my_cap_ref and delta is not None
-                    and my_cap_ref.get("code") != cap_pick["code"]):
-                c_numbers["captain_delta_xpts"] = float(delta)
+            cons_cap = suggested_xi.get("captain")
+            if my_cap_ref and my_cap_ref.get("code") != cap_pick["code"]:
                 c_numbers["your_captain_code"] = int(my_cap_ref["code"])
+                # The delta must belong to the pick this row names. suggested_xi's
+                # captain_delta_xpts is the CONSENSUS captain's lead over the
+                # owner's captain; when the row's pick is the solver's (a
+                # different player, 2026-09-19: João Pedro against a Fernandes
+                # delta) that number is about someone else. Recompute from the
+                # same consensus table the pick_xpts above came from, and only
+                # reuse the served delta when the pick is the consensus captain.
+                my_row = sq_by_code_v.get(int(my_cap_ref["code"]))
+                pick_x = c_numbers.get("pick_xpts")
+                if (cons_cap and cons_cap.get("code") == cap_pick["code"]
+                        and suggested_xi.get("captain_delta_xpts") is not None):
+                    c_numbers["captain_delta_xpts"] = float(
+                        suggested_xi["captain_delta_xpts"])
+                elif my_row is not None and my_row.get("xpts") is not None and pick_x is not None:
+                    c_numbers["captain_delta_xpts"] = round(
+                        float(pick_x) - float(my_row["xpts"]), 2)
+            if cons_cap and cons_cap.get("code") != cap_pick["code"]:
+                cons_row = sq_by_code_v.get(int(cons_cap["code"]))
+                c_numbers["consensus_captain_code"] = int(cons_cap["code"])
+                c_numbers["consensus_captain_name"] = cons_cap.get("name")
+                if cons_row is not None:
+                    c_numbers["consensus_captain_xpts"] = cons_row.get("xpts")
     c_dissent: list[dict[str, Any]] = []
     if suggested_xi and cap_pick is not None:
         cn = suggested_xi.get("captain_numbers") or {}

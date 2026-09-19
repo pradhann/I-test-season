@@ -48,7 +48,7 @@ def transfer_plan(
         been solved. If gap is present, quote its reason.
     """
     return panel_call("transfer_plan", "planner_grid", {
-        "season": season, "horizon": horizon, "entry_id": context.entry_id(),
+        "season": season, "horizon": horizon,
     })
 
 

@@ -296,8 +296,7 @@ def recommend_cmd(
     if chip_names:
         chips = True
 
-    root = Path(__file__).resolve().parents[2]
-    fc_path = root / "data" / "warehouse" / "forecast.parquet"
+    fc_path = Path(db).parent / "forecast.parquet"
     if not fc_path.exists():
         typer.echo(
             "No transfer recommendation: no points forecast is configured.\n"
@@ -449,7 +448,7 @@ def recommend_cmd(
         if share is not None:
             fc_note += f"; engine_fill {share:.1%} of horizon rows"
         payload["notes"] = [*payload["notes"], *extra_notes, fc_note]
-        out = root / "data" / "warehouse" / TRANSFER_PLAN_NAME
+        out = Path(db).parent / TRANSFER_PLAN_NAME
         out.parent.mkdir(parents=True, exist_ok=True)
         tmp = out.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(payload, indent=2))

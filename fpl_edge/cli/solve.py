@@ -211,7 +211,7 @@ def describe_forecast(meta: dict) -> str:
     return f"forecast source {meta['forecast_source']}: {', '.join(parts)}{fill}{tail}"
 
 
-def _commit_forecast(problem, root, *, source: str = "engine", wh=None,
+def _commit_forecast(problem, out_dir, *, source: str = "engine", wh=None,
                      season: str | None = None, as_of=None) -> pd.DataFrame:
     """Persist the forecast the plan is (or would be) solved against.
 
@@ -222,7 +222,10 @@ def _commit_forecast(problem, root, *, source: str = "engine", wh=None,
     ``forecast.meta.json`` carries the provenance the CLI prints.
     """
     fc, meta = build_forecast(problem, source=source, wh=wh, season=season, as_of=as_of)
-    fc_path = root / "data" / "warehouse" / "forecast.parquet"
+    # Beside the warehouse the run was given, never the repo root: a test that
+    # reaches this with a tmp_path db must not rewrite the live forecast (it did,
+    # engine-only and unledgered, on 2026-09-19).
+    fc_path = Path(out_dir) / "forecast.parquet"
     fc_path.parent.mkdir(parents=True, exist_ok=True)
     fc.to_parquet(fc_path, index=False)
     (fc_path.parent / FORECAST_META_NAME).write_text(json.dumps(meta, indent=2))
@@ -360,16 +363,15 @@ def solve(
 
         fc_kwargs = {"source": forecast_source, "wh": wh, "season": season,
                      "as_of": snap.as_of}
-        root = Path(__file__).resolve().parents[2]
         if forecast_only:
-            _commit_forecast(problem, root, **fc_kwargs)
+            _commit_forecast(problem, db.parent, **fc_kwargs)
             typer.echo("forecast-only: models fitted and forecast committed; no plan solved.")
             return
 
         # Commit first (a solve with no incumbent must not lose the fit), and
         # in a consensus currency re-read the arrays so the MILP optimises
         # exactly what the parquet says it did.
-        committed = _commit_forecast(problem, root, **fc_kwargs) if commit else None
+        committed = _commit_forecast(problem, db.parent, **fc_kwargs) if commit else None
         if forecast_source != "engine":
             if committed is None:
                 committed, _ = build_forecast(problem, **fc_kwargs)
@@ -486,7 +488,7 @@ def solve(
                     "bank_after": int(d0.bank_after.tenths),
                 },
             }
-            out = root / "data" / "warehouse" / "gw1_plan.json"
+            out = db.parent / "gw1_plan.json"
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(json.dumps(artefact, indent=2))
             typer.echo(f"\nplan committed: {out} (mode {label})")

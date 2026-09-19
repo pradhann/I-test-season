@@ -33,7 +33,7 @@ def fake_run(monkeypatch):
 
     def install(result=None, *, raises=None, duration_ms=100,
                 performance="ok", notes=()):
-        def run_script(name, params=None, *, db=None):
+        def run_script(name, params=None, *, db=None, ctx=None):
             captured["name"] = name
             captured["params"] = params
             captured["db"] = db
