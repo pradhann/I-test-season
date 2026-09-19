@@ -85,15 +85,15 @@ Three edges inside a layer are named and allowed:
 
 <!-- BEGIN GENERATED: scripts/module_layout.py -->
 
-341 modules, 111,868 lines.
+341 modules, 111,891 lines.
 
 | Package | Module | Responsibility | Lines |
 |---|---|---|---:|
 | `fpl_edge` | `__init__.py` | fpl-edge | 1 |
 | `fpl_edge.cli` | `__init__.py` | fpl-edge | 1 |
 | `fpl_edge.cli` | `main.py` | The `fpl` command line | 643 |
-| `fpl_edge.cli` | `recommend.py` | ``fpl recommend`` -- the transfer recommendation for YOUR fifteen | 458 |
-| `fpl_edge.cli` | `solve.py` | ``fpl solve`` -- the horizon solve, reachable at last | 492 |
+| `fpl_edge.cli` | `recommend.py` | ``fpl recommend`` -- the transfer recommendation for YOUR fifteen | 457 |
+| `fpl_edge.cli` | `solve.py` | ``fpl solve`` -- the horizon solve, reachable at last | 494 |
 | `fpl_edge` | `config.py` | User configuration | 254 |
 | `fpl_edge.eval` | `__init__.py` | fpl-edge | 1 |
 | `fpl_edge.eval` | `baselines.py` | Baseline strategies the engine must beat before it can be trusted | 206 |
@@ -210,7 +210,7 @@ Three edges inside a layer are named and allowed:
 | `fpl_edge.jobs` | `post_gw.py` | The post-gameweek settlement job | 405 |
 | `fpl_edge.mcp` | `__init__.py` | The MCP server, as a second surface over the panels | 9 |
 | `fpl_edge.mcp` | `__main__.py` | Run the MCP server over stdio | 93 |
-| `fpl_edge.mcp` | `adapter.py` | The envelope every tool returns, and the only path to ``run_script`` | 292 |
+| `fpl_edge.mcp` | `adapter.py` | The envelope every tool returns, and the only path to ``run_script`` | 295 |
 | `fpl_edge.mcp` | `context.py` | Who this server is answering for, and where its data lives | 125 |
 | `fpl_edge.mcp` | `prompts.py` | One prompt, derived from what actually registered | 81 |
 | `fpl_edge.mcp` | `render.py` | Pure helpers for the toolbelt | 137 |
@@ -355,7 +355,7 @@ Three edges inside a layer are named and allowed:
 | `fpl_edge.platform.scripts` | `__init__.py` | Panel scripts | 36 |
 | `fpl_edge.platform.scripts.brief` | `__init__.py` | dashboard_brief, the dashboard's aggregator, under the anti-drift contract | 90 |
 | `fpl_edge.platform.scripts.brief` | `build.py` | ``dashboard_brief``: the assembler, and the panel registration | 184 |
-| `fpl_edge.platform.scripts.brief` | `plan.py` | The three blocks that carry the solver's own numbers | 853 |
+| `fpl_edge.platform.scripts.brief` | `plan.py` | The three blocks that carry the solver's own numbers | 872 |
 | `fpl_edge.platform.scripts.brief` | `schema.py` | The JSON Schemas, the threshold table and the precedence the brief echoes | 737 |
 | `fpl_edge.platform.scripts.brief` | `tiles.py` | The alert, tile, watch and empty accumulators, and the blocks that fill them | 1140 |
 | `fpl_edge.platform.scripts` | `common.py` | Shared helpers for panel scripts | 218 |
