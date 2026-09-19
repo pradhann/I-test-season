@@ -83,6 +83,29 @@ PARAMS: dict[str, Any] = {
             "description": "How many gameweeks the matrix covers from the "
                            "anchor gw.",
         },
+        "codes": {
+            "type": ["array", "null"], "items": {"type": "integer"},
+            "maxItems": 60,
+            "default": None,
+            "description": "Restrict the served rows to these player codes. "
+                           "The aggregates, the matrix and the coverage "
+                           "blocks are unaffected, so a filtered board still "
+                           "carries the same scale and the same clocks.",
+        },
+        "compact": {
+            "type": "boolean",
+            "default": False,
+            "description": "Serve the decision fields only: the rows (code, "
+                           "name, pos, team, price, own_pct, status, xpts, "
+                           "spread, p_appear, xp_sum, xp_sum_gws), the "
+                           "gameweek axis and the clocks. The matrix, the "
+                           "per-team and per-position aggregates, the weights "
+                           "table, the provider-accuracy blocks, the settled "
+                           "actuals and the source matrix are omitted, and "
+                           "`omitted_blocks` names every one of them. For a "
+                           "caller under a payload cap; the browser never "
+                           "sets it.",
+        },
         "weighting": {
             "type": "string",
             "enum": ["equal", "earned"],
@@ -165,6 +188,17 @@ _GW_ROW: dict[str, Any] = {
                                     "multiplied in"},
         "xp_if_appears": {"type": ["number", "null"]},
         "value": {"type": ["number", "null"]},
+        # The horizon sum the browser used to compute for itself: this
+        # player's matrix cells added over the gameweeks in `gws`, in the same
+        # selection (consensus or one source) as `xpts`. Null when the
+        # providers cover none of them.
+        "xp_sum": {"type": ["number", "null"],
+                   "description": "sum of this player's matrix cells over the "
+                                  "served `gws`, same selection as xpts"},
+        # How many of those gameweeks actually contributed. Less than
+        # len(gws) means the sum is partial and nothing was filled in for the
+        # rest.
+        "xp_sum_gws": {"type": ["integer", "null"]},
     },
 }
 
@@ -189,6 +223,20 @@ _GW_RESULT: dict[str, Any] = {
                   "description": "latest provider fetch instant at this GW"},
         "notes": {"type": "array", "items": {"type": "string"}},
         "rows": {"type": "array", "items": _GW_ROW},
+        # Present only under compact=true: the blocks this view left out, by
+        # name. An empty matrix or an empty by_team would otherwise read as
+        # "no data", which is the one thing this payload must never say by
+        # accident. Absent under the full view, where nothing was omitted.
+        "omitted_blocks": {
+            "type": "array", "items": {"type": "string"},
+            "description": "compact mode only: the result keys this view "
+                           "emptied. Ask again without compact for them.",
+        },
+        "compact": {"type": "boolean"},
+        # compact mode only: the codes the caller asked for that the board
+        # does not carry, so a filtered request never silently returns fewer
+        # rows than it named.
+        "codes_not_found": {"type": "array", "items": {"type": "integer"}},
         "gw_coverage": {
             "type": "array",
             "items": {
@@ -362,7 +410,9 @@ _GW_RESULT: dict[str, Any] = {
             },
         },
         "provider_accuracy": {
-            "type": "object",
+            # Nullable since compact mode: null there means "this view did not
+            # serve it", named in omitted_blocks, never "no providers scored".
+            "type": ["object", "null"],
             "description": "the accuracy strip: each provider's overall MAE "
                            "against the equal-weight consensus baseline, PER "
                            "settled gameweek (fact_projection_score, latest "

@@ -113,12 +113,22 @@ def panel_call(
     tool: str,
     panel: str,
     params: dict[str, Any] | None = None,
+    *,
+    mode: str | None = None,
 ) -> dict[str, Any]:
     """Run one panel and wrap it. The only call to ``run_script`` in this package.
 
     ``params`` is passed through after ``None`` values are dropped, so a tool
     can declare an optional argument without having to know whether the panel
     prefers an absent key or an explicit null.
+
+    ``mode`` names the shape the caller asked the panel for, on the envelope,
+    next to the result rather than inside it. Two tools serve a reduced payload
+    on request (``projections`` compact, ``transfer_plan`` headline) because
+    the full ones exceed the caller's payload cap, and a reader of a trimmed
+    payload has to be able to tell a panel that served less from a panel that
+    found less. The result itself stays the panel's bytes verbatim; the panel
+    names its own omissions inside it.
     """
     from fpl_edge.platform import scripts  # noqa: F401 - registers the scripts
     from fpl_edge.platform.registry import (
@@ -147,6 +157,7 @@ def panel_call(
         "ok": True,
         "tool": tool,
         "panel": panel,
+        "mode": mode,
         "result": run.result,
         "provenance": run.provenance,
         "budget": {

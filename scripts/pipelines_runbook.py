@@ -390,7 +390,7 @@ ALLOWED: tuple[Overlap, ...] = (
             Citation("fpl_edge/pipelines/tasks.py", 86,
                      "Refresh the cached fixture artefacts so the ticker's "
                      "colours reflect"),
-            Citation("fpl_edge/pipelines/registry.py", 698,
+            Citation("fpl_edge/pipelines/registry.py", 800,
                      "Refit the Dixon-Coles club split the Fixtures board "
                      "colours from."),
         ),
@@ -417,7 +417,7 @@ ALLOWED: tuple[Overlap, ...] = (
             "captions only and never downloads audio; the nightly task runs "
             "the GPU under a wall-clock budget.",
         citations=(
-            Citation("fpl_edge/pipelines/registry.py", 774,
+            Citation("fpl_edge/pipelines/registry.py", 876,
                      "Podcast ASR stays on the nightly task"),
         ),
     ),
@@ -428,7 +428,7 @@ ALLOWED: tuple[Overlap, ...] = (
             "daily one covers the last 21 days, the overnight one drops the "
             "window and eats the never-analysed backlog.",
         citations=(
-            Citation("fpl_edge/pipelines/registry.py", 657,
+            Citation("fpl_edge/pipelines/registry.py", 660,
                      "The second pass, overnight: no window at all, so it eats "
                      "the backlog."),
         ),
@@ -501,6 +501,9 @@ BREAKS_IF_STALE: dict[str, str] = {
     "forecast_refresh": "forecast.parquet covers a horizon the solver has "
                         "already passed and the solve refuses to score it",
     "fixture_ratings_refit": "the Fixtures board colours an older fit",
+    "auto_resolve": "the dashboard opens onto a plan solved for a gameweek "
+                    "that has already been played, so every verdict row "
+                    "reads stale until somebody presses Re-solve",
     "briefing_intel": "the dashboard loses its salience pass",
     "audio_retention": "the ASR audio cache grows without a sweep",
 }
@@ -532,6 +535,7 @@ WRITES: dict[str, str] = {
                              "fixture_difficulty.parquet, "
                              "fixture_calibration.parquet",
     "briefing_intel": "briefing_intel.json",
+    "auto_resolve": "transfer_plan.json",
     "audio_retention": "nothing; it deletes swept audio files",
 }
 

@@ -31,6 +31,8 @@ def projections(
     max_price: float | None = None,
     min_p_appear: float | None = None,
     weighting: str = "equal",
+    codes: list[int] | None = None,
+    compact: bool = True,
 ) -> dict[str, Any]:
     """Projected points, joined to live price and ownership. Three modes.
 
@@ -48,6 +50,17 @@ def projections(
     A projection is a model output, not a price and not a promise. Quote it
     with the spread beside it.
 
+    Every row carries xp_sum, the player's projected points added over the
+    gameweeks the payload lists in gws, which is the horizon arithmetic a
+    transfer decision turns on. xpts is the anchor gameweek alone.
+
+    compact defaults to true and leaves out the per-gameweek matrix, the
+    team and position aggregates, the provider-accuracy tables and the
+    settled actuals; the payload names each one under omitted_blocks. The
+    full version exceeds the payload cap on a normal call, so ask for
+    compact=false only when the question needs a block it dropped, and
+    narrow it with codes or limit at the same time.
+
     Args:
         mode: "xpts", "spread" or "player".
         season: FPL season, for example "2026-27".
@@ -62,10 +75,16 @@ def projections(
         min_p_appear: Drop players whose appearance probability is below this
             or unknown.
         weighting: "equal" or "earned".
+        codes: Return only these player codes, up to 60. The board's scale,
+            coverage and clocks are unchanged, so four rows read exactly as
+            they do on the full board.
+        compact: Leave out the blocks a chart needs and an answer does not.
+            True by default.
 
     Returns:
-        The envelope: result, provenance, budget, and gap when no source
-        projects this gameweek. If gap is present, quote its reason.
+        The envelope: result, provenance, budget, mode naming the shape that
+        answered, and gap when no source projects this gameweek. If gap is
+        present, quote its reason.
     """
     if mode not in MODES:
         from fpl_edge.mcp.adapter import refusal
@@ -90,6 +109,11 @@ def projections(
         if refused is not None:
             return refused
 
+    # mode="player" asks for one player's per-source breakdown, which lives in
+    # the `detail` block that compact drops. Asking for both is a request that
+    # answers itself with nothing, so the detail wins and the envelope says
+    # which shape ran.
+    slim = bool(compact) and mode != "player"
     return panel_call("projections", "projection_table", {
         "season": season,
         "gw": gw,
@@ -101,4 +125,6 @@ def projections(
         "min_p_appear": min_p_appear,
         "detail_code": detail_code,
         "weighting": weighting,
-    })
+        "codes": list(codes) if codes else None,
+        "compact": slim,
+    }, mode="compact" if slim else "full")

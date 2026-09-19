@@ -279,6 +279,29 @@ def _moves(
     return moves, moves_suppressed
 
 
+def _gain_unit(h_gws: list[int], mode: Any, forecast_source: Any) -> str | None:
+    """What ``gain_over_roll`` measures, in words, built from the plan's facts.
+
+    The dashboard printed "14.35" bare. The chat agent, asked about the same
+    transfer on 2026-09-19, said "+0.88": it had summed the starting XI for one
+    gameweek where the solver had summed its whole objective over five, net of
+    the hit, against the plan where the transfer is banked instead. Both
+    numbers are right and they answer different questions, so the surface that
+    prints one has to say which.
+
+    Composed here rather than in the view because the view may not invent the
+    meaning of a number the payload serves (DESIGN_PRINCIPLES, payload-led UI).
+    Null when the plan does not say what it summed over.
+    """
+    if not h_gws:
+        return None
+    span = (f"GW{int(h_gws[0])}" if len(h_gws) == 1
+            else f"GW{int(h_gws[0])}-{int(h_gws[-1])}")
+    tail = (f", {forecast_source} forecast" if forecast_source else "")
+    currency = f" ({mode})" if mode else ""
+    return (f"xPts over {span} versus rolling the transfer, in the solver's "
+            f"currency{currency}{tail}")
+
 
 def _solve_block(
     ctx: BriefCtx,
@@ -505,10 +528,19 @@ def _solve_block(
                     f"{any_ref(o)['name']} \u2192 {plan_ref(i)['name']}"
                     for o, i in zip(a_out, a_in))
 
+            # An alternative's objective is a bare total in the solver's own
+            # currency; standing alone it says nothing a reader can act on.
+            # gain_over_roll is the same subtraction the headline gets, so the
+            # losing rows are comparable with the winning one. The artefact has
+            # carried it per move since the 2026-09-19 pass; a plan written
+            # before that serves null and the view shows the absence.
             alternatives = [{
                 "summary": _alt_summary(a),
                 "objective": (float(a["objective"])
                               if a.get("objective") is not None else None),
+                "gain_over_roll": (float(a["gain_over_roll"])
+                                   if a.get("gain_over_roll") is not None
+                                   else None),
                 "hits": (int(a["hits"]) if a.get("hits") is not None else None),
             } for a in alt_rows[:3]]
 
@@ -551,6 +583,9 @@ def _solve_block(
                 "gain_over_roll": (float(tplan["gain_over_roll"])
                                    if tplan.get("gain_over_roll") is not None
                                    else None),
+                "gain_over_roll_unit": _gain_unit(h_gws,
+                                                  tplan.get("objective_mode"),
+                                                  tplan.get("forecast_source")),
                 "bank_after_tenths": (int(chosen["bank_after_tenths"])
                                       if chosen.get("bank_after_tenths")
                                       is not None else None),
@@ -698,8 +733,35 @@ def _verdict(
     }
 
     # -- captain -----------------------------------------------------------
+    # The solver's captain leads the row by precedence, with ONE named
+    # exception. The MILP's armband is the argmax of the rank-aware captaincy
+    # matrix, which credits variance against the field's captaincy share
+    # (docs/models/rank_solver.md §4), so it can and does land on a player the
+    # providers rank well down the squad: on 2026-09-19 João Pedro at 3.99
+    # consensus xPts, 75% to appear and benched by this same page's bench row,
+    # against B.Fernandes at 6.14. Leading with that pick and printing the
+    # consensus captain underneath it inverts what a manager needs to decide
+    # first. So when the consensus captain leads the solver's pick by more than
+    # captain_divergence_xpts ON THE CONSENSUS CURRENCY (6.14 - 3.99 = 2.15
+    # against a 1.5 gate), the row leads with the consensus captain and the
+    # solver's pick becomes the dissent line. Both numbers are served either
+    # way; only the order changes, and the rule id says which order was taken.
     cap_pick = None
-    if plan is not None and plan.get("captain"):
+    solver_cap = (plan.get("captain") if plan is not None else None)
+    cons_cap_ref = (suggested_xi or {}).get("captain")
+    flip = False
+    if solver_cap and cons_cap_ref and cons_cap_ref.get("code") != solver_cap["code"]:
+        s_row = sq_by_code_v.get(int(solver_cap["code"]))
+        c_row = sq_by_code_v.get(int(cons_cap_ref["code"]))
+        if (s_row is not None and c_row is not None
+                and s_row.get("xpts") is not None
+                and c_row.get("xpts") is not None):
+            flip = (float(c_row["xpts"]) - float(s_row["xpts"])
+                    > float(THRESHOLDS["captain_divergence_xpts"]))
+    if flip:
+        c_rule, cap_pick = "consensus_captain_over_solver", cons_cap_ref
+        c_src, c_as_of = "squad_overview", sq_as_of_v
+    elif plan is not None and plan.get("captain"):
         c_rule, cap_pick = "solver_plan_captain", plan["captain"]
         c_src, c_as_of = "solve_plan", plan_as_of
     elif suggested_xi and suggested_xi.get("captain"):
@@ -717,7 +779,8 @@ def _verdict(
         # committed per-GW forecast. Decorating it with another source's
         # number once made the solver's best captain (its 6.7) wear a stale
         # simulation's 4.0 and look self-contradictory on its own card.
-        if c_rule == "solver_plan_captain" and plan is not None:
+        if plan is not None and c_rule in ("solver_plan_captain",
+                                           "consensus_captain_over_solver"):
             fc_path = Path(source_dir(wh)) / "forecast.parquet"
             h_gws = plan.get("horizon_gws") or []
             if fc_path.exists() and h_gws:
@@ -725,12 +788,26 @@ def _verdict(
                     import pandas as pd
                     fdf = pd.read_parquet(fc_path)
                     first_gw = int(h_gws[0])
-                    hit = fdf[(fdf["gw"] == first_gw)
-                              & (fdf["code"] == int(cap_pick["code"]))]
-                    if not hit.empty:
-                        c_numbers["pick_solver_xpts"] = round(
-                            float(hit.iloc[0]["xpts"]), 2)
+
+                    def _solver_x(code: int) -> float | None:
+                        hit_ = fdf[(fdf["gw"] == first_gw)
+                                   & (fdf["code"] == int(code))]
+                        return (None if hit_.empty
+                                else round(float(hit_.iloc[0]["xpts"]), 2))
+
+                    px = _solver_x(int(cap_pick["code"]))
+                    if px is not None:
+                        c_numbers["pick_solver_xpts"] = px
                         c_numbers["solver_gw"] = first_gw
+                    # The overruled pick's own number, in the currency that
+                    # chose it. Without it the dissent line says the solver
+                    # wanted a 3.99 player, which is the consensus talking; the
+                    # solver's reason for wanting him is its own forecast.
+                    if solver_cap and c_rule == "consensus_captain_over_solver":
+                        sx = _solver_x(int(solver_cap["code"]))
+                        if sx is not None:
+                            c_numbers["solver_captain_solver_xpts"] = sx
+                            c_numbers["solver_gw"] = first_gw
                 except (OSError, KeyError, ValueError):
                     pass  # the forecast is decoration here; absence is quiet
         # Do the two voices agree about the man being captained? The gap is
@@ -772,7 +849,42 @@ def _verdict(
                 c_numbers["consensus_captain_code"] = int(cons_cap["code"])
                 if cons_row is not None:
                     c_numbers["consensus_captain_xpts"] = cons_row.get("xpts")
+        # The mirror of the pair above, and only in the flipped row: the
+        # solver's own pick, in the consensus currency the lead is quoted in,
+        # plus the shortfall that fired the flip and the gate it cleared. One
+        # currency for the comparison, so the subtraction on the page is the
+        # one the rule performed.
+        if c_rule == "consensus_captain_over_solver" and solver_cap:
+            s_row2 = sq_by_code_v.get(int(solver_cap["code"]))
+            c_numbers["solver_captain_code"] = int(solver_cap["code"])
+            if s_row2 is not None and s_row2.get("xpts") is not None:
+                c_numbers["solver_captain_xpts"] = float(s_row2["xpts"])
+                if c_numbers.get("pick_xpts") is not None:
+                    c_numbers["consensus_lead_over_solver"] = round(
+                        float(c_numbers["pick_xpts"]) - float(s_row2["xpts"]), 2)
+            c_numbers["divergence_gate"] = float(
+                THRESHOLDS["captain_divergence_xpts"])
     c_dissent: list[dict[str, Any]] = []
+    # The overruled solver is a voice, not a deletion. It leads the list so a
+    # reader meets the disagreement before the measures that merely rank
+    # differently, and it carries both of its numbers: the solver's own
+    # forecast for its pick and that pick's consensus figure.
+    if c_rule == "consensus_captain_over_solver" and solver_cap:
+        s_row3 = sq_by_code_v.get(int(solver_cap["code"]))
+        c_dissent.append({
+            "voice": "solver", "rule": "solver_plan_captain",
+            "player": solver_cap, "in": None, "out": None,
+            "numbers": {
+                "xpts": (s_row3.get("xpts") if s_row3 is not None else None),
+                "solver_xpts": c_numbers.get("solver_captain_solver_xpts"),
+                "consensus_lead_over_solver":
+                    c_numbers.get("consensus_lead_over_solver"),
+                "divergence_gate": float(
+                    THRESHOLDS["captain_divergence_xpts"]),
+            },
+            "source_panel": "solve_plan", "source_as_of": plan_as_of,
+            "drill": {"focus": "solver"},
+        })
     if suggested_xi and cap_pick is not None:
         cn = suggested_xi.get("captain_numbers") or {}
         bm = suggested_xi.get("captain_by_mean")

@@ -91,15 +91,22 @@ _LAST_RUN_SCHEMA: dict[str, Any] = {
                                 "runner wrote, including a JSON note, is "
                                 "served here unparsed."},
         "note_is_json": {"type": "boolean",
-                         "description": "Computed: the note parsed as a JSON "
-                                        "object. False means the fields below "
-                                        "are absent and the note is prose."},
+                         "description": "Computed: the WHOLE note parsed as a "
+                                        "JSON object. False does not mean the "
+                                        "fields below are absent; a prose note "
+                                        "can still carry a spend= line."},
+        "fields_from": {"type": ["string", "null"],
+                        "enum": ["note_json", "spend_line", None],
+                        "description": "Which shape the model and token "
+                                       "fields were read out of, or null when "
+                                       "the note carries neither."},
         "model": {"type": ["string", "null"],
-                  "description": "From the note's JSON, when it carries a "
-                                 "model name. Never inferred."},
+                  "description": "From the note's JSON or its spend= line, "
+                                 "when one carries a model name. Never "
+                                 "inferred."},
         "tokens": {"type": ["number", "null"],
-                   "description": "From the note's JSON: tokens, or input "
-                                  "plus output where the note splits them."},
+                   "description": "From the same object: tokens, or input "
+                                  "plus output where it splits them."},
         "trigger": {"type": ["string", "null"]},
         "log_path": {"type": ["string", "null"]},
     },
@@ -148,7 +155,10 @@ _ROW_SCHEMA: dict[str, Any] = {
             "description": "Computed: last_success is older than "
                            "stale_window_hours, or nothing has succeeded yet. "
                            "This is the TASK'S OWN window, not health.state's "
-                           "cadence budget; the two disagree by design.",
+                           "cadence budget; the two disagree by design. "
+                           "Always false for a deadline-relative task whose "
+                           "next_due is still in the future: between "
+                           "deadlines such a task is waiting, not late.",
         },
         "enabled": {"type": "boolean"},
         "health": {
@@ -290,22 +300,46 @@ _TOKEN_PAIRS = (("tokens_in", "tokens_out"), ("input_tokens", "output_tokens"))
 
 
 def _note_fields(note: Any) -> dict[str, Any]:
-    """The model and token count a JSON note carries, read defensively.
+    """The model and token count a ledger note carries, read defensively.
 
     The note column is a free-text field that different writers fill
-    differently, so this never assumes a shape. Anything that is not a JSON
-    object, or is one without these keys, comes back as absent and the raw
-    note is served beside it untouched.
+    differently, so this never assumes a shape. TWO shapes are recognised:
+
+    * the whole note parsed as a JSON object (``note_is_json`` true), and
+    * a trailing ``spend={...}`` line inside an otherwise prose note, which is
+      the format :func:`fpl_edge.store.fetch_ledger.spend_note` writes.
+
+    The second one is why ``content_analyse`` showed model None and tokens
+    None on 2026-09-19 with a fully-populated spend line sitting in its note:
+    this panel was built before that format landed and only ever tried the
+    first shape. ``fields_from`` names which shape answered, so a reader is
+    never left guessing why a prose note has a model beside it.
+
+    Anything neither shape recognises comes back as absent, with the raw note
+    served beside it untouched.
     """
-    blank = {"note_is_json": False, "model": None, "tokens": None}
+    blank = {"note_is_json": False, "fields_from": None,
+             "model": None, "tokens": None}
     if not note:
         return blank
+    whole_json = True
     try:
         obj = json.loads(str(note))
     except (TypeError, ValueError):
-        return blank
+        whole_json = False
+        obj = None
+    if not isinstance(obj, dict):
+        whole_json = False
+        obj = None
+    if obj is None:
+        # The prose case: the spend line is parsed by the module that writes
+        # it, so the format has exactly one reader and one writer.
+        from fpl_edge.store.fetch_ledger import parse_spend
+
+        obj = parse_spend(str(note))
     if not isinstance(obj, dict):
         return blank
+    source = "note_json" if whole_json else "spend_line"
 
     model = obj.get("model")
     model = str(model) if isinstance(model, str) else None
@@ -322,7 +356,8 @@ def _note_fields(note: Any) -> dict[str, Any]:
             if isinstance(va, (int, float)) and isinstance(vb, (int, float)):
                 tokens = float(va) + float(vb)
                 break
-    return {"note_is_json": True, "model": model, "tokens": tokens}
+    return {"note_is_json": whole_json, "fields_from": source,
+            "model": model, "tokens": tokens}
 
 
 def _last_success(wh) -> dict[str, dt.datetime]:
@@ -341,10 +376,18 @@ def _last_success(wh) -> dict[str, dt.datetime]:
 
 
 def _age_days(started: Any, now: dt.datetime) -> float | None:
+    """Days since a run started, to ONE decimal.
+
+    It used to be served raw, so the board carried 15 significant figures of
+    float for a number whose question is "is this from today or from last
+    week". Rounding here rather than in the view keeps one answer for the
+    browser, the API and the MCP tool; 0.1 days is 2.4 hours, which is finer
+    than any staleness rule on this page reads.
+    """
     stamp = pd.to_datetime(started, utc=True, errors="coerce")
     if pd.isna(stamp):
         return None
-    return max(0.0, (now - stamp.to_pydatetime()).total_seconds() / 86400.0)
+    return round(max(0.0, (now - stamp.to_pydatetime()).total_seconds() / 86400.0), 1)
 
 
 def pipeline_board(wh) -> dict[str, Any]:
@@ -384,10 +427,22 @@ def pipeline_board(wh) -> dict[str, Any]:
         row["last_success"] = ok_at.isoformat() if ok_at else None
         # Stale by the task's OWN window: never having succeeded counts,
         # because a task with no success is not fresh, it is unproven.
-        row["stale_by_window"] = (
-            True if ok_at is None
-            else (now - ok_at).total_seconds() / 3600.0 > window_h
-        )
+        #
+        # Except on a deadline-relative task that is not yet owed. Those fire
+        # around a deadline and then have nothing to do until the next one, so
+        # between deadlines their last success is necessarily older than a
+        # window measured in hours: final_solve_delivery, lineup_captain_check
+        # and presser_projection_refresh all read "stale 17 days" on
+        # 2026-09-19, which is arithmetically true and reads as three alarms
+        # for three tasks behaving exactly as designed. A task whose next due
+        # instant is in the future is waiting, not late, and the window has no
+        # claim on it until that instant passes.
+        overdue = (now - ok_at).total_seconds() / 3600.0 > window_h if ok_at else True
+        next_due = pd.to_datetime(row.get("next_due"), utc=True, errors="coerce")
+        waiting = (isinstance(task.due, registry.DeadlineRelative)
+                   and not pd.isna(next_due)
+                   and next_due.to_pydatetime() > now)
+        row["stale_by_window"] = bool(overdue and not waiting)
         last = row.get("last_run")
         row["last_run_age_days"] = (
             None if not last else _age_days(last.get("started"), now))

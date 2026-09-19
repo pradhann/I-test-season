@@ -76,9 +76,12 @@ _EPOCH = dt.datetime(1970, 1, 1, tzinfo=UTC)
 TRANSCRIBE_BUDGET_S = 3600.0
 
 #: How long the briefing-intel subprocess may live. The model call inside it is
-#: capped at MODEL_TIMEOUT_S = 240s (platform/briefing_intel.py:100); the rest
-#: of the budget is panel assembly on the local warehouse either side of it.
-BRIEFING_INTEL_TIMEOUT_S = 420.0
+#: capped at MODEL_TIMEOUT_S = 600s (platform/briefing_intel.py); the rest of
+#: the budget is panel assembly on the local warehouse either side of it. This
+#: has to stay ABOVE the model cap, or the process is killed before the call's
+#: own timeout can report which step ran long: 900 leaves 300s for the panels,
+#: against the ~60s they take today.
+BRIEFING_INTEL_TIMEOUT_S = 900.0
 
 #: How much longer than its budget the transcription PROCESS is allowed to
 #: live before ``run_step`` kills it.
@@ -694,6 +697,105 @@ def run_forecast_refresh(ctx: TaskContext) -> TaskResult:
     return TaskResult(outcome=outcome, detail=step.detail[-300:], steps=[step])
 
 
+#: Hours AFTER each deadline that the automatic re-solve fires. Negative,
+#: because :class:`DeadlineRelative` counts hours BEFORE a deadline and this is
+#: the only task in the registry that belongs on the far side of one.
+#:
+#: 26, and not the 2 or 3 that would feel responsive, because the re-solve is
+#: worth nothing until the things it reads have refreshed and those are all on
+#: daily calendars: ``post_gw_settlement`` at 10:30 UTC brings the results and
+#: the squad, ``panel_picks_crawl`` 11:15, ``forecast_refresh`` 11:30 writes
+#: the consensus ``forecast.parquet`` this solve is denominated in. The gap
+#: between consecutive firings of a daily task is 24 hours, so 26 is the
+#: smallest offset that clears every one of them for ANY deadline instant,
+#: including a Friday 19:00 one where the same day's 11:30 forecast ran before
+#: the deadline rather than after it. A weekly deadline leaves six days of a
+#: fresh plan afterwards, so the wait costs nothing a manager can feel.
+RESOLVE_AFTER_DEADLINE_H = -26.0
+
+#: How long one automatic re-solve may run. The dashboard's own solve is
+#: --max-hits 0 --no-chips over a five-gameweek horizon at 150s per MILP and
+#: took three minutes on 2026-09-19; 1800 is the same backstop
+#: ``forecast_refresh`` carries, sized for a cold machine rather than for the
+#: measured case.
+RESOLVE_TIMEOUT_S = 1800.0
+
+
+def run_auto_resolve(ctx: TaskContext) -> TaskResult:
+    """Re-solve the transfer plan once the deadline it was written for has passed.
+
+    THE MISSING RUNG on the dashboard's primary object. Everything else on the
+    page refreshes on a schedule; the plan only ever moved when somebody
+    pressed Re-solve. So the first thing the page said, three weeks before the
+    GW6 deadline on 2026-09-19, was that all four of its verdict rows were
+    stale: the standing plan was 266 hours old and had been solved for a
+    gameweek that had since been played. A manager's first act was to ask for
+    a re-solve, which is a scheduler's job and not a person's.
+
+    It runs ``fpl recommend --commit``, which is exactly what the Re-solve
+    button runs, with the dashboard's own flags (``--max-hits 0``,
+    ``--no-chips``): a chip is the owner's decision and a hit is a decision the
+    headline may not take on its own, so the automatic plan is the conservative
+    one and the optimiser's hit-taking best rides along inside the artefact.
+
+    Two refusals, both returning ``no_source`` rather than failing:
+
+    * **No consensus forecast.** ``forecast.meta.json`` names the currency
+      ``forecast.parquet`` is denominated in. Solving against ``engine`` is the
+      2026-09-19 defect in one line: the engine model ran about 40% hot against
+      the providers, so a plan solved on it captained a 4.5%-owned midfielder
+      the consensus ranked thirtieth while every other surface on the page
+      showed the consensus. The house rule is to solve in the currency the
+      owner sees, so an engine-denominated forecast is a reason not to run, not
+      a currency to run in. ``forecast_refresh`` writes the consensus one
+      daily at 11:30 UTC and this task fires after it, by construction of
+      :data:`RESOLVE_AFTER_DEADLINE_H`.
+    * **No squad to solve against.** ``fpl recommend`` exits 2 when it cannot
+      reconstruct the fifteen, which before the first deadline is the correct
+      state and not a failure.
+
+    No network gate: the FPL reads ``current_state`` makes are the same ones
+    every other task makes, and the solve itself is local.
+    """
+    import json
+
+    meta_path = Path(ctx.db_path).parent / "forecast.meta.json"
+    try:
+        meta = json.loads(meta_path.read_text())
+    except (OSError, ValueError) as exc:
+        return TaskResult(
+            outcome="no_source",
+            detail=(f"no readable {meta_path.name} beside the warehouse "
+                    f"({type(exc).__name__}); forecast_refresh writes it. "
+                    f"Nothing was solved."))
+    source = str((meta or {}).get("forecast_source") or "")
+    if source != "consensus":
+        return TaskResult(
+            outcome="no_source",
+            detail=(f"forecast.parquet is denominated in {source!r}, not "
+                    f"'consensus'. A plan solved on the engine currency "
+                    f"recommends players the rest of the dashboard does not "
+                    f"rank; refusing to write one. Run forecast_refresh."))
+
+    step = run_step(
+        "auto_resolve",
+        [ctx.python, "-m", "fpl_edge.cli.main", "recommend",
+         "--db", str(ctx.db_path), "--season", ctx.season,
+         "--horizon", "5", "--max-hits", "0", "--no-chips", "--commit"],
+        timeout=RESOLVE_TIMEOUT_S,
+    )
+    if step.ok:
+        return TaskResult(outcome="quiet", detail=step.detail[-300:], steps=[step])
+    return TaskResult(
+        outcome="error", kind="alert", steps=[step],
+        detail=f"auto re-solve failed: {step.detail[-200:]}",
+        title="Automatic re-solve FAILED",
+        body=f"fpl recommend --commit exited non-zero after {step.seconds}s. "
+             f"The dashboard is holding the previous plan, which is now "
+             f"pre-deadline.\n\n{step.detail}",
+    )
+
+
 def run_fixture_ratings_refit(ctx: TaskContext) -> TaskResult:
     """Refit the Dixon-Coles club split the Fixtures board colours from.
 
@@ -856,6 +958,11 @@ def run_briefing_intel(ctx: TaskContext) -> TaskResult:
                   tokens_out=artefact.get("tokens_out")),
         model_requested=artefact.get("model"),
         calls=1,
+        # How long the pass took, in the machine-readable line rather than
+        # only in the prose detail. The model cap was raised from 240s to 600s
+        # after one run at 178s and the next at over 240; a timeout limit is
+        # guesswork until the durations are queryable beside the spend.
+        duration_s=duration,
     )
     return TaskResult(
         outcome="quiet",
@@ -1083,6 +1190,20 @@ TASKS: tuple[Task, ...] = (
         due=Calendar(hour_utc=11, minute=30),
         stale_window=dt.timedelta(hours=23),
         run=run_forecast_refresh,
+    ),
+    Task(
+        id="auto_resolve",
+        description="T+26h after each deadline: re-solve the transfer plan on "
+                    "the consensus forecast, so the dashboard never opens onto "
+                    "a plan written for a gameweek already played",
+        due=DeadlineRelative(hours_before=RESOLVE_AFTER_DEADLINE_H),
+        # 20h, the presser window's reasoning inverted. The plan's value does
+        # not decay for days after it is written, so a firing the Mac slept
+        # through is still worth running late; the window stops only at the
+        # point where the NEXT deadline's firing would overlap it.
+        stale_window=dt.timedelta(hours=20),
+        run=run_auto_resolve,
+        family="core",
     ),
     Task(
         id="fixture_ratings_refit",

@@ -67,6 +67,8 @@ def projection_table(
     span: int = 5,
     sources: list[str] | None = None,
     weighting: str = "equal",
+    codes: list[int] | None = None,
+    compact: bool = False,
 ) -> dict[str, Any]:
     """Projected points per player: solved artefact by default, or per-gameweek
     provider consensus (with the cross-source spread as the uncertainty column)
@@ -76,6 +78,10 @@ def projection_table(
     exist: the artefact branch says to run the solve, the gameweek branch
     lists which gameweeks the ingested sources actually cover.
     """
+    # `codes` and `compact` are gameweek-mode shapes only: they exist for the
+    # MCP caller, which always names a gameweek, and the artefact branch has
+    # no matrix for xp_sum to come from. Naming either one is not on its own a
+    # request to switch regimes.
     gw_mode = any(p is not None for p in (gw, source, team, min_p_appear,
                                           detail_code, sources))
     if gw_mode:
@@ -83,12 +89,27 @@ def projection_table(
             wh, season=season, position=position, sort=sort, limit=limit,
             max_price=max_price, gw=gw, source=source, team=team,
             min_p_appear=min_p_appear, detail_code=detail_code, span=span,
-            subset=sources, weighting=weighting,
+            subset=sources, weighting=weighting, codes=codes,
+            compact=bool(compact),
         )
-    return _artefact_mode(
+    out = _artefact_mode(
         wh, season=season, position=position, sort=sort, limit=limit,
         max_price=max_price,
     )
+    # The artefact branch has no matrix, no aggregates and no provider blocks,
+    # so there is nothing for compact to leave out and the whole payload is
+    # already the rows. The code filter still applies, and a compact request
+    # that changed nothing says so rather than passing in silence.
+    if out.get("rows") is not None:
+        if codes:
+            wanted = {int(c) for c in codes}
+            out["rows"] = [r for r in out["rows"] if int(r["code"]) in wanted]
+            out["row_count"] = len(out["rows"])
+        if compact:
+            out["notes"] = [*(out.get("notes") or []),
+                            ("compact had nothing to omit: the "
+                             "solved-artefact view is rows and clocks only.")]
+    return out
 
 
 register_script(

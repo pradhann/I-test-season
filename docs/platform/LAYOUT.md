@@ -85,14 +85,14 @@ Three edges inside a layer are named and allowed:
 
 <!-- BEGIN GENERATED: scripts/module_layout.py -->
 
-341 modules, 111,891 lines.
+341 modules, 112,651 lines.
 
 | Package | Module | Responsibility | Lines |
 |---|---|---|---:|
 | `fpl_edge` | `__init__.py` | fpl-edge | 1 |
 | `fpl_edge.cli` | `__init__.py` | fpl-edge | 1 |
 | `fpl_edge.cli` | `main.py` | The `fpl` command line | 643 |
-| `fpl_edge.cli` | `recommend.py` | ``fpl recommend`` -- the transfer recommendation for YOUR fifteen | 457 |
+| `fpl_edge.cli` | `recommend.py` | ``fpl recommend`` -- the transfer recommendation for YOUR fifteen | 512 |
 | `fpl_edge.cli` | `solve.py` | ``fpl solve`` -- the horizon solve, reachable at last | 494 |
 | `fpl_edge` | `config.py` | User configuration | 254 |
 | `fpl_edge.eval` | `__init__.py` | fpl-edge | 1 |
@@ -210,7 +210,7 @@ Three edges inside a layer are named and allowed:
 | `fpl_edge.jobs` | `post_gw.py` | The post-gameweek settlement job | 405 |
 | `fpl_edge.mcp` | `__init__.py` | The MCP server, as a second surface over the panels | 9 |
 | `fpl_edge.mcp` | `__main__.py` | Run the MCP server over stdio | 93 |
-| `fpl_edge.mcp` | `adapter.py` | The envelope every tool returns, and the only path to ``run_script`` | 295 |
+| `fpl_edge.mcp` | `adapter.py` | The envelope every tool returns, and the only path to ``run_script`` | 306 |
 | `fpl_edge.mcp` | `context.py` | Who this server is answering for, and where its data lives | 125 |
 | `fpl_edge.mcp` | `prompts.py` | One prompt, derived from what actually registered | 81 |
 | `fpl_edge.mcp` | `render.py` | Pure helpers for the toolbelt | 137 |
@@ -224,8 +224,8 @@ Three edges inside a layer are named and allowed:
 | `fpl_edge.mcp.tools` | `manager.py` | ``manager``: one tracked manager, resolved only through a verifier | 65 |
 | `fpl_edge.mcp.tools` | `ownership.py` | ``ownership``: what the field holds, and what that costs you against them | 59 |
 | `fpl_edge.mcp.tools` | `pipelines.py` | ``pipelines`` and ``pipeline_log``: what has run, what is due, what failed | 52 |
-| `fpl_edge.mcp.tools` | `projections.py` | ``projections``: projected points, where the sources disagree, one player | 104 |
-| `fpl_edge.mcp.tools` | `solve.py` | The three solver tools: read the plan, start a solve, poll it | 144 |
+| `fpl_edge.mcp.tools` | `projections.py` | ``projections``: projected points, where the sources disagree, one player | 130 |
+| `fpl_edge.mcp.tools` | `solve.py` | The three solver tools: read the plan, start a solve, poll it | 159 |
 | `fpl_edge.mcp.tools` | `squad.py` | ``my_squad`` and ``brief``: the user's own team, and the dashboard | 65 |
 | `fpl_edge.mcp.tools` | `watchlist.py` | The three watchlist tools | 210 |
 | `fpl_edge.models` | `__init__.py` | fpl-edge | 1 |
@@ -299,7 +299,7 @@ Three edges inside a layer are named and allowed:
 | `fpl_edge.myteam` | `recommend.py` | What to do at the upcoming deadline, what it costs, and what lost | 901 |
 | `fpl_edge.myteam` | `report.py` | The ``transfers`` section of the weekly report | 281 |
 | `fpl_edge.myteam` | `sources.py` | The public FPL entry endpoints, and the one we are forbidden to touch | 390 |
-| `fpl_edge.myteam` | `state.py` | Reconstructing the manager's squad state from public data alone | 751 |
+| `fpl_edge.myteam` | `state.py` | Reconstructing the manager's squad state from public data alone | 789 |
 | `fpl_edge.myteam` | `store.py` | Where the manually-entered squad lives | 182 |
 | `fpl_edge.myteam` | `tokens.py` | Self-renewing FPL authentication via the standard OAuth refresh grant | 331 |
 | `fpl_edge.opt` | `__init__.py` | Multi-gameweek squad optimisation | 104 |
@@ -314,8 +314,8 @@ Three edges inside a layer are named and allowed:
 | `fpl_edge.oracle` | `signals.py` | The oracle's evidence layer | 260 |
 | `fpl_edge.pipelines` | `__init__.py` | Pipelines: the product's edge, organised as a first-class package | 39 |
 | `fpl_edge.pipelines` | `contracts.py` | The task vocabulary: what a task is handed, what it returns, when it is due | 256 |
-| `fpl_edge.pipelines` | `health.py` | Derived pipeline health: one set of rules, returned as data | 450 |
-| `fpl_edge.pipelines` | `registry.py` | The task registry: every scheduled pipeline is one reviewable row here | 1119 |
+| `fpl_edge.pipelines` | `health.py` | Derived pipeline health: one set of rules, returned as data | 458 |
+| `fpl_edge.pipelines` | `registry.py` | The task registry: every scheduled pipeline is one reviewable row here | 1240 |
 | `fpl_edge.pipelines` | `runner.py` | The one execution path every pipeline run goes through | 268 |
 | `fpl_edge.pipelines` | `tasks.py` | The five deadline-relative task bodies | 708 |
 | `fpl_edge.platform` | `__init__.py` | The decision platform: panel scripts, one guarded query path, an HTTP app | 19 |
@@ -338,8 +338,8 @@ Three edges inside a layer are named and allowed:
 | `fpl_edge.platform.auth` | `sessions.py` | The auth database, the session row, and the three cookies | 413 |
 | `fpl_edge.platform.auth` | `settings.py` | Every deployment variable the auth layer reads, in one place | 147 |
 | `fpl_edge.platform` | `boot.py` | The boot sequence a container runs before it answers a single request | 346 |
-| `fpl_edge.platform` | `briefing_intel.py` | briefing_intel, the model-authored salience pass OVER the panels | 1040 |
-| `fpl_edge.platform` | `chat_agent.py` | The chat agent loop: conversations driven through the Claude Agent SDK | 1016 |
+| `fpl_edge.platform` | `briefing_intel.py` | briefing_intel, the model-authored salience pass OVER the panels | 1049 |
+| `fpl_edge.platform` | `chat_agent.py` | The chat agent loop: conversations driven through the Claude Agent SDK | 1044 |
 | `fpl_edge.platform` | `deliveries.py` | Reading and acknowledging the delivery outbox | 131 |
 | `fpl_edge.platform` | `fpl_theme.py` | The house chart style: Athletic/Opta grammar, enforced by import | 170 |
 | `fpl_edge.platform.link_jobs` | `__init__.py` | Pasted links: preflight, approve, ingest, take | 68 |
@@ -355,9 +355,9 @@ Three edges inside a layer are named and allowed:
 | `fpl_edge.platform.scripts` | `__init__.py` | Panel scripts | 36 |
 | `fpl_edge.platform.scripts.brief` | `__init__.py` | dashboard_brief, the dashboard's aggregator, under the anti-drift contract | 90 |
 | `fpl_edge.platform.scripts.brief` | `build.py` | ``dashboard_brief``: the assembler, and the panel registration | 184 |
-| `fpl_edge.platform.scripts.brief` | `plan.py` | The three blocks that carry the solver's own numbers | 872 |
-| `fpl_edge.platform.scripts.brief` | `schema.py` | The JSON Schemas, the threshold table and the precedence the brief echoes | 737 |
-| `fpl_edge.platform.scripts.brief` | `tiles.py` | The alert, tile, watch and empty accumulators, and the blocks that fill them | 1140 |
+| `fpl_edge.platform.scripts.brief` | `plan.py` | The three blocks that carry the solver's own numbers | 984 |
+| `fpl_edge.platform.scripts.brief` | `schema.py` | The JSON Schemas, the threshold table and the precedence the brief echoes | 762 |
+| `fpl_edge.platform.scripts.brief` | `tiles.py` | The alert, tile, watch and empty accumulators, and the blocks that fill them | 1147 |
 | `fpl_edge.platform.scripts` | `common.py` | Shared helpers for panel scripts | 218 |
 | `fpl_edge.platform.scripts.creators` | `__init__.py` | creator_board / creator_detail, the Creators tab's data path | 148 |
 | `fpl_edge.platform.scripts.creators` | `board.py` | `creator_board`: who is saying what this gameweek, and the consensus | 522 |
@@ -384,17 +384,17 @@ Three edges inside a layer are named and allowed:
 | `fpl_edge.platform.scripts.ownership` | `panel.py` | ``ownership_eo``: the assembler, and the panel registration | 157 |
 | `fpl_edge.platform.scripts.ownership` | `schema.py` | The JSON Schemas, the segment vocabulary and the scalar coercions | 641 |
 | `fpl_edge.platform.scripts.ownership` | `tools.py` | The three views of the selected field: diff, what-if and momentum | 281 |
-| `fpl_edge.platform.scripts` | `pipelines_panel.py` | The pipelines control panel's data path: the board, and one run's log | 538 |
-| `fpl_edge.platform.scripts` | `planner.py` | planner_grid, one payload for the multi-gameweek transfer-planner grid | 458 |
+| `fpl_edge.platform.scripts` | `pipelines_panel.py` | The pipelines control panel's data path: the board, and one run's log | 593 |
+| `fpl_edge.platform.scripts` | `planner.py` | planner_grid, one payload for the multi-gameweek transfer-planner grid | 563 |
 | `fpl_edge.platform.scripts` | `player_dossier.py` | ``player_dossier``: the sixteen-section player view, as a panel | 271 |
 | `fpl_edge.platform.scripts` | `player_form.py` | ``player_form``: one player's settled gameweeks, with the season of each row | 362 |
 | `fpl_edge.platform.scripts` | `player_intel.py` | ``player_intel``: news, press coverage and set-piece moves, with timestamps | 427 |
 | `fpl_edge.platform.scripts` | `player_profile.py` | The player profile panel: one player's Understat season, read FPL-first | 345 |
 | `fpl_edge.platform.scripts` | `prices.py` | price_radar, net-transfer velocity between consecutive state snapshots | 287 |
-| `fpl_edge.platform.scripts.projections` | `__init__.py` | projection_table: the player board, joined to live price and ownership | 103 |
+| `fpl_edge.platform.scripts.projections` | `__init__.py` | projection_table: the player board, joined to live price and ownership | 124 |
 | `fpl_edge.platform.scripts.projections` | `artefact.py` | ``_artefact_mode``: the solved artefact, one row per player | 149 |
-| `fpl_edge.platform.scripts.projections` | `gw.py` | ``_gw_mode``: provider projections for one gameweek, through the views | 993 |
-| `fpl_edge.platform.scripts.projections` | `schema.py` | The JSON Schemas for both modes, and the two rounding helpers | 512 |
+| `fpl_edge.platform.scripts.projections` | `gw.py` | ``_gw_mode``: provider projections for one gameweek, through the views | 1067 |
+| `fpl_edge.platform.scripts.projections` | `schema.py` | The JSON Schemas for both modes, and the two rounding helpers | 562 |
 | `fpl_edge.platform.scripts` | `radar.py` | player_radar, one player's per-90 percentiles vs same-position peers | 294 |
 | `fpl_edge.platform.scripts` | `squad.py` | squad_overview, your actual 15, priced, flagged and projected | 348 |
 | `fpl_edge.platform` | `solve_runner.py` | Start and observe `fpl solve` runs from the platform, without owning them | 333 |

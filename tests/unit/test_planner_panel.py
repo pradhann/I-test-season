@@ -358,3 +358,61 @@ def test_a_user_with_no_login_gets_the_named_gap_not_the_owners_squad(
     assert res.get("empty") is True
     assert PRIVATE_GAP in res["reason"]
     assert "4242" in res["reason"]
+
+
+def test_the_headline_view_keeps_the_squad_and_drops_the_pool(
+        seeded_db, monkeypatch):
+    """The MCP tool named transfer_plan wraps this panel, and on 2026-09-19
+    the full grid went over its caller's payload cap, so the agent answered
+    from raw SQL instead. The headline view is the 15, their per-gameweek
+    numbers and the standing plan, with the browsable pool taken out; it says
+    so in its notes rather than serving an empty list in silence."""
+    _fake_state(monkeypatch, bank=15, ft=2)
+    grid = run_script("planner_grid", {"horizon": 5}, db=seeded_db).result
+    head = run_script("planner_grid", {"horizon": 5, "view": "headline"},
+                      db=seeded_db).result
+
+    assert grid["view"] == "grid" and head["view"] == "headline"
+    assert grid["candidates"] and head["candidates"] == []
+    assert any("headline view" in n for n in head["notes"])
+    # the 15 and their numbers are untouched, so an answer built on the
+    # headline is built on the same figures the grid would have shown
+    assert [p["code"] for p in head["squad"]] == [p["code"] for p in grid["squad"]]
+    for code in (str(c) for c in SQUAD_CODES):
+        assert head["xpts"].get(code) == grid["xpts"].get(code)
+    # and the maps carry nobody else
+    assert set(head["xpts"]) <= {str(c) for c in SQUAD_CODES}
+    assert set(head["spread"]) <= {str(c) for c in SQUAD_CODES}
+    assert len(str(head)) < len(str(grid))
+
+
+def test_the_grid_serves_the_standing_plan_or_says_why_it_cannot(
+        seeded_db, monkeypatch, tmp_path):
+    """A tool called transfer_plan returned a grid with no plan in it: 1,200
+    candidate players and none of the solver's own decisions. The plan's
+    headline is served in both views, and an absent artefact is a named gap
+    with the task that writes one."""
+    import json
+
+    _fake_state(monkeypatch)
+    res = run_script("planner_grid", {}, db=seeded_db).result
+    assert res["plan"]["reason"] and "auto_resolve" in res["plan"]["reason"]
+
+    (tmp_path / "transfer_plan.json").write_text(json.dumps({
+        "generated_at": "2099-08-21T00:00:00+00:00", "gw": 2,
+        "horizon_gws": [2, 3], "objective_mode": "expected_points",
+        "forecast_source": "consensus", "free_transfers": 1,
+        "free_transfers_source": "account", "gain_over_roll": 4.25,
+        "chosen": {"out": [100], "in": [200], "captain": 107},
+        "alternatives": [], "notes": [], "squad_before": [],
+    }))
+    res = run_script("planner_grid", {"view": "headline"}, db=seeded_db).result
+    plan = res["plan"]
+    assert plan["reason"] is None
+    assert plan["gain_over_roll"] == pytest.approx(4.25)
+    assert plan["forecast_source"] == "consensus"
+    assert plan["free_transfers_source"] == "account"
+    assert plan["chosen"]["captain"] == 107
+    # the panel does not judge freshness; that rule lives in the brief and in
+    # routes_solve and must not gain a third opinion here
+    assert plan["generated_at"] == "2099-08-21T00:00:00+00:00"

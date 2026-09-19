@@ -91,8 +91,20 @@ def forecast_provenance(frame, gws=None) -> dict[str, Any]:
     }
 
 
-def _serialize_move(move) -> dict[str, Any]:
-    """One solved move, in the artefact's vocabulary. Money as .tenths."""
+def _serialize_move(move, *, roll_objective: float | None = None) -> dict[str, Any]:
+    """One solved move, in the artefact's vocabulary. Money as .tenths.
+
+    ``gain_over_roll`` is this move's objective minus the solved roll's, in the
+    mode's own currency. Every move carries it, not only the unconstrained one:
+    on 2026-09-19 the artefact's five alternatives read as empty stubs on the
+    Planner because the only descriptors they carried were an objective with no
+    baseline beside it and a label the solver never sets for a screened move.
+    The objectives were real; the row had nothing to subtract them from.
+
+    ``label`` is the solver's own, or null. It used to serialise as ``""``,
+    which renders as a labelled row whose label is blank. An absent label is
+    absent.
+    """
     return {
         "out": [int(c) for c in move.out],
         "in": [int(c) for c in move.into],
@@ -100,8 +112,13 @@ def _serialize_move(move) -> dict[str, Any]:
         "hits": int(move.hits),
         "hit_points": int(move.hit_points),
         "objective": float(move.objective),
+        # Unrounded, like `objective` beside it and like the top-level
+        # gain_over_roll this must agree with: rounding here made one of two
+        # names for the same subtraction differ in the fourth decimal.
+        "gain_over_roll": (None if roll_objective is None
+                           else float(move.objective) - float(roll_objective)),
         "chip": str(move.chip or ""),
-        "label": str(move.label or ""),
+        "label": (str(move.label) or None),
     }
 
 
@@ -118,6 +135,8 @@ def serialize_recommendation(
     forecast: dict[str, Any] | None = None,
     squad_before: Sequence[int] | None = None,
     squad_source: str | None = None,
+    free_transfers_source: str | None = None,
+    gw0_xpts: dict[int, float] | None = None,
 ) -> dict[str, Any]:
     """The transfer_plan.json payload, pure and testable without a MILP.
 
@@ -131,14 +150,36 @@ def serialize_recommendation(
     "vs rolling, consensus forecast", not just "vs rolling".
     """
     fc = dict(forecast or {})
+    roll_obj = (float(rec.roll.objective) if rec.roll is not None else None)
     d0 = rec.chosen.plan.decisions[0]
-    chosen = _serialize_move(rec.chosen)
+    chosen = _serialize_move(rec.chosen, roll_objective=roll_obj)
+    xi = [int(c) for c in d0.starting_xi]
     chosen.update({
         "bank_after_tenths": int(rec.chosen.bank_after.tenths),
         "captain": int(d0.captain),
         "vice_captain": int(d0.vice_captain),
-        "starting_xi": [int(c) for c in d0.starting_xi],
+        "starting_xi": xi,
     })
+    # Why the armband landed where it did, in ONE currency, from ONE artefact.
+    # The MILP's captain is the argmax of the rank-aware CAPTAIN matrix, not of
+    # xPts (docs/models/rank_solver.md §4), so its pick can trail the highest
+    # projected starter and did on 2026-09-19: João Pedro 3.99 against
+    # B.Fernandes 6.14. Both numbers are the FORECAST'S, at the first gameweek
+    # of the horizon, so `forecast_source` names the currency for both and no
+    # reader has to join two tables to see the size of the disagreement.
+    if gw0_xpts:
+        cap_x = gw0_xpts.get(int(d0.captain))
+        chosen["captain_xpts"] = (None if cap_x is None else round(float(cap_x), 3))
+        scored = [(c, gw0_xpts[c]) for c in xi if c in gw0_xpts]
+        if scored:
+            top_code, top_x = max(scored, key=lambda kv: kv[1])
+            chosen["best_xi_captain"] = {"code": int(top_code),
+                                         "xpts": round(float(top_x), 3)}
+        else:
+            chosen["best_xi_captain"] = None
+    else:
+        chosen["captain_xpts"] = None
+        chosen["best_xi_captain"] = None
     before = sorted(int(c) for c in (squad_before or ()))
     # A plan is a statement about ONE squad. `out` and `in` are diffed against
     # the squad held when the solve ran, so a reader who applies them to a
@@ -166,13 +207,22 @@ def serialize_recommendation(
         "horizon_gws": [int(g) for g in rec.horizon],
         "objective_mode": str(rec.mode.value),
         "free_transfers": int(rec.free_transfers),
+        # WHERE the count came from, because two surfaces disagreed about it on
+        # 2026-09-19 (header 2, plan 1) and neither said which it was. "account"
+        # is FPL's own my-team limit, read with the manager's session;
+        # "accrual" is the engine's reconstruction from transfer history, which
+        # is a good guess and still a guess. See myteam/state.py's
+        # free-transfer block for the rule.
+        "free_transfers_source": (str(free_transfers_source)
+                                  if free_transfers_source else None),
         "unlimited_transfers": bool(rec.unlimited_transfers),
         "chosen": chosen,
         "roll": ({"objective": float(rec.roll.objective)}
                  if rec.roll is not None else None),
         "gain_over_roll": (float(rec.gain_over_roll)
                            if rec.gain_over_roll is not None else None),
-        "alternatives": [_serialize_move(m) for m in rec.alternatives[:5]],
+        "alternatives": [_serialize_move(m, roll_objective=roll_obj)
+                         for m in rec.alternatives[:5]],
         "hit_verdicts": [v.to_dict() for v in rec.hit_verdicts],
         "notes": [str(n) for n in rec.notes],
         "n_candidates_screened": int(rec.n_candidates_screened),
@@ -183,11 +233,9 @@ def serialize_recommendation(
         # The hit cap the headline honoured, and the optimiser's top move when
         # that cap displaced it: visible beside the headline, never silently gone.
         "max_hits": int(max_hits),
-        "unconstrained": (None if unconstrained is None else {
-            **_serialize_move(unconstrained),
-            "gain_over_roll": (float(unconstrained.objective - rec.roll.objective)
-                               if rec.roll is not None else None),
-        }),
+        "unconstrained": (None if unconstrained is None
+                          else _serialize_move(unconstrained,
+                                               roll_objective=roll_obj)),
         "chips_allowed": bool(chips_allowed),
         # The currency's provenance: which forecast the objective summed.
         "forecast_source": (str(fc["forecast_source"])
@@ -425,6 +473,11 @@ def recommend_cmd(
                     f"Headline held to max_hits={max_hits}: {within.describe(index)} "
                     f"(the unconstrained best took {unconstrained.hits} hit(s))"
                 )
+        # The first gameweek of the horizon, off the same table the objective
+        # summed, so the captain numbers in the artefact are the solver's own.
+        gw0 = fc_frame[fc_frame["gw"] == int(gws[0])]
+        gw0_xpts = {int(c): float(x)
+                    for c, x in zip(gw0["code"], gw0["xpts"], strict=False)}
         payload = serialize_recommendation(
             rec, generated_at=now, max_candidates=int(max_candidates),
             seconds=float(seconds), chips_allowed=bool(chips),
@@ -432,6 +485,8 @@ def recommend_cmd(
             forecast=provenance,
             squad_before=sorted(held_now),
             squad_source=getattr(state.provenance, "name", None),
+            free_transfers_source=getattr(state, "free_transfers_source", None),
+            gw0_xpts=gw0_xpts,
             constraints={
                 "horizon": int(horizon),
                 "max_hits": int(max_hits),

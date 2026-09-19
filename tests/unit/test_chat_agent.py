@@ -663,3 +663,29 @@ def test_steady_activity_outlives_the_idle_window(tmp_path):
     agent.start_turn(conv, "q")
     events = _wait_done(agent, conv, timeout=20.0)
     assert events[-1]["type"] == "done", [e["type"] for e in events]
+
+
+def test_the_system_prompt_requires_a_banner_when_a_panel_fell_back(tmp_path):
+    """The dogfooding failure of 2026-09-19: three squad tools raised
+    ParamsInvalid, the agent silently answered from `query` against the GW4
+    picks lock, and planned around a player sold before GW5. Every number in
+    that answer was real and the squad behind it was not. The rule that the
+    disclosure goes FIRST is the part worth pinning: a caveat under the
+    recommendation is read after the decision has been made."""
+    from fpl_edge.platform.chat_agent import CHARTER, PANEL_FALLBACK_RULE
+
+    agent, captured = _agent(tmp_path)
+    conv = agent.create_conversation()["conv_id"]
+    agent.start_turn(conv, "q")
+    _wait_done(agent, conv)
+    append = captured[0].system_prompt["append"]
+
+    assert PANEL_FALLBACK_RULE in CHARTER
+    assert PANEL_FALLBACK_RULE in append
+    # The header text itself, so a reworded rule that drops the machine
+    # -readable prefix fails here rather than in a transcript weeks later.
+    assert "panels that failed:" in append
+    assert "FIRST line" in append
+    # And that it outranks the doc wrapper, which is the one thing that could
+    # legitimately claim the top of an answer.
+    assert "```doc" in append and "including a ```doc block's title" in append

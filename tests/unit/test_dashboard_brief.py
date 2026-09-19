@@ -212,7 +212,7 @@ def _write_forecast(tmp_path, per_code, *, gw=3):
 
 def _write_transfer_plan(tmp_path, generated_at, *, out=(131,), into=(202,),
                          horizon=(3, 4, 5), gain=3.3, alternatives=None,
-                         hit_verdicts=(), chosen_hits=0):
+                         hit_verdicts=(), chosen_hits=0, captain=120):
     """The artefact `fpl recommend --commit` writes — Fwd2 -> PlanIn by
     default, with a losing alternative and the solved roll on the table."""
     if alternatives is None:
@@ -234,7 +234,7 @@ def _write_transfer_plan(tmp_path, generated_at, *, out=(131,), into=(202,),
                    "n_transfers": len(into), "hits": chosen_hits,
                    "hit_points": chosen_hits * 4, "bank_after_tenths": 5,
                    "chip": "", "objective": 123.4, "label": "",
-                   "captain": 120, "vice_captain": 121,
+                   "captain": int(captain), "vice_captain": 121,
                    "starting_xi": list(STARTERS)},
         "roll": {"objective": 120.1},
         "gain_over_roll": gain,
@@ -1486,3 +1486,119 @@ def test_the_brief_takes_no_entry_id_param_but_still_reports_one(db):
     other = context_for(Identity(user_id="abc123", entry_id=4242))
     mine = run_script("dashboard_brief", {}, db=db, ctx=other).result
     assert mine.get("entry_id") == 4242 or mine.get("empty") is True
+
+
+def test_a_solver_captain_far_below_the_consensus_loses_the_lead_of_the_row(
+        db, tmp_path):
+    """2026-09-19, live: the plan captained Joao Pedro at 3.99 consensus xPts,
+    75 percent to appear and benched by this page's own bench row, while the
+    consensus captain B.Fernandes stood at 6.14. The row led with the solver's
+    pick and printed the consensus captain underneath, so the page asserted an
+    armband a manager would never take and buried the reason.
+
+    The precedence now names the overrule: past captain_divergence_xpts on the
+    consensus currency, the consensus captain leads and the solver's pick is
+    the dissent. Here the plan captains Def5 (3.0) against Mid1 (5.4), a 2.4
+    gap against the 1.5 gate."""
+    _write_transfer_plan(tmp_path, "2099-09-05T15:00:00+00:00", captain=114)
+    brief = run_script("dashboard_brief", {}, db=db).result
+    cap = next(l for l in brief["verdict"]["lines"] if l["question"] == "captain")
+    n = cap["numbers"]
+
+    assert cap["rule"] == "consensus_captain_over_solver"
+    assert cap["pick"]["code"] == 120, "the row leads with the consensus captain"
+    assert cap["source_panel"] == "squad_overview"
+    # both numbers, both in the consensus currency the comparison was made in
+    assert n["pick_xpts"] == pytest.approx(5.4)
+    assert n["solver_captain_code"] == 114
+    assert n["solver_captain_xpts"] == pytest.approx(3.0)
+    assert n["consensus_lead_over_solver"] == pytest.approx(2.4)
+    assert n["divergence_gate"] == brief["thresholds"]["captain_divergence_xpts"]
+    assert n["consensus_lead_over_solver"] > n["divergence_gate"]
+    # the solver is overruled, not deleted: it is the first dissenting voice
+    voices = [d["voice"] for d in cap["dissent"]]
+    assert voices[0] == "solver"
+    solver = cap["dissent"][0]
+    assert solver["player"]["code"] == 114
+    assert solver["numbers"]["xpts"] == pytest.approx(3.0)
+    assert solver["source_panel"] == "solve_plan"
+    # The overruled pick's own number, in the currency that chose it. Without
+    # it the line says the solver wanted a 3.0 player, which is the consensus
+    # talking; the solver's reason for wanting him is its own forecast.
+    _write_forecast(tmp_path, {114: 7.5, 120: 4.0})
+    brief = run_script("dashboard_brief", {}, db=db).result
+    cap = next(l for l in brief["verdict"]["lines"] if l["question"] == "captain")
+    assert cap["rule"] == "consensus_captain_over_solver", (
+        "the flip is decided on the consensus currency, so the solver's own "
+        "forecast for its pick must not move the rule")
+    assert cap["numbers"]["solver_captain_solver_xpts"] == pytest.approx(7.5)
+    assert cap["numbers"]["solver_captain_xpts"] == pytest.approx(3.0)
+    assert cap["dissent"][0]["numbers"]["solver_xpts"] == pytest.approx(7.5)
+    # the rule id is in the schema's enum, so the payload still validates and
+    # the view has a case to render
+    rules = (script("dashboard_brief").result_schema["oneOf"][0]["properties"]
+             ["verdict"]["properties"]["lines"]["items"]["properties"]["rule"]
+             ["enum"])
+    assert "consensus_captain_over_solver" in rules
+    # and the precedence constant discloses it, since it is an overrule
+    assert "captain_divergence_xpts" in brief["verdict"]["precedence"]
+
+
+def test_inside_the_gate_the_solver_keeps_the_captain_row(db, tmp_path):
+    """The flip is the exception, not the new default. Def1 at 4.0 trails
+    Mid1's 5.4 by 1.4, inside the 1.5 gate, so precedence holds and the
+    consensus captain rides beside the pick as a number rather than taking
+    the row."""
+    _write_transfer_plan(tmp_path, "2099-09-05T15:00:00+00:00", captain=110)
+    brief = run_script("dashboard_brief", {}, db=db).result
+    cap = next(l for l in brief["verdict"]["lines"] if l["question"] == "captain")
+    n = cap["numbers"]
+
+    assert cap["rule"] == "solver_plan_captain"
+    assert cap["pick"]["code"] == 110
+    assert n["consensus_captain_code"] == 120
+    assert n["consensus_captain_xpts"] == pytest.approx(5.4)
+    assert "solver_captain_code" not in n
+    assert "solver" not in {d["voice"] for d in cap["dissent"]}
+
+
+def test_the_transfer_gain_is_served_with_the_unit_it_is_measured_in(db, tmp_path):
+    """The dashboard printed 14.35 with nothing beside it while the chat agent
+    measured the same move at 0.88 by summing the XI for one gameweek. Two
+    honest measures of one transfer, and neither surface named its own. The
+    unit is built from the plan's own horizon and currency, in the payload, so
+    the view prints it rather than composing it."""
+    _write_transfer_plan(tmp_path, "2099-09-05T15:00:00+00:00")
+    plan = run_script("dashboard_brief", {}, db=db).result["solve"]["plan"]
+    unit = plan["gain_over_roll_unit"]
+    assert "GW3" in unit and "GW3-5" in unit, "the plan's own horizon"
+    assert "expected_points" in unit, "the currency it names elsewhere"
+    assert "rolling" in unit
+
+
+def test_a_losing_alternative_carries_its_gain_not_only_its_objective(
+        db, tmp_path):
+    """The artefact's alternatives read as empty stubs on 2026-09-19: a blank
+    label, no gain, and an objective total with no baseline on the page to
+    subtract it from. The gain is the same subtraction the headline gets."""
+    _write_transfer_plan(tmp_path, "2099-09-05T15:00:00+00:00", alternatives=[
+        {"out": [121], "in": [201], "n_transfers": 1, "hits": 0,
+         "hit_points": 0, "objective": 122.0, "gain_over_roll": 1.9,
+         "chip": "", "label": None},
+    ])
+    plan = run_script("dashboard_brief", {}, db=db).result["solve"]["plan"]
+    alt = plan["alternatives"][0]
+    assert alt["gain_over_roll"] == pytest.approx(1.9)
+    assert alt["objective"] == pytest.approx(122.0)
+    assert alt["summary"], "the row still names the move"
+
+
+def test_an_older_plan_without_the_gain_field_serves_the_absence(db, tmp_path):
+    """A plan artefact written before the field existed must read as absent,
+    never as zero gain: a zero beside a losing move is a claim nobody made."""
+    _write_transfer_plan(tmp_path, "2099-09-05T15:00:00+00:00", alternatives=[
+        {"out": [121], "in": [201], "n_transfers": 1, "hits": 0,
+         "hit_points": 0, "objective": 122.0, "chip": "", "label": ""},
+    ])
+    plan = run_script("dashboard_brief", {}, db=db).result["solve"]["plan"]
+    assert plan["alternatives"][0]["gain_over_roll"] is None

@@ -36,6 +36,7 @@ from fpl_edge.platform.scripts.common import (
     next_gw,
     q,
     season_param,
+    source_dir,
 )
 from fpl_edge.platform.users import PRIVATE_GAP, UserContext, owner_context
 from fpl_edge.rules import rules
@@ -51,6 +52,44 @@ PARAMS: dict[str, Any] = {
     "properties": {
         "season": season_param(),
         "horizon": {"type": "integer", "minimum": 1, "maximum": 10, "default": 5},
+        "view": {
+            "type": "string",
+            "enum": ["grid", "headline"],
+            "default": "grid",
+            "description": "'grid' is the planner's own payload: your 15 plus "
+                           "every selectable player and their per-gameweek "
+                           "numbers. 'headline' drops the candidate pool and "
+                           "keeps the per-gameweek numbers for your 15 alone, "
+                           "so the plan, the armband and the alternatives fit "
+                           "inside a caller's payload cap. Both views carry "
+                           "`plan`.",
+        },
+    },
+}
+
+#: The committed plan's headline, lifted out of transfer_plan.json beside the
+#: warehouse this run was given. Codes only: the grid already resolves every
+#: name it needs, and inventing a second name table here would be a second
+#: place for a name to be wrong.
+_PLAN_HEADLINE = {
+    "type": ["object", "null"],
+    "additionalProperties": False,
+    "required": ["generated_at", "gw", "horizon_gws"],
+    "properties": {
+        "generated_at": {"type": ["string", "null"]},
+        "gw": {"type": ["integer", "null"]},
+        "horizon_gws": {"type": "array", "items": {"type": "integer"}},
+        "objective_mode": {"type": ["string", "null"]},
+        "forecast_source": {"type": ["string", "null"]},
+        "free_transfers": {"type": ["integer", "null"]},
+        "free_transfers_source": {"type": ["string", "null"]},
+        "gain_over_roll": {"type": ["number", "null"]},
+        "chosen": {"type": ["object", "null"]},
+        "alternatives": {"type": "array"},
+        "unconstrained": {"type": ["object", "null"]},
+        "notes": {"type": "array", "items": {"type": "string"}},
+        "reason": {"type": ["string", "null"],
+                   "description": "why there is no plan, when there is none"},
     },
 }
 
@@ -140,6 +179,13 @@ RESULT: dict[str, Any] = {
         },
         "as_of": {"type": ["string", "null"]},
         "notes": {"type": "array", "items": {"type": "string"}},
+        "view": {"enum": ["grid", "headline"]},
+        # The committed plan's headline. The MCP tool called `transfer_plan`
+        # wrapped this panel and got a grid with no plan in it, so an agent
+        # asking for the plan received 1,200 candidate players and none of the
+        # solver's own decisions. Served in both views because a grid without
+        # the standing plan beside it is the same gap.
+        "plan": _PLAN_HEADLINE,
     },
 }
 
@@ -150,11 +196,48 @@ _SOURCE_LABEL = {
 }
 
 
+def _plan_headline(wh) -> dict[str, Any] | None:
+    """transfer_plan.json's headline, from beside the warehouse this run used.
+
+    Codes and numbers only, verbatim. Freshness is not judged here: the
+    dashboard brief and routes_solve both own that rule and this panel must
+    not become a third opinion about whether a plan may be shown. The
+    artefact's own ``generated_at`` travels with it so the caller can judge.
+    """
+    import json
+    from pathlib import Path
+
+    path = Path(source_dir(wh)) / "transfer_plan.json"
+    if not path.exists():
+        return {"generated_at": None, "gw": None, "horizon_gws": [],
+                "reason": (f"no {path.name} beside this warehouse; the "
+                           f"auto_resolve task writes one after each "
+                           f"deadline, or solve now.")}
+    try:
+        plan = json.loads(path.read_text())
+    except (OSError, ValueError) as exc:
+        return {"generated_at": None, "gw": None, "horizon_gws": [],
+                "reason": f"{path.name} unreadable: {type(exc).__name__}: {exc}"}
+    keep = ("generated_at", "gw", "horizon_gws", "objective_mode",
+            "forecast_source", "free_transfers", "free_transfers_source",
+            "gain_over_roll", "chosen", "alternatives", "unconstrained",
+            "notes")
+    out = {k: plan.get(k) for k in keep if k in plan}
+    out.setdefault("generated_at", None)
+    out.setdefault("gw", None)
+    out.setdefault("horizon_gws", [])
+    out.setdefault("alternatives", [])
+    out.setdefault("notes", [])
+    out["reason"] = None
+    return out
+
+
 def planner_grid(
     wh,
     *,
     season: str,
     horizon: int = 5,
+    view: str = "grid",
     ctx: UserContext | None = None,
 ) -> dict[str, Any]:
     """Your 15, candidate ins, and per-GW consensus xPts for the planner grid.
@@ -422,6 +505,26 @@ def planner_grid(
         "sell-on fee on price rises is not modelled in v1."
     )
 
+    # The headline view is the same payload with the pool taken out: the 15,
+    # their per-gameweek numbers, the rules and the standing plan. That is what
+    # an agent asking "what does the plan say" needs, and it is two orders of
+    # magnitude smaller than 1,200 candidates times five gameweeks times four
+    # maps, which is what put this tool over its caller's payload cap.
+    headline = str(view) == "headline"
+    if headline:
+        keep_codes = {str(c) for c in squad_codes}
+        candidates = []
+        xpts = {k: v for k, v in xpts.items() if k in keep_codes}
+        spread = {k: v for k, v in spread.items() if k in keep_codes}
+        xmins = {k: v for k, v in xmins.items() if k in keep_codes}
+        p_appear = {k: v for k, v in p_appear.items() if k in keep_codes}
+        metrics = {k: v for k, v in metrics.items() if k in keep_codes}
+        notes.append(
+            "headline view: the candidate pool is empty and the per-gameweek "
+            "maps cover your 15 only. Ask for view=\"grid\" to browse "
+            "transfer targets."
+        )
+
     return {
         "season": season,
         "gws": gws,
@@ -435,6 +538,8 @@ def planner_grid(
         "p_appear": p_appear,
         "metrics": metrics,
         "metrics_note": metrics_note,
+        "view": "headline" if headline else "grid",
+        "plan": _plan_headline(wh),
         "ft_entering": max(0, min(ft, max_banked)),
         "bank_tenths": int(getattr(state, "bank_tenths", None) or 0),
         "rules": {

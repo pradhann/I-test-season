@@ -149,6 +149,22 @@ def test_reconstruct_prefers_private_over_manual_and_reports_provenance(tmp_path
     )
     assert state.provenance is Provenance.PRIVATE_API
     assert state.bank.tenths == 15  # observed from the account, not derived
+    # The free-transfer count, same rule as the bank: observed, not derived.
+    # my-team's transfers.limit was fetched and then ignored, so the engine
+    # reconstructed a number FPL had already told it. On 2026-09-19 that left
+    # the dashboard header reading 2 and the solver plan reading 1 with
+    # nothing on either surface saying which was which.
+    assert state.free_transfers == 2               # transfers.limit
+    assert state.free_transfers_source == "account"
+    # The accrual rule still runs and still reports its disagreement; it just
+    # no longer decides.
+    ft_checks = [c for c in state.checks if c.name == "free_transfers"]
+    assert ft_checks and ft_checks[0].ok is False
+    assert ft_checks[0].observed == "2" and ft_checks[0].derived == "0"
+    assert not any(d.startswith(("banked free transfers", "free transfers"))
+                   for d in state.derived), (
+        "an observed count is not a derived one, and the report lists only "
+        "what was derived")
 
 
 class _FakeTokens:

@@ -344,3 +344,78 @@ def test_a_trigger_runs_records_ui_and_the_poller_sees_it(
     # and the 202's run_id joins to the captured log file
     log = runner.log_path_for(run_id, log_dir=tmp_path / "logs")
     assert log.exists() and "hello from the trigger" in log.read_text()
+
+
+def test_a_prose_note_with_a_spend_line_still_gives_up_its_model_and_tokens(db):
+    """2026-09-19: content_analyse showed model None and tokens None on the
+    board while its ledger note ended with a fully populated spend line. The
+    panel only tried to parse a note whose WHOLE body was JSON, and the runner
+    writes prose with one spend line at the end. The line is parsed by the
+    module that writes it, so the format keeps one reader and one writer, and
+    fields_from says which shape answered."""
+    from fpl_edge.store.fetch_ledger import CallUsage, spend_note
+
+    spend = spend_note(CallUsage(model_reported="claude-opus-5",
+                                 tokens_in=1200, tokens_out=300),
+                       calls=7)
+    with Warehouse(db) as wh:
+        _ledger_row(wh, "content_analyse", status="ok", age_h=1.0,
+                    note=f"quiet: last 21d; +4 analyses\n{spend}")
+    rows = {r["id"]: r for r in run_script("pipeline_board", db=db).result["rows"]}
+
+    last = rows["content_analyse"]["last_run"]
+    assert last["model"] == "claude-opus-5"
+    assert last["tokens"] == 1500.0
+    # The whole note is still prose and still served raw, which is the fact
+    # note_is_json reports; the model came off the spend line beside it.
+    assert last["note_is_json"] is False
+    assert last["fields_from"] == "spend_line"
+    assert last["note"].startswith("quiet: last 21d")
+
+
+def test_the_last_run_age_is_rounded_where_it_is_computed(db):
+    """It was served with 15 decimals, so every consumer had to round and the
+    board, the API and the MCP tool could each round differently. 0.1 days is
+    2.4 hours, finer than any staleness rule on this page."""
+    with Warehouse(db) as wh:
+        _ledger_row(wh, "post_gw_settlement", status="ok", age_h=50.0)
+    rows = {r["id"]: r for r in run_script("pipeline_board", db=db).result["rows"]}
+
+    age = rows["post_gw_settlement"]["last_run_age_days"]
+    assert age == round(age, 1)
+    assert age == pytest.approx(2.1, abs=0.05)
+
+
+def test_a_deadline_task_waiting_for_its_next_firing_is_not_stale(db):
+    """The three deadline-relative rows read "stale 17 days" between
+    deadlines on 2026-09-19. True by their window and wrong as a signal:
+    final_solve_delivery has a 3h window and fires at T-4h, so it is past
+    that window for all but a few hours of every gameweek, by design. A task
+    whose next due instant is still ahead of it is waiting, not late.
+
+    The calendar rows are untouched, which is the other half of the rule: a
+    daily task that has not run is late by the same window."""
+    with Warehouse(db) as wh:
+        _ledger_row(wh, "final_solve_delivery", status="ok", age_h=400.0)
+        _ledger_row(wh, "content_fast_rss", status="ok", age_h=400.0)
+    rows = {r["id"]: r for r in run_script("pipeline_board", db=db).result["rows"]}
+
+    deadline_row = rows["final_solve_delivery"]
+    assert deadline_row["due_kind"] == "deadline"
+    if deadline_row["next_due"] is not None:
+        assert deadline_row["stale_by_window"] is False, (
+            "a deadline task with a future next_due is waiting, not late")
+    assert rows["content_fast_rss"]["stale_by_window"] is True
+
+
+def test_a_task_scheduled_after_the_deadline_reads_as_after_in_words(db):
+    """auto_resolve is the registry's only task on the far side of a
+    deadline: DeadlineRelative counts hours BEFORE one, so its offset is
+    negative and a naive render produced "T--26h before each deadline"."""
+    with Warehouse(db) as wh:
+        _ledger_row(wh, "auto_resolve", status="ok", age_h=1.0)
+    rows = {r["id"]: r for r in run_script("pipeline_board", db=db).result["rows"]}
+    row = rows["auto_resolve"]
+    assert row["due_kind"] == "deadline"
+    assert row["schedule"] == "T+26h after each deadline"
+    assert "--" not in row["schedule"]
