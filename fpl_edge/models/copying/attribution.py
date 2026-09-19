@@ -1,4 +1,4 @@
-"""Did copying them actually work? Measured after the fact, per decision.
+"""Whether copying them worked, measured after the fact, per decision.
 
 This module exists because of the failure mode that makes the entire copying
 thesis dangerous: **a manager being highly ranked does not make their next

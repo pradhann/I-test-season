@@ -231,7 +231,7 @@ Three edges inside a layer are named and allowed:
 | `fpl_edge.models` | `__init__.py` | fpl-edge | 1 |
 | `fpl_edge.models` | `contracts.py` | Interfaces every model implements | 203 |
 | `fpl_edge.models.copying` | `__init__.py` | Copying demonstrably skilled managers, and measuring whether it worked | 24 |
-| `fpl_edge.models.copying` | `attribution.py` | Did copying them actually work? Measured after the fact, per decision | 258 |
+| `fpl_edge.models.copying` | `attribution.py` | Whether copying them worked, measured after the fact, per decision | 258 |
 | `fpl_edge.models.copying` | `effects.py` | Effect sizes between cohorts of managers, with the multiplicity honestly paid for | 236 |
 | `fpl_edge.models.copying` | `features.py` | Strategy features: what a manager *did*, measured per season, never asserted | 398 |
 | `fpl_edge.models.copying` | `minileague.py` | Mini-league mode: a different game, played against people you can name | 249 |
