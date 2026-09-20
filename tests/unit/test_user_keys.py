@@ -363,3 +363,65 @@ def test_the_no_key_body_is_the_text_the_ui_prints() -> None:
         "remediation_url": "/#account",
     }
     assert build_router() is not None
+
+
+def _agent(tmp_path):
+    """An agent that spawns nothing: MCP enumeration points at no interpreter."""
+    from fpl_edge.platform import chat_agent
+
+    return chat_agent.ChatAgent(
+        root=tmp_path / "chat",
+        mcp_python="/nonexistent/python",
+        mcp_main=tmp_path / "no_main.py",
+    )
+
+
+# --- two kinds of credential, one per user ---------------------------------
+# A user spends their own Anthropic account (an API key) or their own Claude
+# subscription (a token from `claude setup-token`). Anthropic publishes no
+# OAuth flow that would let this server ask for the second grant on a
+# visitor's behalf, so both arrive the same way: the user mints the value on
+# their own machine and pastes it. The two go in different environment
+# variables and the SDK fails if they are swapped.
+
+def test_the_two_credential_kinds_are_told_apart_by_shape():
+    from fpl_edge.platform.auth import keys
+
+    api = "sk-ant-api03-" + "a" * 40
+    oat = "sk-ant-oat01-" + "b" * 40
+    assert keys.credential_kind(api) == "api_key"
+    assert keys.credential_kind(oat) == "oauth_token"
+
+
+def test_each_kind_names_the_variable_the_sdk_reads():
+    from fpl_edge.platform.auth import keys
+
+    assert keys.CREDENTIAL_ENV["api_key"] == "ANTHROPIC_API_KEY"
+    assert keys.CREDENTIAL_ENV["oauth_token"] == "CLAUDE_CODE_OAUTH_TOKEN"
+
+
+def test_a_subscription_token_reaches_the_sdk_in_its_own_variable(tmp_path):
+    """The whole point: the user's own subscription pays for their turn."""
+    from fpl_edge.platform import chat_agent
+
+    agent = _agent(tmp_path)
+    conv = agent.create_conversation()
+    oat = "sk-ant-oat01-" + "c" * 40
+    opts = agent.build_options(conv, None, anthropic_key=oat)
+    assert opts.env.get("CLAUDE_CODE_OAUTH_TOKEN") == oat
+    assert "ANTHROPIC_API_KEY" not in opts.env
+
+    api = "sk-ant-api03-" + "d" * 40
+    opts = agent.build_options(conv, None, anthropic_key=api)
+    assert opts.env.get("ANTHROPIC_API_KEY") == api
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in opts.env
+
+
+def test_a_subscription_token_in_the_server_environment_is_scrubbed(monkeypatch, tmp_path):
+    """One left in this process would spend the operator's own plan."""
+    import os
+
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "sk-ant-oat01-" + "e" * 40)
+    agent = _agent(tmp_path)
+    agent._scrub_environment()
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in os.environ

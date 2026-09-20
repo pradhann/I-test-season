@@ -47,14 +47,45 @@ UTC = dt.UTC
 #: own words.
 KEY_RE = re.compile(r"^sk-ant-[A-Za-z0-9_-]{20,}$")
 
+#: A Claude Code OAuth token, which a user mints from their own Claude
+#: subscription with ``claude setup-token``. It is a second kind of
+#: credential, not a second format of the first: the SDK reads it from
+#: ``CLAUDE_CODE_OAUTH_TOKEN`` and an API key from ``ANTHROPIC_API_KEY``, and
+#: putting either in the other variable fails. Anthropic publishes no OAuth
+#: flow that would let this server ask for that grant on a visitor's behalf
+#: (AUTH.md section 1), so the user mints the token on their own machine and
+#: pastes it, exactly as they paste an API key. The value is what gets a
+#: subscription's own allowance spent on that user's turns instead of the
+#: operator's.
+OAUTH_TOKEN_RE = re.compile(r"^sk-ant-oat[0-9]{2}-[A-Za-z0-9_-]{20,}$")
+
+
+def credential_kind(secret: str) -> str:
+    """``"oauth_token"`` or ``"api_key"``, by shape.
+
+    The order matters: an OAuth token also starts ``sk-ant-``, so the
+    narrower pattern is tried first.
+    """
+    return "oauth_token" if OAUTH_TOKEN_RE.match(secret or "") else "api_key"
+
+
+#: The environment variable each kind belongs in, read by the Agent SDK from
+#: ``ClaudeAgentOptions.env``.
+CREDENTIAL_ENV = {
+    "api_key": "ANTHROPIC_API_KEY",
+    "oauth_token": "CLAUDE_CODE_OAUTH_TOKEN",
+}
+
 #: Which secret encrypted a row. Version 1 is ``USER_KEY_ENC_SECRET``;
 #: version 0 is a row written before the current secret and readable only
 #: while ``USER_KEY_ENC_SECRET_PREV`` is set.
 CURRENT_KEY_VERSION = 1
 
 EMPTY_PASTE = "paste a key, the field was empty"
-BAD_SHAPE = ("that does not look like an Anthropic API key. It starts with "
-             "sk-ant-")
+BAD_SHAPE = ("that does not look like an Anthropic credential. Paste either "
+             "an API key from console.anthropic.com, which starts sk-ant-, or "
+             "a token from `claude setup-token`, which starts sk-ant-oat and "
+             "spends your own Claude subscription")
 ROTATED_OUT = ("your stored key could not be read after a server key "
                "rotation. Paste it again on the Account tab.")
 

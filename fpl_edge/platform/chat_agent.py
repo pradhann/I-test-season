@@ -778,6 +778,11 @@ class ChatAgent:
         """
         for var in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
                     "ANTHROPIC_BASE_URL", "ANTHROPIC_CUSTOM_HEADERS",
+                    # A token from `claude setup-token` spends a Claude
+                    # subscription. One left in this process would be
+                    # inherited by a turn run for somebody else, which is the
+                    # operator paying for a stranger's message.
+                    "CLAUDE_CODE_OAUTH_TOKEN",
                     "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT"):
             os.environ.pop(var, None)
 
@@ -833,7 +838,17 @@ class ChatAgent:
           turn starts, so there is no path from a stranger's message to the
           operator's subscription.
         """
-        env = {"ANTHROPIC_API_KEY": anthropic_key} if anthropic_key else {}
+        # Which variable the credential belongs in depends on what it is. An
+        # API key is metered on the user's Anthropic account; a token from
+        # `claude setup-token` spends that user's own Claude subscription.
+        # The SDK reads ANTHROPIC_API_KEY and CLAUDE_CODE_OAUTH_TOKEN from
+        # this dict, and putting either value in the other name fails.
+        env: dict[str, str] = {}
+        if anthropic_key:
+            from fpl_edge.platform.auth import keys as key_store
+
+            env[key_store.CREDENTIAL_ENV[
+                key_store.credential_kind(anthropic_key)]] = anthropic_key
         return ClaudeAgentOptions(
             env=env,
             cwd=str(self.cwd),

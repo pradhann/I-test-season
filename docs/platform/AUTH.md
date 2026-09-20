@@ -42,9 +42,22 @@ that login, never reads `ANTHROPIC_*` from the server process environment, and
 never spawns a CLI that would fall back to a machine-level credential. Section
 7 gives the mechanism and section 10 gives the test that proves it.
 
-**If the owner wants users on their own Claude Max subscriptions, that is not
-something this codebase can build.** Not with more effort, not with a
-different library, not by proxying the CLI. The grant does not exist. The two
+**Correction, 2026-09-20.** The paragraph below said a user could not spend
+their own Claude subscription. That is right about a sign-in flow and wrong
+about the outcome. `claude setup-token` mints a long-lived token from the
+user's own subscription on the user's own machine, and the Agent SDK reads
+that token from `CLAUDE_CODE_OAUTH_TOKEN` in `ClaudeAgentOptions.env`, beside
+`ANTHROPIC_API_KEY`. So a user pastes either an API key, billed on their
+Anthropic account, or a setup token, spending their own subscription, and the
+server puts each in the variable its kind belongs in. What remains true is
+that this server cannot ask for that grant: there is no OAuth flow to send a
+visitor through, so the user mints the value themselves and pastes it, which
+is the same shape as the API key it sits beside.
+
+**If the owner wants users signed in to their Claude Max subscriptions
+through an OAuth flow, that is not something this codebase can build.** Not
+with more effort, not with a different library, not by proxying the CLI. The
+grant does not exist. The two
 options that do exist are the one specified here (each user brings an API key
 and pays for their own tokens) or the operator paying for everyone from a
 single operator key, which is a billing decision and a rate-limit decision,

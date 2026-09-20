@@ -500,24 +500,26 @@ export default async function account(host) {
   /* The Anthropic key. Its own block, above the FPL paste, because the two
      credentials are unrelated and the FPL one is the longer job. */
   const keyBlock = el("div", "acct-entry");
-  keyBlock.appendChild(el("h3", null, "Your Anthropic API key"));
+  keyBlock.appendChild(el("h3", null, "Your Claude credential"));
   keyBlock.appendChild(el("div", "sub",
-    "Chat and any model call you trigger run on your own key and are billed "
-    + "to your own Anthropic account. Create one at console.anthropic.com, "
-    + "paste it here, and revoke it there whenever you want."));
+    "Chat and any model call you trigger run on your own credential, never "
+    + "the operator's. Two kinds work. An API key from console.anthropic.com "
+    + "bills your own Anthropic account. A token from `claude setup-token`, "
+    + "run on your own machine, spends your own Claude subscription instead. "
+    + "Paste either one; revoke it at Anthropic whenever you want."));
   const keyHost = el("div", "acct-key-host");
   keyHost.setAttribute("aria-live", "polite");
   keyBlock.appendChild(keyHost);
   const keyForm = el("form", "acct-form");
   keyForm.setAttribute("autocomplete", "off");
-  const keyLabel = el("label", "acct-label", "API key");
+  const keyLabel = el("label", "acct-label", "API key or setup token");
   keyLabel.htmlFor = "acct-key";
   const keyInput = el("input", "acct-entry-input");
   keyInput.id = "acct-key";
   keyInput.type = "password";
   keyInput.autocomplete = "off";
   keyInput.spellcheck = false;
-  keyInput.placeholder = "sk-ant-...";
+  keyInput.placeholder = "sk-ant-... or sk-ant-oat...";
   keyInput.setAttribute("aria-describedby", "acct-key-help");
   const keyHelp = el("div", "sub",
     "Stored encrypted on the server and never shown again. The page clears "
