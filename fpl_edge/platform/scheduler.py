@@ -286,6 +286,19 @@ class Scheduler:
         self.state.last_tick_fired = [
             f"{f.task}:{f.outcome}" for f in fired if hasattr(f, "task")
         ]
+        # One line per tick, at INFO, because a scheduler that runs silently
+        # cannot be told apart from one that died. /api/health carries this
+        # state, but that route trims to {ok, now} for a caller with no
+        # session, so on a deployment where sign-in is not configured yet the
+        # log is the only place an operator can see the loop is alive.
+        ran = [f for f in self.state.last_tick_fired
+               if not f.endswith(":skipped_stale")]
+        log.info(
+            "scheduler tick %d in %.1fs: %d task(s) fired, %d skipped stale%s",
+            self.state.ticks, self.state.last_tick_seconds or 0.0,
+            len(ran), len(self.state.last_tick_fired) - len(ran),
+            (": " + ", ".join(ran)) if ran else "",
+        )
         return report
 
     async def _loop(self) -> None:

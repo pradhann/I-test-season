@@ -297,3 +297,24 @@ def test_the_loop_ticks_immediately_and_stops_on_request(db):
 
     asyncio.run(_drive())
     assert len(ticks) >= 2, "the loop did not tick repeatedly"
+
+
+def test_every_tick_reports_one_line_so_a_dead_loop_is_visible(db, caplog):
+    """A scheduler that runs silently cannot be told apart from one that died.
+
+    ``/api/health`` carries the tick state, but that route trims to
+    ``{ok, now}`` for a caller with no session, so on a deployment where
+    sign-in is not configured the log is the only place an operator can see
+    the loop is alive. This was found on the live Railway service on
+    2026-09-20, where nothing could establish whether the scheduler was
+    ticking.
+    """
+    import logging
+
+    loop = sched.Scheduler(db)
+    with caplog.at_level(logging.INFO, logger="fpl_edge.platform.scheduler"):
+        loop.run_one_tick()
+    lines = [r.getMessage() for r in caplog.records
+             if r.name == "fpl_edge.platform.scheduler"]
+    assert any("scheduler tick" in line for line in lines), lines
+    assert any("task(s) fired" in line for line in lines), lines
