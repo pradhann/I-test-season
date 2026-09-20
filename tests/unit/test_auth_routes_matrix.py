@@ -293,7 +293,13 @@ def test_anonymous_health_is_the_reduced_body(anon, monkeypatch,
     not move; the warehouse path, boot report, migrations and scheduler
     state describe this deployment and are operator fields."""
     body = anon.get("/api/health").json()
-    assert set(body) == {"ok", "now"}, body
+    # model_runtime joined the public fields on 2026-09-20: it says what this
+    # deployment can do, not who is asking, and without it a feature check
+    # cannot tell that chat, the analysis brief and claim extraction are dead
+    # for want of the CLI they spawn, which is how three features stayed
+    # broken on a service whose healthcheck was green.
+    assert set(body) == {"ok", "now", "model_runtime"}, body
+    assert set(body["model_runtime"]) == {"present", "version"}, body
 
 
 def test_the_operator_health_keeps_every_field(monkeypatch, tmp_path) -> None:

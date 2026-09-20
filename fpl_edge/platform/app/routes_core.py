@@ -25,7 +25,37 @@ from fpl_edge.platform.users import UserContext, current_user
 #: The health fields an anonymous caller sees. AUTH.md row 1: every other
 #: field on that payload describes this deployment's own infrastructure, and
 #: ``warehouse`` is a filesystem path on the host.
-PUBLIC_HEALTH_FIELDS = ("ok", "now")
+#: What an anonymous caller sees of the health payload. ``model_runtime``
+#: is here because it describes what this deployment can do rather than
+#: who is asking, and because a feature check that cannot see it cannot
+#: catch a deployment whose chat, brief and claim extraction are dead.
+PUBLIC_HEALTH_FIELDS = ("ok", "now", "model_runtime")
+
+
+def model_runtime() -> dict[str, Any]:
+    """Whether the Claude Code CLI this deployment needs is installed.
+
+    Chat, the analysis brief and claim extraction all spawn that binary
+    through claude_agent_sdk. On 2026-09-20 a deployment served every panel,
+    passed its healthcheck and passed `make deploy-check` while all three
+    were dead, because the image did not carry it and nothing asked. The
+    answer rides in the public part of the health payload on purpose: it
+    says what this deployment can do, not who is asking, and a check that
+    cannot see it cannot catch the outage again.
+    """
+    import shutil
+    import subprocess
+
+    path = shutil.which("claude")
+    if not path:
+        return {"present": False, "version": None}
+    try:
+        out = subprocess.run([path, "--version"], capture_output=True,
+                             text=True, timeout=20.0)
+        version = (out.stdout or out.stderr).strip().splitlines()[0] if out.returncode == 0 else None
+    except Exception:  # noqa: BLE001 - absence is the answer, not a 500
+        version = None
+    return {"present": True, "version": version}
 
 
 def caller_tiers(request: Request) -> frozenset[str]:
@@ -81,6 +111,7 @@ def _core_router(deps: Deps) -> APIRouter:
             "warehouse": str(db_path),
             "warehouse_present": db_path.exists(),
             "now": dt.datetime.now(UTC).isoformat(),
+            "model_runtime": model_runtime(),
         }
         report = boot_mod.LAST_REPORT
         if report is not None and report.db_path != str(db_path):
