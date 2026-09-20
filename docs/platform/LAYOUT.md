@@ -85,7 +85,7 @@ Three edges inside a layer are named and allowed:
 
 <!-- BEGIN GENERATED: scripts/module_layout.py -->
 
-342 modules, 114,021 lines.
+342 modules, 114,052 lines.
 
 | Package | Module | Responsibility | Lines |
 |---|---|---|---:|
@@ -324,7 +324,7 @@ Three edges inside a layer are named and allowed:
 | `fpl_edge.platform.app` | `helpers.py` | Shared by every route group: the request models, the dependency bundle they are handed, and the three warehouse readers two of them call | 324 |
 | `fpl_edge.platform.app` | `routes_chat.py` | The briefing artefact and the agent conversations, including the chart assets a turn produced | 173 |
 | `fpl_edge.platform.app` | `routes_content.py` | Content source state and the per-source fetch, the pasted-link job with its preview gate, and the three item annotation routes | 350 |
-| `fpl_edge.platform.app` | `routes_core.py` | Health, the deadline clock, the panel registry, the script runner and the guarded query path | 254 |
+| `fpl_edge.platform.app` | `routes_core.py` | Health, the deadline clock, the panel registry, the script runner and the guarded query path | 285 |
 | `fpl_edge.platform.app` | `routes_inbox.py` | Deliveries, and the monitor definitions read back off the deadline DAG | 56 |
 | `fpl_edge.platform.app` | `routes_pipelines.py` | The browser's one way to start a registry pipeline, plus its poller | 229 |
 | `fpl_edge.platform.app` | `routes_players.py` | The on-demand Understat profile fetch: one POST to start it, one GET to poll it | 78 |
