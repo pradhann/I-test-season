@@ -318,3 +318,25 @@ def test_every_tick_reports_one_line_so_a_dead_loop_is_visible(db, caplog):
              if r.name == "fpl_edge.platform.scheduler"]
     assert any("scheduler tick" in line for line in lines), lines
     assert any("task(s) fired" in line for line in lines), lines
+
+
+def test_the_package_logger_reaches_the_container_log(db, monkeypatch, capsys):
+    """A deployment runs uvicorn --factory and never enters the CLI, where
+    basicConfig lives, so without this the scheduler's per-tick line is
+    dropped by the default WARNING root level. Shipped and invisible is the
+    state this test exists to prevent."""
+    import logging
+
+    from fpl_edge.platform.app.factory import create_app
+
+    root = logging.getLogger()
+    saved_handlers, saved_level = root.handlers[:], root.level
+    logging.getLogger("fpl_edge").setLevel(logging.NOTSET)
+    root.handlers = []
+    try:
+        create_app(db)
+        assert logging.getLogger(
+            "fpl_edge.platform.scheduler").isEnabledFor(logging.INFO)
+        assert root.handlers, "nothing would carry the record to stdout"
+    finally:
+        root.handlers, root.level = saved_handlers, saved_level

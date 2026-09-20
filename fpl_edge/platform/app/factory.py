@@ -101,12 +101,36 @@ def _chat_root_for(db_path: Path, chat_root: Path | str | None) -> Path:
     return db_path.parent / "chat"
 
 
+def _configure_logging() -> None:
+    """Make the package's own INFO records reach the container log.
+
+    ``fpl platform serve`` calls ``logging.basicConfig`` (cli/main.py), but a
+    deployment runs ``uvicorn --factory`` and never enters the CLI, so the
+    root logger keeps its default WARNING and every ``log.info`` in the
+    package is discarded. That is how the scheduler's per-tick line went
+    missing on Railway on 2026-09-20: shipped, deployed, and invisible.
+
+    Only the ``fpl_edge`` logger is lowered, so uvicorn keeps its own
+    configuration and a library's debug chatter stays out.
+    """
+    import logging
+
+    root = logging.getLogger()
+    if not root.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter(
+            "%(asctime)s %(levelname)s %(name)s %(message)s"))
+        root.addHandler(handler)
+    logging.getLogger("fpl_edge").setLevel(logging.INFO)
+
+
 def create_app(db: Path | str = DEFAULT_DB,
                chat_root: Path | str | None = None) -> FastAPI:
     """Build the app. ``db`` is injectable so tests can seed a tmp warehouse;
     ``chat_root`` likewise for the agent conversation store."""
     from fpl_edge.platform.chat_agent import ChatAgent
 
+    _configure_logging()
     db_path = Path(db)
     chat_agent = ChatAgent(root=_chat_root_for(db_path, chat_root))
     app = FastAPI(
