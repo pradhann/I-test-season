@@ -289,3 +289,56 @@ def test_python_can_import_every_spend_site() -> None:
                  "fpl_edge.platform.briefing_intel",
                  "fpl_edge.platform.chat_agent"):
         assert name in sys.modules or __import__(name)
+
+
+# --- the runtime claim extraction spawns -------------------------------------
+# Chat and the analysis brief go through claude_agent_sdk, whose discovery
+# prefers a binary the wheel ships. Claim extraction shells out itself and
+# looked only at PATH, so in a container it found nothing while the other two
+# worked. It was the one model feature that was broken on Railway, and the
+# fix is to ask the SDK rather than to download a second copy of the same
+# binary into the image.
+
+def test_the_cli_falls_back_to_the_runtime_the_sdk_ships(monkeypatch, tmp_path):
+    import shutil
+    from pathlib import Path
+
+    from fpl_edge.ingest.content import analyze
+
+    bundled_root = tmp_path / "claude_agent_sdk"
+    (bundled_root / "_bundled").mkdir(parents=True)
+    binary = bundled_root / "_bundled" / "claude"
+    binary.write_text("#!/bin/sh\nexit 0\n")
+
+    class _Fake:
+        __file__ = str(bundled_root / "__init__.py")
+
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path / "nohome"))
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+    monkeypatch.setitem(__import__("sys").modules, "claude_agent_sdk", _Fake)
+    assert analyze._find_claude_cli() == str(binary)
+
+
+def test_path_still_wins_over_the_bundled_copy(monkeypatch, tmp_path):
+    """The owner's Mac must keep using its own install, not the wheel's."""
+    import shutil
+    from pathlib import Path
+
+    from fpl_edge.ingest.content import analyze
+
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path / "nohome"))
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/local/bin/claude")
+    assert analyze._find_claude_cli() == "/usr/local/bin/claude"
+
+
+def test_no_runtime_anywhere_is_none_and_not_a_crash(monkeypatch, tmp_path):
+    import shutil
+    import sys
+    from pathlib import Path
+
+    from fpl_edge.ingest.content import analyze
+
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path / "nohome"))
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+    monkeypatch.setitem(sys.modules, "claude_agent_sdk", None)
+    assert analyze._find_claude_cli() is None

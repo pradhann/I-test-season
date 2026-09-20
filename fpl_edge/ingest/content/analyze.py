@@ -522,7 +522,23 @@ def _find_claude_cli() -> str | None:
     native = Path.home() / ".local/bin/claude"
     if native.exists():
         return str(native)
-    return shutil.which("claude")
+    found = shutil.which("claude")
+    if found:
+        return found
+    # The claude-agent-sdk wheel ships its own binary and the SDK's own
+    # discovery prefers it over PATH. That is why chat and the briefing
+    # run in a container carrying no CLI on PATH, while this function
+    # answered None and claim extraction was the one model feature
+    # actually broken there. Asking the SDK keeps one runtime in the
+    # image instead of a second 232 MB download, and keeps its version
+    # matched to the library that speaks its protocol.
+    try:
+        import claude_agent_sdk
+
+        bundled = Path(claude_agent_sdk.__file__).parent / "_bundled" / "claude"
+    except Exception:  # noqa: BLE001 - absence is the answer, not a crash
+        return None
+    return str(bundled) if bundled.exists() else None
 
 
 def _analyze_via_cli(cli: str, *, title: str, creator: str, body: str,
