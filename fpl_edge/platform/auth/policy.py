@@ -28,7 +28,7 @@ THE TIERS
 key, and it applies to a signed-in person who is not the operator. The
 operator's own model credential is the Claude Code CLI login on the machine
 the server runs on, which is the arrangement the engine has today and the one
-``briefing_intel`` and the content pipeline keep using.
+the scheduled ``briefing_intel`` task and the content pipeline keep using.
 
 WHY ONE DEPENDENCY RATHER THAN FOUR
 
@@ -99,10 +99,15 @@ ROUTES: dict[tuple[str, str], str] = {
     ("POST", "/api/content/items/{item_id}/gameweek"): OPERATOR,
 
     # -- the briefing artefact ---------------------------------------------
-    # Read only. The salience pass that writes it is the briefing_intel task,
-    # which runs under the operator's own credential and is triggered through
-    # POST /api/pipelines/{task_id}/run, an operator row above.
+    # The GET reads the caller's own artefact. The POST runs the salience
+    # pass for the caller, on the caller's own credential, which is why it
+    # carries the chat tier and a KEY_REQUIRED row below rather than the
+    # operator tier: a manager runs their own brief and pays for it, and
+    # nothing runs on a schedule for them. The operator's scheduled
+    # briefing_intel task still runs on the machine's own CLI login and is
+    # still triggered through POST /api/pipelines/{task_id}/run above.
     ("GET", "/api/briefing"): SESSION,
+    ("POST", "/api/briefing"): SESSION,
 
     # -- chat ---------------------------------------------------------------
     ("POST", "/api/conversations"): SESSION,
@@ -149,6 +154,7 @@ ROUTES: dict[tuple[str, str], str] = {
 #: is not the operator.
 KEY_REQUIRED: frozenset[tuple[str, str]] = frozenset({
     ("POST", "/api/conversations/{conv_id}/chat"),
+    ("POST", "/api/briefing"),
 })
 
 #: Panel script -> tier, the tier for ``POST /api/scripts/{name}/run``.

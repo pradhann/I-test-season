@@ -843,12 +843,9 @@ class ChatAgent:
         # `claude setup-token` spends that user's own Claude subscription.
         # The SDK reads ANTHROPIC_API_KEY and CLAUDE_CODE_OAUTH_TOKEN from
         # this dict, and putting either value in the other name fails.
-        env: dict[str, str] = {}
-        if anthropic_key:
-            from fpl_edge.platform.auth import keys as key_store
+        from fpl_edge.platform.auth import keys as key_store
 
-            env[key_store.CREDENTIAL_ENV[
-                key_store.credential_kind(anthropic_key)]] = anthropic_key
+        env: dict[str, str] = key_store.credential_env(anthropic_key)
         return ClaudeAgentOptions(
             env=env,
             cwd=str(self.cwd),

@@ -22,9 +22,15 @@ The shape of the pass:
    ``meta_prompt_hash`` so a briefing is traceable to the exact instructions
    that produced it.
 3. **One model call** — ``claude-agent-sdk``, the same auth posture as
-   ``chat_agent.py``: the CLI's own login is the auth, this server holds no
-   API key, and the ANTHROPIC_* environment is scrubbed before the SDK spawns
-   anything. ``tools=[]``, no MCP — pure synthesis over the provided JSON.
+   ``chat_agent.py``: this server holds no API key, the ANTHROPIC_*
+   environment is scrubbed before the SDK spawns anything, and the credential
+   for the call arrives in ``ClaudeAgentOptions.env`` or not at all.
+   ``tools=[]`` and no MCP, so the call is pure synthesis over the provided
+   JSON. Two callers, two credentials, one rule about which.
+   :func:`_run_model` is the scheduled pass and passes no credential, so it
+   runs on the machine's own Claude CLI login, which is the operator's.
+   :func:`generate_for_user` is the request path and runs on the credential
+   its caller hands it. Neither reaches for a credential of its own.
 4. **Validation before write** — every kept item must quote numbers, name
    source panels that were actually in the input, and reference only player
    codes present in the input. Rejects are counted (``rejected_n``), never
@@ -35,11 +41,12 @@ The shape of the pass:
    records status ``error`` with the reason. The ledger observes, never
    swallows.
 
-Artefact: ``briefing_intel.json`` next to the warehouse file, written
-atomically::
+Artefact: ``briefing_intel.json``, under the caller's own user directory and
+next to the warehouse file for the owner, written atomically::
 
-    {generated_at, model, meta_prompt_hash, input_as_of, items,
-     rejected_n, duration_s}
+    {generated_at, model, model_reported, tokens_in, tokens_out,
+     meta_prompt_hash, input_as_of, items, rejected_n, rejected_reasons,
+     duration_s, spend}
 """
 
 from __future__ import annotations
@@ -50,7 +57,9 @@ import hashlib
 import json
 import os
 import re
+import threading
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -416,13 +425,21 @@ def build_prompt(meta_text: str, context: dict[str, Any],
 def _scrub_environment() -> None:
     """Remove auth/nesting variables the SDK child must never inherit.
 
-    Copied from chat_agent.py (same posture, same reasons): the CLI's own
-    login is the auth, this server has no legitimate use for any of these,
-    and a leaked ANTHROPIC_BASE_URL once sent the CLI's OAuth token to a dev
-    proxy that rejected it as revoked.
+    Copied from chat_agent.py (same posture, same reasons): this server has
+    no legitimate use for any of these, and a leaked ANTHROPIC_BASE_URL once
+    sent the CLI's OAuth token to a dev proxy that rejected it as revoked.
+
+    It matters more now that one caller of this module runs on a manager's
+    own credential. With nothing left in ``os.environ`` for the CLI to
+    inherit, a run whose ``env`` failed to arrive fails loudly with an auth
+    error instead of spending whatever login the server process happened
+    to be carrying. ``CLAUDE_CODE_OAUTH_TOKEN`` is cleared for that
+    reason and was not in this list while the scheduled pass was the only
+    caller.
     """
     for var in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
                 "ANTHROPIC_BASE_URL", "ANTHROPIC_CUSTOM_HEADERS",
+                "CLAUDE_CODE_OAUTH_TOKEN",
                 "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT"):
         os.environ.pop(var, None)
 
@@ -466,31 +483,26 @@ def _usage_from_result(msg: Any) -> CallUsage:
     )
 
 
-def _run_model(prompt: str, *, timeout_s: float = MODEL_TIMEOUT_S) -> ModelAnswer:
-    """One query() against the Max-plan CLI via claude-agent-sdk.
+def _ask_model(prompt: str, *, env: Mapping[str, str],
+               timeout_s: float = MODEL_TIMEOUT_S) -> ModelAnswer:
+    """One query() through claude-agent-sdk, on the credential in ``env``.
 
-    Same auth posture as chat_agent.py: no API key here, environment
-    scrubbed, ``tools=[]`` (every built-in disabled), no MCP servers, so this
-    is pure synthesis over the provided JSON. Returns the final assistant
-    text with the reported spend beside it; raises
-    :class:`BriefingIntelError` on anything else.
+    ``tools=[]`` (every built-in disabled), no MCP servers, so this is pure
+    synthesis over the provided JSON. Returns the final assistant text with
+    the reported spend beside it; raises :class:`BriefingIntelError` on
+    anything else.
 
-    THE OWNER'S CREDENTIAL, AND ONLY THE OWNER'S. This function is not a
-    request path. It runs from the ``briefing_intel`` task in
-    ``fpl_edge/pipelines/registry.py``, which shells out to
-    ``python -m fpl_edge.platform.briefing_intel`` on a schedule with no user
-    and no session, and from the operator-tier ``POST /api/pipelines/
-    {task_id}/run``. There is nobody to read a key from, so it stays on the
-    operator's own Claude CLI login with ``ANTHROPIC_*`` scrubbed, exactly as
-    it runs today.
+    ``env`` is handed to the SDK for this one subprocess and nothing else. It
+    is never written to ``os.environ``, never put in argv and never logged:
+    the value is a credential, and the process environment is shared by every
+    request this server is serving at the same time. ``_scrub_environment``
+    runs first for the reason chat_agent.py gives, which is that with nothing
+    left in ``os.environ`` for the CLI to inherit, a caller whose credential
+    failed to arrive gets an auth error rather than somebody else's plan
+    paying for the call.
 
-    Two consequences, both enforced by the per-user key suite. This
-    module imports nothing from the per-user key store in
-    fpl_edge/platform/auth/, so a future
-    edit that reaches for a manager's key fails the suite rather than the
-    review. And the artefact it writes is per-user through
-    :func:`artefact_path`, so a second manager reads their own file or an
-    empty state, never the owner's.
+    This function takes no view on whose credential that is. The two entry
+    points below decide, and they are the only two.
     """
     try:
         from claude_agent_sdk import (
@@ -506,6 +518,7 @@ def _run_model(prompt: str, *, timeout_s: float = MODEL_TIMEOUT_S) -> ModelAnswe
 
     _scrub_environment()
     options = ClaudeAgentOptions(
+        env=dict(env),
         cwd=str(_REPO_ROOT),
         model=MODEL,
         tools=[],
@@ -546,6 +559,53 @@ def _run_model(prompt: str, *, timeout_s: float = MODEL_TIMEOUT_S) -> ModelAnswe
     except Exception as exc:  # noqa: BLE001 - one honest error class for the ledger
         raise BriefingIntelError(
             f"model call failed: {type(exc).__name__}: {exc}") from exc
+
+
+def _run_model(prompt: str, *, timeout_s: float = MODEL_TIMEOUT_S) -> ModelAnswer:
+    """The scheduled pass's model call, on the machine's own CLI login.
+
+    THE OWNER'S CREDENTIAL, AND ONLY THE OWNER'S. This function is not a
+    request path. It runs from the ``briefing_intel`` task in
+    ``fpl_edge/pipelines/registry.py``, which shells out to
+    ``python -m fpl_edge.platform.briefing_intel`` on a schedule with no user
+    and no session, and from the operator-tier ``POST /api/pipelines/
+    {task_id}/run``. There is nobody to read a credential from, so it passes
+    none and the CLI falls back to the login on the machine the server runs
+    on, which is the operator's, exactly as it runs today. The empty ``env``
+    is the whole of that rule and it is an argument, so a reader can see it
+    rather than infer it.
+
+    A request for one manager's own briefing does not come through here. It
+    comes through :func:`generate_for_user`, which is handed that manager's
+    credential by the route and passes it to :func:`_ask_model` in ``env``.
+
+    THE RULE THAT STILL HOLDS, in the stronger form the second entry point
+    needs. This module imports nothing from the per-user key store in
+    ``fpl_edge/platform/auth/`` and cannot look a credential up: it has no
+    user id, no store and no decryption. A credential either arrives as an
+    argument from the caller that already holds it, or the call runs on the
+    machine's own login. The per-user key suite enforces the import ban, so
+    an edit that reaches for a manager's key here fails the suite rather than
+    the review. And the artefact is per-user through :func:`artefact_path`,
+    so a second manager reads their own file or an empty state, never the
+    owner's.
+    """
+    return _ask_model(prompt, env={}, timeout_s=timeout_s)
+
+
+def run_model_for(credential_env: Mapping[str, str], *,
+                  timeout_s: float = MODEL_TIMEOUT_S):
+    """A ``run_model`` callable bound to one caller's credential.
+
+    ``credential_env`` is the ``{variable: secret}`` mapping the caller
+    composed from their own stored credential, which is
+    ``UserContext.credential_env()``. It reaches the SDK as the environment
+    of one subprocess and is referenced nowhere else.
+    """
+    def _bound(prompt: str) -> ModelAnswer:
+        return _ask_model(prompt, env=credential_env, timeout_s=timeout_s)
+
+    return _bound
 
 
 # --------------------------------------------------------------------------
@@ -894,21 +954,24 @@ def briefing_response(db_path: Path | str,
     path = artefact_path(db_path, ctx)
     if not path.exists():
         return {"empty": True,
-                "reason": f"no briefing artefact at {path.name}; run the "
-                          f"briefing_intel pipeline to generate one.",
-                "task": "briefing_intel"}
+                "reason": f"no briefing artefact at {path.name} yet. Run the "
+                          f"analysis brief to write one.",
+                "task": "briefing_intel",
+                "run": run_state(ctx)}
     try:
         artefact = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         return {"empty": True,
                 "reason": f"briefing artefact unreadable: "
                           f"{type(exc).__name__}: {exc}",
-                "task": "briefing_intel"}
+                "task": "briefing_intel",
+                "run": run_state(ctx)}
 
     if current is None:
         current = current_inputs(db_path, now=now)
     out = dict(artefact)
     out.update(freshness(artefact, now=now, current=current))
+    out["run"] = run_state(ctx)
     if current.get("note"):
         out["freshness_note"] = current["note"]
     return out
@@ -994,10 +1057,224 @@ def generate(
         "rejected_reasons": sorted(set(reasons)),
         "duration_s": round(time.monotonic() - started, 2),
     }
+    # What this run cost, in the vocabulary ``fetch_ledger.spend_note`` uses
+    # for the scheduled task, so a manager reading their own briefing and the
+    # operator reading the ledger are reading the same five facts. It repeats
+    # three fields that are also at the top level, because the block is what
+    # a surface prints and splitting it would make the surface assemble a
+    # number from two places. A request path writes it here rather than to
+    # the ledger: the ledger is a warehouse table with one writer, and a
+    # briefing a manager asked for is not a pipeline run.
+    artefact["spend"] = {
+        "model": usage.model_reported,
+        "tokens_in": usage.tokens_in,
+        "tokens_out": usage.tokens_out,
+        "calls": 1,
+        "duration_s": artefact["duration_s"],
+    }
     if dropped:
         artefact["dropped_panels"] = dropped
     write_artefact(artefact_path(db_path, ctx), artefact)
     return artefact
+
+
+# --------------------------------------------------------------------------
+# 6b. the per-user request path
+#
+# The same assemble, ask, validate and write as the scheduled pass, on the
+# credential of the person who asked and into their own artefact. There is no
+# schedule behind it: a manager presses the button and their own credential
+# pays for that one call, so nothing here spends anybody's tokens unasked.
+# --------------------------------------------------------------------------
+
+NO_CREDENTIAL = (
+    "no Anthropic credential was handed to this briefing run. A manager's "
+    "brief runs on their own credential, and there is no fallback to the "
+    "operator's login."
+)
+
+IN_FLIGHT = (
+    "a briefing is already running for this account. It writes when it "
+    "finishes, which takes a few minutes."
+)
+
+GATED = (
+    "the analysis brief is gated: FPL_EDGE_DISABLE_NETWORK_INGEST is set and "
+    "the model call leaves this machine. Nothing was run and nothing was "
+    "spent."
+)
+
+
+class BriefingRunInFlight(BriefingIntelError):
+    """A second run was asked for while this account's first is still going."""
+
+
+class BriefingGated(BriefingIntelError):
+    """The kill-switch is on, so the request path did not call a model."""
+
+
+def _network_disabled() -> bool:
+    """The repo's one kill-switch, read here for the one call that leaves.
+
+    Same variable and same rule as the scheduled task's gate in
+    ``fpl_edge/pipelines/registry.py``, written out rather than imported
+    because ``platform`` importing ``pipelines`` is the edge the architecture
+    review removed. The panels this pass reads are local; the model call is
+    not, so the switch that stops the scheduler fetching also stops a request
+    path spending. A run with an injected ``run_model`` calls no backend and
+    is not gated, which is what lets the suite exercise the whole path.
+    """
+    return os.environ.get("FPL_EDGE_DISABLE_NETWORK_INGEST", "") not in ("", "0")
+
+
+#: user_id -> the last run this process started for them. In process and not
+#: on disk, deliberately: it answers "is one going right now", and after a
+#: restart nothing is going. A restart therefore reads as idle, which is
+#: true, and the artefact on disk is the durable half of the answer.
+_RUNS: dict[str, dict[str, Any]] = {}
+_RUNS_LOCK = threading.Lock()
+
+
+def _user_id_of(ctx) -> str:
+    from fpl_edge.platform.users import owner_context
+
+    ctx = ctx if ctx is not None else owner_context()
+    return str(ctx.user_id)
+
+
+def run_state(ctx=None) -> dict[str, Any]:
+    """What this process knows about one account's briefing run.
+
+    ``{"state": "idle"}`` when none has been started since the server came
+    up, and otherwise the record the run keeps: ``running``, ``done`` or
+    ``error``, with the reason in the caller's own words when it failed.
+    """
+    with _RUNS_LOCK:
+        record = _RUNS.get(_user_id_of(ctx))
+        return dict(record) if record else {"state": "idle"}
+
+
+def _require_credential(ctx, credential_env: Mapping[str, str]) -> None:
+    """The one rule about whose credential a per-user run may spend.
+
+    A context is required, because without one the run would write the
+    owner's artefact. A credential is required for everybody except the
+    operator, whose own is the CLI login on the machine the server runs on.
+    Both entry points below call this, so a caller cannot reach the model by
+    picking the other one.
+    """
+    if ctx is None:
+        raise BriefingIntelError(
+            "a per-user briefing needs the caller's user context; without "
+            "one it would write the owner's artefact.")
+    if not credential_env and not getattr(ctx, "is_owner", False):
+        raise BriefingIntelError(NO_CREDENTIAL)
+
+
+def generate_for_user(
+    db_path: Path | str,
+    *,
+    season: str,
+    ctx,
+    credential_env: Mapping[str, str],
+    now: dt.datetime | None = None,
+    run_model=None,
+) -> dict[str, Any]:
+    """One manager's briefing, on their credential, into their artefact.
+
+    ``ctx`` is the caller's :class:`~fpl_edge.platform.users.UserContext` and
+    decides which artefact is written, through :func:`artefact_path`.
+    ``credential_env`` is the ``{variable: secret}`` mapping that context
+    composed from their own stored credential. It is passed to the SDK as the
+    environment of one subprocess and is held nowhere else: not in
+    ``os.environ``, not in argv, not on any object this returns.
+
+    An empty ``credential_env`` is refused for anybody but the operator,
+    whose own credential is the CLI login on the machine the server runs on.
+    That refusal is the loud failure the design asks for. A bug that dropped
+    a manager's credential on the way here would otherwise run their briefing
+    on the operator's login and nobody would find out until an invoice.
+
+    ``run_model`` overrides the bound model call and is the seam the tests
+    use, so no test spawns the CLI.
+    """
+    _require_credential(ctx, credential_env)
+    ask = run_model if run_model is not None else run_model_for(credential_env)
+    return generate(db_path, season=season, now=now, run_model=ask, ctx=ctx)
+
+
+def start_for_user(
+    db_path: Path | str,
+    *,
+    season: str,
+    ctx,
+    credential_env: Mapping[str, str],
+    now: dt.datetime | None = None,
+    run_model=None,
+    background: bool = True,
+) -> dict[str, Any]:
+    """Start one manager's briefing and return the run record.
+
+    The credential rule is checked here as well as in the run itself, so a
+    caller with nothing to spend is refused before a thread exists rather
+    than through a run record it has to go and read.
+
+    One at a time per account. A second call while the first is running
+    raises :class:`BriefingRunInFlight` rather than starting a second call on
+    the same credential: two runs would spend twice and race to write the one
+    artefact, and the manager asked for a briefing, not for two.
+
+    The kill-switch is read before the slot is claimed, so a gated deployment
+    refuses with :class:`BriefingGated` and leaves no run record behind.
+
+    The run happens on a thread because the pass is one model call that has
+    taken three minutes in production and is allowed ten, which is longer
+    than a browser will hold a request open. The caller gets the record back
+    immediately and reads the result from ``GET /api/briefing``.
+    ``background=False`` runs it inline, which is what the tests and the
+    command line use.
+    """
+    _require_credential(ctx, credential_env)
+    if run_model is None and _network_disabled():
+        raise BriefingGated(GATED)
+    user_id = _user_id_of(ctx)
+    started_at = (now or dt.datetime.now(UTC)).astimezone(UTC)
+    with _RUNS_LOCK:
+        current = _RUNS.get(user_id)
+        if current and current.get("state") == "running":
+            raise BriefingRunInFlight(IN_FLIGHT)
+        _RUNS[user_id] = {"state": "running",
+                          "started_utc": started_at.isoformat(),
+                          "finished_utc": None,
+                          "error": None,
+                          "items_n": None}
+
+    def _finish(**fields: Any) -> None:
+        with _RUNS_LOCK:
+            record = _RUNS.get(user_id) or {}
+            record.update(finished_utc=dt.datetime.now(UTC).isoformat(),
+                          **fields)
+            _RUNS[user_id] = record
+
+    def _work() -> None:
+        try:
+            artefact = generate_for_user(
+                db_path, season=season, ctx=ctx,
+                credential_env=credential_env, now=now, run_model=run_model)
+        except BriefingIntelError as exc:
+            _finish(state="error", error=str(exc))
+        except Exception as exc:  # noqa: BLE001 - the record gets the truth
+            _finish(state="error",
+                    error=f"{type(exc).__name__}: {exc}")
+        else:
+            _finish(state="done", items_n=len(artefact.get("items") or []))
+
+    if background:
+        threading.Thread(target=_work, name=f"briefing-{user_id}",
+                         daemon=True).start()
+    else:
+        _work()
+    return run_state(ctx)
 
 
 # --------------------------------------------------------------------------

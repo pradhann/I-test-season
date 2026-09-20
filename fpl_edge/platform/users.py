@@ -262,6 +262,25 @@ class UserContext:
         except Exception:  # noqa: BLE001 - no store yet is "no key", not a 500
             return None
 
+    def credential_env(self) -> dict[str, Any]:
+        """This manager's credential as the environment one model call needs.
+
+        ``{"ANTHROPIC_API_KEY": ...}`` or ``{"CLAUDE_CODE_OAUTH_TOKEN": ...}``
+        depending on what they pasted, and ``{}`` when nothing is stored. The
+        mapping goes straight into ``ClaudeAgentOptions.env`` for one
+        subprocess, which is the only place the value is allowed to appear.
+
+        This module is the single surface that names the key store, so a
+        caller that needs a credential for a model call asks the context for
+        it rather than importing the store. An empty mapping carries the same
+        two meanings ``anthropic_key`` documents: the operator's own CLI
+        login, or a route that has already refused the request.
+        """
+        from fpl_edge.platform.auth import keys as auth_keys
+
+        key = self.anthropic_key()
+        return auth_keys.credential_env(key.value if key is not None else None)
+
     def to_dict(self) -> dict[str, Any]:
         """The context as a log line. No path, no secret, no display name."""
         return {"user_id": self.user_id, "entry_id": int(self.entry_id),

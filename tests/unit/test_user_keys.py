@@ -311,12 +311,25 @@ def test_a_stderr_line_carrying_the_key_is_redacted_before_it_is_stored() -> Non
     assert "sk-ant-[redacted]" in cleaned
 
 
-# -- the batch path stays the operator's -------------------------------------
+# -- neither spending path looks a credential up -----------------------------
 
-def test_the_batch_analysis_never_imports_the_key_store() -> None:
-    """``analyze.py`` runs from the scheduler with no user and no session,
-    under the operator's own credential. A future edit that reaches for a
-    manager's key fails here rather than in review."""
+def test_the_batch_and_briefing_paths_never_import_the_key_store() -> None:
+    """Neither module can reach for a key, so neither can reach for the
+    wrong one.
+
+    ``analyze.py`` runs from the scheduler with no user and no session, under
+    the operator's own credential, and has no second caller.
+
+    ``briefing_intel.py`` now has two callers. The scheduled pass still runs
+    on the machine's own CLI login through ``_run_model``, which passes an
+    empty ``env``. A manager's own brief runs through ``generate_for_user``,
+    which is HANDED a credential by the route that already holds it. The rule
+    the module keeps is the one that matters and it reads the same either
+    way: this module cannot look a credential up. It has no user id, no store
+    and no decryption, so there is no edit inside it that could spend the
+    wrong person's tokens, and one that tried fails here rather than in
+    review.
+    """
     import ast
     import pathlib
 
@@ -331,9 +344,33 @@ def test_the_batch_analysis_never_imports_the_key_store() -> None:
                 imported.append(node.module)
         assert not [m for m in imported if "auth" in m], (
             f"{name} imports {[m for m in imported if 'auth' in m]}. The batch "
-            f"and briefing paths run under the operator's own credential and "
-            f"never read the per-user key store."
+            f"and briefing paths never read the per-user key store: a "
+            f"credential arrives as an argument or the call runs on the "
+            f"machine's own login."
         )
+
+
+def test_the_briefing_reaches_for_no_key_of_its_own() -> None:
+    """The import ban above is the mechanism; this is the behaviour.
+
+    Every name in ``briefing_intel`` that could name a key store is absent,
+    and the one function that takes a credential takes it as an argument.
+    """
+    import inspect
+
+    from fpl_edge.platform import briefing_intel
+
+    source = inspect.getsource(briefing_intel)
+    for forbidden in ("user_keys", "auth.keys", "anthropic_key(",
+                      "CREDENTIAL_ENV", "credential_kind"):
+        assert forbidden not in source, (
+            f"briefing_intel.py names {forbidden!r}. It neither looks a "
+            f"credential up nor decides which variable one belongs in; the "
+            f"caller hands it the mapping."
+        )
+    params = inspect.signature(briefing_intel.generate_for_user).parameters
+    assert "credential_env" in params
+    assert params["credential_env"].kind is inspect.Parameter.KEYWORD_ONLY
 
 
 def test_the_key_routes_are_the_only_surface_that_names_the_store() -> None:

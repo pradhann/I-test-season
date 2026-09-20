@@ -76,6 +76,20 @@ CREDENTIAL_ENV = {
     "oauth_token": "CLAUDE_CODE_OAUTH_TOKEN",
 }
 
+
+def credential_env(secret: str | None) -> dict[str, str]:
+    """The ``{variable: secret}`` mapping for ``ClaudeAgentOptions.env``.
+
+    One expression for the pairing of a credential with the variable the SDK
+    reads it from, so the chat turn and the briefing run cannot word it
+    differently. Nothing stored means an empty mapping, which is the caller
+    running on the machine's own Claude CLI login.
+    """
+    if not secret:
+        return {}
+    return {CREDENTIAL_ENV[credential_kind(secret)]: secret}
+
+
 #: Which secret encrypted a row. Version 1 is ``USER_KEY_ENC_SECRET``;
 #: version 0 is a row written before the current secret and readable only
 #: while ``USER_KEY_ENC_SECRET_PREV`` is set.
