@@ -84,6 +84,7 @@ scheduled run leave identical ledger rows.
 | `fixture_ratings_refit` | core | daily 11:00 UTC | fixture_ratings.parquet, fixture_difficulty.parquet, fixture_calibration.parquet | 23h 0m | the Fixtures board colours an older fit |
 | `briefing_intel` | core | daily 07:40 Europe/London | briefing_intel.json | 23h 0m | the dashboard loses its salience pass |
 | `audio_retention` | maintenance | weekly | nothing; it deletes swept audio files | 24h 0m | the ASR audio cache grows without a sweep |
+| `warehouse_backup` | maintenance | daily 14:30 UTC | one compressed snapshot in the configured destination, and warehouse_backup.json beside the database | 23h 0m | the volume holds the only copy of the database again, and the newest snapshot ages a day per day |
 
 ### Running one by hand
 
@@ -222,6 +223,12 @@ uv run python -m fpl_edge.platform.briefing_intel --db <db_path> --season <seaso
 
 ```
 # in process: fpl_edge.ingest.content.asr.sweep_audio_cache
+```
+
+**`warehouse_backup`**
+
+```
+uv run python -m fpl_edge.store.backup snapshot --db <db_path> --keep <keep>
 ```
 
 ### Deliberate overlaps

@@ -954,6 +954,14 @@ Every name the image reads. The Dockerfile bakes `FPL_EDGE_BOOT=1`,
 | `FPL_EDGE_ARCHIVE_BODIES` | `0` stops writing fetched HTTP bodies to disk. Content ingest writes about 836 MB a day, nothing in the repo reads those files, and the volume holds the warehouse. Provenance is unaffected: `raw_fetch` carries the source, endpoint, sha256, status and instant of every fetch, and `content_item` carries the parsed text | no | set to `0` |
 | `FPL_EDGE_DAG_POLISH` | model-polish of delivered copy; spends tokens | no | leave unset |
 | `FPL_THEME_MODE` | chart theme, `dark` by default | no | optional |
+| `FPL_EDGE_BACKUP_S3_ENDPOINT` | the bucket's S3 endpoint, section 14 | no | set it |
+| `FPL_EDGE_BACKUP_S3_BUCKET` | the bucket name | no | set it |
+| `FPL_EDGE_BACKUP_S3_ACCESS_KEY_ID` | the bucket's access key id | yes | set it |
+| `FPL_EDGE_BACKUP_S3_SECRET_ACCESS_KEY` | the bucket's secret | yes | set it |
+| `FPL_EDGE_BACKUP_S3_PREFIX` | key prefix inside the bucket, so one bucket can hold more than this service | no | optional |
+| `FPL_EDGE_BACKUP_S3_REGION` | the region the signature names; `auto` when unset | no | leave unset |
+| `FPL_EDGE_BACKUP_DIR` | a directory to write snapshots into instead of a bucket. On Railway that directory is the volume being backed up, so set this on the Mac and not on the service | no | leave unset |
+| `FPL_EDGE_BACKUP_KEEP` | how many snapshots are kept; default 7 | no | optional |
 
 Google sign-in and the per-user model key add seven more. Two naming sets
 reached the build, so both are read and either one configures the value. Set
@@ -1134,3 +1142,202 @@ first time it is used, so the window closes on its own and
 `USER_KEY_ENC_SECRET_PREV` can be cleared afterwards. Rotating without the
 `_PREV` value leaves every manager with a 409 on the Account tab telling them
 to paste their key again, which is the honest answer and never a 500.
+
+---
+
+## 14. Backup and restore
+
+The volume holds one copy of `fpl.duckdb`: four seasons of ingest,
+173,551,616 bytes on the day this was written, growing about 6 MB a day.
+Railway volumes have no snapshots and no history. A bad migration, a `rm`, a
+WAL replay that fails, or a deleted service takes the file and every number
+the engine serves with it. Section 13.4's `fpl.duckdb.incoming` promote is the
+restore half and has been there since the first seed; this section is the
+other half, and the daily task that feeds it.
+
+One snapshot is a `CHECKPOINT`, a file copy, a gzip pass and an upload.
+Measured on the live warehouse: the copy takes 0.11s, the gzip pass takes 4.1s
+and produces 35,403,474 bytes (a ratio of 0.204), and the decompressed file is
+byte-identical to the source. Seven daily snapshots are therefore about 248 MB
+in the bucket, which is inside any free tier worth having.
+
+The warehouse is open for the checkpoint and the copy only. Compression and
+the upload run with the database closed, so a slow bucket delays the next
+snapshot and nothing else.
+
+Both halves stage through `TMPDIR`, which section 3.6 puts at `/app/data/tmp`
+on the volume and boot empties at every start. A snapshot needs about 210 MB
+free there while it runs (the copy plus the archive) and a restore needs the
+same. The volume had 4.4 GB free when this was measured, and both staging
+files are deleted whether the run succeeds or raises.
+
+### 14.1 Turning it on: the owner's own steps
+
+The bucket and its credentials are yours. No agent creates them and no agent
+reads them.
+
+    railway bucket create fpl-edge-backups
+    railway bucket info fpl-edge-backups
+    railway bucket credentials fpl-edge-backups
+
+`credentials` prints an S3-compatible endpoint, access key id and secret. Put
+them into the service's variables under these names, the secrets into the
+secret store:
+
+| Variable | From |
+|---|---|
+| `FPL_EDGE_BACKUP_S3_ENDPOINT` | the endpoint `bucket info` prints |
+| `FPL_EDGE_BACKUP_S3_BUCKET` | `fpl-edge-backups` |
+| `FPL_EDGE_BACKUP_S3_ACCESS_KEY_ID` | the access key id |
+| `FPL_EDGE_BACKUP_S3_SECRET_ACCESS_KEY` | the secret |
+| `FPL_EDGE_BACKUP_S3_PREFIX` | optional, for example `warehouse`, when one bucket holds more than this service |
+| `FPL_EDGE_BACKUP_S3_REGION` | optional; the signature uses `auto` when it is unset, which is what Railway's storage expects |
+| `FPL_EDGE_BACKUP_KEEP` | optional; 7 when unset |
+
+    railway variables --set 'FPL_EDGE_BACKUP_S3_ENDPOINT=https://...' \
+                      --set 'FPL_EDGE_BACKUP_S3_BUCKET=fpl-edge-backups'
+
+Then take one snapshot by hand, before trusting the schedule:
+
+    railway ssh "cd /app && python -m fpl_edge.store.backup snapshot"
+
+It prints one line: the key, the byte count, the sha256, the source size, the
+seconds the database was held, the total seconds, how many old snapshots were
+pruned, and the destination. Until that line appears, there is no backup.
+
+All four S3 values or none. Two of the four set is refused with the missing
+names listed, rather than falling back to a directory inside the container,
+which the next deploy would delete.
+
+### 14.2 The daily task
+
+`warehouse_backup` runs at 14:30 UTC, family `maintenance`, stale window 23
+hours. 14:30 is after the settlement chain, both refits and the transcription
+slot, so the snapshot holds a settled day rather than a database halfway
+through one.
+
+Its ledger row carries the key, the byte count, the sha256, the source byte
+count, the seconds the database was held, the elapsed seconds, how many were
+pruned and the destination. `rows_written` is 1, the one snapshot stored. The
+pruned count stays in the note, because a deleted old snapshot is not an
+unchanged row.
+
+With no destination configured, the row is `no_source` and the note names the
+variables to set. It is never `ok`.
+
+The same numbers are written to `data/warehouse/warehouse_backup.json` beside
+the database, which is where the task reads them from. `railway ssh "cat
+/app/data/warehouse/warehouse_backup.json"` answers "when did this last work"
+without opening the warehouse.
+
+### 14.3 Listing what is stored
+
+    railway ssh "cd /app && python -m fpl_edge.store.backup list"
+
+One row per snapshot, oldest first: the key, the compressed size in bytes and
+MB, the size of the warehouse it came from, the instant, and the first 16
+characters of the sha256. A row that reads `INCOMPLETE, no manifest` is an
+upload that stopped between the data object and the manifest beside it. It is
+listed so it is visible, it is never restored, and the next prune deletes it
+without counting it against the seven.
+
+To check that a stored snapshot is still the bytes that were uploaded, without
+restoring it:
+
+    railway ssh "cd /app && python -m fpl_edge.store.backup verify"
+    railway ssh "cd /app && python -m fpl_edge.store.backup verify --key fpl-duckdb-20260919T143000Z.duckdb.gz"
+
+`verify` downloads the object, compares its length against the manifest,
+recomputes the sha256 and deletes the download. Exit 0 means the object
+matches. Exit 1 means it does not, and the line says whether the length or the
+checksum was wrong.
+
+### 14.4 Restoring the most recent snapshot
+
+Four commands, in this order.
+
+    railway ssh "cd /app && python -m fpl_edge.store.backup list"
+    railway ssh "cd /app && python -m fpl_edge.store.backup restore"
+    railway ssh "ls -la /app/data/warehouse/"
+    railway redeploy
+
+`restore` downloads the newest complete snapshot, checks its length and its
+sha256 against the manifest, decompresses it, opens the result as a DuckDB
+warehouse and counts `dim_player`, and only then renames it to
+`/app/data/warehouse/fpl.duckdb.incoming`. It prints the key, the byte count
+and the player count. It never touches the live database: the replacement is
+boot's, on the next start, when nothing holds the file open.
+
+The `ls` is the same confirmation step 13.4 asks for after an `scp`. The
+`.incoming` byte count must match what `restore` printed.
+
+`railway redeploy` is what promotes it. Boot validates the file again, drops
+the WAL of the database it supersedes, and renames it into place with one
+atomic rename before it opens a connection.
+
+### 14.5 Restoring a specific snapshot
+
+Same path, with the key from `list`:
+
+    railway ssh "cd /app && python -m fpl_edge.store.backup restore --key fpl-duckdb-20260917T143000Z.duckdb.gz"
+    railway ssh "ls -la /app/data/warehouse/"
+    railway redeploy
+
+This is the command for a bad write that was not noticed the same day: pick
+the last key from before it, restore that one, redeploy.
+
+Everything ingested after that snapshot is gone, and the pipelines refetch
+what they can. The settlement chain, the odds ladder and the content tiers are
+all idempotent re-fetches, so a day-old restore costs a day of creator
+analysis and of ASR that is not refetched, and re-derives the rest on the next
+tick.
+
+### 14.6 What the health payload shows afterwards
+
+`GET /api/health` carries the boot report, and `promoted` is the receipt:
+
+    "promoted": {"from": "fpl.duckdb.incoming", "bytes": 173551616,
+                 "players": 659, "replaced_bytes": 2359296, "wal_dropped": false}
+
+`bytes` is the restored file's size and must match the source size the
+snapshot's manifest records. `players` is the row count in `dim_player`.
+`replaced_bytes` is what was there before, or null on an empty volume.
+`promoted` is null on every later boot, because the staged file is gone once
+it has been promoted once.
+
+`artefacts` beside it is the other half of the picture. The parquet artefacts
+live on the volume and are not inside the snapshot, so after a restore onto a
+fresh volume they are absent until `fixture_ratings_refit` and
+`forecast_refresh` have run. The panels say so rather than serving stale
+numbers, and the first tick rebuilds them.
+
+### 14.7 Failure modes
+
+| What you see | What it means | What to do |
+|---|---|---|
+| The ledger row is `no_source` | no destination is configured, and nothing was uploaded | set the four S3 variables from 14.1 |
+| `the S3 backup destination is half configured` | some of the four are set | set the names the message lists |
+| `arrived as N bytes against M sent` | the upload was cut short; the staging key was deleted and no snapshot was created | run `snapshot` again; check the bucket's quota |
+| A `403` with the key named | the bucket credentials are wrong or expired | `railway bucket credentials` again and reset the two secrets |
+| `INCOMPLETE, no manifest` in `list` | an upload stopped between the two objects | ignore it; the next prune removes it. Restore an older key |
+| `downloaded with sha256 X against Y` | the stored object is not what was uploaded | restore the previous key and verify it first |
+| `decompressed to a warehouse with no rows in dim_player` | the snapshot was taken of a schema-only file | restore an older key; check when the service last had data |
+| Boot fails with `is not a readable DuckDB warehouse` | the `.incoming` file is truncated or is not a database | the live database was not touched. Restore again |
+| `holds no complete snapshot` | the bucket is empty | there is no backup to restore. Take one now |
+
+Two of these cost nothing. A failed `restore` leaves no `.incoming` file, so
+the redeploy that follows is an ordinary restart, and a failed boot promote
+leaves the database that was already on the volume untouched.
+
+### 14.8 Keeping a copy off Railway
+
+`FPL_EDGE_BACKUP_DIR` points the same commands at a directory instead of a
+bucket. On the service that directory would be the volume being backed up, so
+it belongs on the Mac:
+
+    FPL_EDGE_BACKUP_DIR=/Volumes/Backup/fpl-edge \
+      uv run python -m fpl_edge.store.backup snapshot
+
+That writes a snapshot of the Mac's own warehouse. To hold a copy of the
+service's database on the Mac instead, `scp` it down the way 13.4 sends one
+up, and snapshot that file.
