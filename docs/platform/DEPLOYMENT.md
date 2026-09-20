@@ -951,6 +951,7 @@ Every name the image reads. The Dockerfile bakes `FPL_EDGE_BOOT=1`,
 | `FPL_EDGE_ANALYSE_BUDGET_S` | per-run wall budget for claim extraction; default 1800 | no | optional |
 | `FPL_EDGE_TRANSCRIBE_BUDGET_S` | wall budget for the transcription task; default 3600 | no | optional |
 | `FPL_EDGE_RAW` | relocate the raw archive root | no | leave unset |
+| `FPL_EDGE_ARCHIVE_BODIES` | `0` stops writing fetched HTTP bodies to disk. Content ingest writes about 836 MB a day, nothing in the repo reads those files, and the volume holds the warehouse. Provenance is unaffected: `raw_fetch` carries the source, endpoint, sha256, status and instant of every fetch, and `content_item` carries the parsed text | no | set to `0` |
 | `FPL_EDGE_DAG_POLISH` | model-polish of delivered copy; spends tokens | no | leave unset |
 | `FPL_THEME_MODE` | chart theme, `dark` by default | no | optional |
 

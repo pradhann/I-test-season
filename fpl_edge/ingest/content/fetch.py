@@ -22,13 +22,31 @@ import time
 import urllib.parse
 import urllib.robotparser
 from dataclasses import dataclass
+import os
 from pathlib import Path
 
 import httpx
 
 from fpl_edge.ingest.http import USER_AGENT
 
-RAW_ROOT = Path("data/raw/content")
+#: Where a fetched body is archived. ``FPL_EDGE_RAW`` relocates it, which is
+#: what DEPLOYMENT.md has always said that variable does; until 2026-09-19 it
+#: reached only ``intel/bootstrap.py`` and this root was a literal.
+RAW_ROOT = Path(os.environ.get("FPL_EDGE_RAW") or "data/raw") / "content"
+
+#: Whether a fetched body is written to :data:`RAW_ROOT` at all. On by default,
+#: because on the owner's Mac the archive costs nothing and answers "what
+#: exactly did that page say when we read it".
+#:
+#: ``FPL_EDGE_ARCHIVE_BODIES=0`` turns it off for a deployment that cannot
+#: afford it: content ingest writes about 836 MB a day, nothing in the repo
+#: reads these files, and a Railway volume holding the warehouse fills in under
+#: a week. Provenance does not depend on them. ``raw_fetch`` records the
+#: source, endpoint, sha256, HTTP status and instant of every fetch, and
+#: ``content_item`` holds the parsed text (1,070 items, 10.4 MB), so what a
+#: page said and when it was read both survive. This is the same trade the ASR
+#: fetcher already makes at ``transcribe_cmd.py:216``.
+ARCHIVE_BODIES = (os.environ.get("FPL_EDGE_ARCHIVE_BODIES") or "1") not in {"0", "false", "no"}
 
 #: Minimum seconds between requests to the same host. YouTube's feeds endpoint
 #: starts returning 404 and 500 for ids that are demonstrably correct once it is
@@ -111,12 +129,12 @@ class ContentFetcher:
         *,
         timeout: float = 45.0,
         delay_s: float = DEFAULT_DELAY_S,
-        archive: bool = True,
+        archive: bool | None = None,
         respect_robots: bool = True,
     ) -> None:
         self.source = source
         self.delay_s = delay_s
-        self.archive = archive
+        self.archive = ARCHIVE_BODIES if archive is None else archive
         self.respect_robots = respect_robots
         self._client = httpx.Client(
             timeout=timeout,
