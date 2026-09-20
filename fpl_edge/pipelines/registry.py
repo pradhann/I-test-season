@@ -1043,6 +1043,102 @@ def run_audio_retention(ctx: TaskContext) -> TaskResult:
     )
 
 
+#: How long one snapshot process may live. The measured parts are a 0.11s
+#: copy of the 173 MB warehouse and a 4.1s gzip pass; the rest is the upload
+#: of 35 MB to Railway's bucket, so the budget is almost entirely network. Ten
+#: minutes covers 35 MB at under 500 kbit/s and still ends a hung connection
+#: inside one tick interval.
+BACKUP_TIMEOUT_S = 600.0
+
+
+def _backup_receipt(db_path) -> dict:
+    """The receipt the snapshot process wrote, or an empty dict.
+
+    Read back off the artefact rather than parsed out of stdout, the same rule
+    the briefing task follows: the file is what was written, and a second
+    reader of the printed line would drift from it.
+    """
+    import json
+    from pathlib import Path
+
+    from fpl_edge.store import backup
+
+    try:
+        loaded = json.loads(backup.receipt_path(Path(db_path)).read_text())
+    except (OSError, ValueError):
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def run_warehouse_backup(ctx: TaskContext) -> TaskResult:
+    """Daily off-volume snapshot of the warehouse (DEPLOYMENT.md section 14).
+
+    The volume holds one copy of four seasons of ingest and has no history of
+    its own, so this is the only thing standing between a bad write and the
+    end of the database.
+
+    Two properties matter more than the schedule. The warehouse is open for
+    the CHECKPOINT and the file copy and closed for everything after them, so
+    the upload blocks no writer; and a run with no destination configured
+    records ``no_source`` with the reason rather than a success, because a
+    backup task that reports ok while storing nothing is the most expensive
+    kind of green.
+
+    The destination is read here, in process, because it costs an environment
+    lookup and decides whether to spawn anything at all. The snapshot itself
+    is a subprocess like its sibling tasks above: it opens the warehouse for
+    writing, and a hung upload or a segfault inside it must not take the
+    scheduler with it.
+    """
+    from fpl_edge.store import backup
+
+    configured = backup.configured_destination()
+    if configured.destination is None:
+        return TaskResult(outcome="no_source", detail=configured.reason)
+
+    keep = backup.configured_keep()
+    step = run_step(
+        "warehouse_backup",
+        [ctx.python, "-m", "fpl_edge.store.backup", "snapshot",
+         "--db", str(ctx.db_path), "--keep", str(keep)],
+        timeout=BACKUP_TIMEOUT_S,
+    )
+    if not step.ok:
+        return TaskResult(
+            outcome="error",
+            steps=[step],
+            title="Warehouse backup failed",
+            body=f"{configured.destination.describe()}: {step.detail}",
+            detail=f"snapshot failed: {step.detail}",
+        )
+    receipt = _backup_receipt(ctx.db_path)
+    if not receipt.get("key"):
+        return TaskResult(
+            outcome="error",
+            steps=[step],
+            title="Warehouse backup left no receipt",
+            body=(f"the snapshot process exited 0 but wrote no "
+                  f"{backup.RECEIPT_NAME} beside {ctx.db_path}"),
+            detail=f"snapshot exited 0 with no receipt: {step.detail}",
+        )
+    pruned = list(receipt.get("pruned") or [])
+    return TaskResult(
+        outcome="quiet",
+        steps=[step],
+        detail=(f"key={receipt['key']} bytes={receipt.get('bytes')} "
+                f"sha256={receipt.get('sha256')} "
+                f"source_bytes={receipt.get('source_bytes')} "
+                f"checkpoint_s={receipt.get('checkpoint_s')} "
+                f"elapsed_s={receipt.get('elapsed_s')} "
+                f"pruned={len(pruned)} keep={keep} "
+                f"destination={receipt.get('destination')}"),
+        # One snapshot written. The pruned count stays in the detail and out
+        # of ``rows_unchanged``: a deleted old snapshot is not a row that was
+        # already there, and the ledger's two counters mean what they say.
+        ledger_written=1,
+    )
+
+
 # --------------------------------------------------------------------------
 # THE registry. Adding authority is adding one row here. Nothing else runs.
 # --------------------------------------------------------------------------
@@ -1233,6 +1329,22 @@ TASKS: tuple[Task, ...] = (
         due=Interval(hours=24 * 7),
         stale_window=dt.timedelta(hours=24),
         run=run_audio_retention,
+        family="maintenance",
+    ),
+    Task(
+        id="warehouse_backup",
+        description="Daily off-volume snapshot: CHECKPOINT, copy, gzip, "
+                    "upload, keep the last 7 by default",
+        # 14:30 UTC: after the settlement chain, the two refits and the
+        # nightly transcription slot have all landed, so the snapshot holds
+        # the day's writes rather than a database halfway through them.
+        due=Calendar(hour_utc=14, minute=30),
+        # 23h, the idempotent-refresh rule. A snapshot taken late is still a
+        # snapshot; the only firing worth dropping is one the next day's
+        # firing is about to replace.
+        stale_window=dt.timedelta(hours=23),
+        run=run_warehouse_backup,
+        budget_s=BACKUP_TIMEOUT_S,
         family="maintenance",
     ),
 )

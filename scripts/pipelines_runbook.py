@@ -506,6 +506,8 @@ BREAKS_IF_STALE: dict[str, str] = {
                     "reads stale until somebody presses Re-solve",
     "briefing_intel": "the dashboard loses its salience pass",
     "audio_retention": "the ASR audio cache grows without a sweep",
+    "warehouse_backup": "the volume holds the only copy of the database "
+                        "again, and the newest snapshot ages a day per day",
 }
 
 #: The artefacts and tables a task writes, in the operator's words. Derived
@@ -537,6 +539,9 @@ WRITES: dict[str, str] = {
     "briefing_intel": "briefing_intel.json",
     "auto_resolve": "transfer_plan.json",
     "audio_retention": "nothing; it deletes swept audio files",
+    "warehouse_backup": "one compressed snapshot in the configured "
+                        "destination, and warehouse_backup.json beside "
+                        "the database",
 }
 
 

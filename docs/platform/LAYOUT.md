@@ -85,7 +85,7 @@ Three edges inside a layer are named and allowed:
 
 <!-- BEGIN GENERATED: scripts/module_layout.py -->
 
-341 modules, 112,723 lines.
+342 modules, 114,021 lines.
 
 | Package | Module | Responsibility | Lines |
 |---|---|---|---:|
@@ -112,7 +112,7 @@ Three edges inside a layer are named and allowed:
 | `fpl_edge.ingest.content` | `clubs.py` | Resolve a club name as spoken into a ``dim_team.team_code``, or refuse | 109 |
 | `fpl_edge.ingest.content` | `consensus.py` | Deduplication and the consensus map -- with its own limitations attached | 146 |
 | `fpl_edge.ingest.content` | `feeds.py` | RSS/Atom parsing without a new dependency | 394 |
-| `fpl_edge.ingest.content` | `fetch.py` | Polite HTTP for content, with the archive and the honesty this package needs | 226 |
+| `fpl_edge.ingest.content` | `fetch.py` | Polite HTTP for content, with the archive and the honesty this package needs | 244 |
 | `fpl_edge.ingest.content` | `identity.py` | Linking a creator name to an FPL entry, and refusing to guess when it cannot | 157 |
 | `fpl_edge.ingest.content` | `link_ledger.py` | The pasted-link ledger: one annotation row per item the owner pasted | 394 |
 | `fpl_edge.ingest.content` | `loaders.py` | Source kind -> :class:`ContentItem` list, with every failure reported | 595 |
@@ -315,12 +315,12 @@ Three edges inside a layer are named and allowed:
 | `fpl_edge.pipelines` | `__init__.py` | Pipelines: the product's edge, organised as a first-class package | 39 |
 | `fpl_edge.pipelines` | `contracts.py` | The task vocabulary: what a task is handed, what it returns, when it is due | 256 |
 | `fpl_edge.pipelines` | `health.py` | Derived pipeline health: one set of rules, returned as data | 458 |
-| `fpl_edge.pipelines` | `registry.py` | The task registry: every scheduled pipeline is one reviewable row here | 1240 |
+| `fpl_edge.pipelines` | `registry.py` | The task registry: every scheduled pipeline is one reviewable row here | 1352 |
 | `fpl_edge.pipelines` | `runner.py` | The one execution path every pipeline run goes through | 268 |
 | `fpl_edge.pipelines` | `tasks.py` | The five deadline-relative task bodies | 708 |
 | `fpl_edge.platform` | `__init__.py` | The decision platform: panel scripts, one guarded query path, an HTTP app | 19 |
 | `fpl_edge.platform.app` | `__init__.py` | The platform HTTP surface, DESIGN.md §2.1, implemented exactly | 78 |
-| `fpl_edge.platform.app` | `factory.py` | ``create_app``: seven route groups wired onto one FastAPI instance, with the account router and the static bundle behind them | 191 |
+| `fpl_edge.platform.app` | `factory.py` | ``create_app``: seven route groups wired onto one FastAPI instance, with the account router and the static bundle behind them | 215 |
 | `fpl_edge.platform.app` | `helpers.py` | Shared by every route group: the request models, the dependency bundle they are handed, and the three warehouse readers two of them call | 324 |
 | `fpl_edge.platform.app` | `routes_chat.py` | The briefing artefact and the agent conversations, including the chart assets a turn produced | 173 |
 | `fpl_edge.platform.app` | `routes_content.py` | Content source state and the per-source fetch, the pasted-link job with its preview gate, and the three item annotation routes | 350 |
@@ -331,7 +331,7 @@ Three edges inside a layer are named and allowed:
 | `fpl_edge.platform.app` | `routes_solve.py` | The solve routes, and the two persisted plan artefacts they serve | 399 |
 | `fpl_edge.platform.app` | `routes_transcripts.py` | The two routes the Mac ASR worker talks to | 507 |
 | `fpl_edge.platform.auth` | `__init__.py` | Identity, sessions, and the per-user Anthropic key | 44 |
-| `fpl_edge.platform.auth` | `keys.py` | The per-user Anthropic API key: encrypted at rest, decrypted per turn | 290 |
+| `fpl_edge.platform.auth` | `keys.py` | The per-user Anthropic API key: encrypted at rest, decrypted per turn | 321 |
 | `fpl_edge.platform.auth` | `oauth.py` | Google OAuth 2.0, authorization code with PKCE, in one file | 279 |
 | `fpl_edge.platform.auth` | `policy.py` | The access matrix, as one table, and the check that reads it | 239 |
 | `fpl_edge.platform.auth` | `routes.py` | The sign-in routes, the key routes, and the one check that reads the matrix | 464 |
@@ -339,7 +339,7 @@ Three edges inside a layer are named and allowed:
 | `fpl_edge.platform.auth` | `settings.py` | Every deployment variable the auth layer reads, in one place | 147 |
 | `fpl_edge.platform` | `boot.py` | The boot sequence a container runs before it answers a single request | 418 |
 | `fpl_edge.platform` | `briefing_intel.py` | briefing_intel, the model-authored salience pass OVER the panels | 1049 |
-| `fpl_edge.platform` | `chat_agent.py` | The chat agent loop: conversations driven through the Claude Agent SDK | 1044 |
+| `fpl_edge.platform` | `chat_agent.py` | The chat agent loop: conversations driven through the Claude Agent SDK | 1059 |
 | `fpl_edge.platform` | `deliveries.py` | Reading and acknowledging the delivery outbox | 131 |
 | `fpl_edge.platform` | `fpl_theme.py` | The house chart style: Athletic/Opta grammar, enforced by import | 170 |
 | `fpl_edge.platform.link_jobs` | `__init__.py` | Pasted links: preflight, approve, ingest, take | 68 |
@@ -351,7 +351,7 @@ Three edges inside a layer are named and allowed:
 | `fpl_edge.platform` | `query.py` | The one guarded query path | 337 |
 | `fpl_edge.platform` | `registry.py` | The panel-script registry: the only data path the UI has | 410 |
 | `fpl_edge.platform` | `routes_account.py` | ``/api/account/*``: connect the FPL account from the browser | 194 |
-| `fpl_edge.platform` | `scheduler.py` | The in-process scheduler, and the one writer lock the whole process shares | 327 |
+| `fpl_edge.platform` | `scheduler.py` | The in-process scheduler, and the one writer lock the whole process shares | 340 |
 | `fpl_edge.platform.scripts` | `__init__.py` | Panel scripts | 36 |
 | `fpl_edge.platform.scripts.brief` | `__init__.py` | dashboard_brief, the dashboard's aggregator, under the anti-drift contract | 90 |
 | `fpl_edge.platform.scripts.brief` | `build.py` | ``dashboard_brief``: the assembler, and the panel registration | 184 |
@@ -418,6 +418,7 @@ Three edges inside a layer are named and allowed:
 | `fpl_edge.sim` | `synthetic.py` | Stand-in points and ownership models, so the simulator is never blocked | 491 |
 | `fpl_edge.sim` | `utility.py` | Rank utility: the objective the optimizer actually maximises | 186 |
 | `fpl_edge.store` | `__init__.py` | Point-in-time warehouse | 25 |
+| `fpl_edge.store` | `backup.py` | Snapshots of the warehouse file, and the restore that puts one back | 1085 |
 | `fpl_edge.store` | `fetch_ledger.py` | The fetch ledger and write-on-change: what ran, and what actually changed | 360 |
 | `fpl_edge.store` | `warehouse.py` | DuckDB warehouse with point-in-time-correct reads | 724 |
 | `fpl_edge.theses` | `__init__.py` | The hypothesis registry: every belief becomes a versioned file that gets graded | 63 |
