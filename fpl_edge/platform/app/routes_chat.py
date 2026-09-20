@@ -24,12 +24,17 @@ def _chat_router(deps: Deps) -> APIRouter:
     router = APIRouter()
 
     # ---- the intelligence briefing (fpl_edge/platform/briefing_intel.py) --
-    # Read-only: serves the model-authored salience artefact plus freshness.
-    # A missing artefact is 404-shaped JSON, never an exception, so the UI
-    # renders the gap and offers the trigger; generation itself goes through
-    # POST /api/pipelines/briefing_intel/run, the same seam as every task,
-    # so a UI-triggered briefing leaves the same ledger row a scheduled one
-    # does. No POST here on purpose.
+    # GET is the read: the model-authored salience artefact plus freshness
+    # plus what this process knows about a run in flight. A missing artefact
+    # is 404-shaped JSON, never an exception, so the UI renders the gap and
+    # offers the button.
+    #
+    # POST is the write, and it is on demand and per user. Each manager runs
+    # their own brief on their own credential into their own artefact, and
+    # there is no schedule behind it, so nothing spends anybody's tokens
+    # unasked. The operator's scheduled briefing_intel task is untouched and
+    # still runs through POST /api/pipelines/briefing_intel/run on the CLI
+    # login of the machine the server runs on.
 
     @router.get("/api/briefing")
     def get_briefing(
@@ -38,6 +43,63 @@ def _chat_router(deps: Deps) -> APIRouter:
         from fpl_edge.platform import briefing_intel
 
         return JSONResponse(briefing_intel.briefing_response(db_path, ctx=user))
+
+    @router.post("/api/briefing")
+    def post_briefing(
+        user: UserContext = Depends(current_user),
+    ) -> JSONResponse:
+        """Run this caller's analysis brief on this caller's credential.
+
+        202 with the run record, which the page follows by polling GET. 409
+        while one is already running for this account, because two runs would
+        spend the caller's tokens twice and race to write one file. 403 with
+        the same named body the chat turn gives when no credential is stored.
+        503 when the network kill-switch is on, since the model call leaves
+        the machine.
+
+        The tier is the chat tier for the same reason: the request spends the
+        caller's credential. The access matrix refuses a signed-in manager
+        with no stored credential before this handler runs, and the handler
+        refuses again on its own, so the route is correct read by itself
+        rather than only in company with the table.
+
+        A team id is not required. Five of the seven input panels are league
+        wide; the two that describe one squad serve their own named empty for
+        a caller with no team, and the pass keeps that empty in the context
+        it sends, so the brief covers the board and says which squad panels
+        it had nothing from. The pass only refuses when every panel is empty.
+        """
+        from fpl_edge.platform import briefing_intel
+        from fpl_edge.platform.app.helpers import SEASON_DEFAULT
+        from fpl_edge.platform.auth.routes import NoKeyRefused
+
+        try:
+            credential_env = user.credential_env()
+        except Exception as exc:  # noqa: BLE001 - see below
+            # The only thing that raises here is a stored credential the
+            # current secrets cannot decrypt, which is the caller's problem
+            # to fix on the Account tab and not a server fault. Its own words
+            # ride out in the flat body shape the UI already prints.
+            return JSONResponse(
+                {"error": "key_unreadable", "detail": str(exc),
+                 "remediation_url": "/#account"},
+                status_code=403)
+        if not credential_env and not user.is_owner:
+            raise NoKeyRefused
+        try:
+            state = briefing_intel.start_for_user(
+                db_path, season=SEASON_DEFAULT, ctx=user,
+                credential_env=credential_env)
+        except briefing_intel.BriefingRunInFlight as exc:
+            return JSONResponse(
+                {"error": "briefing_in_flight", "detail": str(exc),
+                 "run": briefing_intel.run_state(user)},
+                status_code=409)
+        except briefing_intel.BriefingGated as exc:
+            return JSONResponse(
+                {"error": "network_disabled", "detail": str(exc)},
+                status_code=503)
+        return JSONResponse({"started": True, "run": state}, status_code=202)
 
     # ---- agent conversations (fpl_edge/platform/chat_agent.py) ----
     # The router fast-path above stays untouched; these routes are the

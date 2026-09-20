@@ -539,7 +539,7 @@ section 7 when the key is the thing missing.
 | 19 | POST | `/api/content/sources/{source_key}/fetch` | | | yes | | |
 | 20 | GET | `/api/content/sources/{source_key}/fetch_state` | | | yes | | |
 | 21 | GET | `/api/briefing` | | yes | | | Reads a stored artefact. No model call, so no key |
-| 22 | POST | `/api/briefing/refresh` | | yes | | yes | New. Authors a briefing for the caller. The only briefing route that spends tokens |
+| 22 | POST | `/api/briefing` | | yes | | yes | Authors a briefing for the caller. The only briefing route that spends tokens. Built as POST on the same path rather than the `/refresh` suffix this table first named: one resource, the read and the write |
 | 23 | POST | `/api/ingest/link` | | | yes | | The one route that writes the corpus |
 | 24 | GET | `/api/ingest/link/{job_id}` | | | yes | | |
 | 25 | POST | `/api/ingest/link/{job_id}/accept` | | | yes | | |
@@ -696,24 +696,42 @@ this safe rather than merely intended.
 
 ### 7.3 `briefing_intel.py`
 
-`_run_model()` at `fpl_edge/platform/briefing_intel.py:396` is a single
-one-shot synthesis: `tools=[]`, `allowed_tools=[]`, no MCP servers,
-`max_turns=1`. It spawns a CLI subprocess to do work that is one API call.
+The pass is a single one-shot synthesis: `tools=[]`, `allowed_tools=[]`, no
+MCP servers, `max_turns=1`. It has two callers and one rule about whose
+credential each one spends.
 
-Switch it to the Anthropic SDK directly, which is already a declared
-dependency (`anthropic>=0.40`):
+`_ask_model(prompt, env=...)` is the single place that builds
+`ClaudeAgentOptions` and runs the query. It takes no view on whose credential
+is in `env`.
 
-```python
-client = anthropic.Anthropic(api_key=ctx.anthropic_key)
-msg = client.messages.create(model=MODEL, max_tokens=..., messages=[...])
-```
+`_run_model(prompt)` is the scheduled pass. It passes `env={}`, so the CLI
+falls back to the login on the machine the server runs on, which is the
+operator's. It runs from the `briefing_intel` task with no user and no
+session, and from the operator-tier `POST /api/pipelines/{task_id}/run`.
 
-The gain is not only simplicity. No subprocess means no child environment to
-get wrong, no CLI binary to ship, and no second place where a key could reach
-a process's argv or its stderr. The chat keeps the SDK because it needs the
-in-process MCP toolbelt; the briefing has no such need.
+`generate_for_user(db_path, season=..., ctx=..., credential_env=...)` is the
+request path behind `POST /api/briefing`. The route reads the caller's own
+credential through `UserContext.credential_env()` and hands it in. An empty
+mapping is refused for anybody but the operator, which is the loud failure a
+dropped credential needs.
 
-`_scrub_environment()` at line 380 stays for the same reason as above.
+This section previously proposed switching the pass to the Anthropic SDK
+directly, on the grounds that a subprocess is a second place a key could
+reach argv or stderr. That is no longer the right trade. Section 1 now allows
+two kinds of credential, and a token from `claude setup-token` spends a
+Claude subscription that `anthropic.Anthropic(api_key=...)` cannot present.
+Keeping `claude-agent-sdk` is what makes the subscription kind work at all,
+and `ClaudeAgentOptions.env` is the same per-subprocess seam the chat already
+uses, with the same never-in-argv and never-in-a-log guarantees.
+
+The module imports nothing from `fpl_edge/platform/auth/`, so it cannot look
+a credential up: one either arrives as an argument or the call runs on the
+machine's own login. `tests/unit/test_user_keys.py` enforces that.
+
+`_scrub_environment()` stays, and now also clears `CLAUDE_CODE_OAUTH_TOKEN`.
+With nothing left in `os.environ` for the CLI to inherit, a run whose `env`
+failed to arrive fails with an auth error rather than spending whatever login
+the server process was carrying.
 
 ### 7.4 When no key is set
 

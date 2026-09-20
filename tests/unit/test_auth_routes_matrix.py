@@ -176,6 +176,23 @@ def test_signed_in_non_operator(app, method, path, tier) -> None:
     assert not refused_by_tier(r), r.text
 
 
+@pytest.mark.parametrize("method,path", sorted(policy.KEY_REQUIRED))
+def test_signed_in_with_a_credential_passes_the_key_tier(app, method, path) -> None:
+    """The other direction of the same row.
+
+    Every route that spends the caller's credential is reachable once they
+    have stored one. What the handler then does with a placeholder path
+    parameter is the handler's business; the tier is done refusing.
+    """
+    from fpl_edge.platform.auth import keys
+
+    client = TestClient(app)
+    who = auth_fixtures.sign_in(client)
+    keys.store(who.user_id, auth_fixtures.SENTINEL)
+    r = _request(client, method, path, headers=who.headers())
+    assert not refused_by_tier(r), r.text
+
+
 def test_the_operator_refusal_names_the_account_and_the_route(app) -> None:
     client = TestClient(app)
     who = auth_fixtures.sign_in(client)
